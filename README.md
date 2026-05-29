@@ -55,12 +55,35 @@ QT_QPA_PLATFORM=offscreen pytest
 ```
 DB CRUD/FK, 설정 저장, 프레임 변환/썸네일, 캡처 3중 저장(기본·export·DB), 짧은 동영상 녹화를 검증합니다.
 
-## Windows 패키징
-```bash
-pyinstaller build.spec
-# 결과: dist/SlitLampImaging/SlitLampImaging.exe
+## Windows 실행파일(.exe) 만들기
+```bat
+pyinstaller --noconfirm build.spec
+:: 결과: dist\SlitLampImaging\SlitLampImaging.exe
 ```
 번들 ffmpeg와 Qt 플러그인이 함께 포함됩니다.
+
+## Windows 설치파일(Setup.exe) 만들기 — 일반 프로그램처럼 설치/제거
+설치 마법사가 있는 `Setup.exe`를 만들어 시작메뉴/바탕화면 바로가기 등록과 제거(프로그램 추가/제거)를 지원합니다.
+
+**준비:** [Inno Setup 6](https://jrsoftware.org/isdl.php) 설치 (무료)
+
+**원클릭 빌드 (권장):** repo 루트에서 `build_installer.bat` 더블클릭 또는 실행
+```bat
+build_installer.bat
+```
+→ 의존성 설치 → PyInstaller 번들 → Inno Setup 컴파일을 한 번에 수행하고
+`dist\installer\SlitLampImaging-Setup-0.1.0.exe` 가 생성됩니다.
+
+**수동 빌드:**
+```bat
+pyinstaller --noconfirm build.spec
+"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\slitlamp.iss
+```
+
+생성된 `Setup.exe`를 클리닉 PC에서 실행하면 설치 마법사가 뜹니다.
+- 기본은 **관리자 권한 없이 사용자 폴더에 설치**되며, 마법사에서 "모든 사용자(관리자)" 설치도 선택할 수 있습니다.
+- 프로그램 파일과 무관하게 환자 DB·이미지는 항상 `%APPDATA%\SlitLampImaging\` 에 저장되므로, 재설치/업데이트해도 데이터는 보존됩니다.
+- 설치 항목 구성: 설치 경로/제거는 `installer\slitlamp.iss`, 표시 이름·버전·게시자는 파일 상단 `#define` 값에서 수정.
 
 ## 실제 장비 검증(사용자 Windows PC 필수)
 1. 슬릿램프 HDMI → 캡처 장비 → PC. 장치가 UVC 웹캠으로 인식되는지 확인
