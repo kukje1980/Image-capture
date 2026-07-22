@@ -1,0 +1,9 @@
+[project]
+name = "slitlamp-web"
+version = "0.1.0"
+description = "안과 슬릿램프 디지털 영상 시스템 - 웹앱 (FastAPI + 브라우저 캡처)"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
