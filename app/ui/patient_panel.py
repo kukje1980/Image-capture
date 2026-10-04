@@ -22,9 +22,14 @@ class PatientPanel(QWidget):
         super().__init__(parent)
         self.db = db
         self._patients = []
+        self.setObjectName("PatientPanel")
 
         lay = QHBoxLayout(self)
-        lay.addWidget(QLabel("환자:"))
+        lay.setContentsMargins(12, 8, 12, 8)
+        lay.setSpacing(8)
+        _lbl = QLabel("환자:")
+        _lbl.setObjectName("Muted")
+        lay.addWidget(_lbl)
         self.search = QLineEdit()
         self.search.setPlaceholderText("이름/차트번호 검색")
         self.search.setFixedWidth(180)

@@ -26,6 +26,7 @@ class AppConfig:
     subfolder_template: str = "{chart_no}_{patient_id}/{date}"
     thumbnail_max_side: int = 120
     newest_on_top: bool = True
+    theme: str = "light"                     # light | dark
 
     @classmethod
     def config_path(cls) -> Path:

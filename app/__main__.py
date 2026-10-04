@@ -15,6 +15,7 @@ from app.config import AppConfig
 from app.db.database import Database
 from app.logging_setup import setup_logging
 from app.ui.main_window import MainWindow
+from app.ui.theme import build_qss, make_app_icon
 
 
 def _apply_cli_overrides(argv, config: AppConfig) -> None:
@@ -38,6 +39,11 @@ def main(argv=None) -> int:
     db = Database(config.db_path).init()
 
     app = QApplication(argv)
+    app.setApplicationName("슬릿램프 영상 시스템")
+    app.setStyle("Fusion")
+    app.setWindowIcon(make_app_icon())
+    app.setStyleSheet(build_qss(config.theme))
+
     win = MainWindow(config, db)
     win.show()
     return app.exec()

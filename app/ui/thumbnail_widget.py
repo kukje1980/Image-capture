@@ -14,9 +14,10 @@ class ThumbnailWidget(QWidget):
     def __init__(self, capture: Capture, parent=None):
         super().__init__(parent)
         self.capture = capture
+        self.setObjectName("ThumbCard")
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(4, 4, 4, 4)
-        lay.setSpacing(2)
+        lay.setContentsMargins(6, 6, 6, 6)
+        lay.setSpacing(4)
 
         self.img = QLabel()
         self.img.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -37,7 +38,8 @@ class ThumbnailWidget(QWidget):
         when = capture.captured_at[-8:] if capture.captured_at else ""
         self.caption = QLabel(f"{when} {eye}{badge}".strip())
         self.caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.caption.setStyleSheet("font-size:11px;color:#555;")
+        self.caption.setStyleSheet("font-size:11px;")
+        self.caption.setObjectName("Muted")
 
         lay.addWidget(self.img)
         lay.addWidget(self.caption)

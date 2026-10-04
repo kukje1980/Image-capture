@@ -7,7 +7,11 @@
 
 - 화면 좌측: 실시간 영상 + 컨트롤(안구 선택 / 일시정지 / 사진 캡처 / 녹화)
 - 화면 우측: 선택한 환자의 캡처 사진을 작은 썸네일 세로줄로(최신이 위) 표시, 클릭 시 크게 보기
-- 상단: 환자 검색/선택/신규/수정
+- 상단: 환자 검색/선택/신규/수정, **라이트/다크 테마 전환**(설정에 저장)
+- 전용 앱 아이콘(`assets/icons/app.ico`) — 실행파일·바로가기·설치 마법사에 적용
+
+> 동일 기능의 **웹 버전**(FastAPI, 브라우저에서 사용)은 `web/` 폴더에 있습니다. 데스크탑 앱과
+> 웹 앱 두 가지 버전을 모두 제공합니다.
 
 ## 기술 스택
 - Python 3.11+, **PySide6**(Qt6), **OpenCV**(opencv-python), **SQLite**(stdlib)
@@ -60,7 +64,11 @@ DB CRUD/FK, 설정 저장, 프레임 변환/썸네일, 캡처 3중 저장(기본
 pyinstaller --noconfirm build.spec
 :: 결과: dist\SlitLampImaging\SlitLampImaging.exe
 ```
-번들 ffmpeg와 Qt 플러그인이 함께 포함됩니다.
+번들 ffmpeg와 Qt 플러그인, 앱 아이콘이 함께 포함됩니다.
+
+> 아이콘(`assets/icons/app.ico`, `app.png`)은 이미 저장소에 포함되어 있습니다.
+> 디자인을 바꾸려면 `app/ui/theme.py`의 `_render_icon()` 을 수정한 뒤
+> `python tools/generate_icon.py` 로 다시 생성하세요.
 
 ## Windows 설치파일(Setup.exe) 만들기 — 일반 프로그램처럼 설치/제거
 설치 마법사가 있는 `Setup.exe`를 만들어 시작메뉴/바탕화면 바로가기 등록과 제거(프로그램 추가/제거)를 지원합니다.

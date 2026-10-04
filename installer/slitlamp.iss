@@ -33,14 +33,13 @@ PrivilegesRequiredOverridesAllowed=dialog
 ; 64비트 빌드(PySide6) 전용. 구버전 Inno Setup에서 오류 시 x64compatible -> x64 로 바꾸세요.
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-; 아이콘이 있으면 아래 주석을 해제하세요 (app\resources\icons\app.ico).
-; SetupIconFile=..\app\resources\icons\app.ico
+; 설치 마법사/프로그램 아이콘
+SetupIconFile=..\assets\icons\app.ico
 
 [Languages]
+; Inno Setup 기본 배포에 Korean.isl 이 포함되어 있어 한국어 마법사가 기본입니다.
+Name: "korean"; MessagesFile: "compiler:Languages\Korean.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
-; 한국어 마법사를 쓰려면 아래 줄의 주석을 해제하세요.
-; (Inno Setup 설치 폴더의 Languages 에 Korean.isl 이 있어야 합니다.)
-; Name: "korean"; MessagesFile: "compiler:Languages\Korean.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked

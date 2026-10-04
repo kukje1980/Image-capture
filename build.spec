@@ -16,6 +16,10 @@ datas += collect_data_files("imageio_ffmpeg")
 # DB 스키마 파일 동봉
 datas += [("app/db/schema.sql", "app/db")]
 
+# 앱 아이콘 동봉
+datas += [("assets/icons/app.ico", "assets/icons"),
+          ("assets/icons/app.png", "assets/icons")]
+
 block_cipher = None
 
 a = Analysis(
@@ -39,7 +43,7 @@ exe = EXE(
     exclude_binaries=True,
     name="SlitLampImaging",
     console=False,
-    icon=None,
+    icon="assets/icons/app.ico",
 )
 
 coll = COLLECT(

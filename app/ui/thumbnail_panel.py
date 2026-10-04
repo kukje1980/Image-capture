@@ -16,17 +16,18 @@ class ThumbnailPanel(QScrollArea):
         self.newest_on_top = newest_on_top
         self._patient_id = None
 
+        self.setObjectName("ThumbnailPanel")
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setFixedWidth(172)
+        self.setFixedWidth(184)
 
         self._container = QWidget()
         self._lay = QVBoxLayout(self._container)
         self._lay.setAlignment(Qt.AlignmentFlag.AlignTop)
-        self._lay.setContentsMargins(4, 4, 4, 4)
-        self._lay.setSpacing(6)
+        self._lay.setContentsMargins(6, 6, 6, 6)
+        self._lay.setSpacing(8)
         self._header = QLabel("촬영 이미지 (0)")
-        self._header.setStyleSheet("font-weight:600;padding:4px;")
+        self._header.setObjectName("PanelHeader")
         self._lay.addWidget(self._header)  # index 0 = header
         self.setWidget(self._container)
 

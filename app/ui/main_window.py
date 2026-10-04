@@ -25,8 +25,11 @@ from app.ui.control_bar import ControlBar
 from app.ui.image_viewer import ImageViewerDialog
 from app.ui.patient_panel import PatientPanel
 from app.ui.settings_dialog import SettingsDialog
+from app.ui.theme import build_qss, make_app_icon
 from app.ui.thumbnail_panel import ThumbnailPanel
 from app.ui.video_view import VideoView
+
+from PySide6.QtWidgets import QApplication
 
 log = logging.getLogger(__name__)
 
@@ -38,6 +41,7 @@ class MainWindow(QMainWindow):
         self.db = db
         self.service = CaptureService(db, config)
         self.setWindowTitle("슬릿램프 디지털 영상 시스템")
+        self.setWindowIcon(make_app_icon())
         self.resize(1280, 800)
 
         self._last_frame = None
@@ -86,8 +90,11 @@ class MainWindow(QMainWindow):
         act_settings.triggered.connect(self._open_settings)
         act_reconnect = QAction("카메라 재연결", self)
         act_reconnect.triggered.connect(self._restart_camera)
+        self.act_theme = QAction("🌙 다크 모드" if self.config.theme != "dark" else "☀ 라이트 모드", self)
+        self.act_theme.triggered.connect(self._toggle_theme)
         tb.addAction(act_settings)
         tb.addAction(act_reconnect)
+        tb.addAction(self.act_theme)
 
         self.patient_panel.patientChanged.connect(self._on_patient_changed)
         self.control_bar.pauseToggled.connect(self._on_pause)
@@ -250,6 +257,17 @@ class MainWindow(QMainWindow):
 
     def _on_thumbnail_clicked(self, capture) -> None:
         ImageViewerDialog(capture, self).exec()
+
+    def _toggle_theme(self) -> None:
+        self.config.theme = "dark" if self.config.theme != "dark" else "light"
+        app = QApplication.instance()
+        if app is not None:
+            app.setStyleSheet(build_qss(self.config.theme))
+        self.act_theme.setText("🌙 다크 모드" if self.config.theme != "dark" else "☀ 라이트 모드")
+        try:
+            self.config.save()
+        except Exception:  # noqa: BLE001
+            log.warning("theme save failed", exc_info=True)
 
     def _open_settings(self) -> None:
         dlg = SettingsDialog(self.config, self)
