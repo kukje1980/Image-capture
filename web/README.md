@@ -5,7 +5,7 @@
 **동시에 브라우저가 지정한 로컬 폴더에도 저장**하는 웹 애플리케이션입니다.
 
 클리닉 PC에서 로컬 서버(uvicorn)로 실행하며, 브라우저(Chrome/Edge 권장)로 `localhost` 접속해 사용합니다.
-동일 시스템의 **Windows 네이티브 데스크탑 앱**은 이 저장소 상위 폴더(`../app`)에 별도로 있습니다.
+동일 시스템의 **데스크탑 앱(Windows·macOS)**은 이 저장소 상위 폴더(`../app`)에 별도로 있습니다.
 
 ## 기술 스택
 - **FastAPI** + **Jinja2** + **바닐라 JS** (빌드 도구 없음)
@@ -16,8 +16,15 @@
 ## 설치 & 실행
 
 ### 원클릭 실행 (권장)
-- **Windows**: `web\run_web.bat` 더블클릭 → 최초 1회 자동 설치 후 서버 시작 + 브라우저 자동 열림
-- **macOS/Linux**: `./web/run_web.sh`
+준비물: **Python 3.11 이상**([python.org](https://www.python.org/downloads/)), 브라우저 **Chrome 또는 Edge**
+
+- **Windows**: `web\run_web.bat` 더블클릭
+- **macOS**: Finder 에서 `web/run_web.command` 더블클릭
+  (처음 한 번 "확인되지 않은 개발자" 경고가 뜨면 Control-클릭 → 열기)
+- **Linux**: 터미널에서 `./web/run_web.sh`
+
+처음 실행 때만 필요한 패키지를 자동 설치(1~2분)하고, 이후에는 바로 서버가 켜지며 브라우저가
+**http://localhost:8000** 으로 자동으로 열립니다. 실행 창(검은 창/터미널)을 닫거나 Ctrl+C 를 누르면 종료됩니다.
 
 ### 수동 실행
 ```bash

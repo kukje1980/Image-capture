@@ -1,4 +1,4 @@
-"""assets/icons/app.ico + app.png 생성기 (오프스크린 Qt 렌더 → Pillow로 ICO 패킹).
+"""assets/icons/app.ico + app.icns(macOS) + app.png 생성기 (오프스크린 Qt 렌더 → Pillow로 ICO 패킹).
 
     QT_QPA_PLATFORM=offscreen python tools/generate_icon.py
 """
@@ -44,7 +44,11 @@ def main() -> int:
 
     ico_path = os.path.join(OUT_DIR, "app.ico")
     images[-1].save(ico_path, format="ICO", sizes=[(s, s) for s in SIZES])
-    print("wrote", ico_path, "and app.png")
+    # macOS 앱 번들 아이콘 (512/1024 는 벡터 렌더를 그대로 키워 선명하게)
+    big = Image.open(io.BytesIO(qpixmap_to_png_bytes(_render_icon(1024)))).convert("RGBA")
+    icns_path = os.path.join(OUT_DIR, "app.icns")
+    big.save(icns_path, format="ICNS")
+    print("wrote", ico_path, icns_path, "and app.png")
     return 0
 
 

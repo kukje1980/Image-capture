@@ -47,7 +47,7 @@ def build_qss(mode: str = "dark") -> str:
     QWidget {{
         background: {c['bg']};
         color: {c['ink']};
-        font-family: "Pretendard", "Malgun Gothic", "맑은 고딕", "Segoe UI", sans-serif;
+        font-family: "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", "맑은 고딕", "Segoe UI", sans-serif;
         font-size: 13px;
     }}
     QMainWindow, QDialog {{ background: {c['bg']}; }}
@@ -74,13 +74,13 @@ def build_qss(mode: str = "dark") -> str:
     QLabel#Avatar {{ background: {c['accent_soft']}; color: {c['accent_hover'] if mode == 'dark' else c['accent']};
         border-radius: 19px; font-size: 15px; font-weight: 700; }}
     QLabel#PatientName {{ background: transparent; font-size: 16px; font-weight: 700; }}
-    QLabel#ChartNo {{ background: transparent; color: {c['ink_muted']}; font-family: Consolas, "JetBrains Mono", monospace; font-size: 12px; }}
+    QLabel#ChartNo {{ background: transparent; color: {c['ink_muted']}; font-family: Menlo, Consolas, "JetBrains Mono", monospace; font-size: 12px; }}
     QLabel#PatientMeta {{ background: transparent; color: {c['ink_soft']}; font-size: 12px; }}
 
     /* 라벨 */
     QLabel {{ background: transparent; color: {c['ink']}; }}
     QLabel#Muted {{ color: {c['ink_soft']}; }}
-    QLabel#StatusLabel {{ color: {c['ink_soft']}; font-family: Consolas, "JetBrains Mono", monospace; font-size: 12px; }}
+    QLabel#StatusLabel {{ color: {c['ink_soft']}; font-family: Menlo, Consolas, "JetBrains Mono", monospace; font-size: 12px; }}
     QLabel#PanelHeader {{ color: {c['ink_muted']}; font-weight: 700; font-size: 11px; padding: 8px 2px 2px; letter-spacing: 1px; }}
     QLabel#CountBadge {{ background: {c['accent_soft']}; color: {c['accent_hover'] if mode == 'dark' else c['accent']};
         border-radius: 9px; padding: 1px 8px; font-size: 11px; font-weight: 700; }}
@@ -125,7 +125,7 @@ def build_qss(mode: str = "dark") -> str:
     QFrame#EyeSeg {{ background: {c['bg']}; border: 1px solid {c['rule']}; border-radius: 10px; }}
     QPushButton#EyeBtn {{
         background: transparent; border: 1px solid transparent; border-radius: 7px; padding: 2px 6px; min-width: 40px; min-height: 34px;
-        color: {c['ink_soft']}; font-family: Consolas, "JetBrains Mono", monospace; font-size: 13px; font-weight: 700;
+        color: {c['ink_soft']}; font-family: Menlo, Consolas, "JetBrains Mono", monospace; font-size: 13px; font-weight: 700;
     }}
     QPushButton#EyeBtn:hover {{ color: {c['ink']}; }}
     QPushButton#EyeBtn:checked {{ background: {c['raised']}; border: 1px solid {c['rule_strong']}; color: {c['ink']}; }}

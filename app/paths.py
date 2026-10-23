@@ -1,12 +1,13 @@
 """경로/폴더 규칙 헬퍼.
 
-%APPDATA%/SlitLampImaging (Windows) 또는 ~/.local/share/SlitLampImaging (그 외)를
-앱 데이터 루트로 사용한다. 환자별 저장 하위 폴더 이름도 여기서 생성한다.
+%APPDATA%/SlitLampImaging (Windows), ~/Library/Application Support/SlitLampImaging (macOS),
+~/.local/share/SlitLampImaging (그 외)를 앱 데이터 루트로 사용한다. 환자별 저장 하위 폴더 이름도 여기서 생성한다.
 """
 from __future__ import annotations
 
 import os
 import re
+import sys
 from pathlib import Path
 
 APP_DIR_NAME = "SlitLampImaging"
@@ -18,7 +19,12 @@ _UNSAFE = re.compile(r"[^0-9A-Za-z._가-힣-]+")
 def get_appdata_dir() -> Path:
     """앱 데이터 루트 디렉토리(없으면 생성)."""
     appdata = os.environ.get("APPDATA")
-    base = Path(appdata) if appdata else Path.home() / ".local" / "share"
+    if appdata:
+        base = Path(appdata)
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+    else:
+        base = Path.home() / ".local" / "share"
     d = base / APP_DIR_NAME
     d.mkdir(parents=True, exist_ok=True)
     return d

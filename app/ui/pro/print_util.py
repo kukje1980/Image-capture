@@ -50,7 +50,8 @@ def render_report(printer, patient, items: list, title: str = "슬릿램프 영�
     printed = datetime.now().strftime("%Y-%m-%d %H:%M")
 
     def font(pt, bold=False):
-        f = QFont("Malgun Gothic")
+        f = QFont()
+        f.setFamilies(["Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans CJK KR", "sans-serif"])
         f.setPointSizeF(pt)
         f.setBold(bold)
         return f

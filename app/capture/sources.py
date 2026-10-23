@@ -1,12 +1,13 @@
 """프레임 소스 추상화.
 
-DeviceSource  : 실제 캡처 장비(UVC). 운영 환경(Windows + DirectShow).
+DeviceSource  : 실제 캡처 장비(UVC). Windows = DirectShow, macOS = AVFoundation.
 FileSource    : 동영상 파일 반복 재생. 하드웨어 없는 개발용.
 SyntheticSource: numpy로 합성 프레임 생성. 의존성 없이 CI/리눅스 개발용.
 """
 from __future__ import annotations
 
 import abc
+import sys
 import time
 from typing import Optional, Tuple
 
@@ -16,6 +17,8 @@ try:
     import cv2
 except ImportError:  # 테스트 일부는 cv2 없이도 동작
     cv2 = None
+
+from app.capture.frame_utils import capture_api
 
 
 class FrameSource(abc.ABC):
@@ -51,10 +54,11 @@ class DeviceSource(FrameSource):
     def open(self) -> None:
         if cv2 is None:
             raise RuntimeError("OpenCV(cv2)가 설치되어 있지 않습니다.")
-        flag = cv2.CAP_DSHOW if self.backend == "dshow" else cv2.CAP_ANY
-        cap = cv2.VideoCapture(self.index, flag)
+        cap = cv2.VideoCapture(self.index, capture_api(self.backend))
         if not cap.isOpened():
-            raise RuntimeError(f"카메라 장치({self.index})를 열 수 없습니다.")
+            hint = (" macOS: 시스템 설정 > 개인정보 보호 및 보안 > 카메라에서 이 앱(또는 터미널)을 허용하세요."
+                    if sys.platform == "darwin" else "")
+            raise RuntimeError(f"카메라 장치({self.index})를 열 수 없습니다.{hint}")
         # UVC에서 더 높은 FPS를 위해 MJPG 시도 (실패해도 무시)
         try:
             cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))

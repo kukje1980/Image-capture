@@ -13,7 +13,7 @@ CONFIG_FILE = "config.json"
 @dataclass
 class AppConfig:
     camera_index: int = 0
-    camera_backend: str = "dshow"            # dshow | any
+    camera_backend: str = "dshow"            # dshow(Windows; macOS에선 자동으로 AVFoundation) | avfoundation | any
     capture_width: int = 1920
     capture_height: int = 1080
     source_mode: str = "device"              # device | file | synthetic

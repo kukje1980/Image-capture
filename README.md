@@ -16,7 +16,7 @@
 ## 기술 스택
 - Python 3.11+, **PySide6**(Qt6), **OpenCV**(opencv-python), **SQLite**(stdlib)
 - 동영상: **imageio-ffmpeg**(번들 ffmpeg, H.264/yuv420p) 우선, 실패 시 `cv2.VideoWriter(mp4v)` 폴백
-- 대상 OS: **Windows**(캡처는 DirectShow 백엔드). 개발/CI는 Linux에서 합성·파일 소스로 가능
+- 대상 OS: **Windows**(캡처: DirectShow) · **macOS 11 이상**(캡처: AVFoundation, Apple Silicon·Intel). 개발/CI는 Linux에서 합성·파일 소스로 가능
 
 ## 설치
 ```bash
@@ -31,6 +31,28 @@ python run.py --source synthetic  # 하드웨어 없이 합성 영상으로 동�
 python run.py --source file       # 설정의 test_file_path 동영상 재생
 ```
 Linux(헤드리스)에서 GUI를 띄우려면 `QT_QPA_PLATFORM=offscreen` 또는 가상 디스플레이(xvfb)를 사용하세요.
+
+## macOS (맥) 버전
+같은 소스로 맥에서도 동작합니다. 캡처 장비는 맥에서 자동으로 **AVFoundation** 백엔드로 열리고,
+데이터는 `~/Library/Application Support/SlitLampImaging/` 에 저장됩니다.
+
+### 방법 1 — 설치용 dmg 만들기 (권장)
+1. 맥에 **Python 3.11 이상** 설치 ([python.org](https://www.python.org/downloads/macos/) 설치본 권장 — 맥 기본 python3 는 3.9 인 경우가 많음)
+2. 터미널에서 저장소 폴더로 이동 후 `./build_mac.sh`
+3. `dist/SlitLampImaging-<버전>-mac-<arm64|x86_64>.dmg` 를 열고 앱을 **Applications** 로 끌어다 놓기
+
+> 맥이 없어도 GitHub **Actions → "Build macOS app" → Run workflow** 로 Apple Silicon(arm64)·Intel(x86_64)용
+> dmg 를 각각 만들 수 있습니다(실행 결과 화면의 *Artifacts* 에서 내려받기).
+
+### 방법 2 — 소스에서 바로 실행
+Finder 에서 `run_mac.command` 더블클릭(처음 한 번 자동 설치). 하드웨어 없이 확인: 터미널에서 `./run_mac.command --source synthetic`
+
+### 처음 실행할 때 (보안 · 권한)
+- 앱은 Apple 개발자 인증서로 서명·공증되지 않았으므로, 처음에는 **앱 아이콘을 Control-클릭(우클릭) → 열기 → 열기**로 실행합니다.
+  (macOS 15 이상: 한 번 실행 시도 후 **시스템 설정 → 개인정보 보호 및 보안 → "그래도 열기"**)
+- **카메라 권한** 요청이 뜨면 **허용**. 거부했다면 *시스템 설정 → 개인정보 보호 및 보안 → 카메라*에서 켠 뒤
+  상단 **카메라 재연결**을 누르세요(소스 실행 시에는 '터미널'에 권한을 줍니다).
+- 단축키는 맥 관례대로 Ctrl 대신 **⌘(Command)** 를 씁니다(⌘Z 실행 취소, ⌘Y 다시 실행). 촬영/Pro 전환은 F2(fn+F2).
 
 ## 화면 디자인 (Clinical Graphite)
 안과 영상 프로그램(VK-2, EyeSuite, IMAGEnet 등)처럼 **어두운 그래파이트 작업 공간**을 기본으로 해 영상에 시선이 모이게 했습니다(상단 테마 버튼으로 밝은 테마 전환).
@@ -67,6 +89,7 @@ Linux(헤드리스)에서 GUI를 띄우려면 `QT_QPA_PLATFORM=offscreen` 또는
 ## 설정 / 저장 위치
 설정 파일과 기본 데이터는 사용자 앱데이터 폴더에 저장됩니다.
 - Windows: `%APPDATA%\SlitLampImaging\`
+- macOS: `~/Library/Application Support/SlitLampImaging/`
 - 기타(개발): `~/.local/share/SlitLampImaging/`
 
 `config.json` 주요 항목: `camera_index`, `source_mode`(device|file|synthetic),

@@ -1,6 +1,7 @@
 """프레임 변환/썸네일/장치 열거 유틸."""
 from __future__ import annotations
 
+import sys
 from typing import List
 
 import numpy as np
@@ -42,11 +43,30 @@ def make_thumbnail(frame: np.ndarray, max_side: int = 120) -> np.ndarray:
     return frame[ys][:, xs].copy()
 
 
+def capture_api(backend: str = "dshow", platform: str | None = None) -> int:
+    """설정의 camera_backend → OpenCV 캡처 API 상수.
+
+    dshow 는 Windows 전용이므로 다른 OS에서는 그 OS의 기본 백엔드로 바꾼다
+    (macOS = AVFoundation). 'avfoundation'·'any' 를 직접 지정할 수도 있다.
+    """
+    if cv2 is None:
+        return 0
+    plat = platform or sys.platform
+    b = (backend or "dshow").lower()
+    if b == "any":
+        return cv2.CAP_ANY
+    if b == "avfoundation" or (plat == "darwin" and b == "dshow"):
+        return cv2.CAP_AVFOUNDATION
+    if b == "dshow" and plat.startswith("win"):
+        return cv2.CAP_DSHOW
+    return cv2.CAP_ANY
+
+
 def enumerate_devices(max_probe: int = 8, backend: str = "dshow") -> List[int]:
     devices: List[int] = []
     if cv2 is None:
         return devices
-    flag = cv2.CAP_DSHOW if backend == "dshow" else cv2.CAP_ANY
+    flag = capture_api(backend)
     for i in range(max_probe):
         cap = cv2.VideoCapture(i, flag)
         try:
