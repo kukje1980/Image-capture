@@ -1,0 +1,11 @@
+# Keeler 브랜드 자료 출처
+
+- `logo-dark.svg` — Keeler 공식 홈페이지 로고 원본 (흰색 글자, 어두운 배경용)
+  https://www.keelerglobal.com/wp-content/uploads/2024/02/logo.svg
+  (https://www.keelerusa.com 의 logo.svg 와 동일 파일)
+- `logo.svg` — 위 원본에서 흰색(#fff) 글자만 Keeler 네이비(#052133)로 바꾼 밝은 배경용
+- `favicon.png` — 원본 로고의 갈매기 마크(하늘색·주황)만 잘라 네이비 바탕에 배치
+- `theme.css` 색 — keeler.co.uk · keelerusa.com · keelerglobal.com 스타일시트에서 가장 많이 쓰인 브랜드 색
+  #052133(네이비) · #1981b7(파랑) · #6cbce8(하늘) · #ed6f1e(주황) · #cde1ef / #f1f8fd(옅은 파랑)
+
+로고·상표는 Keeler Ltd 소유이며, Keeler 측 사용 허락 범위에서 사용합니다.

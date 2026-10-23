@@ -5,7 +5,7 @@
   <title>로그인 · {{ brand.app_name }}</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
-  <link rel="icon" type="image/png" href="/static/favicon.png">
+  <link rel="icon" type="image/png" href="{{ brand.favicon or '/static/favicon.png' }}">
   <link rel="stylesheet" href="/static/css/app.css">
   {% if brand.css %}<link rel="stylesheet" href="{{ brand.css }}">{% endif %}
   <style>

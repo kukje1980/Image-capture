@@ -85,6 +85,8 @@ def login_page(request: Request, next: str = "/", error: int = 0):
     if _authorized(request):
         return RedirectResponse(dest, status_code=303)
     b = _brand_for_path(dest)
+    if b is BRAND:
+        b = _brand_for_host(request)
     return templates.TemplateResponse(request, "login.html", {"next": dest, "error": bool(error),
                                                              "brand": b, "brand_public": brands.public(b)})
 
@@ -118,7 +120,18 @@ app.mount("/media", StaticFiles(directory=str(config.MEDIA_DIR)), name="media")
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
-    return templates.TemplateResponse(request, "index.html")
+    b = _brand_for_host(request)
+    return templates.TemplateResponse(request, "index.html", {"brand": b, "brand_public": brands.public(b)})
+
+
+def _brand_for_host(request: Request) -> dict:
+    """접속 주소(도메인)에 브랜드 이름이 들어 있으면 그 브랜드 (예: keeler-slitlamp.vercel.app → Keeler).
+    별도 배포를 만들 때 환경변수 없이 프로젝트 이름만으로 브랜드가 정해지게 한다."""
+    host = (request.headers.get("host") or "").lower()
+    for key in brands.BRANDS:
+        if key != "default" and key in host:
+            return brands.get_brand(key)
+    return BRAND
 
 
 def _brand_for_path(path: str) -> dict:
@@ -143,9 +156,10 @@ for _key in brands.BRANDS:
 
 
 @app.get("/favicon.ico", include_in_schema=False)
-def favicon():
-    if BRAND.get("favicon"):
-        return FileResponse(str(BASE_DIR / BRAND["favicon"].lstrip("/")))
+def favicon(request: Request):
+    b = _brand_for_host(request)
+    if b.get("favicon"):
+        return FileResponse(str(BASE_DIR / b["favicon"].lstrip("/")))
     return FileResponse(str(BASE_DIR / "static" / "favicon.ico"))
 
 

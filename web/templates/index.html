@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
   <meta name="theme-color" content="{{ brand.theme_color }}">
-  <link rel="icon" type="image/png" href="/static/favicon.png">
+  <link rel="icon" type="image/png" href="{{ brand.favicon or '/static/favicon.png' }}">
   <link rel="shortcut icon" href="/static/favicon.ico">
   <link rel="stylesheet" href="/static/css/app.css">
   {% if brand.css %}<link rel="stylesheet" href="{{ brand.css }}">{% endif %}

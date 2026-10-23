@@ -76,7 +76,7 @@ HTTPS 주소라서 카메라·저장 폴더 기능도 그대로 동작합니다.
 | 값 | 화면 |
 |----|------|
 | (없음) | 기본 슬릿램프 영상 시스템 (티얼 색) |
-| `keeler` | **Keeler 전용** — Keeler 이름·로고, 네이비/블루 색, 보고서 머리말 "Keeler 슬릿램프 영상 보고서" |
+| `keeler` | **Keeler 전용** — Keeler 공식 로고·브랜드 색(네이비 #052133 · 파랑 #1981b7 · 주황 #ed6f1e), 보고서 머리말 "Keeler 슬릿램프 영상 보고서" |
 
 **바로 쓰기:** 이미 배포된 주소 뒤에 **`/keeler`** 를 붙이면 Keeler 화면이 열립니다
 (예: `https://image-capture-web.vercel.app/keeler`). 같은 서버·같은 환자 DB 를 씁니다.
@@ -84,7 +84,8 @@ HTTPS 주소라서 카메라·저장 폴더 기능도 그대로 동작합니다.
 **Keeler 전용 주소를 따로 만들기 (Vercel, 2~3분 — 데이터도 분리)**
 1. vercel.com → **Add New → Project** → 같은 `Image-capture` 저장소 **Import** (프로젝트 이름 예: `keeler-slitlamp`)
 2. **Root Directory = `web`**
-3. Environment Variables: `SLITLAMP_BRAND` = `keeler`, `SLITLAMP_PASSWORD` = 접속 비밀번호 → **Deploy**
+3. Environment Variables: `SLITLAMP_PASSWORD` = 접속 비밀번호 → **Deploy**
+   (프로젝트 이름에 `keeler` 가 들어가면 주소로 자동 인식해 Keeler 화면이 됩니다. 다른 이름이면 `SLITLAMP_BRAND` = `keeler` 도 추가)
 
 **로고 · 색 바꾸기** — `web/static/brand/keeler/`
 - `logo.svg`(또는 `.png`): 밝은 화면용 공식 로고, `logo-dark.svg`(선택): 어두운 화면용(흰색) 로고

@@ -86,3 +86,20 @@ def test_keeler_login_branding(monkeypatch, tmp_path):
     ok = c.post("/login", data={"password": "pw", "next": "/keeler"}, follow_redirects=False)
     assert ok.headers["location"] == "/keeler"
     assert "brand-keeler" in c.get("/keeler").text
+
+
+def test_keeler_by_hostname(monkeypatch, tmp_path):
+    """프로젝트 이름에 keeler 가 들어간 별도 주소는 설정 없이 Keeler 화면."""
+    c = _client(monkeypatch, tmp_path, None)
+    html = c.get("/", headers={"host": "keeler-slitlamp.vercel.app"}).text
+    assert 'class="brand-keeler"' in html
+    assert "/static/brand/keeler/logo.svg" in html and "/static/brand/keeler/logo-dark.svg" in html
+    assert "/static/brand/keeler/favicon.png" in html
+    assert 'class="brand-default"' in c.get("/", headers={"host": "image-capture-web.vercel.app"}).text
+
+
+def test_official_logo_files_present():
+    b = brands.get_brand("keeler")
+    assert b["logo"].endswith("logo.svg") and b["logo_dark"].endswith("logo-dark.svg")
+    svg = (brands.STATIC_DIR / "brand" / "keeler" / "logo.svg").read_text(encoding="utf-8")
+    assert "#052133" in svg and "#ed6f1e" in svg and "#6cbce8" in svg
