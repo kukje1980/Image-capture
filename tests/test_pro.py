@@ -170,3 +170,24 @@ def test_pro_live_capture_save(qapp, app_env):
     assert cap is not None and cap.eye == "OD"
     assert len(ws.captures()) == 1
     assert not ws.b_capture.isChecked()                    # 저장 후 라이브 복귀
+
+
+def test_pro_multi_real_mouse_click_and_double_click(qapp, app_env):
+    """실제 마우스 이벤트: 클릭=선택 토글, 더블클릭=열기(선택은 원래대로 유지)."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    ws, _, _ = _workspace(app_env, n=5)
+    ws.show()
+    qapp.processEvents()
+    cells = {c.index: c for c in ws.multi._cells}
+    QTest.mouseClick(cells[0], Qt.MouseButton.LeftButton)
+    QTest.mouseClick(cells[2], Qt.MouseButton.LeftButton)
+    assert ws.multi.selection() == [0, 2]
+    assert ws.multi._cells[0] is cells[0]                 # 셀 위젯이 재생성되지 않음
+
+    # 실제 더블클릭 순서: press/release(클릭) → double-click
+    QTest.mouseClick(cells[3], Qt.MouseButton.LeftButton)
+    QTest.mouseDClick(cells[3], Qt.MouseButton.LeftButton)
+    assert ws.mode() == "single" and ws.current_index() == 3
+    assert ws.multi.selection() == [0, 2]                  # 열기 전 선택 복원
+    ws.close()

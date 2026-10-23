@@ -25,6 +25,10 @@ class PatientOut(PatientIn):
     updated_at: Optional[str] = None
 
 
+class CaptureNoteIn(BaseModel):
+    note: Optional[str] = None
+
+
 class CaptureOut(BaseModel):
     id: int
     patient_id: int

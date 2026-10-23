@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import time
 from collections import OrderedDict
 
 from PySide6.QtCore import QSize, Qt, Signal
@@ -61,13 +62,21 @@ class _Cell(QFrame):
             cap_lbl.setObjectName("MultiCaption")
             cap_lbl.setToolTip(cap_lbl.text())
             lay.addWidget(cap_lbl)
-        if sel_rank:
-            badge = QLabel(f"선택 {sel_rank}", self)
-            badge.setObjectName("SelBadge")
-            badge.move(8, 8)
-            badge.adjustSize()
+        self._badge = QLabel("", self)
+        self._badge.setObjectName("SelBadge")
+        self._badge.move(8, 8)
+        self.set_rank(sel_rank)
         if cap is not None:
             self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def set_rank(self, rank: int) -> None:
+        """선택 순서(0=미선택) 갱신 — 위젯을 다시 만들지 않아 더블클릭이 유지된다."""
+        self.setProperty("selected", bool(rank))
+        self._badge.setText(f"선택 {rank}" if rank else "")
+        self._badge.adjustSize()
+        self._badge.setVisible(bool(rank))
+        self.style().unpolish(self)
+        self.style().polish(self)
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
@@ -94,6 +103,8 @@ class MultiGrid(QWidget):
         self._per = 16
         self._page = 0
         self._sel: list = []
+        self._cells: list = []
+        self._last_click = None          # (idx, t, 클릭 전 선택) — 더블클릭 시 선택 복원용
         self._grid = QGridLayout(self)
         self._grid.setContentsMargins(4, 4, 4, 4)
         self._grid.setSpacing(4)
@@ -152,6 +163,19 @@ class MultiGrid(QWidget):
         self.selectionChanged.emit([])
 
     # ---- 선택 ----
+    def _on_click(self, idx: int) -> None:
+        self._last_click = (idx, time.monotonic(), list(self._sel))
+        self._toggle(idx)
+
+    def _on_double(self, idx: int) -> None:
+        # 더블클릭은 '열기' — 첫 클릭으로 바뀐 선택을 되돌린다
+        lc = self._last_click
+        if lc and lc[0] == idx and time.monotonic() - lc[1] < 1.0:
+            self._sel = lc[2]
+            self._refresh_ranks()
+            self.selectionChanged.emit(list(self._sel))
+        self.openRequested.emit(idx)
+
     def _toggle(self, idx: int) -> None:
         if idx in self._sel:
             self._sel.remove(idx)
@@ -159,8 +183,12 @@ class MultiGrid(QWidget):
             self._sel.append(idx)
             if len(self._sel) > 2:
                 self._sel.pop(0)
-        self._rebuild()
+        self._refresh_ranks()
         self.selectionChanged.emit(list(self._sel))
+
+    def _refresh_ranks(self) -> None:
+        for cell in self._cells:
+            cell.set_rank(self._sel.index(cell.index) + 1 if cell.index in self._sel else 0)
 
     # ---- 렌더 ----
     def _rebuild(self) -> None:
@@ -168,6 +196,7 @@ class MultiGrid(QWidget):
             item = self._grid.takeAt(0)
             if item.widget() is not None:
                 item.widget().deleteLater()
+        self._cells = []
         cols = 4 if self._per == 16 else 6
         start = self._page * self._per
         for k in range(self._per):
@@ -176,8 +205,9 @@ class MultiGrid(QWidget):
             rank = (self._sel.index(idx) + 1) if idx in self._sel else 0
             cell = _Cell(cap, idx if cap else -1, idx + 1, rank)
             if cap is not None:
-                cell.clicked.connect(self._toggle)
-                cell.doubleClicked.connect(self.openRequested.emit)
+                cell.clicked.connect(self._on_click)
+                cell.doubleClicked.connect(self._on_double)
+                self._cells.append(cell)
             r, c = divmod(k, cols)
             self._grid.addWidget(cell, r, c)
         for c in range(cols):

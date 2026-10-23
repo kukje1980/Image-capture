@@ -128,6 +128,7 @@ def build_qss(mode: str = "light") -> str:
     QToolBar {{ background: {c['panel']}; border-bottom: 1px solid {c['rule']}; spacing: 4px; padding: 4px 6px; }}
     QToolBar QToolButton {{ background: transparent; border-radius: 6px; padding: 6px 12px; color: {c['ink']}; }}
     QToolBar QToolButton:hover {{ background: {c['panel2']}; }}
+    QToolBar QToolButton:checked {{ background: {c['accent']}; color: #ffffff; font-weight: 600; }}
 
     /* 상태바 */
     QStatusBar {{ background: {c['panel']}; border-top: 1px solid {c['rule']}; color: {c['ink_soft']}; }}

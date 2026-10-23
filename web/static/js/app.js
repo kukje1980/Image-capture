@@ -77,6 +77,7 @@
       state.currentPatientId = parseInt(e.target.value, 10) || null;
       renderThumbs();
       updateCaptureButtons();
+      emitPatient();
     });
     $('btn-new-patient').addEventListener('click', () => openPatientDialog(null));
     $('btn-edit-patient').addEventListener('click', () => {
@@ -110,6 +111,7 @@
 
     document.addEventListener('keydown', (e) => {
       if (e.target.matches('input, textarea, select')) return;
+      if (document.body.classList.contains('pro-on')) return;   // Pro 모드는 pro.js가 처리
       if (e.key === ' ') { e.preventDefault(); togglePause(); }
       else if (e.key.toLowerCase() === 'c') { if (!$('btn-capture').disabled) { e.preventDefault(); capturePhoto(); } }
       else if (e.key.toLowerCase() === 'r') { if (!$('btn-record').disabled) { e.preventDefault(); toggleRecord(); } }
@@ -155,6 +157,11 @@
     }
     updateCaptureButtons();
     await renderThumbs();
+    emitPatient();
+  }
+
+  function emitPatient() {
+    document.dispatchEvent(new CustomEvent('slit:patient', { detail: currentPatient() || null }));
   }
 
   function openPatientDialog(patient) {
@@ -168,6 +175,8 @@
     $('p-phone').value = patient?.phone || '';
     $('p-memo').value = patient?.memo || '';
     $('p-symptoms').value = patient?.symptoms || '';
+    $('p-diagnosis').value = patient?.diagnosis || '';
+    $('p-doctor').value = patient?.doctor || '';
     $('patient-dialog').showModal();
   }
 
@@ -181,6 +190,8 @@
       phone: $('p-phone').value.trim() || null,
       memo: $('p-memo').value.trim() || null,
       symptoms: $('p-symptoms').value.trim() || null,
+      diagnosis: $('p-diagnosis').value.trim() || null,
+      doctor: $('p-doctor').value.trim() || null,
     };
     if (!body.chart_no || !body.name) return;
     try {
@@ -425,6 +436,7 @@
     let folderOk = false;
     if (state.dirHandle) folderOk = await saveToFolder(filename, blob);
 
+    if (serverOk) document.dispatchEvent(new CustomEvent('slit:captures'));
     if (serverOk && !opts.silent) {
       await renderThumbs();
       const where = folderOk ? '서버 + 지정 폴더' : (state.dirHandle ? '서버(폴더 실패)' : '서버');
@@ -678,6 +690,12 @@
       setTimeout(() => el.remove(), 220);
     }, 3200);
   }
+
+  // Pro 모드(pro.js)에서 쓰는 공개 API
+  window.SlitApp = {
+    state, api, currentPatient, persistCapture, renderThumbs, toast, setStatus,
+    startCamera, openPatientDialog, parseTs, fmtDT,
+  };
 
   init();
 })();

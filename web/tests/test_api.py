@@ -99,3 +99,47 @@ def test_capture_cascade_on_patient_delete(client):
     assert len(client.get(f"/api/v1/captures?patient_id={pid}").json()) == 1
     client.delete(f"/api/v1/patients/{pid}")
     assert client.get(f"/api/v1/captures?patient_id={pid}").json() == []
+
+
+def test_patient_diagnosis_doctor(client):
+    r = client.post("/api/v1/patients", json={"chart_no": "DX1", "name": "진단", "diagnosis": "백내장",
+                                               "doctor": "박원장"})
+    assert r.status_code == 201
+    p = r.json()
+    assert (p["diagnosis"], p["doctor"]) == ("백내장", "박원장")
+    r = client.put(f"/api/v1/patients/{p['id']}", json={**p, "diagnosis": "녹내장 의증"})
+    assert r.json()["diagnosis"] == "녹내장 의증"
+
+
+def test_patch_capture_note(client):
+    p = _make_patient(client, chart="PN1")
+    png = b"\x89PNG\r\n\x1a\n" + b"0" * 16
+    cap = client.post("/api/v1/captures", files={"file": ("a.png", io.BytesIO(png), "image/png")},
+                      data={"patient_id": str(p["id"]), "media_type": "photo", "ext": "png"}).json()
+    r = client.patch(f"/api/v1/captures/{cap['id']}", json={"note": "  경과관찰  "})
+    assert r.status_code == 200 and r.json()["note"] == "경과관찰"
+    assert client.patch("/api/v1/captures/99999", json={"note": "x"}).status_code == 404
+
+
+def test_old_web_db_migrated(tmp_path):
+    import sqlite3
+    from app.db.database import Database
+    path = tmp_path / "old.db"
+    con = sqlite3.connect(path)
+    con.executescript("""
+        CREATE TABLE patients (id INTEGER PRIMARY KEY AUTOINCREMENT, chart_no TEXT UNIQUE,
+            patient_id TEXT, name TEXT NOT NULL, birth_date TEXT, sex TEXT, phone TEXT,
+            memo TEXT, symptoms TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')));
+        INSERT INTO patients (chart_no, name) VALUES ('OLD', '기존');
+    """)
+    con.commit(); con.close()
+    db = Database(path).init()
+    try:
+        p = db.list_patients("기존")[0]
+        assert p["diagnosis"] is None
+        db.update_patient(p["id"], {**p, "diagnosis": "결막염", "doctor": "이의사"})
+        assert db.get_patient(p["id"])["doctor"] == "이의사"
+    finally:
+        db.close()

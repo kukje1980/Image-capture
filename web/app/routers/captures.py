@@ -15,7 +15,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Form, HTTPException, Request, UploadFile
 
 from app import config
-from app.models.schemas import CaptureOut
+from app.models.schemas import CaptureNoteIn, CaptureOut
 
 router = APIRouter(prefix="/api/v1/captures", tags=["captures"])
 
@@ -86,6 +86,17 @@ async def create_capture(
         "duration_ms": duration_ms,
         "note": note,
     })
+    return db.get_capture(cid)
+
+
+@router.patch("/{cid}", response_model=CaptureOut)
+def update_capture(request: Request, cid: int, body: CaptureNoteIn):
+    """영상별 코멘트 수정 (Pro 모드)."""
+    db = _db(request)
+    if not db.get_capture(cid):
+        raise HTTPException(status_code=404, detail="영상을 찾을 수 없습니다.")
+    note = (body.note or "").strip() or None
+    db.update_capture_note(cid, note)
     return db.get_capture(cid)
 
 

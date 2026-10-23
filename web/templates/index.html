@@ -21,6 +21,10 @@
       <span class="brand-badge">Web</span>
     </div>
     <div class="top-actions">
+      <button class="btn btn-sm btn-pro" id="btn-pro" aria-pressed="false" title="전문가용 영상 검토 화면 (MULTI·비교·보정·주석·인쇄)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        Pro 모드
+      </button>
       <button class="btn btn-sm" id="btn-folder">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
         저장 폴더 지정
@@ -119,7 +123,90 @@
       </div>
     </aside>
   </main>
+
+  <section class="pro" id="pro" aria-label="Pro 영상 검토">
+    <div class="pro-toolbar" role="toolbar" aria-label="Pro 명령">
+      <div class="seg" id="pro-modes">
+        <button class="pbtn" data-mode="live" title="실시간 영상">LIVE</button>
+        <button class="pbtn" data-mode="single" title="단일 영상 (←/→ 이동)">1화면</button>
+        <button class="pbtn" data-mode="multi" title="다중 영상 그리드">MULTI</button>
+        <button class="pbtn" data-mode="compare" title="선택한 2장 비교">비교</button>
+      </div>
+      <span class="psep"></span>
+      <select class="select psel" id="pro-eye" title="저장할 영상의 안구 방향">
+        <option value="NA">안구 미지정</option><option value="OD">OD 우안</option>
+        <option value="OS">OS 좌안</option><option value="OU">OU 양안</option>
+      </select>
+      <button class="pbtn pcapture" id="pro-capture" title="라이브 정지/재개 (Space)">❄ CAPTURE</button>
+      <button class="pbtn" id="pro-save" title="정지 영상을 환자 DB에 저장">💾 SAVE</button>
+      <span class="psep"></span>
+      <button class="pbtn" id="pro-prev" title="이전 영상/페이지 (←)">◀ PREV</button>
+      <button class="pbtn" id="pro-next" title="다음 영상/페이지 (→)">NEXT ▶</button>
+      <select class="select psel" id="pro-per" title="MULTI 표시 장수"><option value="16">16장</option><option value="36">36장</option></select>
+      <span class="psep"></span>
+      <button class="pbtn" id="pro-comment" title="현재 영상 코멘트 편집">코멘트</button>
+      <button class="pbtn" id="pro-patient" title="진단명·담당의 등 환자 정보">환자정보</button>
+      <span class="pgrow"></span>
+      <button class="pbtn" id="pro-print" title="보고서 인쇄 / PDF 저장">🖨 인쇄·PDF</button>
+    </div>
+
+    <div class="pro-body">
+      <div class="pro-display" id="pro-display">
+        <div class="pro-view" data-view="live">
+          <video id="pro-video" autoplay muted playsinline></video>
+          <canvas id="pro-freeze"></canvas>
+          <div class="pro-empty" id="pro-live-empty">
+            <p>카메라가 꺼져 있습니다.</p>
+            <button class="btn btn-primary" id="pro-start-camera">카메라 시작</button>
+          </div>
+        </div>
+        <div class="pro-view" data-view="single"><canvas class="pcv" id="pcv-single"></canvas></div>
+        <div class="pro-view pro-grid" data-view="multi" id="pro-multi"></div>
+        <div class="pro-view pro-compare" data-view="compare">
+          <canvas class="pcv" id="pcv-left"></canvas><canvas class="pcv" id="pcv-right"></canvas>
+        </div>
+      </div>
+
+      <aside class="pro-side">
+        <h3 class="pside-h">영상 정보</h3>
+        <div class="pside-info" id="pro-imginfo">-</div>
+
+        <h3 class="pside-h">이미지 보정</h3>
+        <label class="prange">밝기 <input type="range" id="adj-bright" min="-100" max="100" value="0"><output id="o-bright">0</output></label>
+        <label class="prange">대비 <input type="range" id="adj-contrast" min="20" max="300" value="100"><output id="o-contrast">1.00</output></label>
+        <label class="prange">감마 <input type="range" id="adj-gamma" min="20" max="300" value="100"><output id="o-gamma">1.00</output></label>
+        <label class="prange">채널
+          <select class="select" id="adj-channel"><option value="rgb">컬러</option><option value="green">Red-free (녹색)</option><option value="gray">흑백</option></select>
+        </label>
+        <label class="pcheck"><input type="checkbox" id="adj-neg"> 네거티브 (NEGA)</label>
+        <div class="pside-row">
+          <button class="btn btn-sm" id="adj-reset">보정 초기화</button>
+          <button class="btn btn-sm" id="pro-fit">화면 맞춤</button>
+        </div>
+        <div class="pside-row">
+          <button class="btn btn-sm" id="pro-zin">확대 +</button>
+          <button class="btn btn-sm" id="pro-zout">축소 −</button>
+        </div>
+
+        <h3 class="pside-h">주석 · 보정본</h3>
+        <div class="pside-grid" id="pro-tools">
+          <button class="pbtn" data-tool="pan">✋ 이동</button>
+          <button class="pbtn" data-tool="text">T 텍스트</button>
+          <button class="pbtn" data-tool="arrow">↗ 화살표</button>
+          <button class="pbtn" id="pro-clear">주석 지우기</button>
+          <button class="pbtn pspan" id="pro-save-edited">💾 보정본 저장</button>
+        </div>
+
+        <h3 class="pside-h">2장 비교</h3>
+        <div class="pside-info" id="pro-selinfo">MULTI에서 영상 2장을 클릭해 선택한 뒤 '비교'를 누르세요.</div>
+      </aside>
+    </div>
+
+    <div class="pro-info" id="pro-info">환자를 선택하세요</div>
+  </section>
 </div>
+
+<div id="print-area" aria-hidden="true"></div>
 
 <dialog id="patient-dialog" aria-labelledby="patient-dialog-title">
   <div class="dialog-header">
@@ -141,6 +228,10 @@
       <div class="form-row"><label for="p-phone">연락처</label><input id="p-phone" autocomplete="off"></div>
       <div class="form-row"><label for="p-memo">메모</label><textarea id="p-memo" rows="2"></textarea></div>
       <div class="form-row"><label for="p-symptoms">증상</label><textarea id="p-symptoms" rows="2"></textarea></div>
+      <div class="form-grid">
+        <div class="form-row"><label for="p-diagnosis">진단명</label><input id="p-diagnosis" placeholder="예: 백내장, 각막염" autocomplete="off"></div>
+        <div class="form-row"><label for="p-doctor">담당의</label><input id="p-doctor" autocomplete="off"></div>
+      </div>
     </div>
     <div class="dialog-footer">
       <button type="button" class="btn btn-ghost danger" id="patient-delete" style="display:none">삭제</button>
@@ -165,5 +256,6 @@
 <div class="toast-wrap" id="toast-wrap" aria-live="polite"></div>
 
 <script src="/static/js/app.js"></script>
+<script src="/static/js/pro.js"></script>
 </body>
 </html>

@@ -128,6 +128,11 @@ class Database:
             r = self._conn.execute("SELECT * FROM captures WHERE id=?", (cid,)).fetchone()
         return dict(r) if r else None
 
+    def update_capture_note(self, cid: int, note: Optional[str]) -> None:
+        with self._lock:
+            self._conn.execute("UPDATE captures SET note=? WHERE id=?", (note, cid))
+            self._conn.commit()
+
     def delete_capture(self, cid: int) -> Optional[dict]:
         with self._lock:
             r = self._conn.execute(
