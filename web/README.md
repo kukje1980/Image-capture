@@ -70,6 +70,26 @@ HTTPS 주소라서 카메라·저장 폴더 기능도 그대로 동작합니다.
 `SLITLAMP_PASSWORD` 환경변수를 주면 로그인 화면이 켜집니다(브라우저당 30일 유지, `/logout` 으로 로그아웃).
 환자 정보가 인터넷에 노출되지 않도록 **배포할 때는 반드시 설정**하세요. 로컬(내 PC) 실행에서는 설정하지 않아도 됩니다.
 
+## 브랜드 버전 (Keeler 전용 등)
+같은 코드로 회사별 전용 화면을 만듭니다. 환경변수 **`SLITLAMP_BRAND`** 로 고릅니다.
+
+| 값 | 화면 |
+|----|------|
+| (없음) | 기본 슬릿램프 영상 시스템 (티얼 색) |
+| `keeler` | **Keeler 전용** — Keeler 이름·로고, 네이비/블루 색, 보고서 머리말 "Keeler 슬릿램프 영상 보고서" |
+
+**Keeler 전용 주소 만들기 (Vercel, 2~3분)**
+1. vercel.com → **Add New → Project** → 같은 `Image-capture` 저장소 **Import** (프로젝트 이름 예: `keeler-slitlamp`)
+2. **Root Directory = `web`**
+3. Environment Variables: `SLITLAMP_BRAND` = `keeler`, `SLITLAMP_PASSWORD` = 접속 비밀번호 → **Deploy**
+
+**로고 · 색 바꾸기** — `web/static/brand/keeler/`
+- `logo.svg`(또는 `.png`): 밝은 화면용 공식 로고, `logo-dark.svg`(선택): 어두운 화면용(흰색) 로고
+  → 파일을 넣고 저장소에 올리면 상단·로그인·인쇄 보고서에 자동 표시됩니다(없으면 글자 'Keeler'로 표시).
+- `theme.css`: 맨 위 `--keeler-navy`, `--keeler-blue` 두 값이 브랜드 색입니다. 공식 색 코드로 바꾸면 전체에 반영됩니다.
+
+> 회사 로고·상표는 해당 회사의 사용 허락을 받은 범위에서 사용하세요.
+
 ## 사용 흐름
 1. **신규 환자** 등록 → 환자 선택(선택해야 캡처 버튼 활성화)
 2. **카메라 시작** → 권한 허용 → 라이브 영상

@@ -2,14 +2,17 @@
 <html lang="ko">
 <head>
   <meta charset="utf-8">
-  <title>슬릿램프 영상 시스템</title>
+  <title>{{ brand.app_name }}</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="{{ brand.theme_color }}">
   <link rel="icon" type="image/png" href="/static/favicon.png">
   <link rel="shortcut icon" href="/static/favicon.ico">
   <link rel="stylesheet" href="/static/css/app.css">
+  {% if brand.css %}<link rel="stylesheet" href="{{ brand.css }}">{% endif %}
+  <script>window.SLIT_BRAND = {{ brand_public | tojson }};</script>
 </head>
-<body>
+<body class="brand-{{ brand.key }}">
 <!-- 아이콘 스프라이트 (선형 24px) -->
 <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
   <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
@@ -68,10 +71,19 @@
 <div class="app">
   <header class="topbar">
     <div class="brand">
+      {% if brand.logo %}
+      <img class="brand-logo brand-logo-light" src="{{ brand.logo }}" alt="{{ brand.wordmark or brand.app_name }}">
+      <img class="brand-logo brand-logo-dark" src="{{ brand.logo_dark }}" alt="{{ brand.wordmark or brand.app_name }}">
+      <span class="brand-divider" aria-hidden="true"></span>
+      {% elif brand.wordmark %}
+      <span class="brand-wordmark">{{ brand.wordmark }}</span>
+      <span class="brand-divider" aria-hidden="true"></span>
+      {% else %}
       <div class="brand-icon" aria-hidden="true"><svg class="ic"><use href="#i-eye"/></svg></div>
+      {% endif %}
       <div class="brand-text">
-        <div class="brand-title">슬릿램프 영상 시스템</div>
-        <div class="brand-sub">Slit Lamp Imaging <span class="brand-badge">Web</span></div>
+        <div class="brand-title">{{ brand.app_name if not brand.wordmark else "슬릿램프 영상 시스템" }}</div>
+        <div class="brand-sub">{{ brand.sub }} <span class="brand-badge">{{ brand.badge }}</span></div>
       </div>
     </div>
     <nav class="modeswitch" aria-label="화면 전환">

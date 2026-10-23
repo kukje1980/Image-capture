@@ -43,6 +43,7 @@
   };
   try { P.pxmm = Math.max(0, parseFloat(localStorage.getItem('slitlamp-pxmm')) || 0); } catch (_) { /* 저장소 차단 */ }
 
+  const BRAND = { report_title: '슬릿램프 영상 보고서', logo: null, ...(window.SLIT_BRAND || {}) };
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const clamp = (x, lo, hi) => (x < lo ? lo : x > hi ? hi : x);
 
@@ -1032,7 +1033,7 @@
     const area = $('print-area');
     area.innerHTML = pages.map((pg, pi) => `
       <section class="rp-page">
-        <div class="rp-head"><div class="rp-title">슬릿램프 영상 보고서</div><div class="rp-date">출력 ${esc(now)}</div></div>
+        <div class="rp-head"><div class="rp-brand">${BRAND.logo ? `<img class="rp-logo" src="${esc(BRAND.logo)}" alt="">` : ''}<div class="rp-title">${esc(BRAND.report_title)}</div></div><div class="rp-date">출력 ${esc(now)}</div></div>
         <div class="rp-pt">
           <div><b>환자: ${esc(p ? p.name : '-')} (${esc(p?.chart_no || '-')})</b>${sex ? '&nbsp; · &nbsp;' + sex : ''}${p?.birth_date ? '&nbsp; · &nbsp;' + esc(p.birth_date) : ''}</div>
           <div class="rp-l2">진단명: ${esc(p?.diagnosis || '-')} &nbsp;&nbsp;&nbsp; 담당의: ${esc(p?.doctor || '-')}</div>

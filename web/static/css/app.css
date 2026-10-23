@@ -5,13 +5,14 @@
   --bg: #0b0e13; --panel: #12161d; --panel-2: #181d26; --raised: #1d2330;
   --rule: #232a35; --rule-strong: #303846;
   --ink: #e7eaf0; --ink-soft: #a3acba; --ink-muted: #6b7586;
-  --accent: #33c2b1; --accent-strong: #6fdccf; --accent-ink: #032321; --accent-soft: rgba(51, 194, 177, .14);
+  --accent: #33c2b1; --accent-strong: #6fdccf; --accent-ink: #032321; --accent-rgb: 51, 194, 177; --accent-soft: rgba(var(--accent-rgb), .14);
+  --brand-grad: linear-gradient(140deg, #3fd2c0 0%, #109a8c 55%, #0b6f66 100%); --brand-glow: rgba(16, 154, 140, .35);
   --record: #f0524f; --record-soft: rgba(240, 82, 79, .14);
   --success: #3ccf7a; --warn: #eab308; --warn-soft: rgba(234, 179, 8, .10);
   --od: #5aa9ff; --os: #f5a524; --ou: #b18cff;
   --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .28);
   --shadow-strong: 0 18px 60px rgba(0, 0, 0, .6);
-  --ring: 0 0 0 3px rgba(51, 194, 177, .35);
+  --ring: 0 0 0 3px rgba(var(--accent-rgb), .35);
   --radius: 12px; --radius-sm: 8px;
   --font-body: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Segoe UI Variable Text", "Malgun Gothic", "맑은 고딕", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Consolas, monospace;
@@ -27,7 +28,8 @@
   --od: #2563eb; --os: #c2410c; --ou: #7c3aed;
   --shadow: 0 1px 2px rgba(15, 23, 42, .05), 0 6px 18px rgba(15, 23, 42, .07);
   --shadow-strong: 0 18px 60px rgba(15, 23, 42, .22);
-  --ring: 0 0 0 3px rgba(15, 143, 132, .25);
+  --accent-rgb: 15, 143, 132;
+  --ring: 0 0 0 3px rgba(var(--accent-rgb), .25);
   color-scheme: light;
 }
 
@@ -51,9 +53,16 @@ h1, h2, h3, h4 { margin: 0; }
 .topbar { display: flex; align-items: center; gap: 18px; height: 56px; padding: 0 18px; background: var(--panel); border-bottom: 1px solid var(--rule); }
 .brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
 .brand-icon { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; color: #fff;
-  background: linear-gradient(140deg, #3fd2c0 0%, #109a8c 55%, #0b6f66 100%); box-shadow: inset 0 0 0 1px rgba(255,255,255,.18), 0 4px 14px rgba(16, 154, 140, .35); }
+  background: var(--brand-grad); box-shadow: inset 0 0 0 1px rgba(255,255,255,.18), 0 4px 14px var(--brand-glow); }
 .brand-icon .ic { width: 19px; height: 19px; stroke-width: 2.2; }
 .brand-text { line-height: 1.15; }
+/* 브랜드 로고 (static/brand/<키>/logo.*) — 테마에 맞는 것만 표시 */
+.brand-logo { height: 28px; width: auto; max-width: 150px; object-fit: contain; display: block; }
+.brand-logo-dark { display: none; }
+:root:not([data-theme="light"]) .brand-logo-light { display: none; }
+:root:not([data-theme="light"]) .brand-logo-dark { display: block; }
+.brand-wordmark { font-size: 21px; font-weight: 800; letter-spacing: -0.01em; color: var(--brand-ink, var(--accent-strong)); line-height: 1; }
+.brand-divider { width: 1px; height: 26px; background: var(--rule-strong); }
 .brand-title { font-weight: 700; font-size: 15px; letter-spacing: -0.02em; white-space: nowrap; }
 .brand-sub { font-size: 10.5px; color: var(--ink-muted); letter-spacing: .08em; text-transform: uppercase; font-weight: 600; display: flex; align-items: center; gap: 6px; }
 .brand-badge { font-size: 9.5px; padding: 1px 6px; border-radius: 4px; background: var(--accent-soft); color: var(--accent-strong); letter-spacing: .08em; }
@@ -116,7 +125,7 @@ body:not(.pro-on) #btn-mode-capture .ic, body.pro-on #btn-pro .ic { color: var(-
 #patient-select { min-width: 200px; }
 .pb-id { display: flex; align-items: center; gap: 12px; min-width: 0; flex: 1; padding-left: 18px; border-left: 1px solid var(--rule); }
 .pb-avatar { width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; flex: none; font-weight: 700; font-size: 15px;
-  background: var(--accent-soft); color: var(--accent-strong); box-shadow: inset 0 0 0 1px rgba(51,194,177,.35); }
+  background: var(--accent-soft); color: var(--accent-strong); box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), .35); }
 .pb-avatar .ic { width: 18px; height: 18px; }
 .pb-main { min-width: 0; }
 .pb-name { display: flex; align-items: baseline; gap: 8px; font-size: 16px; font-weight: 700; letter-spacing: -0.02em; white-space: nowrap; }
@@ -142,7 +151,7 @@ body:not(.pro-on) #btn-mode-capture .ic, body.pro-on #btn-pro .ic { color: var(-
   color: #8a94a6; text-align: center; padding: 24px; background: radial-gradient(ellipse at center, #121821 0%, #000 72%); }
 .video-placeholder p, .pro-empty p { max-width: 360px; margin: 0 0 4px; font-size: 13px; line-height: 1.6; }
 .ph-ring { width: 76px; height: 76px; border-radius: 50%; display: grid; place-items: center; color: #6b7586;
-  background: radial-gradient(circle, rgba(51,194,177,.10) 0%, transparent 70%); box-shadow: inset 0 0 0 1px #262e3a, 0 0 0 10px rgba(255,255,255,.015); }
+  background: radial-gradient(circle, rgba(var(--accent-rgb), .10) 0%, transparent 70%); box-shadow: inset 0 0 0 1px #262e3a, 0 0 0 10px rgba(255,255,255,.015); }
 .ph-ring .ic { width: 34px; height: 34px; stroke-width: 1.4; }
 .ph-title { color: #e7eaf0; font-weight: 700; font-size: 16px; letter-spacing: -0.01em; }
 
@@ -201,10 +210,10 @@ body:not(.pro-on) #btn-mode-capture .ic, body.pro-on #btn-pro .ic { color: var(-
 .eye-seg button.on small { color: inherit; opacity: .85; }
 .btn-tool { height: 40px; background: transparent; border-color: transparent; color: var(--ink-soft); padding: 0 11px; }
 .btn-tool:hover:not(:disabled) { background: var(--panel-2); border-color: var(--rule); color: var(--ink); }
-.btn.active { background: var(--accent-soft); border-color: rgba(51,194,177,.5); color: var(--accent-strong); }
+.btn.active { background: var(--accent-soft); border-color: rgba(var(--accent-rgb), .5); color: var(--accent-strong); }
 .dock-center { display: flex; align-items: center; gap: 6px; padding: 0 6px; }
 .btn-shutter { height: 46px; padding: 0 18px 0 6px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); border: 0; font-size: 14px; font-weight: 700;
-  box-shadow: 0 6px 18px rgba(51, 194, 177, .28), inset 0 -2px 0 rgba(0,0,0,.12); }
+  box-shadow: 0 6px 18px rgba(var(--accent-rgb), .28), inset 0 -2px 0 rgba(0,0,0,.12); }
 .btn-shutter:hover:not(:disabled) { background: var(--accent-strong); border: 0; }
 .btn-shutter:disabled { box-shadow: none; }
 .shutter-ring { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; background: rgba(255,255,255,.22); box-shadow: inset 0 0 0 2px rgba(255,255,255,.55); }
@@ -318,7 +327,7 @@ body.pro-on .workspace { display: none; }
 .seg .pbtn { border-color: transparent; background: transparent; color: var(--ink-soft); }
 .seg .pbtn:hover:not(:disabled) { color: var(--ink); background: var(--panel-2); border-color: transparent; }
 .seg .pbtn.on { background: var(--accent); color: var(--accent-ink); }
-.pcapture { color: var(--accent-strong); border-color: rgba(51,194,177,.55); }
+.pcapture { color: var(--accent-strong); border-color: rgba(var(--accent-rgb), .55); }
 .pcapture.on, .pcapture.on:hover:not(:disabled) { background: var(--record); border-color: var(--record); color: #fff; }
 .pprint { background: var(--accent); border-color: transparent; color: var(--accent-ink); }
 .pprint:hover:not(:disabled) { background: var(--accent-strong); border-color: transparent; }
@@ -429,6 +438,9 @@ body.pro-on .pro-info { display: none; }   /* 환자 정보는 상단 배너에 
 .rp-page:last-child { page-break-after: auto; break-after: auto; }
 .rp-head { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2px solid #0d9488; padding-bottom: 6px; }
 .rp-title { font-size: 17pt; font-weight: 700; }
+.rp-brand { display: flex; align-items: center; gap: 10px; }
+.rp-logo { height: 26px; width: auto; }
+.rp-head { border-bottom-color: var(--report-rule, #0d9488); }
 .rp-date { font-size: 8.5pt; color: #475569; }
 .rp-pt { margin: 8px 0 10px; font-size: 10.5pt; }
 .rp-l2 { font-size: 9.5pt; margin-top: 3px; }

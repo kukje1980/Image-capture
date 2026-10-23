@@ -2,11 +2,12 @@
 <html lang="ko">
 <head>
   <meta charset="utf-8">
-  <title>로그인 · 슬릿램프 영상 시스템</title>
+  <title>로그인 · {{ brand.app_name }}</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
   <link rel="icon" type="image/png" href="/static/favicon.png">
   <link rel="stylesheet" href="/static/css/app.css">
+  {% if brand.css %}<link rel="stylesheet" href="{{ brand.css }}">{% endif %}
   <style>
     body { overflow: auto; display: grid; place-items: center; min-height: 100vh; padding: 16px;
       background: radial-gradient(ellipse at top, var(--panel-2), var(--bg) 70%); }
@@ -21,15 +22,24 @@
   </style>
   <script>try { var t = localStorage.getItem('slitlamp-theme'); if (t) document.documentElement.setAttribute('data-theme', t); } catch (e) {}</script>
 </head>
-<body>
+<body class="brand-{{ brand.key }}">
   <form class="login" method="post" action="/login">
     <div class="brand">
+      {% if brand.logo %}
+      <img class="brand-logo brand-logo-light" src="{{ brand.logo }}" alt="{{ brand.wordmark or brand.app_name }}">
+      <img class="brand-logo brand-logo-dark" src="{{ brand.logo_dark }}" alt="{{ brand.wordmark or brand.app_name }}">
+      <span class="brand-divider" aria-hidden="true"></span>
+      {% elif brand.wordmark %}
+      <span class="brand-wordmark">{{ brand.wordmark }}</span>
+      <span class="brand-divider" aria-hidden="true"></span>
+      {% else %}
       <div class="brand-icon" aria-hidden="true">
         <svg class="ic" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
       </div>
+      {% endif %}
       <div class="brand-text">
-        <div class="brand-title">슬릿램프 영상 시스템</div>
-        <div class="brand-sub">Slit Lamp Imaging <span class="brand-badge">Web</span></div>
+        <div class="brand-title">{{ brand.app_name if not brand.wordmark else "슬릿램프 영상 시스템" }}</div>
+        <div class="brand-sub">{{ brand.sub }} <span class="brand-badge">{{ brand.badge }}</span></div>
       </div>
     </div>
     <h1>접속 비밀번호를 입력하세요</h1>

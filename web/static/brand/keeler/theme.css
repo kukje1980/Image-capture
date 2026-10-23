@@ -1,0 +1,33 @@
+/* Keeler 전용 색 테마 — app.css 의 색 변수만 덮어쓴다.
+ * 색 값은 임시(네이비·블루 계열)입니다. Keeler 공식 브랜드 색 코드를 받으면 아래 값만 바꾸면 됩니다.
+ *   --keeler-navy   : 브랜드 대표색 (로고·보고서 선·밝은 테마의 주 버튼)
+ *   --keeler-blue   : 어두운 화면에서 쓰는 밝은 강조색
+ */
+:root {
+  --keeler-navy: #0b3d91;
+  --keeler-navy-deep: #071a3d;
+  --keeler-blue: #5b9bff;
+
+  /* 어두운(기본) 테마 — 네이비 기운의 영상 작업 공간 */
+  --bg: #080c15; --panel: #0e1421; --panel-2: #131a2a; --raised: #192134;
+  --rule: #202a3e; --rule-strong: #2c3851;
+  --accent: var(--keeler-blue); --accent-strong: #9cc2ff; --accent-ink: #04122e;
+  --accent-rgb: 91, 155, 255; --accent-soft: rgba(91, 155, 255, .14);
+  --ring: 0 0 0 3px rgba(91, 155, 255, .35);
+  --brand-grad: linear-gradient(140deg, #3a7be8 0%, var(--keeler-navy) 55%, var(--keeler-navy-deep) 100%);
+  --brand-glow: rgba(11, 61, 145, .5);
+  --brand-ink: #f2f6ff;
+  --report-rule: var(--keeler-navy);
+}
+:root[data-theme="light"] {
+  --bg: #eef2f8; --panel: #ffffff; --panel-2: #f3f6fb; --raised: #ffffff;
+  --rule: #dce3ee; --rule-strong: #c6d0de;
+  --accent: var(--keeler-navy); --accent-strong: #082d6b; --accent-ink: #ffffff;
+  --accent-rgb: 11, 61, 145; --accent-soft: #dfe8f8;
+  --ring: 0 0 0 3px rgba(11, 61, 145, .25);
+  --brand-ink: var(--keeler-navy);
+}
+
+/* 글자 로고(공식 로고 파일이 없을 때) */
+.brand-keeler .brand-wordmark { font-weight: 800; font-size: 22px; letter-spacing: .02em; }
+.brand-keeler .brand-badge { background: rgba(var(--accent-rgb), .16); color: var(--accent-strong); }

@@ -17,12 +17,15 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from app import config
+from app import brands, config
 from app.db.database import Database
 from app.routers import captures, patients
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+BRAND = brands.get_brand()            # SLITLAMP_BRAND 환경변수 (기본 / keeler …)
+templates.env.globals["brand"] = BRAND
+templates.env.globals["brand_public"] = brands.public(BRAND)
 
 
 def _ensure_db(app: FastAPI) -> None:
@@ -118,6 +121,8 @@ def index(request: Request):
 
 @app.get("/favicon.ico", include_in_schema=False)
 def favicon():
+    if BRAND.get("favicon"):
+        return FileResponse(str(BASE_DIR / BRAND["favicon"].lstrip("/")))
     return FileResponse(str(BASE_DIR / "static" / "favicon.ico"))
 
 
