@@ -22,6 +22,12 @@ def test_index_page(client):
     assert "슬릿램프" in r.text
 
 
+def test_favicon(client):
+    r = client.get("/favicon.ico")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith(("image/", "application/"))
+
+
 def test_patient_crud(client):
     p = _make_patient(client)
     pid = p["id"]

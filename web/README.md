@@ -14,6 +14,12 @@
 - 지정 폴더 저장: **File System Access API** (`showDirectoryPicker`, Chrome/Edge)
 
 ## 설치 & 실행
+
+### 원클릭 실행 (권장)
+- **Windows**: `web\run_web.bat` 더블클릭 → 최초 1회 자동 설치 후 서버 시작 + 브라우저 자동 열림
+- **macOS/Linux**: `./web/run_web.sh`
+
+### 수동 실행
 ```bash
 cd web
 python -m venv .venv
