@@ -5,15 +5,18 @@ import logging
 import time
 from collections import deque
 
-from PySide6.QtCore import QThread
+from PySide6.QtCore import QSize, Qt, QThread, QTimer
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
+    QButtonGroup,
+    QFrame,
     QHBoxLayout,
+    QLabel,
     QMainWindow,
     QMessageBox,
+    QPushButton,
     QStackedWidget,
     QStatusBar,
-    QToolBar,
     QVBoxLayout,
     QWidget,
 )
@@ -28,7 +31,8 @@ from app.ui.patient_panel import PatientPanel
 from app.ui.pro.pro_workspace import ProWorkspace
 from app.ui.quad_view import QuadView
 from app.ui.settings_dialog import SettingsDialog
-from app.ui.theme import build_qss, make_app_icon
+from app.ui import icons
+from app.ui.theme import ICON, ICON_ACCENT, build_qss, make_app_icon
 from app.ui.thumbnail_panel import ThumbnailPanel
 from app.ui.video_view import VideoView
 
@@ -60,6 +64,7 @@ class MainWindow(QMainWindow):
         self._video_ts = None
         self._video_eye = "NA"
         self._first_video_frame = None
+        self._rec_started = 0.0
         self.cam_thread = None
         self.worker = None
 
@@ -73,16 +78,22 @@ class MainWindow(QMainWindow):
     def _build_ui(self) -> None:
         central = QWidget()
         outer = QVBoxLayout(central)
-        outer.setContentsMargins(8, 8, 8, 8)
-        outer.setSpacing(6)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        outer.addWidget(self._build_topbar())
         self.patient_panel = PatientPanel(self.db)
-        outer.addWidget(self.patient_panel)          # 단일/Pro 공통 환자 바
+        outer.addWidget(self.patient_panel)          # 단일/Pro 공통 환자 배너
 
+        body = QWidget()
+        body_lay = QVBoxLayout(body)
+        body_lay.setContentsMargins(12, 12, 12, 10)
         simple = QWidget()                           # 기본(촬영) 화면
         root = QHBoxLayout(simple)
         root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(12)
 
         left = QVBoxLayout()
+        left.setSpacing(10)
         self.video_view = VideoView()
         self.quad_view = QuadView()
         self.view_stack = QStackedWidget()
@@ -102,27 +113,11 @@ class MainWindow(QMainWindow):
         self.mode_stack = QStackedWidget()
         self.mode_stack.addWidget(simple)            # 0 = 기본
         self.mode_stack.addWidget(self.pro)          # 1 = Pro
-        outer.addWidget(self.mode_stack, 1)
+        body_lay.addWidget(self.mode_stack, 1)
+        outer.addWidget(body, 1)
         self.setCentralWidget(central)
         self.setStatusBar(QStatusBar())
 
-        tb = QToolBar()
-        self.addToolBar(tb)
-        act_settings = QAction("설정", self)
-        act_settings.triggered.connect(self._open_settings)
-        act_reconnect = QAction("카메라 재연결", self)
-        act_reconnect.triggered.connect(self._restart_camera)
-        self.act_theme = QAction("🌙 다크 모드" if self.config.theme != "dark" else "☀ 라이트 모드", self)
-        self.act_theme.triggered.connect(self._toggle_theme)
-        self.act_pro = QAction("🩺 Pro 모드", self)
-        self.act_pro.setCheckable(True)
-        self.act_pro.setToolTip("전문가용 영상 검토 화면 (MULTI·비교·보정·주석·인쇄)")
-        self.act_pro.toggled.connect(self._on_pro_toggled)
-        tb.addAction(self.act_pro)
-        tb.addSeparator()
-        tb.addAction(act_settings)
-        tb.addAction(act_reconnect)
-        tb.addAction(self.act_theme)
         self.pro.savedCapture.connect(self._on_pro_saved)
         self.pro.patientUpdated.connect(self._on_pro_patient_updated)
 
@@ -136,8 +131,105 @@ class MainWindow(QMainWindow):
         self.control_bar.clearQuadClicked.connect(self._on_clear_quad)
         self.quad_view.cellClicked.connect(self._on_quad_cell_clicked)
         self.thumbnail_panel.thumbnailClicked.connect(self._on_thumbnail_clicked)
+        self.control_bar.eyeChanged.connect(lambda e: self.video_view.set_hud(eye=e))
+        self._rec_timer = QTimer(self)
+        self._rec_timer.setInterval(500)
+        self._rec_timer.timeout.connect(self._update_rec_hud)
 
         self._on_patient_changed(self.patient_panel.current_patient())
+
+    def _build_topbar(self) -> QFrame:
+        """브랜드 + 촬영/Pro 검토 전환 스위치 + 설정·재연결·테마."""
+        bar = QFrame()
+        bar.setObjectName("TopBar")
+        lay = QHBoxLayout(bar)
+        lay.setContentsMargins(16, 9, 12, 9)
+        lay.setSpacing(12)
+        logo = QLabel()
+        logo.setPixmap(make_app_icon().pixmap(34, 34))
+        logo.setFixedSize(34, 34)
+        brand = QVBoxLayout()
+        brand.setSpacing(0)
+        t1 = QLabel("슬릿램프 영상 시스템")
+        t1.setObjectName("BrandTitle")
+        t2 = QLabel("SLIT LAMP IMAGING")
+        t2.setObjectName("BrandSub")
+        brand.addWidget(t1)
+        brand.addWidget(t2)
+        lay.addWidget(logo)
+        lay.addLayout(brand)
+        lay.addSpacing(12)
+
+        # 촬영 / Pro 검토 전환 (act_pro 는 체크형 액션으로 유지)
+        self.act_pro = QAction("Pro 검토", self)
+        self.act_pro.setCheckable(True)
+        self.act_pro.setShortcut("F2")
+        self.act_pro.setToolTip("전문가용 영상 검토 화면 (MULTI·비교·보정·편집·인쇄)")
+        self.act_pro.toggled.connect(self._on_pro_toggled)
+        self.addAction(self.act_pro)
+        sw = QFrame()
+        sw.setObjectName("ModeSwitch")
+        sl = QHBoxLayout(sw)
+        sl.setContentsMargins(3, 3, 3, 3)
+        sl.setSpacing(2)
+        self.btn_mode_capture = QPushButton(icons.gap("촬영"))
+        self.btn_mode_pro = QPushButton(icons.gap("Pro 검토"))
+        grp = QButtonGroup(self)
+        for b, name in ((self.btn_mode_capture, "camera"), (self.btn_mode_pro, "review")):
+            b.setObjectName("ModeBtn")
+            b.setCheckable(True)
+            b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            ic = icons.icon(name, ICON, 16)
+            ic.addPixmap(icons.pixmap(name, ICON_ACCENT, 16), ic.Mode.Normal, ic.State.On)
+            b.setIcon(ic)
+            b.setIconSize(QSize(15, 15))
+            grp.addButton(b)
+            sl.addWidget(b)
+        self.btn_mode_capture.setChecked(True)
+        self.btn_mode_pro.setToolTip(self.act_pro.toolTip() + "  (F2)")
+        self.btn_mode_capture.clicked.connect(lambda: self.act_pro.setChecked(False))
+        self.btn_mode_pro.clicked.connect(lambda: self.act_pro.setChecked(True))
+        lay.addWidget(sw)
+        lay.addStretch(1)
+
+        def tool(text, icon_name, tip, slot):
+            b = QPushButton(icons.gap(text))
+            b.setObjectName("IconBtn")
+            b.setIcon(icons.icon(icon_name, ICON, 16))
+            b.setIconSize(QSize(16, 16))
+            b.setToolTip(tip)
+            b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            b.clicked.connect(slot)
+            lay.addWidget(b)
+            return b
+
+        tool("카메라 재연결", "videocam", "캡처 장비 다시 연결", self._restart_camera)
+        tool("설정", "sliders", "카메라·저장 위치·형식 설정", self._open_settings)
+        self.act_theme = QAction(self)
+        self.act_theme.triggered.connect(self._toggle_theme)
+        self.btn_theme = tool("", "sun", "밝은/어두운 테마 전환", self._toggle_theme)
+        self._sync_theme_button()
+        return bar
+
+    def _sync_theme_button(self) -> None:
+        dark = self.config.theme == "dark"
+        self.btn_theme.setIcon(icons.icon("sun" if dark else "moon", ICON, 16))
+        self.act_theme.setText("☀ 라이트 모드" if dark else "🌙 다크 모드")
+
+    def _update_rec_hud(self) -> None:
+        if self._recording and self._rec_started:
+            s = int(time.time() - self._rec_started)
+            self.video_view.set_hud(state="rec", rec_text=f"{s // 60:02d}:{s % 60:02d}")
+
+    def _refresh_hud_state(self) -> None:
+        if self._recording:
+            self._update_rec_hud()
+        elif self._single_frozen:
+            self.video_view.set_hud(state="frozen")
+        elif self._paused:
+            self.video_view.set_hud(state="paused")
+        else:
+            self.video_view.set_hud(state="live")
 
     # ---- 카메라 스레드 ----
     def _source_factory(self):
@@ -220,12 +312,15 @@ class MainWindow(QMainWindow):
     def _on_patient_changed(self, patient) -> None:
         self._current_patient = patient
         self.control_bar.set_capture_enabled(patient is not None)
+        self.video_view.set_hud(patient=(f"{patient.name}  ·  {patient.chart_no}" if patient and patient.chart_no
+                                         else (patient.name if patient else "환자 미선택")))
         self.thumbnail_panel.set_patient(patient.id if patient else None)
         self.pro.set_patient(patient)
 
     # ---- Pro 모드 ----
     def _on_pro_toggled(self, on: bool) -> None:
         self.mode_stack.setCurrentIndex(1 if on else 0)
+        (self.btn_mode_pro if on else self.btn_mode_capture).setChecked(True)
         if on:
             self.pro.reload(select_last=False)
             if self._last_frame is not None:
@@ -243,10 +338,12 @@ class MainWindow(QMainWindow):
     def _on_pro_patient_updated(self, patient) -> None:
         self._current_patient = patient
         self.patient_panel.refresh_current(patient)
+        self.video_view.set_hud(patient=f"{patient.name}  ·  {patient.chart_no}" if patient.chart_no else patient.name)
 
     # ---- 컨트롤 ----
     def _on_pause(self, checked: bool) -> None:
         self._paused = checked
+        self._refresh_hud_state()
 
     def _on_quad_toggled(self, on: bool) -> None:
         self._quad = on
@@ -254,7 +351,8 @@ class MainWindow(QMainWindow):
         # 모드 전환 시 단일-정지 상태/버튼 초기화
         self._single_frozen = False
         self._freeze_frame = None
-        self.control_bar.btn_freeze.setText("❄  정지영상")
+        self.control_bar.set_freeze_state(False)
+        self._refresh_hud_state()
         self.control_bar.set_status(
             "4분할 모드 · '정지영상'으로 각 칸을 채우세요" if on else "단일 모드")
 
@@ -279,12 +377,13 @@ class MainWindow(QMainWindow):
         if self._single_frozen:
             self._freeze_frame = self._last_frame
             self.video_view.set_frame(self._freeze_frame)
-            self.control_bar.btn_freeze.setText("▶  라이브")
+            self.control_bar.set_freeze_state(True)
             self.control_bar.set_status("정지영상 (▶라이브로 복귀 · 사진 캡처로 저장)")
         else:
             self._freeze_frame = None
-            self.control_bar.btn_freeze.setText("❄  정지영상")
+            self.control_bar.set_freeze_state(False)
             self.control_bar.set_status("라이브")
+        self._refresh_hud_state()
 
     def _on_save_quad(self) -> None:
         if self._current_patient is None:
@@ -361,12 +460,17 @@ class MainWindow(QMainWindow):
         self._video_ts = ts
         self._video_eye = eye
         self._first_video_frame = None
+        self._rec_started = time.time()
+        self._rec_timer.start()
+        self._update_rec_hud()
         self.control_bar.set_status("녹화 중...")
 
     def _stop_recording(self) -> None:
         if not self._recording:
             return
         self._recording = False
+        self._rec_timer.stop()
+        self._refresh_hud_state()
         _, _, duration = self.recorder.stop()
         try:
             cap = self.service.finish_video(
@@ -392,7 +496,7 @@ class MainWindow(QMainWindow):
         app = QApplication.instance()
         if app is not None:
             app.setStyleSheet(build_qss(self.config.theme))
-        self.act_theme.setText("🌙 다크 모드" if self.config.theme != "dark" else "☀ 라이트 모드")
+        self._sync_theme_button()
         try:
             self.config.save()
         except Exception:  # noqa: BLE001

@@ -26,7 +26,7 @@ class AppConfig:
     subfolder_template: str = "{chart_no}_{patient_id}/{date}"
     thumbnail_max_side: int = 120
     newest_on_top: bool = True
-    theme: str = "light"                     # light | dark
+    theme: str = "dark"                      # dark(기본, 영상 작업 공간) | light
     clinic_name: str = ""                    # 인쇄 보고서 머리말 기관명
     px_per_mm: float = 0.0                   # 측정 눈금 보정 (0 = 미보정, px 단위)
 

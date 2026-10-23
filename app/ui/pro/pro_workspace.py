@@ -17,9 +17,8 @@ import os
 from datetime import datetime
 
 import numpy as np
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtCore import QPointF
-from PySide6.QtGui import QColor, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QShortcut
+from PySide6.QtCore import QPointF, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QIcon, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QShortcut
 from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -34,6 +33,8 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
+    QToolButton,
     QScrollArea,
     QSlider,
     QStackedWidget,
@@ -43,10 +44,12 @@ from PySide6.QtWidgets import (
 )
 
 from app.capture.image_process import Adjust, apply_adjust, auto_levels, histogram
+from app.ui import icons
 from app.ui.patient_dialog import PatientDialog
 from app.ui.pro import print_util
 from app.ui.pro.image_canvas import ImageCanvas
 from app.ui.pro.multi_grid import MultiGrid
+from app.ui.theme import ICON, ICON_ACCENT, ICON_ON_ACCENT
 
 try:
     import cv2
@@ -61,16 +64,26 @@ _CHANNELS = ["rgb", "green", "red", "blue", "gray"]
 _DENOISE = ["none", "median", "average"]
 # (도구, 버튼 텍스트, 설명, 허용 모드)
 _TOOLS = [
-    ("pan", "✋ 이동", "이동 / 휠 확대", ("single", "compare")),
-    ("magnify", "🔍 돋보기", "누르고 있는 동안 확대 렌즈", ("single", "compare", "live")),
-    ("crop", "✂ 자르기", "드래그한 영역만 남김", ("single",)),
-    ("text", "T 텍스트", "클릭한 위치에 텍스트 주석", ("single", "compare")),
-    ("arrow", "↗ 화살표", "드래그해 화살표 주석", ("single", "compare")),
-    ("circle", "◯ 원", "드래그해 원·타원 표시", ("single", "compare")),
-    ("length", "📏 길이", "드래그해 길이 측정 (눈금 보정 시 mm)", ("single", "compare")),
-    ("angle", "∠ 각도", "세 점 클릭 — 두 번째 점이 꼭짓점", ("single", "compare")),
-    ("calibrate", "📐 눈금 보정", "실제 길이를 아는 선을 그어 mm 단위 보정", ("single",)),
+    ("pan", "이동", "이동 / 휠 확대", ("single", "compare")),
+    ("magnify", "돋보기", "누르고 있는 동안 확대 렌즈", ("single", "compare", "live")),
+    ("crop", "자르기", "드래그한 영역만 남김", ("single",)),
+    ("text", "텍스트", "클릭한 위치에 텍스트 주석", ("single", "compare")),
+    ("arrow", "화살표", "드래그해 화살표 주석", ("single", "compare")),
+    ("circle", "원", "드래그해 원·타원 표시", ("single", "compare")),
+    ("length", "길이", "드래그해 길이 측정 (눈금 보정 시 mm)", ("single", "compare")),
+    ("angle", "각도", "세 점 클릭 — 두 번째 점이 꼭짓점", ("single", "compare")),
+    ("calibrate", "눈금", "실제 길이를 아는 선을 그어 mm 단위 보정", ("single",)),
 ]
+_TOOL_ICONS = {"pan": "hand", "magnify": "lens", "crop": "crop", "text": "type", "arrow": "arrow",
+               "circle": "circle", "length": "ruler", "angle": "angle", "calibrate": "calib"}
+
+
+def _icon(name: str, color: str = ICON, on: str | None = None) -> QIcon:
+    """선형 아이콘. on 을 주면 체크(선택) 상태용 색을 따로 둔다."""
+    ic = icons.icon(name, color, 18, disabled="#4a5262")
+    if on:
+        ic.addPixmap(icons.pixmap(name, on, 18), QIcon.Mode.Normal, QIcon.State.On)
+    return ic
 
 
 def caption_of(cap, number=None, total=None) -> str:
@@ -126,13 +139,16 @@ class ProWorkspace(QWidget):
         self._update_info()
 
     # ================= UI =================
-    def _btn(self, text, tip, checkable=False, obj="ProBtn") -> QPushButton:
-        b = QPushButton(text)
+    def _btn(self, text, tip, checkable=False, obj="ProBtn", icon=None, color=ICON) -> QPushButton:
+        b = QPushButton(icons.gap(text) if icon else text)
         b.setObjectName(obj)
         b.setToolTip(tip)
         b.setCheckable(checkable)
         b.setMinimumHeight(34)
         b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        if icon:
+            b.setIcon(_icon(icon, color, on=ICON_ON_ACCENT if checkable else None))
+            b.setIconSize(QSize(15, 15))
         return b
 
     @staticmethod
@@ -153,20 +169,27 @@ class ProWorkspace(QWidget):
         tl.setContentsMargins(8, 6, 8, 6)
         tl.setSpacing(4)
 
-        self.b_live = self._btn("LIVE", "실시간 영상", True)
-        self.b_single = self._btn("1화면", "단일 영상 보기", True)
-        self.b_multi = self._btn("MULTI", "다중 영상 그리드 (16/36)", True)
-        self.b_cmp = self._btn("비교", "선택한 2장 나란히 비교", True)
+        self.b_live = self._btn("LIVE", "실시간 영상", True, "ProSegBtn", "live")
+        self.b_single = self._btn("1화면", "단일 영상 보기", True, "ProSegBtn", "single")
+        self.b_multi = self._btn("MULTI", "다중 영상 그리드 (16/36)", True, "ProSegBtn", "review")
+        self.b_cmp = self._btn("비교", "선택한 2장 나란히 비교", True, "ProSegBtn", "compare")
         self.mode_group = QButtonGroup(self)
+        seg = QFrame()
+        seg.setObjectName("ProSeg")
+        sgl = QHBoxLayout(seg)
+        sgl.setContentsMargins(2, 2, 2, 2)
+        sgl.setSpacing(2)
         for b, m in ((self.b_live, "live"), (self.b_single, "single"),
                      (self.b_multi, "multi"), (self.b_cmp, "compare")):
             self.mode_group.addButton(b)
+            b.setMinimumHeight(30)
             b.clicked.connect(lambda _=False, m=m: self.set_mode(m))
-            tl.addWidget(b)
+            sgl.addWidget(b)
+        tl.addWidget(seg)
         tl.addWidget(self._sep())
 
-        self.b_capture = self._btn("❄ CAPTURE", "라이브 정지/재개 (Space)", True, "ProCapture")
-        self.b_save = self._btn("💾 SAVE", "정지 영상을 환자 DB에 저장")
+        self.b_capture = self._btn("CAPTURE", "라이브 정지/재개 (Space)", True, "ProCapture", "freeze", ICON_ACCENT)
+        self.b_save = self._btn("SAVE", "정지 영상을 환자 DB에 저장", icon="save")
         self.c_eye = QComboBox()
         self.c_eye.addItems(["안구 미지정", "OD 우안", "OS 좌안", "OU 양안"])
         self.c_eye.setToolTip("저장할 영상의 안구 방향")
@@ -175,8 +198,9 @@ class ProWorkspace(QWidget):
         tl.addWidget(self.b_save)
         tl.addWidget(self._sep())
 
-        self.b_prev = self._btn("◀ PREV", "이전 영상 / 페이지 (←)")
-        self.b_next = self._btn("NEXT ▶", "다음 영상 / 페이지 (→)")
+        self.b_prev = self._btn("PREV", "이전 영상 / 페이지 (←)", icon="chev-l")
+        self.b_next = self._btn("NEXT", "다음 영상 / 페이지 (→)", icon="chev-r")
+        self.b_next.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.c_per = QComboBox()
         self.c_per.addItems(["16장", "36장"])
         self.c_per.setToolTip("MULTI 표시 장수")
@@ -189,29 +213,41 @@ class ProWorkspace(QWidget):
         self.tool_buttons = {}
         self.tool_group = QButtonGroup(self)
         for t, text, tip, _modes in _TOOLS:
-            b = self._btn(text, tip, True)
+            b = QToolButton()
+            b.setText(text)
+            b.setToolTip(tip)
+            b.setObjectName("ProTool")
+            b.setCheckable(True)
+            b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+            b.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            b.setMinimumHeight(50)
+            b.setIcon(_icon(_TOOL_ICONS[t], ICON, on=ICON_ON_ACCENT))
+            b.setIconSize(QSize(18, 18))
             self.tool_group.addButton(b)
             b.clicked.connect(lambda _=False, t=t: self.set_tool(t))
             self.tool_buttons[t] = b
         self.b_pan, self.b_text, self.b_arrow = (self.tool_buttons[k] for k in ("pan", "text", "arrow"))
         self.b_pan.setChecked(True)
-        self.b_rot_l = self._btn("⟲ 90°", "반시계 방향 90° 회전")
-        self.b_rot_r = self._btn("⟳ 90°", "시계 방향 90° 회전")
-        self.b_flip_h = self._btn("⇋ 좌우", "좌우 반전")
-        self.b_flip_v = self._btn("⇅ 상하", "상하 반전")
-        self.b_undo = self._btn("↶ 실행 취소", "마지막 편집 취소 (Ctrl+Z)")
-        self.b_redo = self._btn("↷ 다시 실행", "취소한 편집 다시 실행 (Ctrl+Y)")
-        self.b_orig = self._btn("원본", "모든 보정·편집을 지우고 원본으로")
-        self.b_clear = self._btn("주석·측정 지우기", "현재 화면의 주석·측정 모두 삭제")
-        self.b_edit_save = self._btn("💾 편집본 저장", "보정·편집·주석·측정을 반영한 새 영상으로 저장 (원본 보존)")
+        self.b_rot_l = self._btn("", "반시계 방향 90° 회전", icon="rot-l")
+        self.b_rot_r = self._btn("", "시계 방향 90° 회전", icon="rot-r")
+        self.b_flip_h = self._btn("", "좌우 반전", icon="flip-h")
+        self.b_flip_v = self._btn("", "상하 반전", icon="flip-v")
+        self.b_undo = self._btn("실행 취소", "마지막 편집 취소 (Ctrl+Z)", icon="undo")
+        self.b_redo = self._btn("다시 실행", "취소한 편집 다시 실행 (Ctrl+Y)", icon="redo")
+        self.b_orig = self._btn("원본", "모든 보정·편집을 지우고 원본으로", icon="history")
+        self.b_clear = self._btn("주석 지우기", "현재 화면의 주석·측정 모두 삭제", icon="eraser")
+        self.b_edit_save = self._btn("편집본 저장", "보정·편집·주석·측정을 반영한 새 영상으로 저장 (원본 보존)",
+                                     obj="ProPrimary", icon="save", color=ICON_ON_ACCENT)
 
-        self.b_comment = self._btn("코멘트", "현재 영상 코멘트 편집")
-        self.b_patient = self._btn("환자정보", "진단명·담당의 등 환자 정보 편집")
+        self.b_comment = self._btn("코멘트", "현재 영상 코멘트 편집", obj="ProGhost", icon="comment")
+        self.b_patient = self._btn("환자정보", "진단명·담당의 등 환자 정보 편집", obj="ProGhost", icon="user")
         for b in (self.b_comment, self.b_patient):
             tl.addWidget(b)
         tl.addStretch(1)
-        self.b_print = self._btn("🖨 인쇄", "현재 화면 영상 보고서 인쇄")
-        self.b_pdf = self._btn("PDF", "PDF 보고서로 저장")
+        self.b_print = self._btn("인쇄", "현재 화면 영상 보고서 인쇄", obj="ProPrimary", icon="printer",
+                                 color=ICON_ON_ACCENT)
+        self.b_pdf = self._btn("PDF", "PDF 보고서로 저장", icon="download")
         tl.addWidget(self.b_print)
         tl.addWidget(self.b_pdf)
         root.addWidget(bar)
@@ -242,6 +278,7 @@ class ProWorkspace(QWidget):
         self.info = QLabel()
         self.info.setObjectName("ProInfo")
         self.info.setTextFormat(Qt.TextFormat.RichText)
+        self.info.setVisible(False)          # 환자 요약은 상단 환자 배너에 표시
         root.addWidget(self.info)
 
         self.b_capture.toggled.connect(self._on_capture_toggled)
@@ -266,13 +303,19 @@ class ProWorkspace(QWidget):
         lay.setContentsMargins(10, 10, 10, 10)
         lay.setSpacing(6)
 
+        card = QFrame()
+        card.setObjectName("ProCard")
+        cl = QVBoxLayout(card)
+        cl.setContentsMargins(10, 6, 10, 8)
+        cl.setSpacing(2)
         h1 = QLabel("영상 정보")
         h1.setObjectName("PanelHeader")
-        lay.addWidget(h1)
+        cl.addWidget(h1)
         self.lbl_img = QLabel("-")
         self.lbl_img.setWordWrap(True)
         self.lbl_img.setObjectName("Muted")
-        lay.addWidget(self.lbl_img)
+        cl.addWidget(self.lbl_img)
+        lay.addWidget(card)
 
         self.tabs = QTabWidget()
         self.tabs.setObjectName("ProTabs")
@@ -333,6 +376,8 @@ class ProWorkspace(QWidget):
         self.s_r = self._slider_row(form2, "R", 50, 150, 100, pct)
         self.s_g = self._slider_row(form2, "G", 50, 150, 100, pct)
         self.s_b = self._slider_row(form2, "B", 50, 150, 100, pct)
+        for sl, name in ((self.s_r, "SliderR"), (self.s_g, "SliderG"), (self.s_b, "SliderB")):
+            sl.setObjectName(name)
         lay.addLayout(form2)
 
         lay.addWidget(self._sub("레벨 · 히스토그램"))
@@ -356,9 +401,9 @@ class ProWorkspace(QWidget):
         lay.addLayout(form4)
 
         r1 = QHBoxLayout()
-        self.b_auto = QPushButton("자동 대비")
+        self.b_auto = self._btn("자동 대비", "", icon="wand")
         self.b_auto.setToolTip("히스토그램 양끝 0.5%를 잘라 흑·백점 자동 설정")
-        self.b_reset = QPushButton("보정 초기화")
+        self.b_reset = self._btn("초기화", "보정 초기화", icon="history")
         r1.addWidget(self.b_auto)
         r1.addWidget(self.b_reset)
         lay.addLayout(r1)
@@ -414,12 +459,12 @@ class ProWorkspace(QWidget):
         lay.addWidget(self._sub("보기"))
         g0 = QGridLayout()
         g0.setSpacing(4)
-        self.b_fit = QPushButton("화면 맞춤")
-        self.b_zin = QPushButton("확대 +")
-        self.b_zout = QPushButton("축소 −")
-        g0.addWidget(self.b_fit, 0, 0, 1, 2)
-        g0.addWidget(self.b_zin, 1, 0)
-        g0.addWidget(self.b_zout, 1, 1)
+        self.b_fit = self._btn("맞춤", "화면 맞춤", icon="fit")
+        self.b_zin = self._btn("확대", "확대", icon="zin")
+        self.b_zout = self._btn("축소", "축소", icon="zout")
+        g0.addWidget(self.b_fit, 0, 0)
+        g0.addWidget(self.b_zin, 0, 1)
+        g0.addWidget(self.b_zout, 0, 2)
         lay.addLayout(g0)
 
         lay.addWidget(self._sub("회전 · 반전"))
@@ -427,15 +472,15 @@ class ProWorkspace(QWidget):
         g1.setSpacing(4)
         g1.addWidget(self.b_rot_l, 0, 0)
         g1.addWidget(self.b_rot_r, 0, 1)
-        g1.addWidget(self.b_flip_h, 1, 0)
-        g1.addWidget(self.b_flip_v, 1, 1)
+        g1.addWidget(self.b_flip_h, 0, 2)
+        g1.addWidget(self.b_flip_v, 0, 3)
         lay.addLayout(g1)
 
         lay.addWidget(self._sub("도구 (주석 · 측정)"))
         g2 = QGridLayout()
         g2.setSpacing(4)
         for k, (t, *_rest) in enumerate(_TOOLS):
-            g2.addWidget(self.tool_buttons[t], k // 2, k % 2)
+            g2.addWidget(self.tool_buttons[t], k // 3, k % 3)
         lay.addLayout(g2)
         cal = QHBoxLayout()
         self.lbl_calib = QLabel()
@@ -876,10 +921,12 @@ class ProWorkspace(QWidget):
             self._frozen_frame = None if self._live is None else self._live.copy()
             if self._frozen_frame is not None:
                 self.live_canvas.set_image(self._frozen_frame, keep_view=True)
-            self.b_capture.setText("▶ RESUME")
+            self.b_capture.setText(icons.gap("RESUME"))
+            self.b_capture.setIcon(_icon("play", "#ffffff"))
         else:
             self._frozen_frame = None
-            self.b_capture.setText("❄ CAPTURE")
+            self.b_capture.setText(icons.gap("CAPTURE"))
+            self.b_capture.setIcon(_icon("freeze", ICON_ACCENT))
         self._update_side()
 
     def current_eye(self) -> str:

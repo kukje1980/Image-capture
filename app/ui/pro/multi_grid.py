@@ -6,12 +6,15 @@
 """
 from __future__ import annotations
 
+import html
 import time
 from collections import OrderedDict
 
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QImageReader, QPixmap
 from PySide6.QtWidgets import QFrame, QGridLayout, QLabel, QVBoxLayout, QWidget
+
+from app.ui.theme import EYE_COLORS
 
 _PREVIEW_MAX = 640
 _cache: "OrderedDict[str, QPixmap]" = OrderedDict()
@@ -57,10 +60,12 @@ class _Cell(QFrame):
         if cap is not None:
             when = (cap.captured_at or "")[2:16].replace("-", ".")
             eye = cap.eye if cap.eye and cap.eye != "NA" else ""
-            note = f" · {cap.note}" if cap.note else ""
-            cap_lbl = QLabel(f"{number}  {when}  {eye}{note}")
+            note = f"&nbsp; <span style='color:#8a94a6'>{html.escape(cap.note)}</span>" if cap.note else ""
+            eye_html = (f"<b style='color:{EYE_COLORS.get(eye, '#a3acba')}'>{eye}</b>&nbsp; " if eye else "")
+            cap_lbl = QLabel(f"<span style='color:#6b7586'><b>{number}</b></span>&nbsp; {eye_html}{when}{note}")
             cap_lbl.setObjectName("MultiCaption")
-            cap_lbl.setToolTip(cap_lbl.text())
+            cap_lbl.setTextFormat(Qt.TextFormat.RichText)
+            cap_lbl.setToolTip(" · ".join(x for x in (str(number), cap.captured_at or "", eye, cap.note or "") if x))
             lay.addWidget(cap_lbl)
         self._badge = QLabel("", self)
         self._badge.setObjectName("SelBadge")
