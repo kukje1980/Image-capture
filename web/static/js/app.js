@@ -19,6 +19,13 @@
     editingPatientId: null,
     statusResetTimer: null,
     dirHandle: null,     // File System Access API 디렉토리 핸들
+    // 4분할
+    quad: false,
+    quadActive: 0,
+    quadFrozen: [false, false, false, false],
+    quadHasImg: [false, false, false, false],
+    quadEyes: ['NA', 'NA', 'NA', 'NA'],
+    quadRAF: null,
   };
 
   const fmt = (d) => d.toLocaleTimeString('ko-KR', { hour12: false });
@@ -90,6 +97,13 @@
     $('btn-pause').addEventListener('click', togglePause);
     $('btn-capture').addEventListener('click', capturePhoto);
     $('btn-record').addEventListener('click', toggleRecord);
+    $('btn-quad').addEventListener('click', toggleQuad);
+    $('btn-freeze').addEventListener('click', freezeFrame);
+    $('btn-save-quad').addEventListener('click', saveQuad);
+    $('btn-clear-quad').addEventListener('click', clearQuad);
+    document.querySelectorAll('#quad-grid .quad-cell').forEach((cell) => {
+      cell.addEventListener('click', () => { if (state.quad) setQuadActive(+cell.dataset.i); });
+    });
 
     $('viewer-close').addEventListener('click', () => $('viewer-dialog').close());
     $('viewer-close-2').addEventListener('click', () => $('viewer-dialog').close());
@@ -310,11 +324,15 @@
   }
 
   // ---- capture ----
-  function buildFilename(patient, mediaType, ts, ext, eye) {
+  let _fnSeq = 0;
+  function buildFilename(patient, mediaType, ts, ext, eye, note) {
     const pad = (n, w = 2) => String(n).padStart(w, '0');
     const chart = (patient.chart_no || 'noChart').replace(/[^0-9A-Za-z._가-힣-]+/g, '_');
-    const stamp = `${ts.getFullYear()}${pad(ts.getMonth() + 1)}${pad(ts.getDate())}_${pad(ts.getHours())}${pad(ts.getMinutes())}${pad(ts.getSeconds())}`;
-    return `${chart}_${stamp}_${eye || 'NA'}.${ext}`;
+    const stamp = `${ts.getFullYear()}${pad(ts.getMonth() + 1)}${pad(ts.getDate())}_` +
+      `${pad(ts.getHours())}${pad(ts.getMinutes())}${pad(ts.getSeconds())}${pad(ts.getMilliseconds(), 3)}`;
+    const seq = pad((_fnSeq++) % 1000, 3);
+    const tag = note === '4분할 합성' ? '_quad' : (note === '4분할' ? '_q' : '');
+    return `${chart}_${stamp}_${seq}_${eye || 'NA'}${tag}.${ext}`;
   }
 
   async function capturePhoto() {
@@ -382,9 +400,9 @@
   }
 
   // 서버 + 지정 폴더 동시 저장
-  async function persistCapture(patient, mediaType, blob, ext, eye, durationMs) {
+  async function persistCapture(patient, mediaType, blob, ext, eye, durationMs, note, opts = {}) {
     const ts = new Date();
-    const filename = buildFilename(patient, mediaType, ts, ext, eye);
+    const filename = buildFilename(patient, mediaType, ts, ext, eye, note);
 
     // (a) 서버 저장 (환자 DB + 미디어 폴더)
     let serverOk = false;
@@ -395,6 +413,7 @@
       fd.append('eye', eye || 'NA');
       fd.append('ext', ext);
       if (durationMs != null) fd.append('duration_ms', String(durationMs));
+      if (note) fd.append('note', note);
       fd.append('file', blob, filename);
       await api('/captures', { method: 'POST', body: fd });
       serverOk = true;
@@ -406,11 +425,150 @@
     let folderOk = false;
     if (state.dirHandle) folderOk = await saveToFolder(filename, blob);
 
-    if (serverOk) {
+    if (serverOk && !opts.silent) {
       await renderThumbs();
       const where = folderOk ? '서버 + 지정 폴더' : (state.dirHandle ? '서버(폴더 실패)' : '서버');
       setStatus(`${mediaType === 'photo' ? '사진' : '동영상'} 저장됨 · ${where}`, 'ready', true);
     }
+    return serverOk;
+  }
+
+  // ---- 4분할 정지영상 ----
+  function quadCells() {
+    return Array.from(document.querySelectorAll('#quad-grid .quad-cell'));
+  }
+
+  function toggleQuad() {
+    state.quad = !state.quad;
+    const frame = $('video-frame');
+    frame.classList.toggle('quad', state.quad);
+    $('btn-quad').classList.toggle('active', state.quad);
+    $('btn-pause').style.display = state.quad ? 'none' : '';
+    $('btn-save-quad').style.display = state.quad ? '' : 'none';
+    $('btn-clear-quad').style.display = state.quad ? '' : 'none';
+    if (state.quad) {
+      clearQuad();
+      startQuadLoop();
+      setStatus("4분할 · '정지영상'으로 각 칸을 채우세요", 'ready');
+    } else {
+      stopQuadLoop();
+      setStatus('단일 모드', 'ready');
+    }
+  }
+
+  function startQuadLoop() {
+    const cells = quadCells();
+    const video = $('video');
+    const tick = () => {
+      if (!state.quad) return;
+      const i = state.quadActive;
+      if (i != null && !state.quadFrozen[i] && video.videoWidth) {
+        const cnv = cells[i].querySelector('canvas');
+        if (cnv.width !== video.videoWidth) { cnv.width = video.videoWidth; cnv.height = video.videoHeight; }
+        cnv.getContext('2d').drawImage(video, 0, 0, cnv.width, cnv.height);
+        state.quadHasImg[i] = true;
+      }
+      state.quadRAF = requestAnimationFrame(tick);
+    };
+    stopQuadLoop();
+    state.quadRAF = requestAnimationFrame(tick);
+  }
+  function stopQuadLoop() {
+    if (state.quadRAF) cancelAnimationFrame(state.quadRAF);
+    state.quadRAF = null;
+  }
+
+  function refreshQuadCells() {
+    quadCells().forEach((cell, i) => {
+      cell.classList.toggle('active', i === state.quadActive);
+      cell.classList.toggle('frozen', state.quadFrozen[i]);
+      const tag = cell.querySelector('.quad-tag');
+      if (i === state.quadActive) tag.textContent = '● 라이브';
+      else if (state.quadFrozen[i]) tag.textContent = '정지' + (state.quadEyes[i] !== 'NA' ? ' · ' + state.quadEyes[i] : '');
+      else tag.textContent = '';
+    });
+  }
+
+  function freezeFrame() {
+    if (!state.quad) {
+      // 단일 모드: 일시정지(정지영상)와 동일하게 현재 프레임 고정 토글
+      togglePause();
+      return;
+    }
+    const i = state.quadActive;
+    if (i == null || !state.quadHasImg[i]) { toast('라이브 영상이 준비되지 않았습니다.', 'error'); return; }
+    state.quadFrozen[i] = true;
+    state.quadEyes[i] = $('eye-select').value;
+    // 다음 빈 칸 찾기
+    let nxt = null;
+    for (let j = 1; j <= 4; j++) { const k = (i + j) % 4; if (!state.quadFrozen[k]) { nxt = k; break; } }
+    if (nxt == null) {
+      state.quadActive = null;
+      setStatus("4칸 모두 채움 · '4분할 저장' 또는 칸 클릭으로 교체", 'ready');
+    } else {
+      state.quadActive = nxt;
+      state.quadHasImg[nxt] = false;
+      setStatus('정지영상 추가됨 (다음 칸으로 이동)', 'ready');
+    }
+    refreshQuadCells();
+  }
+
+  function setQuadActive(idx) {
+    state.quadActive = idx;
+    state.quadFrozen[idx] = false;
+    state.quadHasImg[idx] = false;
+    refreshQuadCells();
+  }
+
+  function clearQuad() {
+    state.quadActive = 0;
+    state.quadFrozen = [false, false, false, false];
+    state.quadHasImg = [false, false, false, false];
+    state.quadEyes = ['NA', 'NA', 'NA', 'NA'];
+    quadCells().forEach((cell) => {
+      const c = cell.querySelector('canvas');
+      if (c.width) c.getContext('2d').clearRect(0, 0, c.width, c.height);
+    });
+    refreshQuadCells();
+  }
+
+  async function saveQuad() {
+    const patient = currentPatient();
+    if (!patient) { toast('환자를 먼저 선택하세요.', 'error'); return; }
+    const cells = quadCells();
+    const indices = [0, 1, 2, 3].filter(i => state.quadFrozen[i] || i === state.quadActive);
+    const withImg = indices.filter(i => state.quadHasImg[i]);
+    if (withImg.length === 0) { toast('저장할 정지영상이 없습니다.', 'error'); return; }
+    let saved = 0;
+    // 개별 저장
+    for (const i of withImg) {
+      const cnv = cells[i].querySelector('canvas');
+      const blob = await new Promise(res => cnv.toBlob(res, 'image/png'));
+      if (!blob) continue;
+      const eye = state.quadFrozen[i] ? state.quadEyes[i] : $('eye-select').value;
+      const ok = await persistCapture(patient, 'photo', blob, 'png', eye, null, '4분할', { silent: true });
+      if (ok) saved++;
+    }
+    // 2×2 합성 저장
+    const ref = cells[withImg[0]].querySelector('canvas');
+    const cw = ref.width, ch = ref.height;
+    const comp = document.createElement('canvas');
+    comp.width = cw * 2; comp.height = ch * 2;
+    const cx = comp.getContext('2d');
+    cx.fillStyle = '#000'; cx.fillRect(0, 0, comp.width, comp.height);
+    for (const i of withImg) {
+      const cnv = cells[i].querySelector('canvas');
+      const r = Math.floor(i / 2), c = i % 2;
+      cx.drawImage(cnv, c * cw, r * ch, cw, ch);
+    }
+    const compBlob = await new Promise(res => comp.toBlob(res, 'image/png'));
+    if (compBlob) {
+      const ok = await persistCapture(patient, 'photo', compBlob, 'png', 'NA', null, '4분할 합성', { silent: true });
+      if (ok) saved++;
+    }
+    await renderThumbs();
+    setStatus(`4분할 저장됨 (개별+합성 ${saved}장)`, 'ready', true);
+    toast(`4분할 저장 완료 (${saved}장)`, 'success');
   }
 
   // ---- thumbnails ----
@@ -484,6 +642,8 @@
     $('btn-capture').disabled = !has;
     $('btn-record').disabled = !has;
     $('btn-pause').disabled = !state.stream;
+    $('btn-freeze').disabled = !has;
+    $('btn-save-quad').disabled = !has;
   }
   function setStatus(text, kind, transient) {
     $('status-text').textContent = text;

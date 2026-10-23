@@ -111,10 +111,18 @@ def build_qss(mode: str = "light") -> str:
     QPushButton#Record:checked {{ background: {c['record']}; color: #ffffff; border: none; }}
     QPushButton#Record:disabled {{ color: {c['disabled']}; border-color: {c['rule']}; }}
 
-    /* 일시정지 토글 */
+    /* 일시정지 / 4분할 토글 */
     QPushButton#Pause:checked {{
         background: {c['accent_soft']}; border-color: {c['accent']}; color: {c['accent_hover']};
     }}
+
+    /* 정지영상 버튼 */
+    QPushButton#Freeze {{
+        background: {c['panel']}; color: {c['accent_hover']};
+        border: 1px solid {c['accent']}; font-weight: 600;
+    }}
+    QPushButton#Freeze:hover {{ background: {c['accent_soft']}; }}
+    QPushButton#Freeze:disabled {{ color: {c['disabled']}; border-color: {c['rule']}; }}
 
     /* 툴바 */
     QToolBar {{ background: {c['panel']}; border-bottom: 1px solid {c['rule']}; spacing: 4px; padding: 4px 6px; }}

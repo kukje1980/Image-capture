@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QMainWindow,
     QMessageBox,
+    QStackedWidget,
     QStatusBar,
     QToolBar,
     QVBoxLayout,
@@ -24,6 +25,7 @@ from app.services.capture_service import CaptureService
 from app.ui.control_bar import ControlBar
 from app.ui.image_viewer import ImageViewerDialog
 from app.ui.patient_panel import PatientPanel
+from app.ui.quad_view import QuadView
 from app.ui.settings_dialog import SettingsDialog
 from app.ui.theme import build_qss, make_app_icon
 from app.ui.thumbnail_panel import ThumbnailPanel
@@ -46,6 +48,9 @@ class MainWindow(QMainWindow):
 
         self._last_frame = None
         self._paused = False
+        self._quad = False
+        self._single_frozen = False
+        self._freeze_frame = None
         self._current_patient = None
         self._frame_times = deque(maxlen=60)
         self._frame_size = (config.capture_width, config.capture_height)
@@ -72,9 +77,13 @@ class MainWindow(QMainWindow):
         left = QVBoxLayout()
         self.patient_panel = PatientPanel(self.db)
         self.video_view = VideoView()
+        self.quad_view = QuadView()
+        self.view_stack = QStackedWidget()
+        self.view_stack.addWidget(self.video_view)   # index 0 = 단일
+        self.view_stack.addWidget(self.quad_view)     # index 1 = 4분할
         self.control_bar = ControlBar()
         left.addWidget(self.patient_panel)
-        left.addWidget(self.video_view, 1)
+        left.addWidget(self.view_stack, 1)
         left.addWidget(self.control_bar)
 
         self.thumbnail_panel = ThumbnailPanel(self.db, newest_on_top=self.config.newest_on_top)
@@ -100,6 +109,11 @@ class MainWindow(QMainWindow):
         self.control_bar.pauseToggled.connect(self._on_pause)
         self.control_bar.captureClicked.connect(self._on_capture)
         self.control_bar.recordToggled.connect(self._on_record_toggle)
+        self.control_bar.quadToggled.connect(self._on_quad_toggled)
+        self.control_bar.freezeClicked.connect(self._on_freeze)
+        self.control_bar.saveQuadClicked.connect(self._on_save_quad)
+        self.control_bar.clearQuadClicked.connect(self._on_clear_quad)
+        self.quad_view.cellClicked.connect(self._on_quad_cell_clicked)
         self.thumbnail_panel.thumbnailClicked.connect(self._on_thumbnail_clicked)
 
         self._on_patient_changed(self.patient_panel.current_patient())
@@ -159,7 +173,9 @@ class MainWindow(QMainWindow):
             self.recorder.feed(frame)
             if self._first_video_frame is None:
                 self._first_video_frame = frame
-        if not self._paused:
+        if self._quad:
+            self.quad_view.set_live_frame(frame)
+        elif not self._paused and not self._single_frozen:
             self.video_view.set_frame(frame)
 
     def _on_camera_error(self, msg: str) -> None:
@@ -187,16 +203,84 @@ class MainWindow(QMainWindow):
     def _on_pause(self, checked: bool) -> None:
         self._paused = checked
 
+    def _on_quad_toggled(self, on: bool) -> None:
+        self._quad = on
+        self.view_stack.setCurrentIndex(1 if on else 0)
+        # 모드 전환 시 단일-정지 상태/버튼 초기화
+        self._single_frozen = False
+        self._freeze_frame = None
+        self.control_bar.btn_freeze.setText("❄  정지영상")
+        self.control_bar.set_status(
+            "4분할 모드 · '정지영상'으로 각 칸을 채우세요" if on else "단일 모드")
+
+    def _on_quad_cell_clicked(self, idx: int) -> None:
+        if self._quad:
+            self.quad_view.set_active(idx)
+
+    def _on_freeze(self) -> None:
+        if self._last_frame is None:
+            return
+        if self._quad:
+            if self.quad_view.freeze_active(self.control_bar.current_eye()):
+                if self.quad_view.is_full():
+                    self.control_bar.set_status("4칸 모두 채움 · '4분할 저장' 또는 칸 클릭으로 교체")
+                else:
+                    self.control_bar.set_status("정지영상 추가됨 (다음 칸으로 이동)")
+            else:
+                self.control_bar.set_status("4칸이 가득 찼습니다 · 칸을 클릭해 교체하거나 '비우기'")
+            return
+        # 단일 모드: 현재 프레임을 정지영상으로 고정 / 재개 토글
+        self._single_frozen = not self._single_frozen
+        if self._single_frozen:
+            self._freeze_frame = self._last_frame
+            self.video_view.set_frame(self._freeze_frame)
+            self.control_bar.btn_freeze.setText("▶  라이브")
+            self.control_bar.set_status("정지영상 (▶라이브로 복귀 · 사진 캡처로 저장)")
+        else:
+            self._freeze_frame = None
+            self.control_bar.btn_freeze.setText("❄  정지영상")
+            self.control_bar.set_status("라이브")
+
+    def _on_save_quad(self) -> None:
+        if self._current_patient is None:
+            QMessageBox.information(self, "확인", "환자를 먼저 선택하세요.")
+            return
+        if not self.quad_view.has_any():
+            QMessageBox.information(self, "확인", "저장할 정지영상이 없습니다.")
+            return
+        eye = self.control_bar.current_eye()
+        saved = 0
+        try:
+            for frame, cell_eye in self.quad_view.images_for_save(eye):
+                cap = self.service.save_photo(frame, self._current_patient, eye=cell_eye, note="4분할")
+                self.thumbnail_panel.add_capture(cap)
+                saved += 1
+            comp = self.quad_view.composite()
+            if comp is not None:
+                cap = self.service.save_photo(comp, self._current_patient, eye="NA", note="4분할 합성")
+                self.thumbnail_panel.add_capture(cap)
+                saved += 1
+        except Exception as e:  # noqa: BLE001
+            log.exception("quad save failed")
+            QMessageBox.warning(self, "오류", f"4분할 저장 실패: {e}")
+            return
+        self.control_bar.set_status(f"4분할 저장됨 (개별+합성 {saved}장)")
+
+    def _on_clear_quad(self) -> None:
+        self.quad_view.reset()
+        self.control_bar.set_status("4분할 초기화")
+
     def _on_capture(self) -> None:
         if self._current_patient is None:
             QMessageBox.information(self, "확인", "환자를 먼저 선택하세요.")
             return
-        if self._last_frame is None:
+        frame = self._freeze_frame if (self._single_frozen and self._freeze_frame is not None) else self._last_frame
+        if frame is None:
             QMessageBox.information(self, "확인", "표시할 영상이 없습니다.")
             return
         eye = self.control_bar.current_eye()
         try:
-            cap = self.service.save_photo(self._last_frame, self._current_patient, eye=eye)
+            cap = self.service.save_photo(frame, self._current_patient, eye=eye)
         except Exception as e:  # noqa: BLE001
             log.exception("photo save failed")
             QMessageBox.warning(self, "오류", f"저장 실패: {e}")

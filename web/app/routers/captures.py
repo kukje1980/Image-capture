@@ -57,6 +57,7 @@ async def create_capture(
     eye: str = Form("NA"),
     duration_ms: Optional[int] = Form(None),
     ext: Optional[str] = Form(None),
+    note: Optional[str] = Form(None),
     file: UploadFile = Form(...),
 ):
     db = _db(request)
@@ -83,7 +84,7 @@ async def create_capture(
         "captured_at": ts.strftime("%Y-%m-%d %H:%M:%S"),
         "eye": eye if eye in ("OD", "OS", "OU", "NA") else "NA",
         "duration_ms": duration_ms,
-        "note": None,
+        "note": note,
     })
     return db.get_capture(cid)
 

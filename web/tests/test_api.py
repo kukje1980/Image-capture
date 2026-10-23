@@ -52,6 +52,18 @@ def test_duplicate_chart_no(client):
     assert r.status_code == 400
 
 
+def test_capture_with_note(client):
+    """4분할 저장이 쓰는 note 필드가 저장·반환되는지."""
+    p = _make_patient(client, chart="Q100")
+    png = b"\x89PNG\r\n\x1a\n" + b"0" * 32
+    r = client.post("/api/v1/captures", files={"file": ("q.png", io.BytesIO(png), "image/png")},
+                    data={"patient_id": str(p["id"]), "media_type": "photo", "eye": "OD",
+                          "ext": "png", "note": "4분할 합성"})
+    assert r.status_code == 201, r.text
+    assert r.json()["note"] == "4분할 합성"
+    assert client.get(f"/api/v1/captures?patient_id={p['id']}").json()[0]["note"] == "4분할 합성"
+
+
 def test_capture_upload_and_list(client):
     p = _make_patient(client, chart="C100")
     pid = p["id"]
