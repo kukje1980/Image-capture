@@ -61,3 +61,28 @@ def test_logo_file_is_picked_up(tmp_path, monkeypatch):
     (fake / "brand" / "keeler" / "logo.svg").write_text("<svg xmlns='http://www.w3.org/2000/svg'/>")
     b = brands.get_brand("keeler")
     assert b["logo"] == "/static/brand/keeler/logo.svg" and b["logo_dark"] == b["logo"]
+
+
+def test_keeler_path_on_default_deployment(monkeypatch, tmp_path):
+    """기본 배포에서도 /keeler 주소로 Keeler 화면이 열린다."""
+    c = _client(monkeypatch, tmp_path, None)
+    html = c.get("/keeler").text
+    assert "<title>Keeler 슬릿램프 영상 시스템</title>" in html and 'class="brand-keeler"' in html
+    assert "<title>슬릿램프 영상 시스템</title>" in c.get("/").text
+
+
+def test_keeler_login_branding(monkeypatch, tmp_path):
+    monkeypatch.setenv("SLITLAMP_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("SLITLAMP_BRAND", raising=False)
+    monkeypatch.setenv("SLITLAMP_PASSWORD", "pw")
+    from app import config as config_mod, main as main_mod
+    importlib.reload(config_mod)
+    importlib.reload(main_mod)
+    c = TestClient(main_mod.app)
+    r = c.get("/keeler", follow_redirects=False)
+    assert r.headers["location"].startswith("/login?next=/keeler")
+    page = c.get(r.headers["location"]).text
+    assert "Keeler" in page and "brand-keeler" in page
+    ok = c.post("/login", data={"password": "pw", "next": "/keeler"}, follow_redirects=False)
+    assert ok.headers["location"] == "/keeler"
+    assert "brand-keeler" in c.get("/keeler").text

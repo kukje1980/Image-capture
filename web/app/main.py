@@ -84,7 +84,9 @@ def login_page(request: Request, next: str = "/", error: int = 0):
     dest = _safe_next(next)
     if _authorized(request):
         return RedirectResponse(dest, status_code=303)
-    return templates.TemplateResponse(request, "login.html", {"next": dest, "error": bool(error)})
+    b = _brand_for_path(dest)
+    return templates.TemplateResponse(request, "login.html", {"next": dest, "error": bool(error),
+                                                             "brand": b, "brand_public": brands.public(b)})
 
 
 @app.post("/login", include_in_schema=False)
@@ -117,6 +119,27 @@ app.mount("/media", StaticFiles(directory=str(config.MEDIA_DIR)), name="media")
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
     return templates.TemplateResponse(request, "index.html")
+
+
+def _brand_for_path(path: str) -> dict:
+    """/keeler… 처럼 브랜드 경로면 그 브랜드, 아니면 배포 기본 브랜드."""
+    first = (path or "/").lstrip("/").split("/", 1)[0].split("?", 1)[0].lower()
+    if first in brands.BRANDS and first != "default":
+        return brands.get_brand(first)
+    return BRAND
+
+
+def _brand_page(key: str):
+    def page(request: Request):
+        b = brands.get_brand(key)
+        return templates.TemplateResponse(request, "index.html", {"brand": b, "brand_public": brands.public(b)})
+    return page
+
+
+# 같은 주소에서 브랜드 화면 제공: https://<주소>/keeler  (별도 배포 없이 바로 사용)
+for _key in brands.BRANDS:
+    if _key != "default":
+        app.get(f"/{_key}", response_class=HTMLResponse, include_in_schema=False)(_brand_page(_key))
 
 
 @app.get("/favicon.ico", include_in_schema=False)

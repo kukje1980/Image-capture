@@ -78,7 +78,10 @@ HTTPS 주소라서 카메라·저장 폴더 기능도 그대로 동작합니다.
 | (없음) | 기본 슬릿램프 영상 시스템 (티얼 색) |
 | `keeler` | **Keeler 전용** — Keeler 이름·로고, 네이비/블루 색, 보고서 머리말 "Keeler 슬릿램프 영상 보고서" |
 
-**Keeler 전용 주소 만들기 (Vercel, 2~3분)**
+**바로 쓰기:** 이미 배포된 주소 뒤에 **`/keeler`** 를 붙이면 Keeler 화면이 열립니다
+(예: `https://image-capture-web.vercel.app/keeler`). 같은 서버·같은 환자 DB 를 씁니다.
+
+**Keeler 전용 주소를 따로 만들기 (Vercel, 2~3분 — 데이터도 분리)**
 1. vercel.com → **Add New → Project** → 같은 `Image-capture` 저장소 **Import** (프로젝트 이름 예: `keeler-slitlamp`)
 2. **Root Directory = `web`**
 3. Environment Variables: `SLITLAMP_BRAND` = `keeler`, `SLITLAMP_PASSWORD` = 접속 비밀번호 → **Deploy**
