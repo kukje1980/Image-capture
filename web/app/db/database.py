@@ -27,6 +27,7 @@ class Database:
         self._conn.execute("PRAGMA journal_mode=WAL")
         with self._lock:
             self._conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+            _add_missing_columns(self._conn, "patients", {"diagnosis": "TEXT", "doctor": "TEXT"})
             self._conn.commit()
         return self
 
@@ -62,8 +63,10 @@ class Database:
         with self._lock:
             cur = self._conn.execute(
                 """INSERT INTO patients
-                   (chart_no, patient_id, name, birth_date, sex, phone, memo, symptoms)
-                   VALUES (:chart_no, :patient_id, :name, :birth_date, :sex, :phone, :memo, :symptoms)""",
+                   (chart_no, patient_id, name, birth_date, sex, phone, memo, symptoms,
+                    diagnosis, doctor)
+                   VALUES (:chart_no, :patient_id, :name, :birth_date, :sex, :phone, :memo, :symptoms,
+                           :diagnosis, :doctor)""",
                 _patient_params(p),
             )
             self._conn.commit()
@@ -77,7 +80,8 @@ class Database:
                 """UPDATE patients SET
                      chart_no=:chart_no, patient_id=:patient_id, name=:name,
                      birth_date=:birth_date, sex=:sex, phone=:phone, memo=:memo,
-                     symptoms=:symptoms, updated_at=datetime('now','localtime')
+                     symptoms=:symptoms, diagnosis=:diagnosis, doctor=:doctor,
+                     updated_at=datetime('now','localtime')
                    WHERE id=:id""",
                 params,
             )
@@ -144,4 +148,14 @@ def _patient_params(p: dict) -> dict:
         "phone": p.get("phone"),
         "memo": p.get("memo"),
         "symptoms": p.get("symptoms"),
+        "diagnosis": p.get("diagnosis"),
+        "doctor": p.get("doctor"),
     }
+
+
+def _add_missing_columns(conn: sqlite3.Connection, table: str, cols: dict) -> None:
+    """기존 DB에 새 컬럼이 없으면 추가 (구버전 DB 자동 업그레이드)."""
+    have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+    for name, decl in cols.items():
+        if name not in have:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")

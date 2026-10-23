@@ -21,7 +21,7 @@ class PatientDialog(QDialog):
     def __init__(self, parent=None, patient: Patient | None = None):
         super().__init__(parent)
         self.setWindowTitle("환자 정보")
-        self.resize(440, 460)
+        self.resize(460, 540)
         self._patient = patient or Patient()
 
         form = QFormLayout()
@@ -38,6 +38,9 @@ class PatientDialog(QDialog):
         self.memo.setFixedHeight(56)
         self.symptoms = QTextEdit(self._patient.symptoms or "")
         self.symptoms.setFixedHeight(56)
+        self.diagnosis = QLineEdit(self._patient.diagnosis or "")
+        self.diagnosis.setPlaceholderText("예: 백내장, 각막염")
+        self.doctor = QLineEdit(self._patient.doctor or "")
 
         form.addRow("차트번호 *", self.chart)
         form.addRow("환자ID", self.pid)
@@ -47,6 +50,8 @@ class PatientDialog(QDialog):
         form.addRow("연락처", self.phone)
         form.addRow("메모", self.memo)
         form.addRow("증상", self.symptoms)
+        form.addRow("진단명", self.diagnosis)
+        form.addRow("담당의", self.doctor)
 
         btns = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -77,4 +82,6 @@ class PatientDialog(QDialog):
         p.phone = self.phone.text().strip() or None
         p.memo = self.memo.toPlainText().strip() or None
         p.symptoms = self.symptoms.toPlainText().strip() or None
+        p.diagnosis = self.diagnosis.text().strip() or None
+        p.doctor = self.doctor.text().strip() or None
         return p

@@ -15,6 +15,8 @@ class PatientIn(BaseModel):
     phone: Optional[str] = None
     memo: Optional[str] = None
     symptoms: Optional[str] = None
+    diagnosis: Optional[str] = None
+    doctor: Optional[str] = None
 
 
 class PatientOut(PatientIn):

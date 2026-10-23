@@ -27,6 +27,7 @@ class AppConfig:
     thumbnail_max_side: int = 120
     newest_on_top: bool = True
     theme: str = "light"                     # light | dark
+    clinic_name: str = ""                    # 인쇄 보고서 머리말 기관명
 
     @classmethod
     def config_path(cls) -> Path:

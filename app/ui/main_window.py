@@ -25,6 +25,7 @@ from app.services.capture_service import CaptureService
 from app.ui.control_bar import ControlBar
 from app.ui.image_viewer import ImageViewerDialog
 from app.ui.patient_panel import PatientPanel
+from app.ui.pro.pro_workspace import ProWorkspace
 from app.ui.quad_view import QuadView
 from app.ui.settings_dialog import SettingsDialog
 from app.ui.theme import build_qss, make_app_icon
@@ -71,18 +72,23 @@ class MainWindow(QMainWindow):
     # ---- UI 구성 ----
     def _build_ui(self) -> None:
         central = QWidget()
-        root = QHBoxLayout(central)
-        root.setContentsMargins(8, 8, 8, 8)
+        outer = QVBoxLayout(central)
+        outer.setContentsMargins(8, 8, 8, 8)
+        outer.setSpacing(6)
+        self.patient_panel = PatientPanel(self.db)
+        outer.addWidget(self.patient_panel)          # 단일/Pro 공통 환자 바
+
+        simple = QWidget()                           # 기본(촬영) 화면
+        root = QHBoxLayout(simple)
+        root.setContentsMargins(0, 0, 0, 0)
 
         left = QVBoxLayout()
-        self.patient_panel = PatientPanel(self.db)
         self.video_view = VideoView()
         self.quad_view = QuadView()
         self.view_stack = QStackedWidget()
         self.view_stack.addWidget(self.video_view)   # index 0 = 단일
         self.view_stack.addWidget(self.quad_view)     # index 1 = 4분할
         self.control_bar = ControlBar()
-        left.addWidget(self.patient_panel)
         left.addWidget(self.view_stack, 1)
         left.addWidget(self.control_bar)
 
@@ -90,6 +96,13 @@ class MainWindow(QMainWindow):
 
         root.addLayout(left, 1)
         root.addWidget(self.thumbnail_panel)
+
+        # Pro(전문가 검토) 화면
+        self.pro = ProWorkspace(self.db, self.service, self.config, get_eye=None)
+        self.mode_stack = QStackedWidget()
+        self.mode_stack.addWidget(simple)            # 0 = 기본
+        self.mode_stack.addWidget(self.pro)          # 1 = Pro
+        outer.addWidget(self.mode_stack, 1)
         self.setCentralWidget(central)
         self.setStatusBar(QStatusBar())
 
@@ -101,9 +114,17 @@ class MainWindow(QMainWindow):
         act_reconnect.triggered.connect(self._restart_camera)
         self.act_theme = QAction("🌙 다크 모드" if self.config.theme != "dark" else "☀ 라이트 모드", self)
         self.act_theme.triggered.connect(self._toggle_theme)
+        self.act_pro = QAction("🩺 Pro 모드", self)
+        self.act_pro.setCheckable(True)
+        self.act_pro.setToolTip("전문가용 영상 검토 화면 (MULTI·비교·보정·주석·인쇄)")
+        self.act_pro.toggled.connect(self._on_pro_toggled)
+        tb.addAction(self.act_pro)
+        tb.addSeparator()
         tb.addAction(act_settings)
         tb.addAction(act_reconnect)
         tb.addAction(self.act_theme)
+        self.pro.savedCapture.connect(self._on_pro_saved)
+        self.pro.patientUpdated.connect(self._on_pro_patient_updated)
 
         self.patient_panel.patientChanged.connect(self._on_patient_changed)
         self.control_bar.pauseToggled.connect(self._on_pause)
@@ -173,6 +194,8 @@ class MainWindow(QMainWindow):
             self.recorder.feed(frame)
             if self._first_video_frame is None:
                 self._first_video_frame = frame
+        if self.mode_stack.currentIndex() == 1:
+            self.pro.set_live_frame(frame)
         if self._quad:
             self.quad_view.set_live_frame(frame)
         elif not self._paused and not self._single_frozen:
@@ -198,6 +221,28 @@ class MainWindow(QMainWindow):
         self._current_patient = patient
         self.control_bar.set_capture_enabled(patient is not None)
         self.thumbnail_panel.set_patient(patient.id if patient else None)
+        self.pro.set_patient(patient)
+
+    # ---- Pro 모드 ----
+    def _on_pro_toggled(self, on: bool) -> None:
+        self.mode_stack.setCurrentIndex(1 if on else 0)
+        if on:
+            self.pro.reload(select_last=False)
+            if self._last_frame is not None:
+                self.pro.set_live_frame(self._last_frame)
+            self.pro.setFocus()
+        else:
+            p = self._current_patient
+            self.thumbnail_panel.set_patient(p.id if p else None)
+        self.statusBar().showMessage("Pro 모드" if on else "기본 모드", 3000)
+
+    def _on_pro_saved(self) -> None:
+        p = self._current_patient
+        self.thumbnail_panel.set_patient(p.id if p else None)
+
+    def _on_pro_patient_updated(self, patient) -> None:
+        self._current_patient = patient
+        self.patient_panel.refresh_current(patient)
 
     # ---- 컨트롤 ----
     def _on_pause(self, checked: bool) -> None:

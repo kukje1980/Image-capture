@@ -39,6 +39,8 @@ class Database:
         ddl = SCHEMA_PATH.read_text(encoding="utf-8")
         with self._lock:
             self._conn.executescript(ddl)
+            _add_missing_columns(self._conn, "patients",
+                                 {"diagnosis": "TEXT", "doctor": "TEXT"})
             self._conn.commit()
 
     def close(self) -> None:
@@ -46,3 +48,11 @@ class Database:
             with self._lock:
                 self._conn.close()
                 self._conn = None
+
+
+def _add_missing_columns(conn: sqlite3.Connection, table: str, cols: dict) -> None:
+    """기존 DB에 새 컬럼이 없으면 추가 (구버전 DB 자동 업그레이드)."""
+    have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+    for name, decl in cols.items():
+        if name not in have:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")

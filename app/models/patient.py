@@ -15,5 +15,7 @@ class Patient:
     phone: Optional[str] = None
     memo: Optional[str] = None
     symptoms: Optional[str] = None
+    diagnosis: Optional[str] = None      # 진단명
+    doctor: Optional[str] = None         # 담당의
     created_at: Optional[str] = None
     updated_at: Optional[str] = None

@@ -16,9 +16,11 @@ class PatientsDAO:
         with self._lock:
             cur = self._c.execute(
                 """INSERT INTO patients
-                   (chart_no, patient_id, name, birth_date, sex, phone, memo, symptoms)
-                   VALUES (?,?,?,?,?,?,?,?)""",
-                (p.chart_no, p.patient_id, p.name, p.birth_date, p.sex, p.phone, p.memo, p.symptoms),
+                   (chart_no, patient_id, name, birth_date, sex, phone, memo, symptoms,
+                    diagnosis, doctor)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (p.chart_no, p.patient_id, p.name, p.birth_date, p.sex, p.phone, p.memo, p.symptoms,
+                 p.diagnosis, p.doctor),
             )
             self._c.commit()
             return cur.lastrowid
@@ -28,10 +30,11 @@ class PatientsDAO:
             self._c.execute(
                 """UPDATE patients SET
                      chart_no=?, patient_id=?, name=?, birth_date=?, sex=?, phone=?,
-                     memo=?, symptoms=?, updated_at=datetime('now','localtime')
+                     memo=?, symptoms=?, diagnosis=?, doctor=?,
+                     updated_at=datetime('now','localtime')
                    WHERE id=?""",
                 (p.chart_no, p.patient_id, p.name, p.birth_date, p.sex, p.phone,
-                 p.memo, p.symptoms, p.id),
+                 p.memo, p.symptoms, p.diagnosis, p.doctor, p.id),
             )
             self._c.commit()
 

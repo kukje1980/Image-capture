@@ -10,6 +10,8 @@ CREATE TABLE IF NOT EXISTS patients (
     phone       TEXT,
     memo        TEXT,
     symptoms    TEXT,                        -- 증상/기타
+    diagnosis   TEXT,                        -- 진단명
+    doctor      TEXT,                        -- 담당의
     created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime')),
     updated_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );

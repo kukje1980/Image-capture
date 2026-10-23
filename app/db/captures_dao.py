@@ -40,6 +40,12 @@ class CapturesDAO:
             r = self._c.execute("SELECT * FROM captures WHERE id=?", (cid,)).fetchone()
         return self._row(r)
 
+    def update_note(self, cid: int, note: Optional[str]) -> None:
+        """영상별 코멘트 수정 (Pro 모드 Edit Data)."""
+        with self._lock:
+            self._c.execute("UPDATE captures SET note=? WHERE id=?", (note, cid))
+            self._c.commit()
+
     def delete(self, cid: int) -> Optional[dict]:
         """레코드를 지우고, 디스크 정리를 위해 관련 경로를 반환한다."""
         with self._lock:

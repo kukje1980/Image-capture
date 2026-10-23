@@ -52,7 +52,7 @@ def build_qss(mode: str = "light") -> str:
     /* 라벨 */
     QLabel {{ background: transparent; color: {c['ink']}; }}
     QLabel#Muted {{ color: {c['ink_soft']}; }}
-    QLabel#StatusLabel {{ color: {c['ink_soft']}; font-variant-numeric: tabular-nums; }}
+    QLabel#StatusLabel {{ color: {c['ink_soft']}; }}
     QLabel#PanelHeader {{
         color: {c['ink_soft']}; font-weight: 700; font-size: 11px;
         padding: 10px 12px; letter-spacing: 1px;
@@ -142,6 +142,40 @@ def build_qss(mode: str = "light") -> str:
     /* 썸네일 카드 */
     QFrame#ThumbCard {{ background: {c['panel2']}; border: 2px solid transparent; border-radius: 8px; }}
     QFrame#ThumbCard:hover {{ border: 2px solid {c['accent']}; }}
+
+    /* ===== Pro 모드 ===== */
+    QFrame#ProToolbar {{
+        background: {c['panel']}; border: 1px solid {c['rule']}; border-radius: 10px;
+    }}
+    QFrame#ProSep {{ background: {c['rule']}; margin: 4px 6px; }}
+    QPushButton#ProBtn, QPushButton#ProCapture {{
+        padding: 6px 10px; font-weight: 600; font-size: 13px;
+    }}
+    QPushButton#ProBtn:checked {{
+        background: {c['accent']}; color: #ffffff; border-color: {c['accent']};
+    }}
+    QPushButton#ProCapture {{ color: {c['accent_hover']}; border: 1px solid {c['accent']}; }}
+    QPushButton#ProCapture:checked {{ background: {c['record']}; color: #ffffff; border-color: {c['record']}; }}
+    QStackedWidget#ProDisplay {{ background: #000000; border-radius: 10px; }}
+    QFrame#ProSide {{
+        background: {c['panel']}; border: 1px solid {c['rule']}; border-radius: 10px;
+    }}
+    QLabel#ProInfo {{
+        background: {c['panel']}; border: 1px solid {c['rule']}; border-radius: 8px;
+        padding: 8px 14px; color: {c['ink']};
+    }}
+    QFrame#MultiCell {{ background: #0b0f17; border: 2px solid #1e293b; border-radius: 6px; }}
+    QFrame#MultiCell:hover {{ border-color: {c['accent']}; }}
+    QFrame#MultiCell[selected="true"] {{ border: 3px solid #facc15; }}
+    QLabel#MultiCaption {{ background: transparent; color: #cbd5e1; font-size: 11px; }}
+    QLabel#SelBadge {{
+        background: #facc15; color: #0f172a; font-weight: 700; font-size: 11px;
+        padding: 2px 8px; border-radius: 8px;
+    }}
+    QSlider::groove:horizontal {{ height: 4px; background: {c['rule']}; border-radius: 2px; }}
+    QSlider::handle:horizontal {{
+        background: {c['accent']}; width: 14px; margin: -6px 0; border-radius: 7px;
+    }}
 
     QMenuBar {{ background: {c['panel']}; }}
     QMenuBar::item:selected {{ background: {c['panel2']}; }}

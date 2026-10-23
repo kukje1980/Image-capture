@@ -56,6 +56,13 @@ class PatientPanel(QWidget):
             return self._patients[idx]
         return None
 
+    def refresh_current(self, patient) -> None:
+        """현재 선택된 환자 정보만 갱신 (선택 유지)."""
+        idx = self.combo.currentIndex()
+        if 0 <= idx < len(self._patients) and self._patients[idx].id == patient.id:
+            self._patients[idx] = patient
+            self.combo.setItemText(idx, f"{patient.name} ({patient.chart_no or '-'})")
+
     def _reload(self, *_):
         q = self.search.text().strip()
         self._patients = self.db.patients.search(q) if q else self.db.patients.list_all()
