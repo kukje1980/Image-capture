@@ -13,7 +13,7 @@
 - 캡처: 브라우저 `getUserMedia`, 사진 `canvas.toBlob`, 동영상 `MediaRecorder`(mp4 우선/webm 폴백)
 - 지정 폴더 저장: **File System Access API** (`showDirectoryPicker`, Chrome/Edge)
 
-## 설치 & 실행
+## 설치 & 실행 (내 PC에서)
 
 ### 원클릭 실행 (권장)
 준비물: **Python 3.11 이상**([python.org](https://www.python.org/downloads/)), 브라우저 **Chrome 또는 Edge**
@@ -44,6 +44,31 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 > 카메라(getUserMedia)와 폴더 저장(File System Access)은 **localhost 또는 HTTPS**에서만 동작합니다.
 > `127.0.0.1`/`localhost` 는 보안 컨텍스트로 취급되어 그대로 사용 가능합니다.
+
+## 인터넷 주소로 쓰기 (MedFix 처럼 — 설치 없이 브라우저로 접속)
+PC마다 프로그램을 설치하지 않고 **https://주소** 하나로 어느 컴퓨터에서나 접속합니다.
+HTTPS 주소라서 카메라·저장 폴더 기능도 그대로 동작합니다.
+
+### Render (권장 — 사진·동영상 모두 저장)
+1. [render.com](https://render.com) 에 GitHub 계정으로 로그인
+2. **New → Blueprint** → 저장소 `Image-capture` 선택 → 브랜치 `claude/slit-lamp-imaging-system-ecM9y` (병합 후에는 `main`)
+3. 저장소의 `render.yaml` 이 자동으로 읽힙니다. **SLITLAMP_PASSWORD**(접속 비밀번호) 입력란에 비밀번호를 넣고 **Apply**
+4. 몇 분 뒤 `https://slitlamp-imaging.onrender.com` 같은 주소가 생깁니다 → 접속 → 비밀번호 입력
+
+> **무료 플랜 주의:** 15분간 사용이 없으면 잠들어 첫 접속이 30초~1분 걸리고, 재시작·재배포 때
+> 서버에 저장된 환자 DB·영상이 지워집니다. 촬영 화면 상단 **저장 폴더**를 지정해 두면 촬영본은 PC 폴더에 그대로 남습니다.
+> 서버에 영구 보관하려면 `render.yaml` 의 안내대로 유료 플랜 + 디스크를 붙이세요.
+
+### Vercel (MedFix 와 같은 서비스)
+1. [vercel.com](https://vercel.com) → **Add New → Project** → `Image-capture` 가져오기
+2. **Root Directory 를 `web`** 으로 지정 (중요), Environment Variables 에 `SLITLAMP_PASSWORD` 추가 → **Deploy**
+
+> **Vercel 제약:** 저장 공간이 임시(수시로 초기화)이고 업로드가 약 4.5MB로 제한되어 **긴 동영상은 저장되지 않습니다**
+> (큰 사진은 자동으로 고화질 JPEG로 줄여 올림). 화면 확인·사진 위주 사용에 적합하며, 실사용은 Render 를 권장합니다.
+
+### 접속 비밀번호
+`SLITLAMP_PASSWORD` 환경변수를 주면 로그인 화면이 켜집니다(브라우저당 30일 유지, `/logout` 으로 로그아웃).
+환자 정보가 인터넷에 노출되지 않도록 **배포할 때는 반드시 설정**하세요. 로컬(내 PC) 실행에서는 설정하지 않아도 됩니다.
 
 ## 사용 흐름
 1. **신규 환자** 등록 → 환자 선택(선택해야 캡처 버튼 활성화)

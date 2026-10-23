@@ -3,6 +3,13 @@ name = "slitlamp-web"
 version = "0.1.0"
 description = "안과 슬릿램프 디지털 영상 시스템 - 웹앱 (FastAPI + 브라우저 캡처)"
 requires-python = ">=3.11"
+# requirements.txt 와 같은 목록 (호스팅 서비스가 둘 중 어느 쪽을 읽어도 같게 설치되도록)
+dependencies = [
+    "fastapi==0.115.*",
+    "uvicorn[standard]==0.34.*",
+    "jinja2==3.1.*",
+    "python-multipart==0.0.*",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

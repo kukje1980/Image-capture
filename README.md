@@ -11,7 +11,8 @@
 - 전용 앱 아이콘(`assets/icons/app.ico`) — 실행파일·바로가기·설치 마법사에 적용
 
 > 동일 기능의 **웹 버전**(FastAPI, 브라우저에서 사용)은 `web/` 폴더에 있습니다. 데스크탑 앱과
-> 웹 앱 두 가지 버전을 모두 제공합니다.
+> 웹 앱 두 가지 버전을 모두 제공합니다. 웹 버전은 MedFix 처럼 **Render/Vercel 에 올려 인터넷 주소로** 쓸 수 있습니다
+> (`render.yaml`, `web/vercel.json` — 방법은 `web/README.md` 의 "인터넷 주소로 쓰기").
 
 ## 기술 스택
 - Python 3.11+, **PySide6**(Qt6), **OpenCV**(opencv-python), **SQLite**(stdlib)

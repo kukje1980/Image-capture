@@ -468,7 +468,28 @@
   }
 
   // 서버 + 지정 폴더 동시 저장
+  // 인터넷 호스팅(Vercel 등)은 업로드 크기 제한(약 4.5MB)이 있어, 큰 PNG 사진은 고화질 JPEG 로 바꿔 올린다
+  const IS_LOCAL = ['localhost', '127.0.0.1', '[::1]', ''].includes(location.hostname);
+  const UPLOAD_SOFT_LIMIT = 4 * 1024 * 1024;
+  async function shrinkPhoto(blob) {
+    try {
+      const bmp = await createImageBitmap(blob);
+      const c = document.createElement('canvas');
+      c.width = bmp.width; c.height = bmp.height;
+      c.getContext('2d').drawImage(bmp, 0, 0);
+      for (const q of [0.95, 0.9, 0.82]) {
+        const j = await new Promise((res) => c.toBlob(res, 'image/jpeg', q));
+        if (j && j.size <= UPLOAD_SOFT_LIMIT) return j;
+      }
+    } catch (_) { /* 변환 실패 시 원본 그대로 */ }
+    return null;
+  }
+
   async function persistCapture(patient, mediaType, blob, ext, eye, durationMs, note, opts = {}) {
+    if (!IS_LOCAL && mediaType === 'photo' && ext === 'png' && blob.size > UPLOAD_SOFT_LIMIT) {
+      const j = await shrinkPhoto(blob);
+      if (j) { blob = j; ext = 'jpg'; }
+    }
     const ts = new Date();
     const filename = buildFilename(patient, mediaType, ts, ext, eye, note);
 

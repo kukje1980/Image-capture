@@ -6,9 +6,14 @@ from pathlib import Path
 
 # web/ 디렉토리 기준
 BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = Path(os.environ.get("SLITLAMP_DATA_DIR", BASE_DIR / "data"))
+# Vercel 같은 서버리스 호스팅은 /tmp 만 쓰기 가능 (인스턴스가 바뀌면 지워지는 임시 저장)
+_DEFAULT_DATA = Path("/tmp/slitlamp") if os.environ.get("VERCEL") else BASE_DIR / "data"
+DATA_DIR = Path(os.environ.get("SLITLAMP_DATA_DIR", _DEFAULT_DATA))
 MEDIA_DIR = Path(os.environ.get("SLITLAMP_MEDIA_DIR", DATA_DIR / "media"))
 DB_PATH = Path(os.environ.get("SLITLAMP_DB_PATH", DATA_DIR / "slitlamp.db"))
+
+# 접속 비밀번호 (인터넷에 올릴 때 설정 권장). 비어 있으면 로그인 없이 열린다.
+PASSWORD = os.environ.get("SLITLAMP_PASSWORD", "")
 
 # 사진 저장 경로 규칙: <media>/<chart_no>_<patient_id>/<YYYY-MM-DD>/<파일>
 SUBFOLDER_TEMPLATE = "{chart_no}_{patient_id}/{date}"
