@@ -678,7 +678,8 @@
       const when = (c.captured_at || '').slice(2, 16).replace(/-/g, '.');
       const eye = c.eye && c.eye !== 'NA' ? c.eye : '';
       cell.innerHTML = `<img src="${esc(c.url)}" alt="" loading="lazy" draggable="false">` +
-        `<div class="mcap">${i + 1}&nbsp; ${esc(when)}&nbsp; ${esc(eye)}${c.note ? ' · ' + esc(c.note) : ''}</div>` +
+        `<div class="mcap"><span class="mno">${i + 1}</span>${eye ? `<span class="meye e-${esc(eye)}">${esc(eye)}</span>` : ''}` +
+        `<span>${esc(when)}</span>${c.note ? `<span class="mnote">${esc(c.note)}</span>` : ''}</div>` +
         '<span class="mbadge" hidden></span>';
       cell.title = caption(c, i + 1);
       cell.addEventListener('click', () => {
@@ -917,7 +918,7 @@
     } else P.frozen = false;
     view.classList.toggle('frozen', P.frozen);
     $('pro-capture').classList.toggle('on', P.frozen);
-    $('pro-capture').textContent = P.frozen ? '▶ RESUME' : '❄ CAPTURE';
+    $('pro-capture').innerHTML = P.frozen ? '<svg class="ic"><use href="#i-play"/></svg>RESUME' : '<svg class="ic"><use href="#i-freeze"/></svg>CAPTURE';
     updateSide();
   }
   async function saveLive() {
@@ -1055,6 +1056,7 @@
   }
 
   $('btn-pro').addEventListener('click', () => setPro(!P.on));
+  $('btn-mode-capture').addEventListener('click', () => { if (P.on) setPro(false); });
   document.querySelectorAll('#pro-modes .pbtn').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
   document.querySelectorAll('#pro-tools [data-tool]').forEach((b) => b.addEventListener('click', () => setTool(b.dataset.tool)));
   $('pro-capture').addEventListener('click', toggleCapture);

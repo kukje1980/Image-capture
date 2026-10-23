@@ -62,6 +62,7 @@
     } catch (_) {}
     syncThemeIcon();
     bindEvents();
+    syncEye();
     if (!('showDirectoryPicker' in window)) {
       $('btn-folder').disabled = true;
       $('btn-folder').title = '이 브라우저는 폴더 저장을 지원하지 않습니다 (Chrome/Edge 사용)';
@@ -90,6 +91,13 @@
     $('patient-delete').addEventListener('click', deletePatient);
 
     $('btn-theme').addEventListener('click', toggleTheme);
+    document.querySelectorAll('#eye-seg [data-eye]').forEach((b) => b.addEventListener('click', () => setEye(b.dataset.eye)));
+    $('eye-select').addEventListener('change', syncEye);
+    document.querySelectorAll('#thumb-filter .tf').forEach((b) => b.addEventListener('click', () => {
+      state.thumbFilter = b.dataset.f;
+      document.querySelectorAll('#thumb-filter .tf').forEach((x) => x.classList.toggle('on', x === b));
+      renderThumbs();
+    }));
     $('hint-close').addEventListener('click', () => $('hint').style.display = 'none');
     $('btn-folder').addEventListener('click', pickFolder);
 
@@ -161,7 +169,58 @@
   }
 
   function emitPatient() {
+    renderBanner();
     document.dispatchEvent(new CustomEvent('slit:patient', { detail: currentPatient() || null }));
+  }
+
+  // ---- 환자 배너 · 영상 HUD ----
+  const escHtml = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  function ageOf(birth) {
+    const m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(birth || '');
+    if (!m) return null;
+    const now = new Date(), b = new Date(+m[1], +m[2] - 1, +m[3]);
+    let a = now.getFullYear() - b.getFullYear();
+    if (now < new Date(now.getFullYear(), b.getMonth(), b.getDate())) a--;
+    return a >= 0 && a < 150 ? a : null;
+  }
+  function renderBanner() {
+    const p = currentPatient();
+    $('btn-edit-patient').disabled = !p;
+    if (!p) {
+      $('pb-avatar').innerHTML = '<svg class="ic"><use href="#i-user"/></svg>';
+      $('pb-name').textContent = '환자를 선택하세요';
+      $('pb-chart').textContent = '';
+      $('pb-meta').innerHTML = '<span>검색하거나 신규 환자를 등록하세요</span>';
+      $('hud-patient').textContent = '환자 미선택';
+      return;
+    }
+    $('pb-avatar').textContent = (p.name || '?').trim().charAt(0);
+    $('pb-name').textContent = p.name;
+    $('pb-chart').textContent = p.chart_no ? '#' + p.chart_no : '';
+    const sex = { M: '남', F: '여', O: '기타' }[p.sex] || '';
+    const age = ageOf(p.birth_date);
+    const bits = [];
+    if (sex || age != null) bits.push(`<span>${[sex, age != null ? age + '세' : ''].filter(Boolean).join(' · ')}</span>`);
+    if (p.birth_date) bits.push(`<span><b>생년월일</b>${escHtml(p.birth_date)}</span>`);
+    bits.push(`<span><b>진단명</b><span class="dx">${escHtml(p.diagnosis || '-')}</span></span>`);
+    bits.push(`<span><b>담당의</b>${escHtml(p.doctor || '-')}</span>`);
+    $('pb-meta').innerHTML = bits.join('');
+    $('hud-patient').textContent = `${p.name}${p.chart_no ? '  ·  ' + p.chart_no : ''}`;
+  }
+  const EYE_TEXT = { OD: 'OD 우안', OS: 'OS 좌안', OU: 'OU 양안', NA: '안구 미지정' };
+  function setEye(v) {
+    const sel = $('eye-select');
+    if (sel.value !== v) { sel.value = v; }
+    syncEye();
+  }
+  function syncEye() {
+    const v = $('eye-select').value || 'NA';
+    document.querySelectorAll('#eye-seg [data-eye]').forEach((b) => {
+      const on = b.dataset.eye === v;
+      b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on));
+    });
+    const chip = $('hud-eye');
+    chip.dataset.eye = v; chip.textContent = EYE_TEXT[v] || v;
   }
 
   function openPatientDialog(patient) {
@@ -228,16 +287,14 @@
   // ---- theme ----
   function toggleTheme() {
     const root = document.documentElement;
-    const cur = root.getAttribute('data-theme');
-    const isDark = cur ? cur === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+    const isDark = root.getAttribute('data-theme') !== 'light';   // 기본은 어두운 영상 작업 공간
     const next = isDark ? 'light' : 'dark';
     root.setAttribute('data-theme', next);
     try { localStorage.setItem('slitlamp-theme', next); } catch (_) {}
     syncThemeIcon();
   }
   function syncThemeIcon() {
-    const isDark = document.documentElement.getAttribute('data-theme') === 'dark' ||
-      (!document.documentElement.getAttribute('data-theme') && matchMedia('(prefers-color-scheme: dark)').matches);
+    const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
     $('theme-icon-light').style.display = isDark ? 'block' : 'none';
     $('theme-icon-dark').style.display = isDark ? 'none' : 'block';
   }
@@ -325,12 +382,12 @@
       video.pause();
       frame.classList.add('paused');
       state.isPaused = true;
-      $('btn-pause').innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg> 재개';
+      $('btn-pause').innerHTML = '<svg class="ic"><use href="#i-play"/></svg>재개';
     } else {
       video.play();
       frame.classList.remove('paused');
       state.isPaused = false;
-      $('btn-pause').innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg> 일시정지';
+      $('btn-pause').innerHTML = '<svg class="ic"><use href="#i-pause"/></svg>일시정지';
     }
   }
 
@@ -584,10 +641,12 @@
   }
 
   // ---- thumbnails ----
+  const DOW = ['일', '월', '화', '수', '목', '금', '토'];
+  const hms = (d) => [d.getHours(), d.getMinutes(), d.getSeconds()].map((n) => String(n).padStart(2, '0')).join(':');
   async function renderThumbs() {
     const list = $('thumb-list');
     const empty = $('thumb-empty');
-    Array.from(list.querySelectorAll('.thumb')).forEach(n => n.remove());
+    Array.from(list.querySelectorAll('.thumb, .thumb-day')).forEach(n => n.remove());
     if (!state.currentPatientId) {
       empty.style.display = 'block';
       empty.querySelector('div').innerHTML = '환자를 선택하세요';
@@ -601,32 +660,48 @@
       toast('촬영 목록 조회 실패: ' + e.message, 'error');
     }
     $('thumb-count').textContent = items.length;
-    if (items.length === 0) {
+    const f = state.thumbFilter || 'all';
+    const shown = items.filter((c) => f === 'all' || (f === 'video' ? c.media_type === 'video' : c.eye === f));
+    if (shown.length === 0) {
       empty.style.display = 'block';
-      empty.querySelector('div').innerHTML = '선택한 환자의<br>촬영 이미지가 없습니다';
+      empty.querySelector('div').innerHTML = items.length ? '조건에 맞는 영상이 없습니다' : '선택한 환자의<br>촬영 이미지가 없습니다';
       return;
     }
     empty.style.display = 'none';
-    for (const c of items) {
+    // 촬영일별 묶음 (최근 → 과거)
+    let day = '';
+    const perDay = {};
+    for (const c of shown) { const d = (c.captured_at || '').slice(0, 10); perDay[d] = (perDay[d] || 0) + 1; }
+    for (const c of shown) {
       const ts = parseTs(c.captured_at);
+      const d = (c.captured_at || '').slice(0, 10);
+      if (d !== day) {
+        day = d;
+        const h = document.createElement('div');
+        h.className = 'thumb-day';
+        h.innerHTML = `<span>${d.replace(/-/g, '.')} (${DOW[ts.getDay()] || ''})</span><span>${perDay[d]}장</span>`;
+        list.appendChild(h);
+      }
       const el = document.createElement('div');
       el.className = 'thumb';
-      const eyeLabel = c.eye && c.eye !== 'NA' ? c.eye : '';
+      el.tabIndex = 0;
+      const eye = c.eye && c.eye !== 'NA' ? c.eye : '';
       const isVideo = c.media_type === 'video';
       const dur = isVideo ? `▶ ${Math.round((c.duration_ms || 0) / 1000)}s` : '';
-      const thumbSrc = isVideo ? '' : c.url;
       el.innerHTML = `
         ${isVideo
-          ? `<div style="width:100%;aspect-ratio:4/3;background:#000;display:flex;align-items:center;justify-content:center;color:#64748b"><svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></div>`
-          : `<img src="${thumbSrc}" alt="캡처 ${fmt(ts)}" loading="lazy">`}
+          ? '<div class="tvid"><svg class="ic"><use href="#i-play"/></svg></div>'
+          : `<img src="${c.url}" alt="캡처 ${fmt(ts)}" loading="lazy">`}
+        <span class="thumb-badges">
+          ${eye ? `<span class="thumb-badge e-${eye}">${eye}</span>` : ''}
+          ${dur ? `<span class="thumb-badge video">${dur}</span>` : ''}
+        </span>
         <div class="thumb-caption">
-          <span>${fmt(ts)}</span>
-          <span class="thumb-badges">
-            ${eyeLabel ? `<span class="thumb-badge">${eyeLabel}</span>` : ''}
-            ${dur ? `<span class="thumb-badge video">${dur}</span>` : ''}
-          </span>
+          <span><span class="thumb-time">${hms(ts)}</span>${c.note ? `<span class="thumb-note">${escHtml(c.note)}</span>` : ''}</span>
         </div>`;
+      el.title = [fmtDT(ts), eye, c.note].filter(Boolean).join(' · ');
       el.addEventListener('click', () => openViewer(c, ts));
+      el.addEventListener('keydown', (e) => { if (e.key === 'Enter') openViewer(c, ts); });
       list.appendChild(el);
     }
   }
@@ -654,6 +729,7 @@
     $('btn-capture').disabled = !has;
     $('btn-record').disabled = !has;
     $('btn-pause').disabled = !state.stream;
+    $('video-frame').classList.toggle('live', !!state.stream);
     $('btn-freeze').disabled = !has;
     $('btn-save-quad').disabled = !has;
   }

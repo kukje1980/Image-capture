@@ -4,64 +4,122 @@
   <meta charset="utf-8">
   <title>슬릿램프 영상 시스템</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
   <link rel="icon" type="image/png" href="/static/favicon.png">
   <link rel="shortcut icon" href="/static/favicon.ico">
   <link rel="stylesheet" href="/static/css/app.css">
 </head>
 <body>
+<!-- 아이콘 스프라이트 (선형 24px) -->
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-review" viewBox="0 0 24 24"><rect x="3" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.5"/></symbol>
+  <symbol id="i-aperture" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M14.3 3.3L9.7 11M20.4 8.5H11.2M19.4 16.2L14.8 8.2M9.7 20.7l4.6-7.9M3.6 15.5h9.2M4.6 7.8l4.6 8"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M6.3 17.7l-1.4 1.4M19.1 4.9l-1.4 1.4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1111.2 3 7 7 0 0021 12.8z"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20.5 20.5l-4.2-4.2"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></symbol>
+  <symbol id="i-videocam" viewBox="0 0 24 24"><path d="M22 7l-6 5 6 5z"/><rect x="2" y="5" width="14" height="14" rx="2.5"/></symbol>
+  <symbol id="i-camera" viewBox="0 0 24 24"><path d="M3 8.5A2.5 2.5 0 015.5 6h2l1.6-2.2h5.8L16.5 6h2A2.5 2.5 0 0121 8.5v9a2.5 2.5 0 01-2.5 2.5h-13A2.5 2.5 0 013 17.5z"/><circle cx="12" cy="13" r="3.8"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6.5" y="5" width="3.6" height="14" rx="1" fill="currentColor" stroke="none"/><rect x="13.9" y="5" width="3.6" height="14" rx="1" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5z" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-rec" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6.5" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-freeze" viewBox="0 0 24 24"><path d="M12 2.5v19M3.8 7.2l16.4 9.6M3.8 16.8l16.4-9.6M9.5 4l2.5 2 2.5-2M9.5 20l2.5-2 2.5 2"/></symbol>
+  <symbol id="i-quad" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2.5"/><path d="M12 3v18M3 12h18"/></symbol>
+  <symbol id="i-save" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><path d="M17 21v-7H7v7M7 3v4h8"/></symbol>
+  <symbol id="i-printer" viewBox="0 0 24 24"><path d="M6 9V3h12v6"/><path d="M6 18H4.5A2.5 2.5 0 012 15.5v-4A2.5 2.5 0 014.5 9h15a2.5 2.5 0 012.5 2.5v4a2.5 2.5 0 01-2.5 2.5H18"/><rect x="6" y="14" width="12" height="7" rx="1"/></symbol>
+  <symbol id="i-chev-l" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></symbol>
+  <symbol id="i-chev-r" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></symbol>
+  <symbol id="i-comment" viewBox="0 0 24 24"><path d="M21 14.5a2.5 2.5 0 01-2.5 2.5H8l-5 4V5.5A2.5 2.5 0 015.5 3h13A2.5 2.5 0 0121 5.5z"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 016-6h4a6 6 0 016 6v1"/></symbol>
+  <symbol id="i-live" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.5"/><path d="M16.2 7.8a6 6 0 010 8.4M7.8 16.2a6 6 0 010-8.4M19 5a10 10 0 010 14M5 19A10 10 0 015 5"/></symbol>
+  <symbol id="i-single" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/></symbol>
+  <symbol id="i-compare" viewBox="0 0 24 24"><rect x="2.5" y="4" width="8.5" height="16" rx="2"/><rect x="13" y="4" width="8.5" height="16" rx="2"/></symbol>
+  <symbol id="i-hand" viewBox="0 0 24 24"><path d="M18 11V6.5a1.75 1.75 0 00-3.5 0V11M14.5 10V4.5a1.75 1.75 0 00-3.5 0V10M11 10.5V6a1.75 1.75 0 00-3.5 0v8.5"/><path d="M18 9a1.75 1.75 0 013.5 0v5a8 8 0 01-8 8h-1.6a7.5 7.5 0 01-5.6-2.5L3 15.6a1.8 1.8 0 012.6-2.5L7.5 15"/></symbol>
+  <symbol id="i-lens" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="7"/><path d="M21 21l-5.5-5.5"/><circle cx="10.5" cy="10.5" r="2.8"/></symbol>
+  <symbol id="i-crop" viewBox="0 0 24 24"><path d="M6 2v14a2 2 0 002 2h14"/><path d="M18 22V8a2 2 0 00-2-2H2"/></symbol>
+  <symbol id="i-type" viewBox="0 0 24 24"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M6 18L18 6M8 6h10v10"/></symbol>
+  <symbol id="i-circle" viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="9" ry="7.5"/></symbol>
+  <symbol id="i-ruler" viewBox="0 0 24 24"><path d="M3 15.5L15.5 3 21 8.5 8.5 21z"/><path d="M7 11.5l2 2M10 8.5l2 2M13 5.5l2 2M5.5 14.5l1 1M8.5 11.5l1 1"/></symbol>
+  <symbol id="i-angle" viewBox="0 0 24 24"><path d="M4 20h16M4 20L15 5"/><path d="M10 20a6 6 0 00-2.2-4.6"/></symbol>
+  <symbol id="i-calib" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7.5"/><path d="M12 2v4.5M12 17.5V22M2 12h4.5M17.5 12H22"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/></symbol>
+  <symbol id="i-rot-l" viewBox="0 0 24 24"><path d="M3.5 12a8.5 8.5 0 108.5-8.5 9.2 9.2 0 00-6.4 2.6L3.5 8"/><path d="M3.5 3.5V8H8"/></symbol>
+  <symbol id="i-rot-r" viewBox="0 0 24 24"><path d="M20.5 12A8.5 8.5 0 1112 3.5a9.2 9.2 0 016.4 2.6L20.5 8"/><path d="M20.5 3.5V8H16"/></symbol>
+  <symbol id="i-flip-h" viewBox="0 0 24 24"><path d="M12 3v18" stroke-dasharray="2 2.5"/><path d="M9 7l-6 5 6 5zM15 7l6 5-6 5z"/></symbol>
+  <symbol id="i-flip-v" viewBox="0 0 24 24"><path d="M3 12h18" stroke-dasharray="2 2.5"/><path d="M7 9l5-6 5 6zM7 15l5 6 5-6z"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 010 11H11"/></symbol>
+  <symbol id="i-redo" viewBox="0 0 24 24"><path d="M15 14l5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 000 11H13"/></symbol>
+  <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 3v5h5"/><path d="M3.1 13A9 9 0 106 5.3L3 8"/><path d="M12 7.5V12l3 2"/></symbol>
+  <symbol id="i-eraser" viewBox="0 0 24 24"><path d="M20 20H8.5l-5-5a2 2 0 010-2.8l9.2-9.2a2 2 0 012.8 0l5 5a2 2 0 010 2.8L12 20"/><path d="M6.5 10.5l7 7"/></symbol>
+  <symbol id="i-fit" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 00-2 2v3M21 8V5a2 2 0 00-2-2h-3M3 16v3a2 2 0 002 2h3M16 21h3a2 2 0 002-2v-3"/></symbol>
+  <symbol id="i-zin" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20.5 20.5l-4.2-4.2M11 8v6M8 11h6"/></symbol>
+  <symbol id="i-zout" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20.5 20.5l-4.2-4.2M8 11h6"/></symbol>
+  <symbol id="i-wand" viewBox="0 0 24 24"><path d="M15 4V2M15 16v-2M8 9h2M20 9h2M17.8 11.8L19 13M17.8 6.2L19 5M12.2 6.2L11 5"/><path d="M3 21l11-11"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1.5 14h5M9.5 8h5M17.5 16h5"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.5"/><path d="M12 11v5.5M12 7.6h.01"/></symbol>
+  <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2.5"/><circle cx="8.5" cy="8.5" r="1.6"/><path d="M21 15l-5-5L5 21"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M4 21h16"/></symbol>
+</svg>
+
 <div class="app">
   <header class="topbar">
     <div class="brand">
-      <div class="brand-icon" aria-hidden="true">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>
-        </svg>
+      <div class="brand-icon" aria-hidden="true"><svg class="ic"><use href="#i-eye"/></svg></div>
+      <div class="brand-text">
+        <div class="brand-title">슬릿램프 영상 시스템</div>
+        <div class="brand-sub">Slit Lamp Imaging <span class="brand-badge">Web</span></div>
       </div>
-      <div class="brand-title">슬릿램프 영상 시스템</div>
-      <span class="brand-badge">Web</span>
     </div>
+    <nav class="modeswitch" aria-label="화면 전환">
+      <button class="ms-btn" id="btn-mode-capture" title="촬영 화면"><svg class="ic"><use href="#i-camera"/></svg>촬영</button>
+      <button class="ms-btn" id="btn-pro" aria-pressed="false" title="전문가용 영상 검토 화면 (MULTI·비교·보정·편집·인쇄)"><svg class="ic"><use href="#i-review"/></svg>Pro 검토</button>
+    </nav>
     <div class="top-actions">
-      <button class="btn btn-sm btn-pro" id="btn-pro" aria-pressed="false" title="전문가용 영상 검토 화면 (MULTI·비교·보정·주석·인쇄)">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-        Pro 모드
-      </button>
-      <button class="btn btn-sm" id="btn-folder">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
-        저장 폴더 지정
-      </button>
+      <label class="cam-pick" title="캡처 장비 (HDMI 캡처보드 / 웹캠)">
+        <svg class="ic"><use href="#i-videocam"/></svg>
+        <select class="select select-bare" id="camera-select" aria-label="카메라 선택"><option>—</option></select>
+      </label>
+      <button class="btn btn-sm btn-quiet" id="btn-folder"><svg class="ic"><use href="#i-folder"/></svg>저장 폴더</button>
       <span class="folder-status" id="folder-status" title="브라우저가 직접 저장할 로컬 폴더"><span class="dot"></span> 폴더 미지정</span>
-      <button class="btn btn-icon" id="btn-theme" title="테마 전환" aria-label="테마 전환">
-        <svg id="theme-icon-light" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
-        <svg id="theme-icon-dark" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      <button class="btn btn-icon btn-quiet" id="btn-theme" title="밝은/어두운 테마" aria-label="테마 전환">
+        <svg class="ic" id="theme-icon-light" style="display:block"><use href="#i-sun"/></svg>
+        <svg class="ic" id="theme-icon-dark" style="display:none"><use href="#i-moon"/></svg>
       </button>
     </div>
   </header>
 
   <div class="hint" id="hint">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+    <svg class="ic"><use href="#i-info"/></svg>
     <div class="hint-body" id="hint-body">
-      캡처한 사진·영상은 <strong>서버(환자 DB + 미디어 폴더)</strong>에 저장되며, 상단 <strong>“저장 폴더 지정”</strong>으로 한 번 권한을 주면 <strong>지정한 로컬 폴더에도 동시에</strong> 저장됩니다(Chrome/Edge). HTTPS 또는 localhost에서만 카메라를 사용할 수 있습니다.
+      캡처한 사진·영상은 <strong>서버(환자 DB + 미디어 폴더)</strong>에 저장되며, 상단 <strong>“저장 폴더”</strong>로 한 번 권한을 주면 <strong>지정한 로컬 폴더에도 동시에</strong> 저장됩니다(Chrome/Edge). HTTPS 또는 localhost에서만 카메라를 사용할 수 있습니다.
     </div>
-    <button class="hint-close" id="hint-close" aria-label="닫기">✕</button>
+    <button class="hint-close" id="hint-close" aria-label="닫기"><svg class="ic"><use href="#i-x"/></svg></button>
   </div>
 
-  <div class="patient-strip">
-    <span class="strip-label">환자</span>
-    <input class="input" type="search" id="patient-search" placeholder="이름/차트번호 검색" style="width:180px">
-    <select class="select" id="patient-select" style="min-width:220px" aria-label="환자 선택"></select>
-    <button class="btn" id="btn-new-patient">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-      신규 환자
-    </button>
-    <button class="btn" id="btn-edit-patient">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-      정보 수정
-    </button>
-    <div style="margin-left:auto; display:flex; align-items:center; gap:8px;">
-      <span class="strip-label">카메라</span>
-      <select class="select" id="camera-select" style="min-width:200px" aria-label="카메라 선택"><option>—</option></select>
+  <section class="pbanner" aria-label="환자">
+    <div class="pb-pick">
+      <label class="search">
+        <svg class="ic"><use href="#i-search"/></svg>
+        <input class="input" type="search" id="patient-search" placeholder="이름 · 차트번호 검색" aria-label="환자 검색">
+      </label>
+      <select class="select" id="patient-select" aria-label="환자 선택"></select>
     </div>
-  </div>
+    <div class="pb-id" id="pb-id">
+      <div class="pb-avatar" id="pb-avatar"><svg class="ic"><use href="#i-user"/></svg></div>
+      <div class="pb-main">
+        <div class="pb-name"><span id="pb-name">환자를 선택하세요</span><span class="pb-chart" id="pb-chart"></span></div>
+        <div class="pb-meta" id="pb-meta"></div>
+      </div>
+    </div>
+    <div class="pb-actions">
+      <button class="btn btn-sm" id="btn-edit-patient"><svg class="ic"><use href="#i-edit"/></svg>정보 수정</button>
+      <button class="btn btn-sm btn-primary" id="btn-new-patient"><svg class="ic"><use href="#i-plus"/></svg>신규 환자</button>
+    </div>
+  </section>
 
   <main class="workspace">
     <section class="video-col">
@@ -69,55 +127,66 @@
         <video id="video" autoplay muted playsinline></video>
         <canvas class="freeze" id="freeze"></canvas>
         <div class="quad-grid" id="quad-grid">
-          <div class="quad-cell" data-i="0"><canvas></canvas><span class="quad-tag"></span></div>
-          <div class="quad-cell" data-i="1"><canvas></canvas><span class="quad-tag"></span></div>
-          <div class="quad-cell" data-i="2"><canvas></canvas><span class="quad-tag"></span></div>
-          <div class="quad-cell" data-i="3"><canvas></canvas><span class="quad-tag"></span></div>
+          <div class="quad-cell" data-i="0"><canvas></canvas><span class="quad-tag"></span><span class="quad-no">1</span></div>
+          <div class="quad-cell" data-i="1"><canvas></canvas><span class="quad-tag"></span><span class="quad-no">2</span></div>
+          <div class="quad-cell" data-i="2"><canvas></canvas><span class="quad-tag"></span><span class="quad-no">3</span></div>
+          <div class="quad-cell" data-i="3"><canvas></canvas><span class="quad-tag"></span><span class="quad-no">4</span></div>
         </div>
         <div class="video-placeholder" id="video-placeholder">
-          <svg class="icon-lg" width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
-          <p>캡처 장비(또는 웹캠)에 접근할 수 있게 아래 버튼을 눌러 권한을 허용해 주세요.</p>
-          <button class="btn btn-primary" id="btn-start-camera">카메라 시작</button>
+          <div class="ph-ring"><svg class="ic"><use href="#i-aperture"/></svg></div>
+          <div class="ph-title">카메라 대기 중</div>
+          <p>캡처 장비(HDMI 캡처보드 또는 웹캠)에 접근할 수 있게 권한을 허용해 주세요.</p>
+          <button class="btn btn-primary" id="btn-start-camera"><svg class="ic"><use href="#i-videocam"/></svg>카메라 시작</button>
         </div>
-        <div class="badge-rec" id="rec-badge"><span class="rec-dot"></span> REC <span id="rec-time">00:00</span></div>
-        <div class="badge-paused">PAUSED</div>
+        <div class="hud hud-tl">
+          <span class="hud-chip" id="hud-patient">환자 미선택</span>
+          <span class="eye-chip" id="hud-eye" data-eye="NA">안구 미지정</span>
+        </div>
+        <div class="hud hud-tr">
+          <span class="badge-rec" id="rec-badge"><span class="rec-dot"></span> REC <span id="rec-time">00:00</span></span>
+          <span class="badge-paused">PAUSED</span>
+          <span class="hud-live"><span class="live-dot"></span>LIVE</span>
+        </div>
       </div>
 
-      <div class="controls">
-        <label class="field-inline" for="eye-select">안구
-          <select class="select" id="eye-select">
-            <option value="NA">미지정</option>
-            <option value="OD">OD (우안)</option>
-            <option value="OS">OS (좌안)</option>
-            <option value="OU">OU (양안)</option>
-          </select>
-        </label>
-        <button class="btn" id="btn-quad">⊞ 4분할</button>
-        <button class="btn" id="btn-pause" disabled>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
-          일시정지
-        </button>
-        <button class="btn btn-freeze" id="btn-freeze" disabled>❄ 정지영상</button>
-        <button class="btn btn-primary" id="btn-capture" disabled>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
-          사진 캡처
-        </button>
-        <button class="btn btn-record" id="btn-record" disabled>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="8"/></svg>
-          <span id="rec-btn-label">녹화 시작</span>
-        </button>
-        <button class="btn btn-primary" id="btn-save-quad" style="display:none" disabled>💾 4분할 저장</button>
-        <button class="btn" id="btn-clear-quad" style="display:none">비우기</button>
+      <div class="controls dock">
+        <div class="eye-seg" id="eye-seg" role="radiogroup" aria-label="안구">
+          <button role="radio" data-eye="OD" title="우안">OD<small>우안</small></button>
+          <button role="radio" data-eye="OS" title="좌안">OS<small>좌안</small></button>
+          <button role="radio" data-eye="OU" title="양안">OU<small>양안</small></button>
+          <button role="radio" data-eye="NA" title="미지정">—<small>미지정</small></button>
+        </div>
+        <select class="sr-only" id="eye-select" aria-label="안구" tabindex="-1">
+          <option value="NA">미지정</option>
+          <option value="OD">OD (우안)</option>
+          <option value="OS">OS (좌안)</option>
+          <option value="OU">OU (양안)</option>
+        </select>
+        <span class="dsep"></span>
+        <button class="btn btn-tool" id="btn-quad" title="한 화면 4분할 정지영상"><svg class="ic"><use href="#i-quad"/></svg>4분할</button>
+        <button class="btn btn-tool" id="btn-pause" disabled title="일시정지 (Space)"><svg class="ic"><use href="#i-pause"/></svg>일시정지</button>
+        <div class="dock-center">
+          <button class="btn btn-tool btn-freeze" id="btn-freeze" disabled title="정지영상 (4분할 칸 채우기)"><svg class="ic"><use href="#i-freeze"/></svg>정지영상</button>
+          <button class="btn btn-shutter" id="btn-capture" disabled title="사진 캡처 (C)"><span class="shutter-ring"><svg class="ic"><use href="#i-camera"/></svg></span><span>사진 캡처</span></button>
+          <button class="btn btn-tool btn-record" id="btn-record" disabled title="녹화 시작/중지 (R)"><svg class="ic"><use href="#i-rec"/></svg><span id="rec-btn-label">녹화 시작</span></button>
+        </div>
+        <button class="btn btn-primary" id="btn-save-quad" style="display:none" disabled><svg class="ic"><use href="#i-save"/></svg>4분할 저장</button>
+        <button class="btn btn-tool" id="btn-clear-quad" style="display:none"><svg class="ic"><use href="#i-eraser"/></svg>비우기</button>
         <div class="spacer"></div>
         <div class="status-indicator"><span class="status-dot" id="status-dot"></span><span id="status-text">대기 중</span></div>
       </div>
     </section>
 
     <aside class="thumbs" aria-label="촬영 이미지 목록">
-      <div class="thumbs-header">촬영 이미지 <span class="thumbs-count" id="thumb-count">0</span></div>
+      <div class="thumbs-header">
+        <span class="th-title">촬영 이미지</span><span class="thumbs-count" id="thumb-count">0</span>
+      </div>
+      <div class="thumb-filter" id="thumb-filter" role="tablist" aria-label="필터">
+        <button class="tf on" data-f="all">전체</button><button class="tf" data-f="OD">OD</button><button class="tf" data-f="OS">OS</button><button class="tf" data-f="video">동영상</button>
+      </div>
       <div class="thumbs-list" id="thumb-list">
         <div class="thumbs-empty" id="thumb-empty">
-          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+          <svg class="ic"><use href="#i-image"/></svg>
           <div>선택한 환자의<br>촬영 이미지가 없습니다</div>
         </div>
       </div>
@@ -127,27 +196,29 @@
   <section class="pro" id="pro" aria-label="Pro 영상 검토">
     <div class="pro-toolbar" role="toolbar" aria-label="Pro 명령">
       <div class="seg" id="pro-modes">
-        <button class="pbtn" data-mode="live" title="실시간 영상">LIVE</button>
-        <button class="pbtn" data-mode="single" title="단일 영상 (←/→ 이동)">1화면</button>
-        <button class="pbtn" data-mode="multi" title="다중 영상 그리드">MULTI</button>
-        <button class="pbtn" data-mode="compare" title="선택한 2장 비교">비교</button>
+        <button class="pbtn" data-mode="live" title="실시간 영상"><svg class="ic"><use href="#i-live"/></svg>LIVE</button>
+        <button class="pbtn" data-mode="single" title="단일 영상 (←/→ 이동)"><svg class="ic"><use href="#i-single"/></svg>1화면</button>
+        <button class="pbtn" data-mode="multi" title="다중 영상 그리드"><svg class="ic"><use href="#i-review"/></svg>MULTI</button>
+        <button class="pbtn" data-mode="compare" title="선택한 2장 비교"><svg class="ic"><use href="#i-compare"/></svg>비교</button>
       </div>
       <span class="psep"></span>
       <select class="select psel" id="pro-eye" title="저장할 영상의 안구 방향">
         <option value="NA">안구 미지정</option><option value="OD">OD 우안</option>
         <option value="OS">OS 좌안</option><option value="OU">OU 양안</option>
       </select>
-      <button class="pbtn pcapture" id="pro-capture" title="라이브 정지/재개 (Space)">❄ CAPTURE</button>
-      <button class="pbtn" id="pro-save" title="정지 영상을 환자 DB에 저장">💾 SAVE</button>
+      <button class="pbtn pcapture" id="pro-capture" title="라이브 정지/재개 (Space)"><svg class="ic"><use href="#i-freeze"/></svg>CAPTURE</button>
+      <button class="pbtn" id="pro-save" title="정지 영상을 환자 DB에 저장"><svg class="ic"><use href="#i-save"/></svg>SAVE</button>
       <span class="psep"></span>
-      <button class="pbtn" id="pro-prev" title="이전 영상/페이지 (←)">◀ PREV</button>
-      <button class="pbtn" id="pro-next" title="다음 영상/페이지 (→)">NEXT ▶</button>
+      <div class="seg">
+        <button class="pbtn picon" id="pro-prev" title="이전 영상/페이지 (←)" aria-label="이전"><svg class="ic"><use href="#i-chev-l"/></svg>PREV</button>
+        <button class="pbtn picon" id="pro-next" title="다음 영상/페이지 (→)" aria-label="다음">NEXT<svg class="ic"><use href="#i-chev-r"/></svg></button>
+      </div>
       <select class="select psel" id="pro-per" title="MULTI 표시 장수"><option value="16">16장</option><option value="36">36장</option></select>
       <span class="psep"></span>
-      <button class="pbtn" id="pro-comment" title="현재 영상 코멘트 편집">코멘트</button>
-      <button class="pbtn" id="pro-patient" title="진단명·담당의 등 환자 정보">환자정보</button>
+      <button class="pbtn pghost" id="pro-comment" title="현재 영상 코멘트 편집"><svg class="ic"><use href="#i-comment"/></svg>코멘트</button>
+      <button class="pbtn pghost" id="pro-patient" title="진단명·담당의 등 환자 정보"><svg class="ic"><use href="#i-user"/></svg>환자정보</button>
       <span class="pgrow"></span>
-      <button class="pbtn" id="pro-print" title="보고서 인쇄 / PDF 저장">🖨 인쇄·PDF</button>
+      <button class="pbtn pprint" id="pro-print" title="보고서 인쇄 / PDF 저장"><svg class="ic"><use href="#i-printer"/></svg>인쇄·PDF</button>
     </div>
 
     <div class="pro-body">
@@ -156,8 +227,9 @@
           <video id="pro-video" autoplay muted playsinline></video>
           <canvas id="pro-freeze"></canvas>
           <div class="pro-empty" id="pro-live-empty">
+            <div class="ph-ring"><svg class="ic"><use href="#i-aperture"/></svg></div>
             <p>카메라가 꺼져 있습니다.</p>
-            <button class="btn btn-primary" id="pro-start-camera">카메라 시작</button>
+            <button class="btn btn-primary" id="pro-start-camera"><svg class="ic"><use href="#i-videocam"/></svg>카메라 시작</button>
           </div>
         </div>
         <div class="pro-view" data-view="single"><canvas class="pcv" id="pcv-single"></canvas></div>
@@ -168,13 +240,15 @@
       </div>
 
       <aside class="pro-side">
-        <h3 class="pside-h">영상 정보</h3>
-        <div class="pside-info" id="pro-imginfo">-</div>
+        <div class="pcard">
+          <h3 class="pside-h"><svg class="ic"><use href="#i-info"/></svg>영상 정보</h3>
+          <div class="pside-info" id="pro-imginfo">-</div>
+        </div>
 
         <div class="ptabs" role="tablist">
-          <button class="ptab on" role="tab" data-tab="adj" aria-selected="true">보정</button>
-          <button class="ptab" role="tab" data-tab="flt" aria-selected="false">필터</button>
-          <button class="ptab" role="tab" data-tab="edit" aria-selected="false">편집</button>
+          <button class="ptab on" role="tab" data-tab="adj" aria-selected="true"><svg class="ic"><use href="#i-sliders"/></svg>보정</button>
+          <button class="ptab" role="tab" data-tab="flt" aria-selected="false"><svg class="ic"><use href="#i-wand"/></svg>필터</button>
+          <button class="ptab" role="tab" data-tab="edit" aria-selected="false"><svg class="ic"><use href="#i-edit"/></svg>편집</button>
         </div>
 
         <div class="ppane on" data-pane="adj" role="tabpanel">
@@ -183,9 +257,9 @@
           <label class="prange">감마 <input type="range" id="adj-gamma" min="20" max="300" value="100"><output id="o-gamma">1.00</output></label>
           <label class="prange">채도 <input type="range" id="adj-sat" min="0" max="200" value="100"><output id="o-sat">1.00</output></label>
           <h4 class="psub">색균형 (RGB)</h4>
-          <label class="prange">R <input type="range" id="adj-r" min="50" max="150" value="100"><output id="o-r">1.00</output></label>
-          <label class="prange">G <input type="range" id="adj-g" min="50" max="150" value="100"><output id="o-g">1.00</output></label>
-          <label class="prange">B <input type="range" id="adj-b" min="50" max="150" value="100"><output id="o-b">1.00</output></label>
+          <label class="prange ch-r">R <input type="range" id="adj-r" min="50" max="150" value="100"><output id="o-r">1.00</output></label>
+          <label class="prange ch-g">G <input type="range" id="adj-g" min="50" max="150" value="100"><output id="o-g">1.00</output></label>
+          <label class="prange ch-b">B <input type="range" id="adj-b" min="50" max="150" value="100"><output id="o-b">1.00</output></label>
           <h4 class="psub">레벨 · 히스토그램</h4>
           <canvas id="pro-hist" width="228" height="64" aria-label="히스토그램"></canvas>
           <label class="prange">흑점 <input type="range" id="adj-black" min="0" max="250" value="0"><output id="o-black">0</output></label>
@@ -198,8 +272,8 @@
           </label>
           <label class="pcheck"><input type="checkbox" id="adj-neg"> 네거티브 (NEGA)</label>
           <div class="pside-row">
-            <button class="btn btn-sm" id="adj-auto" title="히스토그램 양끝 0.5%를 잘라 흑·백점 자동 설정">자동 대비</button>
-            <button class="btn btn-sm" id="adj-reset">보정 초기화</button>
+            <button class="btn btn-sm" id="adj-auto" title="히스토그램 양끝 0.5%를 잘라 흑·백점 자동 설정"><svg class="ic"><use href="#i-wand"/></svg>자동 대비</button>
+            <button class="btn btn-sm" id="adj-reset"><svg class="ic"><use href="#i-history"/></svg>초기화</button>
           </div>
         </div>
 
@@ -213,7 +287,7 @@
           <label class="prange wide">국소 대비 향상
             <select class="select" id="adj-enhance"><option value="0">없음</option><option value="1">약</option><option value="2">중</option><option value="3">강</option></select>
           </label>
-          <p class="pside-info">· 노이즈 제거: 어두운 영상의 잡티 감소
+          <p class="pside-tip">· 노이즈 제거: 어두운 영상의 잡티 감소
 · 선명하게: 경계(각막·수정체 단면)를 또렷하게
 · 국소 대비 향상: 미세한 밝기 차이(혼탁·부종)를 강조
 · 보정 탭의 Red-free는 혈관·출혈 관찰에 유용</p>
@@ -221,42 +295,42 @@
 
         <div class="ppane" data-pane="edit" role="tabpanel">
           <h4 class="psub">보기</h4>
-          <div class="pside-grid">
-            <button class="pbtn pspan" id="pro-fit">화면 맞춤</button>
-            <button class="pbtn" id="pro-zin">확대 +</button>
-            <button class="pbtn" id="pro-zout">축소 −</button>
+          <div class="pside-grid g3">
+            <button class="pbtn" id="pro-fit" title="화면 맞춤"><svg class="ic"><use href="#i-fit"/></svg>맞춤</button>
+            <button class="pbtn" id="pro-zin" title="확대"><svg class="ic"><use href="#i-zin"/></svg>확대</button>
+            <button class="pbtn" id="pro-zout" title="축소"><svg class="ic"><use href="#i-zout"/></svg>축소</button>
           </div>
           <h4 class="psub">회전 · 반전</h4>
-          <div class="pside-grid">
-            <button class="pbtn" id="ed-rot-l" title="반시계 방향 90°">⟲ 90°</button>
-            <button class="pbtn" id="ed-rot-r" title="시계 방향 90°">⟳ 90°</button>
-            <button class="pbtn" id="ed-flip-h" title="좌우 반전">⇋ 좌우</button>
-            <button class="pbtn" id="ed-flip-v" title="상하 반전">⇅ 상하</button>
+          <div class="pside-grid g4">
+            <button class="pbtn picon" id="ed-rot-l" title="반시계 방향 90°" aria-label="반시계 90°"><svg class="ic"><use href="#i-rot-l"/></svg></button>
+            <button class="pbtn picon" id="ed-rot-r" title="시계 방향 90°" aria-label="시계 90°"><svg class="ic"><use href="#i-rot-r"/></svg></button>
+            <button class="pbtn picon" id="ed-flip-h" title="좌우 반전" aria-label="좌우 반전"><svg class="ic"><use href="#i-flip-h"/></svg></button>
+            <button class="pbtn picon" id="ed-flip-v" title="상하 반전" aria-label="상하 반전"><svg class="ic"><use href="#i-flip-v"/></svg></button>
           </div>
           <h4 class="psub">도구 (주석 · 측정)</h4>
-          <div class="pside-grid" id="pro-tools">
-            <button class="pbtn" data-tool="pan" title="이동 / 휠 확대">✋ 이동</button>
-            <button class="pbtn" data-tool="magnify" title="누르고 있는 동안 확대 렌즈">🔍 돋보기</button>
-            <button class="pbtn" data-tool="crop" title="드래그한 영역만 남김 (1화면)">✂ 자르기</button>
-            <button class="pbtn" data-tool="text" title="클릭한 위치에 텍스트">T 텍스트</button>
-            <button class="pbtn" data-tool="arrow" title="드래그해 화살표">↗ 화살표</button>
-            <button class="pbtn" data-tool="circle" title="드래그해 원·타원">◯ 원</button>
-            <button class="pbtn" data-tool="length" title="드래그해 길이 측정">📏 길이</button>
-            <button class="pbtn" data-tool="angle" title="세 점 클릭 — 두 번째 점이 꼭짓점">∠ 각도</button>
-            <button class="pbtn pspan" data-tool="calibrate" title="실제 길이를 아는 선을 그어 mm 단위 보정">📐 눈금 보정</button>
+          <div class="pside-grid g3 ptools" id="pro-tools">
+            <button class="pbtn" data-tool="pan" title="이동 / 휠 확대"><svg class="ic"><use href="#i-hand"/></svg>이동</button>
+            <button class="pbtn" data-tool="magnify" title="누르고 있는 동안 확대 렌즈"><svg class="ic"><use href="#i-lens"/></svg>돋보기</button>
+            <button class="pbtn" data-tool="crop" title="드래그한 영역만 남김 (1화면)"><svg class="ic"><use href="#i-crop"/></svg>자르기</button>
+            <button class="pbtn" data-tool="text" title="클릭한 위치에 텍스트"><svg class="ic"><use href="#i-type"/></svg>텍스트</button>
+            <button class="pbtn" data-tool="arrow" title="드래그해 화살표"><svg class="ic"><use href="#i-arrow"/></svg>화살표</button>
+            <button class="pbtn" data-tool="circle" title="드래그해 원·타원"><svg class="ic"><use href="#i-circle"/></svg>원</button>
+            <button class="pbtn" data-tool="length" title="드래그해 길이 측정"><svg class="ic"><use href="#i-ruler"/></svg>길이</button>
+            <button class="pbtn" data-tool="angle" title="세 점 클릭 — 두 번째 점이 꼭짓점"><svg class="ic"><use href="#i-angle"/></svg>각도</button>
+            <button class="pbtn" data-tool="calibrate" title="실제 길이를 아는 선을 그어 mm 단위 보정"><svg class="ic"><use href="#i-calib"/></svg>눈금</button>
           </div>
           <div class="pcalib"><span id="pro-calib">눈금: 미보정 (px 단위)</span><button class="btn btn-sm" id="pro-calib-clear">해제</button></div>
           <h4 class="psub">편집 이력</h4>
           <div class="pside-grid">
-            <button class="pbtn" id="ed-undo" title="마지막 편집 취소 (Ctrl+Z)">↶ 실행 취소</button>
-            <button class="pbtn" id="ed-redo" title="취소한 편집 다시 실행 (Ctrl+Y)">↷ 다시 실행</button>
-            <button class="pbtn" id="ed-orig" title="모든 보정·편집을 지우고 원본으로">원본</button>
-            <button class="pbtn" id="pro-clear">주석·측정 지우기</button>
-            <button class="pbtn pspan" id="pro-save-edited" title="보정·편집·주석·측정을 반영한 새 영상으로 저장 (원본 보존)">💾 편집본 저장</button>
+            <button class="pbtn" id="ed-undo" title="마지막 편집 취소 (Ctrl+Z)"><svg class="ic"><use href="#i-undo"/></svg>실행 취소</button>
+            <button class="pbtn" id="ed-redo" title="취소한 편집 다시 실행 (Ctrl+Y)"><svg class="ic"><use href="#i-redo"/></svg>다시 실행</button>
+            <button class="pbtn" id="ed-orig" title="모든 보정·편집을 지우고 원본으로"><svg class="ic"><use href="#i-history"/></svg>원본</button>
+            <button class="pbtn" id="pro-clear" title="주석·측정 지우기"><svg class="ic"><use href="#i-eraser"/></svg>주석 지우기</button>
+            <button class="pbtn pspan pprimary" id="pro-save-edited" title="보정·편집·주석·측정을 반영한 새 영상으로 저장 (원본 보존)"><svg class="ic"><use href="#i-save"/></svg>편집본 저장</button>
           </div>
         </div>
 
-        <div class="pside-info" id="pro-selinfo">MULTI에서 영상 2장을 클릭해 선택한 뒤 '비교'를 누르세요.</div>
+        <div class="pside-note" id="pro-selinfo">MULTI에서 영상 2장을 클릭해 선택한 뒤 '비교'를 누르세요.</div>
       </aside>
     </div>
 
@@ -269,7 +343,7 @@
 <dialog id="patient-dialog" aria-labelledby="patient-dialog-title">
   <div class="dialog-header">
     <div class="dialog-title" id="patient-dialog-title">신규 환자</div>
-    <button class="btn btn-ghost btn-icon" type="button" id="patient-x" aria-label="닫기">✕</button>
+    <button class="btn btn-ghost btn-icon" type="button" id="patient-x" aria-label="닫기"><svg class="ic"><use href="#i-x"/></svg></button>
   </div>
   <form id="patient-form">
     <div class="dialog-body">
@@ -302,11 +376,11 @@
 <dialog id="viewer-dialog" class="viewer-dialog" aria-labelledby="viewer-title">
   <div class="dialog-header">
     <div class="dialog-title" id="viewer-title">보기</div>
-    <button class="btn btn-ghost btn-icon" type="button" id="viewer-close" aria-label="닫기">✕</button>
+    <button class="btn btn-ghost btn-icon" type="button" id="viewer-close" aria-label="닫기"><svg class="ic"><use href="#i-x"/></svg></button>
   </div>
   <div class="viewer-body" id="viewer-body"></div>
   <div class="dialog-footer">
-    <a class="btn" id="viewer-download" download>다운로드</a>
+    <a class="btn" id="viewer-download" download><svg class="ic"><use href="#i-download"/></svg>다운로드</a>
     <button class="btn btn-primary" type="button" id="viewer-close-2">닫기</button>
   </div>
 </dialog>
