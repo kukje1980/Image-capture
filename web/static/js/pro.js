@@ -560,9 +560,16 @@
   V.left.peer = V.right; V.right.peer = V.left;
 
   // ================= 데이터 =================
+  // 최근 사용 순(LRU) 캐시 — 오래 쓰면 메모리가 계속 늘지 않도록 개수 제한
   const imgCache = new Map();
+  const IMG_CACHE_MAX = 48;
   function loadImage(url) {
-    if (imgCache.has(url)) return imgCache.get(url);
+    if (imgCache.has(url)) {
+      const hit = imgCache.get(url);
+      imgCache.delete(url); imgCache.set(url, hit);       // 최근 사용으로 이동
+      return hit;
+    }
+    while (imgCache.size >= IMG_CACHE_MAX) imgCache.delete(imgCache.keys().next().value);
     const p = new Promise((res, rej) => {
       const im = new Image();
       im.onload = () => res(im);

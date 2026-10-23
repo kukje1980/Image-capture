@@ -21,6 +21,9 @@ router = APIRouter(prefix="/api/v1/captures", tags=["captures"])
 
 _UNSAFE = re.compile(r"[^0-9A-Za-z._가-힣-]+")
 _EXT = {"photo": "png", "video": "mp4"}
+# 저장 파일은 /media 로 같은 출처에서 그대로 제공되므로, 영상 형식만 허용한다
+# (html·svg 등이 올라가면 같은 출처에서 스크립트가 실행될 수 있음)
+_ALLOWED_EXT = {"photo": {"png", "jpg", "jpeg", "webp"}, "video": {"mp4", "webm", "mov", "mkv"}}
 
 
 def _db(request: Request):
@@ -68,7 +71,9 @@ async def create_capture(
         raise HTTPException(status_code=400, detail="media_type은 photo 또는 video 여야 합니다.")
 
     ts = datetime.now()
-    file_ext = _sanitize(ext) if ext else _EXT[media_type]
+    file_ext = (ext or _EXT[media_type]).strip().lower().lstrip(".")
+    if file_ext not in _ALLOWED_EXT[media_type]:
+        raise HTTPException(status_code=400, detail=f"허용되지 않는 파일 형식입니다: {file_ext}")
     rel_path, abs_path = _target_paths(patient, media_type, ts, file_ext)
     abs_path.parent.mkdir(parents=True, exist_ok=True)
 

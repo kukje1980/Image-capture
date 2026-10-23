@@ -3,6 +3,9 @@
 imageio-ffmpeg(번들 ffmpeg, H.264/yuv420p)를 우선 사용하고, 실패 시
 cv2.VideoWriter(mp4v)로 폴백한다. 인코딩은 자체 스레드 + 바운디드 큐에서
 수행해 GUI 스레드를 막지 않는다. 큐가 가득 차면 가장 최근 프레임을 버린다.
+
+재생 속도가 실제 시간과 같도록, 들어오는 프레임을 실제 경과 시간 기준으로 맞춘다
+(카메라가 느리거나 프레임이 버려졌으면 직전 프레임을 반복, 빠르면 건너뜀).
 """
 from __future__ import annotations
 
@@ -28,6 +31,7 @@ except ImportError:
 log = logging.getLogger(__name__)
 
 _QUEUE_MAX = 120
+_MAX_REPEAT = 8          # 한 번에 채워 넣을 최대 반복 프레임 수 (긴 멈춤 뒤 폭주 방지)
 _SENTINEL = object()
 
 
@@ -46,6 +50,7 @@ class VideoRecorder(QObject):
         self._fps = 30.0
         self._size = (0, 0)
         self._count = 0
+        self._queued = 0
         self._start_ts = 0.0
         self._recording = False
 
@@ -60,6 +65,7 @@ class VideoRecorder(QObject):
         self._fps = float(fps) if fps and fps > 0 else 30.0
         self._size = (int(size[0]), int(size[1]))
         self._count = 0
+        self._queued = 0
         self._open_writer()
         self._queue = queue.Queue(maxsize=_QUEUE_MAX)
         self._recording = True
@@ -95,10 +101,15 @@ class VideoRecorder(QObject):
     def feed(self, frame: np.ndarray) -> None:
         if not self._recording or self._queue is None:
             return
-        try:
-            self._queue.put_nowait(frame)
-        except queue.Full:
-            pass  # 인코더가 못 따라오면 프레임 드롭
+        # 실제 경과 시간에 해당하는 프레임 번호까지 채운다
+        target = int((time.time() - self._start_ts) * self._fps) + 1
+        need = min(target - self._queued, _MAX_REPEAT)
+        for _ in range(need):
+            try:
+                self._queue.put_nowait(frame)
+                self._queued += 1
+            except queue.Full:
+                break  # 인코더가 못 따라오면 드롭 → 다음 프레임에서 반복으로 메움
 
     def _worker(self) -> None:
         while True:
@@ -108,9 +119,31 @@ class VideoRecorder(QObject):
             try:
                 self._write(item)
             except Exception as e:  # noqa: BLE001
+                # imageio 는 첫 프레임에서 ffmpeg 를 띄우므로 실패가 여기서 드러난다 → cv2 로 한 번 폴백
+                if self._backend == "ffmpeg" and self._count == 0 and self._fallback_to_cv2():
+                    try:
+                        self._write(item)
+                        continue
+                    except Exception:  # noqa: BLE001
+                        pass
                 log.exception("frame write failed")
                 self.error.emit(str(e))
                 break
+
+    def _fallback_to_cv2(self) -> bool:
+        if cv2 is None:
+            return False
+        try:
+            self._writer.close()
+        except Exception:  # noqa: BLE001
+            pass
+        fourcc = cv2.VideoWriter_fourcc(*self._fallback_fourcc)
+        writer = cv2.VideoWriter(self._path, fourcc, self._fps, self._size)
+        if not writer.isOpened():
+            return False
+        log.warning("ffmpeg 쓰기 실패 → cv2(%s) 로 녹화 계속", self._fallback_fourcc)
+        self._writer, self._backend = writer, "cv2"
+        return True
 
     def _write(self, frame: np.ndarray) -> None:
         if self._backend == "ffmpeg":

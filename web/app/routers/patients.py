@@ -5,6 +5,7 @@ from typing import List
 
 from fastapi import APIRouter, HTTPException, Request
 
+from app import config
 from app.models.schemas import PatientIn, PatientOut
 
 router = APIRouter(prefix="/api/v1/patients", tags=["patients"])
@@ -52,4 +53,23 @@ def update_patient(request: Request, pid: int, patient: PatientIn):
 
 @router.delete("/{pid}", status_code=204)
 def delete_patient(request: Request, pid: int):
-    _db(request).delete_patient(pid)
+    """환자와 촬영 기록 삭제 — 서버에 저장된 사진·동영상 파일도 함께 지운다."""
+    media_root = config.MEDIA_DIR.resolve()
+    dirs = set()
+    for rel in _db(request).delete_patient(pid):
+        f = (config.MEDIA_DIR / rel).resolve()
+        if media_root not in f.parents:          # 미디어 폴더 밖은 건드리지 않음
+            continue
+        try:
+            f.unlink(missing_ok=True)
+            dirs.add(f.parent)
+        except OSError:
+            pass
+    # 비게 된 날짜 폴더 · 환자 폴더 정리
+    for dpath in sorted(dirs, key=lambda x: len(x.parts), reverse=True):
+        for d in (dpath, dpath.parent):
+            try:
+                if d != media_root and d.is_dir() and not any(d.iterdir()):
+                    d.rmdir()
+            except OSError:
+                pass

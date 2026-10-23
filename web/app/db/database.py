@@ -87,10 +87,15 @@ class Database:
             )
             self._conn.commit()
 
-    def delete_patient(self, pid: int) -> None:
+    def delete_patient(self, pid: int) -> List[str]:
+        """환자 삭제 (영상 레코드는 CASCADE). 지워야 할 미디어 파일 경로 목록을 돌려준다."""
         with self._lock:
+            rows = self._conn.execute(
+                "SELECT file_path FROM captures WHERE patient_id=?", (pid,)
+            ).fetchall()
             self._conn.execute("DELETE FROM patients WHERE id=?", (pid,))
             self._conn.commit()
+        return [r["file_path"] for r in rows if r["file_path"]]
 
     # ---- captures ----
     def create_capture(self, c: dict) -> int:

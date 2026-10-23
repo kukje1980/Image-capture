@@ -947,7 +947,12 @@ class ProWorkspace(QWidget):
         if frame is None:
             QMessageBox.information(self, "확인", "저장할 영상이 없습니다.")
             return None
-        cap = self.service.save_photo(frame, self._patient, eye=self.current_eye())
+        try:
+            cap = self.service.save_photo(frame, self._patient, eye=self.current_eye())
+        except Exception as e:  # noqa: BLE001
+            log.exception("Pro live save failed")
+            QMessageBox.warning(self, "저장 실패", f"영상을 저장하지 못했습니다.\n{e}")
+            return None
         self.reload()
         self.savedCapture.emit()
         if self._frozen:
@@ -979,10 +984,16 @@ class ProWorkspace(QWidget):
                 note = "편집본"
             else:
                 note = "보정본"
-            saved.append(self.service.save_photo(cv.render_to_bgr(), self._patient,
-                                                 eye=src.eye or "NA", note=note))
+            try:
+                saved.append(self.service.save_photo(cv.render_to_bgr(), self._patient,
+                                                     eye=src.eye or "NA", note=note))
+            except Exception as e:  # noqa: BLE001
+                log.exception("Pro edited save failed")
+                QMessageBox.warning(self, "저장 실패", f"편집본을 저장하지 못했습니다.\n{e}")
+                break
         if not saved:
-            QMessageBox.information(self, "편집본 저장", "보정·편집·주석이 없어 저장할 내용이 없습니다.")
+            if not any(cv.is_modified() for cv, _ in targets if cv.image() is not None):
+                QMessageBox.information(self, "편집본 저장", "보정·편집·주석이 없어 저장할 내용이 없습니다.")
             return []
         self.clear_annotations()
         self.reset_adjust()                       # 저장본엔 보정이 이미 반영됨 → 이중 적용 방지

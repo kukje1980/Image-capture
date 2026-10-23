@@ -159,7 +159,18 @@
         opt.textContent = `${p.name} (${p.chart_no || '-'})`;
         sel.appendChild(opt);
       }
-      const inList = state.patients.find(p => p.id === state.currentPatientId);
+      let inList = state.patients.find(p => p.id === state.currentPatientId);
+      if (!inList && state.currentPatientId && !q) {
+        // 목록(최대 500명)에 없는 방금 저장한 환자도 선택이 유지되도록 따로 불러와 맨 앞에 둔다
+        try {
+          inList = await api(`/patients/${state.currentPatientId}`);
+          state.patients.unshift(inList);
+          const opt = document.createElement('option');
+          opt.value = String(inList.id);
+          opt.textContent = `${inList.name} (${inList.chart_no || '-'})`;
+          sel.insertBefore(opt, sel.firstChild);
+        } catch (_) { inList = null; }
+      }
       state.currentPatientId = inList ? state.currentPatientId : state.patients[0].id;
       sel.value = String(state.currentPatientId);
     }
@@ -513,6 +524,19 @@
     // (b) 지정 로컬 폴더에도 동시 저장
     let folderOk = false;
     if (state.dirHandle) folderOk = await saveToFolder(filename, blob);
+
+    // (c) 서버·폴더 모두 실패하면 촬영본을 잃지 않도록 파일로 내려받는다
+    //     (예: 인터넷 호스팅의 업로드 크기 제한에 걸린 긴 동영상)
+    if (!serverOk && !folderOk) {
+      try {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = filename;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+        toast(`서버에 저장하지 못해 '${filename}' 파일로 내려받았습니다. 상단 '저장 폴더'를 지정하면 PC 폴더에 자동 보관됩니다.`, 'error');
+      } catch (_) { /* 내려받기도 불가한 환경 */ }
+    }
 
     if (serverOk) document.dispatchEvent(new CustomEvent('slit:captures'));
     if (serverOk && !opts.silent) {

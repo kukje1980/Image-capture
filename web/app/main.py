@@ -50,6 +50,14 @@ def _auth_token() -> str:
     return hmac.new(config.PASSWORD.encode("utf-8"), b"slitlamp-web-v1", hashlib.sha256).hexdigest()
 
 
+def _safe_next(target: str) -> str:
+    """로그인 후 이동 경로 — 같은 사이트 안의 경로만 허용 (//evil, /\\evil 같은 외부 이동 차단)."""
+    t = target or "/"
+    if not t.startswith("/") or t.startswith("//") or "\\" in t or any(ord(ch) < 32 for ch in t):
+        return "/"
+    return t
+
+
 def _authorized(request: Request) -> bool:
     if not config.PASSWORD:
         return True
@@ -70,14 +78,15 @@ async def _gate(request: Request, call_next):
 
 @app.get("/login", response_class=HTMLResponse, include_in_schema=False)
 def login_page(request: Request, next: str = "/", error: int = 0):
+    dest = _safe_next(next)
     if _authorized(request):
-        return RedirectResponse(next if next.startswith("/") else "/", status_code=303)
-    return templates.TemplateResponse(request, "login.html", {"next": next, "error": bool(error)})
+        return RedirectResponse(dest, status_code=303)
+    return templates.TemplateResponse(request, "login.html", {"next": dest, "error": bool(error)})
 
 
 @app.post("/login", include_in_schema=False)
 def login_submit(request: Request, password: str = Form(""), next: str = Form("/")):
-    dest = next if next.startswith("/") and not next.startswith("//") else "/"
+    dest = _safe_next(next)
     if not config.PASSWORD or not hmac.compare_digest(password.encode("utf-8"), config.PASSWORD.encode("utf-8")):
         return RedirectResponse(f"/login?error=1&next={quote(dest)}", status_code=303)
     resp = RedirectResponse(dest, status_code=303)

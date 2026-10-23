@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from collections import deque
 
@@ -64,6 +65,7 @@ class MainWindow(QMainWindow):
         self._video_ts = None
         self._video_eye = "NA"
         self._first_video_frame = None
+        self._video_patient = None
         self._rec_started = 0.0
         self.cam_thread = None
         self.worker = None
@@ -459,6 +461,7 @@ class MainWindow(QMainWindow):
         self._video_path = path
         self._video_ts = ts
         self._video_eye = eye
+        self._video_patient = self._current_patient   # 녹화 중 환자를 바꿔도 시작한 환자에게 저장
         self._first_video_frame = None
         self._rec_started = time.time()
         self._rec_timer.start()
@@ -471,10 +474,20 @@ class MainWindow(QMainWindow):
         self._recording = False
         self._rec_timer.stop()
         self._refresh_hud_state()
-        _, _, duration = self.recorder.stop()
+        _, count, duration = self.recorder.stop()
+        if count == 0:
+            # 프레임이 하나도 기록되지 않은 녹화(인코더 오류·카메라 끊김)는 DB 에 남기지 않는다
+            try:
+                os.remove(self._video_path)
+            except OSError:
+                pass
+            QMessageBox.warning(self, "녹화 실패", "녹화된 영상이 없습니다 (카메라 또는 인코더 오류).")
+            self.control_bar.set_status("녹화 실패")
+            self.control_bar.reset_record_button()
+            return
         try:
             cap = self.service.finish_video(
-                self._video_path, self._current_patient, self._video_eye,
+                self._video_path, self._video_patient, self._video_eye,
                 self._video_ts, duration, thumb_frame=self._first_video_frame,
             )
             self.thumbnail_panel.add_capture(cap)

@@ -52,13 +52,19 @@ def test_password_gate(monkeypatch, tmp_path):
 def test_open_redirect_blocked(monkeypatch, tmp_path):
     app = _load(monkeypatch, tmp_path, "pw")
     with TestClient(app) as c:
-        r = c.post("/login", data={"password": "pw", "next": "//evil.example"}, follow_redirects=False)
+        for bad in ("//evil.example", "/\\evil.example", "https://evil.example", "/\tevil"):
+            r = c.post("/login", data={"password": "pw", "next": bad}, follow_redirects=False)
+            assert r.headers["location"] == "/", bad
+        # 이미 로그인한 상태의 GET /login?next=… 도 외부로 보내지 않는다
+        r = c.get("/login", params={"next": "//evil.example"}, follow_redirects=False)
         assert r.headers["location"] == "/"
 
 
 def test_no_password_is_open(monkeypatch, tmp_path):
     app = _load(monkeypatch, tmp_path, "")
     with TestClient(app) as c:
+        r = c.get("/login", params={"next": "//evil.example"}, follow_redirects=False)
+        assert r.headers["location"] == "/"
         assert c.get("/").status_code == 200
         assert c.get("/api/v1/patients").status_code == 200
 

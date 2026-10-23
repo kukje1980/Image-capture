@@ -143,3 +143,29 @@ def test_old_web_db_migrated(tmp_path):
         assert db.get_patient(p["id"])["doctor"] == "이의사"
     finally:
         db.close()
+
+
+def test_capture_rejects_non_media_extension(client):
+    """html·svg 같은 확장자는 같은 출처에서 스크립트 실행 위험 → 거부."""
+    p = _make_patient(client, chart="X1")
+    for bad in ("html", "svg", "js"):
+        r = client.post("/api/v1/captures", files={"file": ("x", io.BytesIO(b"<script>1</script>"), "text/html")},
+                        data={"patient_id": str(p["id"]), "media_type": "photo", "ext": bad})
+        assert r.status_code == 400, bad
+    ok = client.post("/api/v1/captures", files={"file": ("v.webm", io.BytesIO(b"\x1aE\xdf\xa3"), "video/webm")},
+                     data={"patient_id": str(p["id"]), "media_type": "video", "ext": "webm"})
+    assert ok.status_code == 201
+
+
+def test_delete_patient_removes_media_files(client):
+    from app import config
+    p = _make_patient(client, chart="DEL1")
+    png = b"\x89PNG\r\n\x1a\n" + b"0" * 64
+    cap = client.post("/api/v1/captures", files={"file": ("a.png", io.BytesIO(png), "image/png")},
+                      data={"patient_id": str(p["id"]), "media_type": "photo", "ext": "png"}).json()
+    f = config.MEDIA_DIR / cap["url"].removeprefix("/media/")
+    assert f.exists()
+    assert client.delete(f"/api/v1/patients/{p['id']}").status_code == 204
+    assert not f.exists()
+    assert not f.parent.exists()                      # 빈 날짜 폴더도 정리
+    assert client.get(cap["url"]).status_code == 404
