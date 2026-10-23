@@ -165,6 +165,16 @@ def build_qss(mode: str = "light") -> str:
         background: {c['panel']}; border: 1px solid {c['rule']}; border-radius: 8px;
         padding: 8px 14px; color: {c['ink']};
     }}
+    QTabWidget#ProTabs::pane {{ border: none; }}
+    QTabWidget#ProTabs QStackedWidget, QWidget#ProTabPage,
+    QFrame#ProSide QScrollArea, QFrame#ProSide QWidget#qt_scrollarea_viewport {{ background: {c['panel']}; }}
+    QTabWidget#ProTabs QTabBar::tab {{
+        background: transparent; color: {c['ink_soft']}; padding: 6px 16px; margin-right: 2px;
+        border: none; border-bottom: 2px solid transparent; font-weight: 600;
+    }}
+    QTabWidget#ProTabs QTabBar::tab:selected {{ color: {c['accent_hover']}; border-bottom: 2px solid {c['accent']}; }}
+    QTabWidget#ProTabs QTabBar::tab:hover {{ color: {c['ink']}; }}
+    QLabel#Histogram {{ border: 1px solid {c['rule']}; border-radius: 4px; }}
     QFrame#MultiCell {{ background: #0b0f17; border: 2px solid #1e293b; border-radius: 6px; }}
     QFrame#MultiCell:hover {{ border-color: {c['accent']}; }}
     QFrame#MultiCell[selected="true"] {{ border: 3px solid #facc15; }}

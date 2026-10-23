@@ -28,6 +28,7 @@ class AppConfig:
     newest_on_top: bool = True
     theme: str = "light"                     # light | dark
     clinic_name: str = ""                    # 인쇄 보고서 머리말 기관명
+    px_per_mm: float = 0.0                   # 측정 눈금 보정 (0 = 미보정, px 단위)
 
     @classmethod
     def config_path(cls) -> Path:

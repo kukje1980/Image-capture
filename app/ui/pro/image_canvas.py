@@ -1,18 +1,23 @@
-"""Pro 모드 이미지 캔버스.
+"""Pro 모드 이미지 캔버스 (보기 + 편집).
 
-- 휠 확대/축소, 드래그 이동(Pan), 창 크기 맞춤(Fit)
-- 이미지 보정(Adjust) 실시간 적용 — 원본(_base)은 보존
-- 주석 도구: 텍스트(T), 화살표(↗). 좌표는 원본 이미지 픽셀 좌표계
-- render_to_bgr(): 보정 + 주석을 원본 해상도로 합성 (보정본 저장/인쇄용)
+- 휠 확대/축소, 드래그 이동(Pan), 화면 맞춤(Fit), 돋보기(누르는 동안 확대 렌즈)
+- 이미지 보정(Adjust) 적용 — 원본(_orig)은 보존, 편집 결과는 _base(기하) + _adj(보정) + _ann(주석)
+- 기하 편집: 90° 회전, 좌우/상하 반전, 자르기 — 주석·측정 좌표도 함께 변환
+- 주석: 텍스트, 화살표, 원 / 측정: 길이(px 또는 보정된 mm), 각도(3점)
+- 눈금 보정: 실제 길이를 아는 선을 그어 px/mm 산출 (calibrated 시그널)
+- 실행 취소 / 다시 실행(최대 20단계), 원본 복원
+- render_to_bgr(): 보정 + 주석·측정을 편집 이미지 해상도로 합성 (편집본 저장·인쇄용)
 - link(other): 2장 비교 시 확대·스크롤 동기화
 """
 from __future__ import annotations
 
+import copy
 import math
+import time
 
 import numpy as np
 from PySide6.QtCore import QLineF, QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QFont, QImage, QPainter, QPen, QPixmap, QPolygonF
+from PySide6.QtGui import QBrush, QColor, QFont, QImage, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
 from PySide6.QtWidgets import (
     QGraphicsPixmapItem,
     QGraphicsScene,
@@ -21,10 +26,15 @@ from PySide6.QtWidgets import (
     QInputDialog,
 )
 
+from app.capture import image_process as ip
 from app.capture.frame_utils import bgr_to_qimage
 from app.capture.image_process import Adjust, apply_adjust
 
-_ANN_COLOR = QColor("#facc15")   # 노란 주석 (검은 외곽선과 함께 어떤 배경에서도 잘 보임)
+ANN_COLOR = QColor("#facc15")    # 주석: 노랑
+MEAS_COLOR = QColor("#22d3ee")   # 측정: 시안
+HISTORY_MAX = 20
+MEASURE_KINDS = ("length", "angle")
+_DRAG_TOOLS = {"arrow": "arrow", "circle": "circle", "length": "length", "crop": "crop", "calibrate": "length"}
 
 
 def qimage_to_bgr(qimg: QImage) -> np.ndarray:
@@ -35,8 +45,37 @@ def qimage_to_bgr(qimg: QImage) -> np.ndarray:
     return rgb[..., ::-1].copy()
 
 
+def length_px(a: dict) -> float:
+    return math.hypot(a["x2"] - a["x1"], a["y2"] - a["y1"])
+
+
+def angle_deg(a: dict) -> float:
+    """(x2,y2)가 꼭짓점인 각도(0~180°)."""
+    v1 = (a["x1"] - a["x2"], a["y1"] - a["y2"])
+    v2 = (a["x3"] - a["x2"], a["y3"] - a["y2"])
+    n = math.hypot(*v1) * math.hypot(*v2)
+    if n == 0:
+        return 0.0
+    c = max(-1.0, min(1.0, (v1[0] * v2[0] + v1[1] * v2[1]) / n))
+    return math.degrees(math.acos(c))
+
+
+def _map_points(ann: list, f) -> list:
+    out = []
+    for a in ann:
+        b = dict(a)
+        for kx, ky in (("x", "y"), ("x1", "y1"), ("x2", "y2"), ("x3", "y3")):
+            if kx in b:
+                b[kx], b[ky] = f(b[kx], b[ky])
+        out.append(b)
+    return out
+
+
 class ImageCanvas(QGraphicsView):
     zoomed = Signal(float)
+    edited = Signal()            # 보정·기하·주석 변경 → 실행 취소 상태·히스토그램 갱신
+    activated = Signal()         # 사용자가 이 캔버스를 조작 (비교 모드 편집 대상)
+    calibrated = Signal(float)   # 눈금 보정 결과 (px / mm)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -45,12 +84,23 @@ class ImageCanvas(QGraphicsView):
         self._pix = QGraphicsPixmapItem()
         self._pix.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
         self._scene.addItem(self._pix)
+        self._orig: np.ndarray | None = None
         self._base: np.ndarray | None = None
+        self._proc: np.ndarray | None = None
         self._adj = Adjust()
-        self._tool = "pan"
         self._ann: list = []
-        self._drag_start: QPointF | None = None
-        self._temp_line = None
+        self._ov: list = []          # 주석 그래픽 아이템
+        self._temp: list = []        # 그리는 중 미리보기 아이템
+        self._undo: list = []
+        self._redo: list = []
+        self._last_adj_push = 0.0
+        self._tool = "pan"
+        self._drag: QPointF | None = None
+        self._angle_pts: list = []
+        self._lens: QPointF | None = None
+        self.lens_zoom = 2.5
+        self.lens_radius = 90
+        self.px_per_mm = 0.0
         self._auto_fit = True
         self._caption = ""
         self._placeholder = "영상 없음"
@@ -63,35 +113,171 @@ class ImageCanvas(QGraphicsView):
         self.setFrameShape(QGraphicsView.Shape.NoFrame)
         self.setMinimumSize(320, 240)
 
-    # ---- 이미지 ----
+    # ================= 이미지 / 상태 =================
     def set_image(self, frame: np.ndarray | None, keep_view: bool = False,
                   keep_annotations: bool = False) -> None:
         first = self._base is None
+        self._orig = frame
         self._base = frame
         if not keep_annotations:
-            self.clear_annotations()
+            self._ann = []
+            self._undo.clear()
+            self._redo.clear()
+        self._cancel_temp()
         self._refresh()
         if frame is not None and (not keep_view or first):
             self._auto_fit = True
             self.fit()
 
     def image(self) -> np.ndarray | None:
+        """현재 편집 이미지(회전·자르기 반영, 보정 전)."""
         return self._base
 
-    def set_adjust(self, adj: Adjust) -> None:
-        self._adj = adj
-        self._refresh()
+    def original(self) -> np.ndarray | None:
+        return self._orig
+
+    def processed(self) -> np.ndarray | None:
+        """보정까지 반영된 표시 이미지(주석 제외)."""
+        return self._proc
+
+    def adjust(self) -> Adjust:
+        return self._adj.copy()
+
+    def annotations(self) -> list:
+        return copy.deepcopy(self._ann)
+
+    def geometry_changed(self) -> bool:
+        return self._base is not self._orig
+
+    def is_modified(self) -> bool:
+        return self.geometry_changed() or not self._adj.is_identity() or bool(self._ann)
 
     def _refresh(self) -> None:
         if self._base is None:
+            self._proc = None
             self._pix.setPixmap(QPixmap())
             self._scene.setSceneRect(QRectF(0, 0, 1, 1))
         else:
-            img = apply_adjust(self._base, self._adj)
-            self._pix.setPixmap(QPixmap.fromImage(bgr_to_qimage(img)))
-            self._scene.setSceneRect(self._pix.boundingRect())
+            self._proc = apply_adjust(self._base, self._adj)
+            self._pix.setPixmap(QPixmap.fromImage(bgr_to_qimage(self._proc)))
+            h, w = self._base.shape[:2]
+            self._scene.setSceneRect(QRectF(0, 0, w, h))
+        self._rebuild_overlay()
         self.viewport().update()
 
+    # ================= 실행 취소 =================
+    def _snap(self):
+        return (self._base, self._adj.copy(), copy.deepcopy(self._ann))
+
+    def _push(self) -> None:
+        self._undo.append(self._snap())
+        if len(self._undo) > HISTORY_MAX:
+            self._undo.pop(0)
+        self._redo.clear()
+
+    def _restore(self, snap) -> None:
+        geom_changed = snap[0] is not self._base
+        self._base, adj, ann = snap
+        self._adj = adj.copy()
+        self._ann = ann
+        self._refresh()
+        if geom_changed:
+            self.reset_view()
+
+    def can_undo(self) -> bool:
+        return bool(self._undo)
+
+    def can_redo(self) -> bool:
+        return bool(self._redo)
+
+    def undo(self) -> bool:
+        if not self._undo:
+            return False
+        self._redo.append(self._snap())
+        self._restore(self._undo.pop())
+        self._last_adj_push = 0.0
+        self.edited.emit()
+        return True
+
+    def redo(self) -> bool:
+        if not self._redo:
+            return False
+        self._undo.append(self._snap())
+        self._restore(self._redo.pop())
+        self._last_adj_push = 0.0
+        self.edited.emit()
+        return True
+
+    def restore_original(self) -> bool:
+        if self._base is None or not self.is_modified():
+            return False
+        self._push()
+        geom = self.geometry_changed()
+        self._base, self._adj, self._ann = self._orig, Adjust(), []
+        self._refresh()
+        if geom:
+            self.reset_view()
+        self.edited.emit()
+        return True
+
+    # ================= 보정 =================
+    def set_adjust(self, adj: Adjust, record: bool = False) -> None:
+        if record and self._base is not None and adj != self._adj:
+            now = time.monotonic()
+            if now - self._last_adj_push > 1.0:      # 슬라이더 드래그는 한 단계로 묶음
+                self._push()
+            self._last_adj_push = now
+        changed = adj != self._adj
+        self._adj = adj.copy()
+        if changed or self._proc is None:
+            self._refresh()
+        if record and changed:
+            self.edited.emit()
+
+    # ================= 기하 편집 =================
+    def rotate(self, k: int) -> None:
+        """k=1 시계 방향 90°, k=-1 반시계 90°."""
+        if self._base is None:
+            return
+        h, w = self._base.shape[:2]
+        self._push()
+        self._base = ip.rotate90(self._base, k)
+        if k == 1:
+            self._ann = _map_points(self._ann, lambda x, y: (h - y, x))
+        else:
+            self._ann = _map_points(self._ann, lambda x, y: (y, w - x))
+        self._refresh()
+        self.reset_view()
+        self.edited.emit()
+
+    def flip(self, horizontal: bool) -> None:
+        if self._base is None:
+            return
+        h, w = self._base.shape[:2]
+        self._push()
+        self._base = ip.flip(self._base, horizontal)
+        f = (lambda x, y: (w - x, y)) if horizontal else (lambda x, y: (x, h - y))
+        self._ann = _map_points(self._ann, f)
+        self._refresh()
+        self.edited.emit()
+
+    def crop_to(self, x0: float, y0: float, x1: float, y1: float) -> bool:
+        if self._base is None:
+            return False
+        h, w = self._base.shape[:2]
+        xa, xb = sorted((max(0, min(w, round(x0))), max(0, min(w, round(x1)))))
+        ya, yb = sorted((max(0, min(h, round(y0))), max(0, min(h, round(y1)))))
+        if xb - xa < 8 or yb - ya < 8:
+            return False
+        self._push()
+        self._base = ip.crop(self._base, xa, ya, xb, yb)
+        self._ann = _map_points(self._ann, lambda x, y: (x - xa, y - ya))
+        self._refresh()
+        self.reset_view()
+        self.edited.emit()
+        return True
+
+    # ================= 보기 =================
     def fit(self) -> None:
         if self._base is not None:
             self.fitInView(self._pix, Qt.AspectRatioMode.KeepAspectRatio)
@@ -131,31 +317,177 @@ class ImageCanvas(QGraphicsView):
         self.verticalScrollBar().valueChanged.connect(other.verticalScrollBar().setValue)
         other.verticalScrollBar().valueChanged.connect(self.verticalScrollBar().setValue)
 
-    # ---- 캡션 (좌상단 오버레이) ----
     def set_caption(self, text: str) -> None:
         self._caption = text
         self.viewport().update()
 
-    def drawForeground(self, painter: QPainter, rect) -> None:  # noqa: N802
-        painter.save()
-        painter.resetTransform()
-        if self._base is None:
-            painter.setPen(QColor("#64748b"))
-            painter.drawText(self.viewport().rect(), Qt.AlignmentFlag.AlignCenter, self._placeholder)
-        elif self._caption:
-            f = QFont(self.font())
-            f.setPointSize(10)
-            painter.setFont(f)
-            fm = painter.fontMetrics()
-            w = fm.horizontalAdvance(self._caption) + 16
-            painter.fillRect(8, 8, w, fm.height() + 8, QColor(0, 0, 0, 160))
-            painter.setPen(QColor("#e2e8f0"))
-            painter.drawText(16, 8 + 4 + fm.ascent(), self._caption)
-        painter.restore()
+    def set_px_per_mm(self, value: float) -> None:
+        self.px_per_mm = max(0.0, float(value or 0.0))
+        self._rebuild_overlay()
 
-    # ---- 주석 ----
+    # ================= 주석 · 측정 =================
+    def _scale(self) -> float:
+        if self._base is None:
+            return 1.0
+        return max(1.0, max(self._base.shape[:2]) / 900.0)
+
+    def length_label(self, a: dict) -> str:
+        L = length_px(a)
+        return f"{L / self.px_per_mm:.2f} mm" if self.px_per_mm > 0 else f"{L:.0f} px"
+
+    def measurements(self) -> list:
+        """[(종류, 값 텍스트), ...]"""
+        out = []
+        for a in self._ann:
+            if a["kind"] == "length":
+                out.append(("length", self.length_label(a)))
+            elif a["kind"] == "angle":
+                out.append(("angle", f"{angle_deg(a):.1f}°"))
+        return out
+
+    def _label(self, text: str, x: float, y: float, color: QColor, px: float) -> QGraphicsSimpleTextItem:
+        item = QGraphicsSimpleTextItem(text)
+        f = QFont()
+        f.setPixelSize(int(px))
+        f.setBold(True)
+        item.setFont(f)
+        item.setBrush(QBrush(color))
+        outline = QPen(QColor("#000000"))
+        outline.setWidthF(1.2 * self._scale())
+        item.setPen(outline)
+        item.setPos(x, y)
+        self._scene.addItem(item)
+        return item
+
+    def _boxed_label(self, text: str, x: float, y: float, color: QColor, px: float) -> list:
+        """측정값 라벨 — 반투명 어두운 상자 위에 표시해 어떤 배경에서도 읽히게."""
+        item = self._label(text, x, y, color, px)
+        pad = 4 * self._scale()
+        r = item.boundingRect().adjusted(-pad, -pad / 2, pad, pad / 2).translated(x, y)
+        box = self._scene.addRect(r, QPen(Qt.PenStyle.NoPen), QBrush(QColor(0, 0, 0, 165)))
+        box.setZValue(1)                       # 영상(z=0) 위, 글자(z=2) 아래
+        item.setZValue(2)
+        return [box, item]
+
+    def _make_items(self, a: dict, temp: bool = False) -> list:
+        s = self._scale()
+        kind = a["kind"]
+        color = MEAS_COLOR if kind in MEASURE_KINDS or kind == "poly" else ANN_COLOR
+        pen = QPen(color)
+        pen.setWidthF((2.5 if color == MEAS_COLOR else 3.0) * s)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        if temp:
+            pen.setStyle(Qt.PenStyle.DashLine)
+        items = []
+        if kind == "text":
+            items.append(self._label(a["text"], a["x"], a["y"], ANN_COLOR, 26 * s))
+        elif kind == "arrow":
+            p1, p2 = QPointF(a["x1"], a["y1"]), QPointF(a["x2"], a["y2"])
+            items.append(self._scene.addLine(QLineF(p1, p2), pen))
+            ang = math.atan2(p2.y() - p1.y(), p2.x() - p1.x())
+            L = 18 * s
+            h1 = QPointF(p2.x() - L * math.cos(ang - math.pi / 7), p2.y() - L * math.sin(ang - math.pi / 7))
+            h2 = QPointF(p2.x() - L * math.cos(ang + math.pi / 7), p2.y() - L * math.sin(ang + math.pi / 7))
+            solid = QPen(pen)
+            solid.setStyle(Qt.PenStyle.SolidLine)
+            items.append(self._scene.addPolygon(QPolygonF([p2, h1, h2]), solid, QBrush(color)))
+        elif kind == "circle":
+            r = QRectF(QPointF(min(a["x1"], a["x2"]), min(a["y1"], a["y2"])),
+                       QPointF(max(a["x1"], a["x2"]), max(a["y1"], a["y2"])))
+            items.append(self._scene.addEllipse(r, pen))
+        elif kind == "length":
+            p1, p2 = QPointF(a["x1"], a["y1"]), QPointF(a["x2"], a["y2"])
+            items.append(self._scene.addLine(QLineF(p1, p2), pen))
+            ang = math.atan2(p2.y() - p1.y(), p2.x() - p1.x()) + math.pi / 2
+            t = 8 * s
+            for p in (p1, p2):
+                d = QPointF(t * math.cos(ang), t * math.sin(ang))
+                items.append(self._scene.addLine(QLineF(p - d, p + d), pen))
+            if not temp or length_px(a) > 4:
+                mx, my = (p1.x() + p2.x()) / 2, (p1.y() + p2.y()) / 2
+                items.extend(self._boxed_label(self.length_label(a), mx + 8 * s, my + 6 * s, MEAS_COLOR, 20 * s))
+        elif kind == "angle":
+            v = QPointF(a["x2"], a["y2"])
+            items.append(self._scene.addLine(QLineF(QPointF(a["x1"], a["y1"]), v), pen))
+            items.append(self._scene.addLine(QLineF(v, QPointF(a["x3"], a["y3"])), pen))
+            # 라벨은 두 변의 이등분선 방향(각의 안쪽)에 배치
+            u1 = QPointF(a["x1"] - v.x(), a["y1"] - v.y())
+            u2 = QPointF(a["x3"] - v.x(), a["y3"] - v.y())
+            n1, n2 = math.hypot(u1.x(), u1.y()) or 1, math.hypot(u2.x(), u2.y()) or 1
+            bx, by = u1.x() / n1 + u2.x() / n2, u1.y() / n1 + u2.y() / n2
+            nb = math.hypot(bx, by) or 1
+            d = 34 * s
+            items.extend(self._boxed_label(f"{angle_deg(a):.1f}°", v.x() + bx / nb * d - 18 * s,
+                                           v.y() + by / nb * d - 10 * s, MEAS_COLOR, 20 * s))
+        elif kind == "poly":
+            pts = a["pts"]
+            for p, q in zip(pts, pts[1:]):
+                items.append(self._scene.addLine(QLineF(QPointF(*p), QPointF(*q)), pen))
+        elif kind == "crop":
+            cp = QPen(QColor("#ffffff"))
+            cp.setWidthF(2 * s)
+            cp.setStyle(Qt.PenStyle.DashLine)
+            r = QRectF(QPointF(min(a["x1"], a["x2"]), min(a["y1"], a["y2"])),
+                       QPointF(max(a["x1"], a["x2"]), max(a["y1"], a["y2"])))
+            items.append(self._scene.addRect(r, cp, QBrush(QColor(255, 255, 255, 30))))
+        return items
+
+    def _remove(self, items: list) -> None:
+        for it in items:
+            if it.scene() is not None:
+                self._scene.removeItem(it)
+
+    def _rebuild_overlay(self) -> None:
+        self._remove(self._ov)
+        self._ov = []
+        if self._base is None:
+            return
+        for a in self._ann:
+            self._ov.extend(self._make_items(a))
+
+    def _add_ann(self, a: dict) -> None:
+        self._push()
+        self._ann.append(a)
+        self._rebuild_overlay()
+        self.edited.emit()
+
+    def add_text(self, x: float, y: float, text: str) -> None:
+        self._add_ann({"kind": "text", "x": x, "y": y, "text": text})
+
+    def add_arrow(self, p1: QPointF, p2: QPointF) -> None:
+        self._add_ann({"kind": "arrow", "x1": p1.x(), "y1": p1.y(), "x2": p2.x(), "y2": p2.y()})
+
+    def add_circle(self, p1: QPointF, p2: QPointF) -> None:
+        self._add_ann({"kind": "circle", "x1": p1.x(), "y1": p1.y(), "x2": p2.x(), "y2": p2.y()})
+
+    def add_length(self, p1: QPointF, p2: QPointF) -> None:
+        self._add_ann({"kind": "length", "x1": p1.x(), "y1": p1.y(), "x2": p2.x(), "y2": p2.y()})
+
+    def add_angle(self, a: QPointF, vertex: QPointF, c: QPointF) -> None:
+        self._add_ann({"kind": "angle", "x1": a.x(), "y1": a.y(), "x2": vertex.x(), "y2": vertex.y(),
+                       "x3": c.x(), "y3": c.y()})
+
+    def clear_annotations(self) -> None:
+        if not self._ann:
+            return
+        self._push()
+        self._ann = []
+        self._rebuild_overlay()
+        self.edited.emit()
+
+    def annotation_kinds(self) -> list:
+        return [a["kind"] for a in self._ann]
+
+    def has_annotations(self) -> bool:
+        return bool(self._ann)
+
+    # ================= 도구 · 마우스 =================
+    def tool(self) -> str:
+        return self._tool
+
     def set_tool(self, tool: str) -> None:
         self._tool = tool
+        self._cancel_temp()
         if tool == "pan":
             self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
             self.viewport().setCursor(Qt.CursorShape.OpenHandCursor)
@@ -163,91 +495,147 @@ class ImageCanvas(QGraphicsView):
             self.setDragMode(QGraphicsView.DragMode.NoDrag)
             self.viewport().setCursor(Qt.CursorShape.CrossCursor)
 
-    def _ann_scale(self) -> float:
-        if self._base is None:
-            return 1.0
-        return max(1.0, max(self._base.shape[:2]) / 900.0)
+    def _cancel_temp(self) -> None:
+        self._remove(self._temp)
+        self._temp = []
+        self._drag = None
+        self._angle_pts = []
+        self._lens = None
 
-    def _ann_pen(self) -> QPen:
-        pen = QPen(_ANN_COLOR)
-        pen.setWidthF(3.0 * self._ann_scale())
-        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        return pen
-
-    def add_text(self, x: float, y: float, text: str) -> None:
-        item = QGraphicsSimpleTextItem(text)
-        f = QFont()
-        f.setPixelSize(int(26 * self._ann_scale()))
-        f.setBold(True)
-        item.setFont(f)
-        item.setBrush(QBrush(_ANN_COLOR))
-        outline = QPen(QColor("#000000"))
-        outline.setWidthF(1.2 * self._ann_scale())
-        item.setPen(outline)
-        item.setPos(x, y)
-        self._scene.addItem(item)
-        self._ann.append(("text", item, text))
-
-    def add_arrow(self, p1: QPointF, p2: QPointF) -> None:
-        pen = self._ann_pen()
-        line = self._scene.addLine(QLineF(p1, p2), pen)
-        ang = math.atan2(p2.y() - p1.y(), p2.x() - p1.x())
-        size = 18 * self._ann_scale()
-        a1 = QPointF(p2.x() - size * math.cos(ang - math.pi / 7), p2.y() - size * math.sin(ang - math.pi / 7))
-        a2 = QPointF(p2.x() - size * math.cos(ang + math.pi / 7), p2.y() - size * math.sin(ang + math.pi / 7))
-        head = self._scene.addPolygon(QPolygonF([p2, a1, a2]), pen, QBrush(_ANN_COLOR))
-        self._ann.append(("arrow", line, head))
-
-    def clear_annotations(self) -> None:
-        for entry in self._ann:
-            for obj in entry[1:]:
-                if hasattr(obj, "scene") and obj.scene() is not None:
-                    self._scene.removeItem(obj)
-        self._ann = []
-
-    def annotation_kinds(self) -> list:
-        return [e[0] for e in self._ann]
-
-    def has_annotations(self) -> bool:
-        return bool(self._ann)
+    def _show_temp(self, a: dict) -> None:
+        self._remove(self._temp)
+        self._temp = self._make_items(a, temp=True)
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
-        if self._base is not None and event.button() == Qt.MouseButton.LeftButton:
-            pos = self.mapToScene(event.position().toPoint())
-            if self._tool == "text":
-                text, ok = QInputDialog.getText(self, "텍스트 주석", "내용:")
-                if ok and text.strip():
-                    self.add_text(pos.x(), pos.y(), text.strip())
-                return
-            if self._tool == "arrow":
-                self._drag_start = pos
-                self._temp_line = self._scene.addLine(QLineF(pos, pos), self._ann_pen())
-                return
-        super().mousePressEvent(event)
+        if self._base is None:
+            super().mousePressEvent(event)
+            return
+        self.activated.emit()
+        if event.button() != Qt.MouseButton.LeftButton or self._tool == "pan":
+            super().mousePressEvent(event)
+            return
+        pos = self.mapToScene(event.position().toPoint())
+        if self._tool == "text":
+            text, ok = QInputDialog.getText(self, "텍스트 주석", "내용:")
+            if ok and text.strip():
+                self.add_text(pos.x(), pos.y(), text.strip())
+        elif self._tool in _DRAG_TOOLS:
+            self._drag = pos
+        elif self._tool == "angle":
+            self._angle_pts.append(pos)
+            if len(self._angle_pts) == 3:
+                a, v, c = self._angle_pts
+                self._cancel_temp()
+                self.add_angle(a, v, c)
+        elif self._tool == "magnify":
+            self._lens = event.position()
+            self.viewport().update()
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
-        if self._tool == "arrow" and self._drag_start is not None and self._temp_line is not None:
-            self._temp_line.setLine(QLineF(self._drag_start, self.mapToScene(event.position().toPoint())))
+        if self._tool == "magnify" and self._lens is not None:
+            self._lens = event.position()
+            self.viewport().update()
+            return
+        pos = self.mapToScene(event.position().toPoint())
+        if self._drag is not None and self._tool in _DRAG_TOOLS:
+            self._show_temp({"kind": _DRAG_TOOLS[self._tool], "x1": self._drag.x(), "y1": self._drag.y(),
+                             "x2": pos.x(), "y2": pos.y()})
+            return
+        if self._tool == "angle" and self._angle_pts:
+            pts = [(p.x(), p.y()) for p in self._angle_pts] + [(pos.x(), pos.y())]
+            if len(pts) == 3:
+                self._show_temp({"kind": "angle", "x1": pts[0][0], "y1": pts[0][1], "x2": pts[1][0],
+                                 "y2": pts[1][1], "x3": pts[2][0], "y3": pts[2][1]})
+            else:
+                self._show_temp({"kind": "poly", "pts": pts})
             return
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
-        if self._tool == "arrow" and self._drag_start is not None:
-            end = self.mapToScene(event.position().toPoint())
-            if self._temp_line is not None:
-                self._scene.removeItem(self._temp_line)
-                self._temp_line = None
-            if QLineF(self._drag_start, end).length() > 4:
-                self.add_arrow(self._drag_start, end)
-            self._drag_start = None
+        if self._tool == "magnify":
+            self._lens = None
+            self.viewport().update()
+            return
+        if self._drag is not None and self._tool in _DRAG_TOOLS:
+            start, end = self._drag, self.mapToScene(event.position().toPoint())
+            self._drag = None
+            self._remove(self._temp)
+            self._temp = []
+            if QLineF(start, end).length() < 4:
+                return
+            if self._tool == "arrow":
+                self.add_arrow(start, end)
+            elif self._tool == "circle":
+                self.add_circle(start, end)
+            elif self._tool == "length":
+                self.add_length(start, end)
+            elif self._tool == "crop":
+                self.crop_to(start.x(), start.y(), end.x(), end.y())
+            elif self._tool == "calibrate":
+                px = QLineF(start, end).length()
+                mm, ok = QInputDialog.getDouble(self, "눈금 보정", "방금 그은 선의 실제 길이(mm):", 1.0, 0.01, 200.0, 2)
+                if ok and mm > 0:
+                    self.calibrated.emit(px / mm)
             return
         super().mouseReleaseEvent(event)
 
-    # ---- 합성 렌더 ----
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        if event.key() == Qt.Key.Key_Escape and (self._temp or self._angle_pts or self._drag is not None):
+            self._cancel_temp()
+            return
+        super().keyPressEvent(event)
+
+    # ================= 오버레이 (캡션 · 돋보기) =================
+    def drawForeground(self, painter: QPainter, rect) -> None:  # noqa: N802
+        painter.save()
+        painter.resetTransform()
+        if self._base is None:
+            painter.setPen(QColor("#64748b"))
+            painter.drawText(self.viewport().rect(), Qt.AlignmentFlag.AlignCenter, self._placeholder)
+        else:
+            if self._caption:
+                f = QFont(self.font())
+                f.setPointSize(10)
+                painter.setFont(f)
+                fm = painter.fontMetrics()
+                w = fm.horizontalAdvance(self._caption) + 16
+                painter.fillRect(8, 8, w, fm.height() + 8, QColor(0, 0, 0, 160))
+                painter.setPen(QColor("#e2e8f0"))
+                painter.drawText(16, 8 + 4 + fm.ascent(), self._caption)
+            if self._lens is not None and not self._pix.pixmap().isNull():
+                self._draw_lens(painter)
+        painter.restore()
+
+    def _draw_lens(self, painter: QPainter) -> None:
+        vp = self._lens
+        r = float(self.lens_radius)
+        sp = self.mapToScene(vp.toPoint())
+        scale = max(1e-6, self.transform().m11())
+        half = r / (scale * self.lens_zoom)
+        src = QRectF(sp.x() - half, sp.y() - half, 2 * half, 2 * half)
+        dst = QRectF(vp.x() - r, vp.y() - r, 2 * r, 2 * r)
+        path = QPainterPath()
+        path.addEllipse(dst)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        painter.setClipPath(path)
+        painter.fillRect(dst, QColor("#000000"))
+        painter.drawPixmap(dst, self._pix.pixmap(), src)
+        painter.setClipping(False)
+        painter.setPen(QPen(QColor("#ffffff"), 2))
+        painter.drawEllipse(dst)
+        painter.setPen(QPen(QColor(255, 255, 255, 120), 1))
+        painter.drawLine(QPointF(vp.x() - 8, vp.y()), QPointF(vp.x() + 8, vp.y()))
+        painter.drawLine(QPointF(vp.x(), vp.y() - 8), QPointF(vp.x(), vp.y() + 8))
+
+    # ================= 합성 렌더 =================
     def render_to_bgr(self) -> np.ndarray | None:
-        """보정 + 주석을 원본 해상도 BGR로 합성."""
+        """보정 + 주석·측정을 편집 이미지 해상도 BGR로 합성 (미리보기 선 제외)."""
         if self._base is None:
             return None
+        temp, self._temp = self._temp, []
+        for it in temp:
+            it.setVisible(False)
         h, w = self._base.shape[:2]
         qimg = QImage(w, h, QImage.Format.Format_RGB888)
         qimg.fill(QColor("#000000"))
@@ -256,4 +644,7 @@ class ImageCanvas(QGraphicsView):
         p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
         self._scene.render(p, QRectF(0, 0, w, h), QRectF(0, 0, w, h))
         p.end()
+        for it in temp:
+            it.setVisible(True)
+        self._temp = temp
         return qimage_to_bgr(qimg)
