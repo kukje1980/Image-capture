@@ -263,6 +263,8 @@ body:not(.pro-on) #btn-mode-capture .ic, body.pro-on #btn-pro .ic { color: var(-
 .thumb-badge.e-OS { color: #ffd08a; box-shadow: inset 0 0 0 1px rgba(245,165,36,.6); }
 .thumb-badge.e-OU { color: #d6c2ff; box-shadow: inset 0 0 0 1px rgba(177,140,255,.6); }
 .thumb-badge.video { color: #ffb4b4; box-shadow: inset 0 0 0 1px rgba(240,82,79,.6); }
+.thumb.pending { opacity: .75; }
+.thumb.pending img { filter: saturate(.8); }
 .thumbs-empty { text-align: center; padding: 44px 12px; color: var(--ink-muted); font-size: 12px; line-height: 1.6; }
 .thumbs-empty .ic { width: 34px; height: 34px; stroke-width: 1.4; opacity: .55; margin-bottom: 8px; }
 

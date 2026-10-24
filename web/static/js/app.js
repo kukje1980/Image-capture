@@ -496,34 +496,60 @@
     return null;
   }
 
+  // 촬영 직후 썸네일을 바로 보여 준다 (서버 저장이 끝나면 목록을 다시 그려 교체)
+  function addPendingThumb(blob, eye, ts) {
+    const list = $('thumb-list');
+    $('thumb-empty').style.display = 'none';
+    const el = document.createElement('div');
+    el.className = 'thumb pending';
+    const url = URL.createObjectURL(blob);
+    el.innerHTML = `<img src="${url}" alt="">
+      <span class="thumb-badges">${eye && eye !== 'NA' ? `<span class="thumb-badge e-${eye}">${eye}</span>` : ''}<span class="thumb-badge">저장 중…</span></span>
+      <div class="thumb-caption"><span><span class="thumb-time">${hms(ts)}</span></span></div>`;
+    const first = list.querySelector('.thumb-day, .thumb');
+    list.insertBefore(el, first);
+    return { el, url };
+  }
+
   async function persistCapture(patient, mediaType, blob, ext, eye, durationMs, note, opts = {}) {
-    if (!IS_LOCAL && mediaType === 'photo' && ext === 'png' && blob.size > UPLOAD_SOFT_LIMIT) {
-      const j = await shrinkPhoto(blob);
-      if (j) { blob = j; ext = 'jpg'; }
-    }
     const ts = new Date();
-    const filename = buildFilename(patient, mediaType, ts, ext, eye, note);
-
-    // (a) 서버 저장 (환자 DB + 미디어 폴더)
-    let serverOk = false;
-    try {
-      const fd = new FormData();
-      fd.append('patient_id', String(patient.id));
-      fd.append('media_type', mediaType);
-      fd.append('eye', eye || 'NA');
-      fd.append('ext', ext);
-      if (durationMs != null) fd.append('duration_ms', String(durationMs));
-      if (note) fd.append('note', note);
-      fd.append('file', blob, filename);
-      await api('/captures', { method: 'POST', body: fd });
-      serverOk = true;
-    } catch (err) {
-      toast('서버 저장 실패: ' + err.message, 'error');
+    // 지정 폴더에는 원본(무손실 PNG), 인터넷 서버에는 고화질 JPEG(약 1/3 크기)로 올려 저장 시간을 줄인다
+    const folderBlob = blob, folderExt = ext;
+    let upBlob = blob, upExt = ext;
+    if (!IS_LOCAL && mediaType === 'photo' && ext === 'png') {
+      const j = await shrinkPhoto(blob);
+      if (j) { upBlob = j; upExt = 'jpg'; }
     }
+    const filename = buildFilename(patient, mediaType, ts, folderExt, eye, note);
+    const upName = buildFilename(patient, mediaType, ts, upExt, eye, note);
+    const pending = !opts.silent && mediaType === 'photo' ? addPendingThumb(folderBlob, eye, ts) : null;
+    if (!opts.silent) setStatus('저장 중…', 'ready');
 
-    // (b) 지정 로컬 폴더에도 동시 저장
-    let folderOk = false;
-    if (state.dirHandle) folderOk = await saveToFolder(filename, blob);
+    // (a) 서버 저장 (환자 DB + 미디어 폴더) 과 (b) 지정 로컬 폴더 저장을 동시에
+    const serverP = (async () => {
+      try {
+        const fd = new FormData();
+        fd.append('patient_id', String(patient.id));
+        fd.append('media_type', mediaType);
+        fd.append('eye', eye || 'NA');
+        fd.append('ext', upExt);
+        if (durationMs != null) fd.append('duration_ms', String(durationMs));
+        if (note) fd.append('note', note);
+        fd.append('file', upBlob, upName);
+        await api('/captures', { method: 'POST', body: fd });
+        return true;
+      } catch (err) {
+        toast('서버 저장 실패: ' + err.message, 'error');
+        return false;
+      }
+    })();
+    const folderP = state.dirHandle ? saveToFolder(filename, folderBlob) : Promise.resolve(false);
+    const [serverOk, folderOk] = await Promise.all([serverP, folderP]);
+    if (pending) {
+      setTimeout(() => URL.revokeObjectURL(pending.url), 30000);
+      if (!serverOk) pending.el.remove();
+    }
+    blob = folderBlob;
 
     // (c) 서버·폴더 모두 실패하면 촬영본을 잃지 않도록 파일로 내려받는다
     //     (예: 인터넷 호스팅의 업로드 크기 제한에 걸린 긴 동영상)
@@ -540,7 +566,7 @@
 
     if (serverOk) document.dispatchEvent(new CustomEvent('slit:captures'));
     if (serverOk && !opts.silent) {
-      await renderThumbs();
+      renderThumbs();                      // 기다리지 않음 — 미리 보인 썸네일을 서버 목록으로 교체
       const where = folderOk ? '서버 + 지정 폴더' : (state.dirHandle ? '서버(폴더 실패)' : '서버');
       setStatus(`${mediaType === 'photo' ? '사진' : '동영상'} 저장됨 · ${where}`, 'ready', true);
     }
