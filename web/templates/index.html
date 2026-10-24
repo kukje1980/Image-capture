@@ -65,6 +65,10 @@
   <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></symbol>
   <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.5"/><path d="M12 11v5.5M12 7.6h.01"/></symbol>
   <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2.5"/><circle cx="8.5" cy="8.5" r="1.6"/><path d="M21 15l-5-5L5 21"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3.5" cy="6" r="1" fill="currentColor"/><circle cx="3.5" cy="12" r="1" fill="currentColor"/><circle cx="3.5" cy="18" r="1" fill="currentColor"/></symbol>
+  <symbol id="i-expand" viewBox="0 0 24 24"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></symbol>
+  <symbol id="i-shrink" viewBox="0 0 24 24"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></symbol>
   <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M4 21h16"/></symbol>
 </svg>
 
@@ -92,6 +96,15 @@
       <button class="ms-btn" id="btn-mode-capture" title="촬영 화면"><svg class="ic"><use href="#i-camera"/></svg>촬영</button>
       <button class="ms-btn" id="btn-pro" aria-pressed="false" title="전문가용 영상 검토 화면 (MULTI·비교·보정·편집·인쇄)"><svg class="ic"><use href="#i-review"/></svg>Pro 검토</button>
     </nav>
+    <button class="pchip" id="pb-chip" title="환자 목록 열기">
+      <span class="pb-avatar" id="pb-avatar"><svg class="ic"><use href="#i-user"/></svg></span>
+      <span class="pb-main">
+        <span class="pb-name"><span id="pb-name">환자를 선택하세요</span><span class="pb-chart" id="pb-chart"></span></span>
+        <span class="pb-meta" id="pb-meta"></span>
+      </span>
+    </button>
+    <button class="btn btn-sm" id="btn-patients" title="환자 목록 (검색·선택·수정)"><svg class="ic"><use href="#i-list"/></svg>환자 목록</button>
+    <button class="btn btn-sm btn-primary" id="btn-new-patient" title="신규 환자 등록"><svg class="ic"><use href="#i-plus"/></svg>신규 환자</button>
     <div class="top-actions">
       <label class="cam-pick" title="캡처 장비 (HDMI 캡처보드 / 웹캠)">
         <svg class="ic"><use href="#i-videocam"/></svg>
@@ -115,26 +128,6 @@
     <button class="hint-close" id="hint-close" aria-label="닫기"><svg class="ic"><use href="#i-x"/></svg></button>
   </div>
 
-  <section class="pbanner" aria-label="환자">
-    <div class="pb-pick">
-      <label class="search">
-        <svg class="ic"><use href="#i-search"/></svg>
-        <input class="input" type="search" id="patient-search" placeholder="이름 · 차트번호 검색" aria-label="환자 검색">
-      </label>
-      <select class="select" id="patient-select" aria-label="환자 선택"></select>
-    </div>
-    <div class="pb-id" id="pb-id">
-      <div class="pb-avatar" id="pb-avatar"><svg class="ic"><use href="#i-user"/></svg></div>
-      <div class="pb-main">
-        <div class="pb-name"><span id="pb-name">환자를 선택하세요</span><span class="pb-chart" id="pb-chart"></span></div>
-        <div class="pb-meta" id="pb-meta"></div>
-      </div>
-    </div>
-    <div class="pb-actions">
-      <button class="btn btn-sm" id="btn-edit-patient"><svg class="ic"><use href="#i-edit"/></svg>정보 수정</button>
-      <button class="btn btn-sm btn-primary" id="btn-new-patient"><svg class="ic"><use href="#i-plus"/></svg>신규 환자</button>
-    </div>
-  </section>
 
   <main class="workspace">
     <section class="video-col">
@@ -155,12 +148,19 @@
         </div>
         <div class="hud hud-tl">
           <span class="hud-chip" id="hud-patient">환자 미선택</span>
-          <span class="eye-chip" id="hud-eye" data-eye="NA">안구 미지정</span>
         </div>
         <div class="hud hud-tr">
           <span class="badge-rec" id="rec-badge"><span class="rec-dot"></span> REC <span id="rec-time">00:00</span></span>
           <span class="badge-paused">PAUSED</span>
           <span class="hud-live"><span class="live-dot"></span>LIVE</span>
+        </div>
+        <!-- 전체 화면일 때만 보이는 조작 바 -->
+        <div class="fs-bar" id="fs-bar">
+          <span class="fs-eye" id="fs-eye">안구 —</span>
+          <button class="btn btn-tool" id="btn-fs-freeze" title="정지영상"><svg class="ic"><use href="#i-freeze"/></svg>정지영상</button>
+          <button class="btn btn-shutter" id="btn-fs-capture" title="사진 캡처 (C)"><span class="shutter-ring"><svg class="ic"><use href="#i-camera"/></svg></span><span>사진 캡처</span></button>
+          <button class="btn btn-tool btn-record" id="btn-fs-record" title="녹화 (R)"><svg class="ic"><use href="#i-rec"/></svg><span id="fs-rec-label">녹화</span></button>
+          <button class="btn btn-tool" id="btn-fs-exit" title="전체 화면 끝내기 (F / Esc)"><svg class="ic"><use href="#i-shrink"/></svg>나가기</button>
         </div>
       </div>
 
@@ -188,6 +188,7 @@
         <button class="btn btn-primary" id="btn-save-quad" style="display:none" disabled><svg class="ic"><use href="#i-save"/></svg>4분할 저장</button>
         <button class="btn btn-tool" id="btn-clear-quad" style="display:none"><svg class="ic"><use href="#i-eraser"/></svg>비우기</button>
         <div class="spacer"></div>
+        <button class="btn btn-tool" id="btn-fullscreen" title="실시간 영상을 전체 화면으로 (F)"><svg class="ic"><use href="#i-expand"/></svg>전체 화면</button>
         <div class="status-indicator"><span class="status-dot" id="status-dot"></span><span id="status-text">대기 중</span></div>
       </div>
     </section>
@@ -233,6 +234,7 @@
       <button class="pbtn pghost" id="pro-comment" title="현재 영상 코멘트 편집"><svg class="ic"><use href="#i-comment"/></svg>코멘트</button>
       <button class="pbtn pghost" id="pro-patient" title="진단명·담당의 등 환자 정보"><svg class="ic"><use href="#i-user"/></svg>환자정보</button>
       <span class="pgrow"></span>
+      <button class="pbtn pghost" id="pro-fullscreen" title="영상 영역 전체 화면 (F)"><svg class="ic"><use href="#i-expand"/></svg>전체 화면</button>
       <button class="pbtn pprint" id="pro-print" title="보고서 인쇄 / PDF 저장"><svg class="ic"><use href="#i-printer"/></svg>인쇄·PDF</button>
     </div>
 
@@ -398,6 +400,32 @@
     <a class="btn" id="viewer-download" download><svg class="ic"><use href="#i-download"/></svg>다운로드</a>
     <button class="btn btn-primary" type="button" id="viewer-close-2">닫기</button>
   </div>
+</dialog>
+
+<dialog id="patient-drawer" class="pdrawer" aria-labelledby="pd-title">
+  <div class="pd-head">
+    <div class="dialog-title" id="pd-title">환자 목록 <span class="thumbs-count" id="pd-count">0</span></div>
+    <button class="btn btn-ghost btn-icon" type="button" id="pd-close" aria-label="닫기"><svg class="ic"><use href="#i-x"/></svg></button>
+  </div>
+  <div class="pd-tools">
+    <label class="search">
+      <svg class="ic"><use href="#i-search"/></svg>
+      <input class="input" type="search" id="patient-search" placeholder="이름 · 차트번호 검색" aria-label="환자 검색">
+    </label>
+    <button class="btn btn-sm btn-primary" id="pd-new"><svg class="ic"><use href="#i-plus"/></svg>신규 환자</button>
+  </div>
+  <div class="pd-table-wrap">
+    <table class="pd-table">
+      <thead><tr><th>이름</th><th>차트번호</th><th>성별·나이</th><th>생년월일</th><th>진단명</th><th>담당의</th><th aria-label="수정"></th></tr></thead>
+      <tbody id="pd-rows"></tbody>
+    </table>
+    <div class="pd-empty" id="pd-empty" hidden>등록된 환자가 없습니다</div>
+  </div>
+  <div class="pd-foot">
+    <span class="pd-hint">행을 클릭하면 그 환자로 바뀝니다</span>
+    <button class="btn btn-sm" id="btn-edit-patient"><svg class="ic"><use href="#i-edit"/></svg>선택 환자 정보 수정</button>
+  </div>
+  <select class="sr-only" id="patient-select" aria-label="환자 선택" tabindex="-1"></select>
 </dialog>
 
 <dialog id="storage-dialog" aria-labelledby="storage-title">
