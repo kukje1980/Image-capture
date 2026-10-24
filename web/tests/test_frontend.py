@@ -19,9 +19,9 @@ def test_pro_js_ids_exist_in_template():
 def test_edit_tabs_and_tools_present():
     tabs = re.findall(r'class="ptab[^"]*"[^>]*data-tab="(\w+)"', HTML)
     panes = re.findall(r'class="ppane[^"]*"\s+data-pane="(\w+)"', HTML)
-    assert tabs == ["adj", "flt", "edit"] and panes == tabs
+    assert tabs == ["adj", "flt", "edit", "meibo"] and panes == tabs
     tools = re.findall(r'data-tool="(\w+)"', HTML)
-    assert set(tools) == {"pan", "magnify", "crop", "text", "arrow", "circle", "length", "angle", "calibrate"}
+    assert set(tools) == {"pan", "magnify", "crop", "text", "arrow", "circle", "length", "angle", "calibrate", "tarsus", "dropout"}
     for t in tools:                                 # 모든 도구에 사용 가능 모드 정의
         assert re.search(rf"\b{t}: \[", PRO_JS), t
 
@@ -33,3 +33,16 @@ def test_channel_and_filter_options_match_engine():
         assert f"'{ch}'" in PRO_JS
     dn = re.findall(r'<option value="(\w+)"', HTML[HTML.index('id="adj-denoise"'):HTML.index("</select>", HTML.index('id="adj-denoise"'))])
     assert dn == ["none", "median", "average"]
+
+
+def test_meibo_mode_wired():
+    APP_JS = (Path(__file__).resolve().parents[1] / "static/js/app.js").read_text(encoding="utf-8")
+    for el in ("btn-meibo", "mb-lid-seg", "btn-mb-enh", "btn-mb-inv", "hud-meibo", "meibo-guide",
+               "mb-lid", "mb-enhance", "mb-auto", "mb-clear", "mb-save", "mb-result"):
+        assert f'id="{el}"' in HTML, el
+    assert "id: 'meibo'" in APP_JS and "id: 'lid'" in APP_JS       # 단축키 M / U
+    assert "마이봄 ${LID_KO[meibo.lid]}" in APP_JS                 # 촬영 메모 → Pro 에서 안검 자동 선택
+    # Arita 경계 (1/3, 2/3) 와 Pult 5단계
+    assert "100 / 3" in PRO_JS and "200 / 3" in PRO_JS
+    for cat in ("'0%'", "'<25%'", "'25–50%'", "'51–75%'", "'>75%'"):
+        assert cat in PRO_JS

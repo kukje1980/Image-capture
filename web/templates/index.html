@@ -70,6 +70,8 @@
   <symbol id="i-shrink" viewBox="0 0 24 24"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/></symbol>
   <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></symbol>
   <symbol id="i-keyboard" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2.5"/><path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 12.5h.01M10 12.5h.01M14 12.5h.01M18 12.5h.01M8 16h8"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></symbol>
+  <symbol id="i-meibo" viewBox="0 0 24 24"><path d="M2 12c3-5 7-7 10-7s7 2 10 7"/><path d="M5 9.5v4M8 7.6v6.4M12 7v7M16 7.6v6.4M19 9.5v4"/><path d="M3 17c3 2 6 3 9 3s6-1 9-3"/></symbol>
   <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M4 21h16"/></symbol>
 </svg>
 
@@ -107,22 +109,8 @@
     <button class="btn btn-sm" id="btn-patients" title="환자 목록 (검색·선택·수정)"><svg class="ic"><use href="#i-list"/></svg>환자 목록</button>
     <button class="btn btn-sm btn-primary" id="btn-new-patient" title="신규 환자 등록"><svg class="ic"><use href="#i-plus"/></svg>신규 환자</button>
     <div class="top-actions">
-      <label class="cam-pick" title="캡처 장비 (HDMI 캡처보드 / 웹캠)">
-        <svg class="ic"><use href="#i-videocam"/></svg>
-        <select class="select select-bare" id="camera-select" aria-label="카메라 선택"><option>—</option></select>
-        <select class="select select-bare res-select" id="res-select" aria-label="해상도" title="실시간 영상 해상도 (카메라가 지원하는 범위에서)">
-          <option value="2160">4K</option><option value="1080" selected>1080p</option><option value="720">720p</option>
-        </select>
-      </label>
-      <button class="btn btn-icon btn-quiet btn-sony-help" title="소니 카메라(ZV-E10 II · FX3) 연결 방법" aria-label="소니 카메라 연결 방법"><svg class="ic"><use href="#i-info"/></svg></button>
-      <button class="btn btn-sm btn-quiet storage-btn" id="btn-storage" title="촬영본·환자 정보를 어디에 저장할지 선택"><svg class="ic"><use href="#i-save"/></svg><span id="storage-label">저장: 서버</span></button>
-      <button class="btn btn-sm btn-quiet" id="btn-folder"><svg class="ic"><use href="#i-folder"/></svg>저장 폴더</button>
-      <span class="folder-status" id="folder-status" title="브라우저가 직접 저장할 로컬 폴더"><span class="dot"></span> 폴더 미지정</span>
-      <button class="btn btn-icon btn-quiet" id="btn-keys" title="단축키 설정 (캡처·녹화·안구 등)" aria-label="단축키 설정"><svg class="ic"><use href="#i-keyboard"/></svg></button>
-      <button class="btn btn-icon btn-quiet" id="btn-theme" title="밝은/어두운 테마" aria-label="테마 전환">
-        <svg class="ic" id="theme-icon-light" style="display:block"><use href="#i-sun"/></svg>
-        <svg class="ic" id="theme-icon-dark" style="display:none"><use href="#i-moon"/></svg>
-      </button>
+      <span class="cam-chip" id="cam-chip" title="현재 카메라 · 해상도 (설정에서 변경)"><span class="status-dot" id="cam-chip-dot"></span><span id="cam-chip-text">카메라 꺼짐</span></span>
+      <button class="btn btn-icon btn-quiet" id="btn-settings" title="설정 (카메라·해상도·저장·단축키·테마)" aria-label="설정"><svg class="ic"><use href="#i-gear"/></svg></button>
     </div>
   </header>
 
@@ -155,7 +143,13 @@
         </div>
         <div class="hud hud-tl">
           <span class="hud-chip" id="hud-patient">환자 미선택</span>
+          <span class="hud-chip hud-meibo" id="hud-meibo">MEIBO · 상안검</span>
         </div>
+        <!-- 마이봄 모드 가이드: 뒤집은 눈꺼풀 검판을 이 틀 안에 맞춤 -->
+        <svg class="meibo-guide" id="meibo-guide" viewBox="0 0 100 60" preserveAspectRatio="none" aria-hidden="true">
+          <path class="mg-upper" d="M8 14 Q50 2 92 14 L88 46 Q50 58 12 46 Z"/>
+          <path class="mg-lower" d="M10 18 Q50 6 90 18 L92 36 Q50 54 8 36 Z"/>
+        </svg>
         <div class="hud hud-tr">
           <span class="badge-rec" id="rec-badge"><span class="rec-dot"></span> REC <span id="rec-time">00:00</span></span>
           <span class="badge-paused">PAUSED</span>
@@ -186,6 +180,15 @@
         </select>
         <span class="dsep"></span>
         <button class="btn btn-tool" id="btn-quad" title="한 화면 4분할 정지영상"><svg class="ic"><use href="#i-quad"/></svg>4분할</button>
+        <button class="btn btn-tool" id="btn-meibo" aria-pressed="false" title="마이봄샘 촬영 모드 (M) — 적외선(NIR) 흑백·대비 강화 화면"><svg class="ic"><use href="#i-meibo"/></svg>마이봄</button>
+        <div class="mb-ctl" id="mb-ctl">
+          <div class="mb-seg" id="mb-lid-seg" role="radiogroup" aria-label="안검">
+            <button role="radio" data-lid="upper" aria-checked="true" title="상안검 (U 로 전환)">상안검</button>
+            <button role="radio" data-lid="lower" aria-checked="false" title="하안검 (U 로 전환)">하안검</button>
+          </div>
+          <button class="btn btn-tool btn-sm" id="btn-mb-enh" aria-pressed="true" title="화면 대비 강화 (저장 영상은 흑백 원본)">강화</button>
+          <button class="btn btn-tool btn-sm" id="btn-mb-inv" aria-pressed="false" title="화면 밝기 반전 — 보기 전용 (저장 영상은 반전하지 않음)">반전</button>
+        </div>
         <button class="btn btn-tool" id="btn-pause" disabled title="일시정지 (Space)"><svg class="ic"><use href="#i-pause"/></svg>일시정지</button>
         <div class="dock-center">
           <button class="btn btn-tool btn-freeze" id="btn-freeze" disabled title="정지영상 (4분할 칸 채우기)"><svg class="ic"><use href="#i-freeze"/></svg>정지영상</button>
@@ -270,6 +273,7 @@
           <button class="ptab on" role="tab" data-tab="adj" aria-selected="true"><svg class="ic"><use href="#i-sliders"/></svg>보정</button>
           <button class="ptab" role="tab" data-tab="flt" aria-selected="false"><svg class="ic"><use href="#i-wand"/></svg>필터</button>
           <button class="ptab" role="tab" data-tab="edit" aria-selected="false"><svg class="ic"><use href="#i-edit"/></svg>편집</button>
+          <button class="ptab" role="tab" data-tab="meibo" aria-selected="false"><svg class="ic"><use href="#i-meibo"/></svg>마이봄</button>
         </div>
 
         <div class="ppane on" data-pane="adj" role="tabpanel">
@@ -349,6 +353,27 @@
             <button class="pbtn" id="pro-clear" title="주석·측정 지우기"><svg class="ic"><use href="#i-eraser"/></svg>주석 지우기</button>
             <button class="pbtn pspan pprimary" id="pro-save-edited" title="보정·편집·주석·측정을 반영한 새 영상으로 저장 (원본 보존)"><svg class="ic"><use href="#i-save"/></svg>편집본 저장</button>
           </div>
+        </div>
+
+        <div class="ppane" data-pane="meibo" role="tabpanel">
+          <label class="prange wide">안검
+            <select class="select" id="mb-lid"><option value="upper">상안검</option><option value="lower">하안검</option></select>
+          </label>
+          <div class="pside-grid ptools">
+            <button class="pbtn" id="mb-enhance" title="흑백 + 국소 대비 강 + 선명 + 자동 대비"><svg class="ic"><use href="#i-wand"/></svg>향상 보기</button>
+            <button class="pbtn" data-tool="tarsus" title="검판(샘이 있는 판) 둘레를 클릭해 다각형으로 — 첫 점 클릭·더블클릭·Enter 로 닫기"><svg class="ic"><use href="#i-meibo"/></svg>검판 영역</button>
+            <button class="pbtn" id="mb-auto" title="검판 안의 밝은 샘을 찾아 소실 면적을 자동 추정"><svg class="ic"><use href="#i-aperture"/></svg>자동 분석</button>
+            <button class="pbtn" data-tool="dropout" title="샘이 없어진 부분을 직접 다각형으로 (자동 결과보다 우선)"><svg class="ic"><use href="#i-eraser"/></svg>소실 영역</button>
+          </div>
+          <div class="mb-result" id="mb-result"></div>
+          <div class="pside-grid">
+            <button class="pbtn" id="mb-clear" title="검판·소실 영역과 분석 결과 지우기"><svg class="ic"><use href="#i-trash"/></svg>분석 지우기</button>
+            <button class="pbtn pprimary" id="mb-save" title="결과 표기와 함께 새 영상으로 저장 (원본 보존)"><svg class="ic"><use href="#i-save"/></svg>결과 저장</button>
+          </div>
+          <p class="pside-tip">· 소실률 = 검판 면적 중 샘이 없는 면적
+· Arita: 0 없음 · 1 &lt;1/3 · 2 1/3–2/3 · 3 &gt;2/3 (상+하 합산 0–6)
+· Pult: 0% · &lt;25% · 25–50% · 51–75% · &gt;75%
+· 자동 분석은 영상 품질에 따라 달라지는 추정값입니다. 진단은 의사가 영상을 보고 판단하세요.</p>
         </div>
 
         <div class="pside-note" id="pro-selinfo">MULTI에서 영상 2장을 클릭해 선택한 뒤 '비교'를 누르세요.</div>
@@ -450,6 +475,43 @@
     · 카메라 자체 셔터로 <b>고해상도 원본(2,400만 화소)</b>을 찍는 원격 제어는 소니 Camera Remote SDK 로 데스크탑 앱에 추가 예정입니다.</p>
   </div>
   <div class="dialog-footer"><button type="button" class="btn btn-primary" id="sony-ok">확인</button></div>
+</dialog>
+
+<dialog id="settings-dialog" class="settings-pop" aria-labelledby="settings-title">
+  <div class="dialog-header">
+    <div class="dialog-title" id="settings-title">설정</div>
+    <button class="btn btn-ghost btn-icon" type="button" id="settings-x" aria-label="닫기"><svg class="ic"><use href="#i-x"/></svg></button>
+  </div>
+  <div class="dialog-body set-body">
+    <section class="set-sec">
+      <h4><svg class="ic"><use href="#i-videocam"/></svg>카메라</h4>
+      <label class="set-row"><span>캡처 장비</span>
+        <select class="select" id="camera-select" aria-label="카메라 선택"><option>—</option></select></label>
+      <label class="set-row"><span>해상도</span>
+        <select class="select" id="res-select" aria-label="해상도" title="실시간 영상 해상도 (카메라가 지원하는 범위에서)">
+          <option value="2160">4K (2160p)</option><option value="1080" selected>Full HD (1080p)</option><option value="720">HD (720p)</option>
+        </select></label>
+      <button class="btn btn-sm btn-quiet btn-sony-help set-link" title="소니 카메라 연결 방법"><svg class="ic"><use href="#i-info"/></svg>소니 카메라(ZV-E10 II · FX3) 연결 방법</button>
+    </section>
+    <section class="set-sec">
+      <h4><svg class="ic"><use href="#i-save"/></svg>저장</h4>
+      <div class="set-row"><span>저장 방식</span>
+        <button class="btn btn-sm storage-btn" id="btn-storage" title="촬영본·환자 정보를 어디에 저장할지 선택"><svg class="ic"><use href="#i-save"/></svg><span id="storage-label">저장: 서버</span></button></div>
+      <div class="set-row"><span>PC 저장 폴더</span>
+        <span class="set-inline"><span class="folder-status" id="folder-status" title="브라우저가 직접 저장할 로컬 폴더"><span class="dot"></span> 폴더 미지정</span>
+        <button class="btn btn-sm" id="btn-folder"><svg class="ic"><use href="#i-folder"/></svg>폴더 지정</button></span></div>
+    </section>
+    <section class="set-sec">
+      <h4><svg class="ic"><use href="#i-keyboard"/></svg>단축키 · 화면</h4>
+      <div class="set-row"><span>단축키</span>
+        <button class="btn btn-sm" id="btn-keys" title="단축키 설정 (캡처·녹화·안구 등)"><svg class="ic"><use href="#i-keyboard"/></svg>단축키 설정</button></div>
+      <div class="set-row"><span>테마</span>
+        <button class="btn btn-sm" id="btn-theme" title="밝은/어두운 테마" aria-label="테마 전환">
+          <svg class="ic" id="theme-icon-light" style="display:block"><use href="#i-sun"/></svg>
+          <svg class="ic" id="theme-icon-dark" style="display:none"><use href="#i-moon"/></svg><span id="theme-label">밝은 테마로</span>
+        </button></div>
+    </section>
+  </div>
 </dialog>
 
 <dialog id="keys-dialog" class="keys-dialog" aria-labelledby="keys-title">

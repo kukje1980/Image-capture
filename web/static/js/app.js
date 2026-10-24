@@ -139,6 +139,11 @@
     $('btn-capture').addEventListener('click', capturePhoto);
     $('btn-record').addEventListener('click', toggleRecord);
     $('btn-quad').addEventListener('click', toggleQuad);
+    $('btn-meibo').addEventListener('click', () => setMeibo(!meibo.on));
+    $('btn-mb-enh').addEventListener('click', () => { meibo.enh = !meibo.enh; saveMeibo(); syncMeibo(); });
+    $('btn-mb-inv').addEventListener('click', () => { meibo.inv = !meibo.inv; saveMeibo(); syncMeibo(); });
+    document.querySelectorAll('#mb-lid-seg [data-lid]').forEach((x) => x.addEventListener('click', () => setLid(x.dataset.lid)));
+    syncMeibo();
     $('btn-freeze').addEventListener('click', freezeFrame);
     $('btn-save-quad').addEventListener('click', saveQuad);
     $('btn-clear-quad').addEventListener('click', clearQuad);
@@ -152,6 +157,11 @@
     // 단축키 (사용자 지정 — 단축키 설정 창)
     document.addEventListener('keydown', onShortcutKey);
     $('btn-keys').addEventListener('click', openKeysDialog);
+    $('btn-settings').addEventListener('click', () => $('settings-dialog').showModal());
+    $('settings-x').addEventListener('click', () => $('settings-dialog').close());
+    $('cam-chip').addEventListener('click', () => $('settings-dialog').showModal());
+    // 바깥(배경) 클릭으로 설정 창 닫기
+    $('settings-dialog').addEventListener('click', (e) => { if (e.target === $('settings-dialog')) $('settings-dialog').close(); });
     $('keys-x').addEventListener('click', () => $('keys-dialog').close());
     $('keys-ok').addEventListener('click', () => $('keys-dialog').close());
     $('keys-reset').addEventListener('click', () => { keymap = defaultKeymap(); saveKeymap(); renderKeysTable(); applyKeyHints(); });
@@ -168,6 +178,8 @@
     { id: 'freeze', label: '정지영상 (4분할 칸 채우기)', def: 'X', scope: 'capture', btns: ['btn-freeze', 'btn-fs-freeze'],
       run: () => { if (!$('btn-freeze').disabled) freezeFrame(); } },
     { id: 'quad', label: '4분할 켜기 / 끄기', def: 'Q', scope: 'capture', btns: ['btn-quad'], run: () => toggleQuad() },
+    { id: 'meibo', label: '마이봄샘 촬영 모드 켜기 / 끄기', def: 'M', scope: 'capture', btns: ['btn-meibo'], run: () => setMeibo(!meibo.on) },
+    { id: 'lid', label: '마이봄 상안검 ↔ 하안검', def: 'U', scope: 'capture', run: () => { if (meibo.on) setLid(meibo.lid === 'upper' ? 'lower' : 'upper'); } },
     { id: 'eyeOD', label: '안구 OD (우안)', def: '1', scope: 'all', run: () => setEyeAny('OD') },
     { id: 'eyeOS', label: '안구 OS (좌안)', def: '2', scope: 'all', run: () => setEyeAny('OS') },
     { id: 'eyeOU', label: '안구 OU (양안)', def: '3', scope: 'all', run: () => setEyeAny('OU') },
@@ -538,6 +550,7 @@
     const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
     $('theme-icon-light').style.display = isDark ? 'block' : 'none';
     $('theme-icon-dark').style.display = isDark ? 'none' : 'block';
+    $('theme-label').textContent = isDark ? '밝은 테마로' : '어두운 테마로';
   }
 
   // ---- folder (File System Access API) ----
@@ -673,6 +686,31 @@
     return `${chart}_${stamp}_${seq}_${eye || 'NA'}${tag}.${ext}`;
   }
 
+  // ---- 마이봄샘 촬영 모드 ----
+  // 근적외선(NIR, 850nm 권장) 조명 + 뒤집은 눈꺼풀. 화면은 흑백·대비 강화, 저장은 흑백 원본(PNG) + 메모 '마이봄 상안검/하안검'
+  const meibo = { on: false, lid: 'upper', enh: true, inv: false };
+  try { Object.assign(meibo, JSON.parse(localStorage.getItem('slitlamp-meibo') || '{}'), { on: false }); } catch (_) { /* 기본값 */ }
+  const LID_KO = { upper: '상안검', lower: '하안검' };
+  function saveMeibo() { try { localStorage.setItem('slitlamp-meibo', JSON.stringify({ lid: meibo.lid, enh: meibo.enh, inv: meibo.inv })); } catch (_) { /* 저장 불가 */ } }
+  function syncMeibo() {
+    const b = document.body;
+    b.classList.toggle('meibo-on', meibo.on);
+    b.classList.toggle('mb-enh', meibo.enh);
+    b.classList.toggle('mb-inv', meibo.inv);
+    b.classList.toggle('mb-lower', meibo.lid === 'lower');
+    $('btn-meibo').setAttribute('aria-pressed', String(meibo.on));
+    $('btn-mb-enh').setAttribute('aria-pressed', String(meibo.enh));
+    $('btn-mb-inv').setAttribute('aria-pressed', String(meibo.inv));
+    document.querySelectorAll('#mb-lid-seg [data-lid]').forEach((x) => x.setAttribute('aria-checked', String(x.dataset.lid === meibo.lid)));
+    $('hud-meibo').textContent = `MEIBO · ${LID_KO[meibo.lid]}`;
+  }
+  function setMeibo(on) {
+    if (on && state.quad) toggleQuad();             // 마이봄은 1화면으로
+    meibo.on = !!on; syncMeibo();
+    toast(meibo.on ? `마이봄 촬영 모드 · ${LID_KO[meibo.lid]} (눈꺼풀을 뒤집어 틀에 맞추세요)` : '마이봄 촬영 모드 끔', 'success');
+  }
+  function setLid(lid) { meibo.lid = lid === 'lower' ? 'lower' : 'upper'; saveMeibo(); syncMeibo(); }
+
   async function capturePhoto() {
     const patient = currentPatient();
     if (!patient) { toast('환자를 먼저 선택하세요.', 'error'); return; }
@@ -682,11 +720,13 @@
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     const src = state.isPaused ? $('freeze') : video;
-    canvas.getContext('2d').drawImage(src, 0, 0, canvas.width, canvas.height);
+    const cx = canvas.getContext('2d');
+    if (meibo.on) cx.filter = 'grayscale(1)';      // 마이봄: 흑백 원본 (대비 강화·반전은 화면 보기 전용)
+    cx.drawImage(src, 0, 0, canvas.width, canvas.height);
     const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
     if (!blob) return;
     const eye = $('eye-select').value;
-    await persistCapture(patient, 'photo', blob, 'png', eye, null);
+    await persistCapture(patient, 'photo', blob, 'png', eye, null, meibo.on ? `마이봄 ${LID_KO[meibo.lid]}` : null);
   }
 
   function toggleRecord() {
@@ -841,6 +881,7 @@
   }
 
   function toggleQuad() {
+    if (!state.quad && meibo.on) setMeibo(false);
     state.quad = !state.quad;
     const frame = $('video-frame');
     frame.classList.toggle('quad', state.quad);
@@ -1069,7 +1110,18 @@
     $('btn-freeze').disabled = !has;
     $('btn-save-quad').disabled = !has;
   }
+  function syncCamChip() {
+    const v = $('video'), track = state.stream && state.stream.getVideoTracks()[0];
+    const dot = $('cam-chip-dot');
+    dot.classList.toggle('ready', !!track);
+    if (!track) { $('cam-chip-text').textContent = '카메라 꺼짐'; return; }
+    const name = (track.label || '카메라').replace(/\s*\([0-9a-f]{4}:[0-9a-f]{4}\)\s*$/i, '');
+    $('cam-chip-text').textContent = `${isSony(track.label) ? '★ ' : ''}${name}${v.videoWidth ? ` · ${v.videoHeight >= 2000 ? '4K' : v.videoHeight + 'p'}` : ''}`;
+    $('cam-chip').title = `${track.label} · ${v.videoWidth}×${v.videoHeight} (설정에서 변경)`;
+  }
+
   function setStatus(text, kind, transient) {
+    syncCamChip();
     $('status-text').textContent = text;
     const dot = $('status-dot');
     dot.classList.remove('ready', 'recording');
