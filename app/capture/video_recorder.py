@@ -182,6 +182,7 @@ class VideoRecorder(QObject):
         if not self._recording:
             return (self._path or "", 0, 0)
         self._recording = False
+        stop_ts = time.time()                    # 길이는 멈춘 순간 기준 (인코더가 남은 프레임을 쓰는 시간은 빼고)
         try:
             self._queue.put(_SENTINEL, timeout=2)
         except Exception:  # noqa: BLE001
@@ -192,7 +193,7 @@ class VideoRecorder(QObject):
                 log.warning("인코더가 아직 쓰는 중 — 끝나면 스레드가 파일을 닫습니다")
         else:
             self._close_writer()
-        duration_ms = int((time.time() - self._start_ts) * 1000)
+        duration_ms = int((stop_ts - self._start_ts) * 1000)
         if self._failed:                         # 실패한 녹화는 실제로 쓴 길이만큼만
             duration_ms = int(self._count / self._fps * 1000)
         path, count = self._path or "", self._count
