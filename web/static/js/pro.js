@@ -1075,6 +1075,10 @@
   $('pro-comment').addEventListener('click', editComment);
   $('pro-patient').addEventListener('click', editPatient);
   $('pro-print').addEventListener('click', doPrint);
+  $('pro-fullscreen').addEventListener('click', () => {
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    else $('pro-display').requestFullscreen().catch((e) => App.toast('전체 화면을 열 수 없습니다: ' + e.message, 'error'));
+  });
   $('pro-clear').addEventListener('click', clearAnn);
   $('pro-save-edited').addEventListener('click', saveEdited);
   $('pro-fit').addEventListener('click', () => { for (const v of Object.values(V)) v.resetView(); });
@@ -1102,6 +1106,7 @@
     else if (e.key === 'ArrowRight') { e.preventDefault(); step(1); }
     else if (e.key === ' ' && P.mode === 'live') { e.preventDefault(); toggleCapture(); }
     else if (e.key === 'Escape') setTool('pan');
+    else if (e.key.toLowerCase() === 'f' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); $('pro-fullscreen').click(); }
     else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); (e.shiftKey ? redo : undo)(); }
     else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); }
   });

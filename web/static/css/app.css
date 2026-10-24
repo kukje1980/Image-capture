@@ -47,10 +47,11 @@ h1, h2, h3, h4 { margin: 0; }
 ::-webkit-scrollbar-thumb { background: var(--rule-strong); border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
 ::-webkit-scrollbar-track { background: transparent; }
 
-.app { display: grid; grid-template-rows: auto auto auto 1fr; height: 100vh; }
+.app { display: flex; flex-direction: column; height: 100vh; }
+.app > .workspace, .app > .pro { flex: 1 1 auto; min-height: 0; }
 
 /* ---------- 상단바 ---------- */
-.topbar { display: flex; align-items: center; gap: 18px; height: 56px; padding: 0 18px; background: var(--panel); border-bottom: 1px solid var(--rule); }
+.topbar { display: flex; align-items: center; gap: 12px; height: 58px; padding: 0 14px; background: var(--panel); border-bottom: 1px solid var(--rule); }
 .brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
 .brand-icon { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; color: #fff;
   background: var(--brand-grad); box-shadow: inset 0 0 0 1px rgba(255,255,255,.18), 0 4px 14px var(--brand-glow); }
@@ -145,8 +146,8 @@ body:not(.pro-on) #btn-mode-capture .ic, body.pro-on #btn-pro .ic { color: var(-
 .pb-actions { display: flex; gap: 6px; margin-left: auto; }
 
 /* ---------- 촬영 작업 공간 ---------- */
-.workspace { display: grid; grid-template-columns: minmax(0, 1fr) 248px; gap: 12px; padding: 12px 14px 14px; min-height: 0; }
-.video-col { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.workspace { display: grid; grid-template-columns: minmax(0, 1fr) 212px; gap: 8px; padding: 8px 10px 10px; min-height: 0; }
+.video-col { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
 
 .video-frame { position: relative; background: #000; border-radius: var(--radius); overflow: hidden; flex: 1; min-height: 320px;
   box-shadow: inset 0 0 0 1px rgba(255,255,255,.06), var(--shadow); }
@@ -202,11 +203,11 @@ body:not(.pro-on) #btn-mode-capture .ic, body.pro-on #btn-pro .ic { color: var(-
 .quad-no { position: absolute; bottom: 8px; right: 10px; font-family: var(--font-mono); font-size: 12px; font-weight: 700; color: rgba(231,234,240,.35); }
 
 /* 하단 촬영 도크 */
-.controls { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--panel); border-radius: var(--radius); border: 1px solid var(--rule); flex-wrap: wrap; box-shadow: var(--shadow); }
+.controls { display: flex; align-items: center; gap: 6px; padding: 5px 8px; background: var(--panel); border-radius: var(--radius); border: 1px solid var(--rule); flex-wrap: wrap; box-shadow: var(--shadow); }
 .dsep { width: 1px; height: 28px; background: var(--rule); margin: 0 2px; }
 .controls .spacer { flex: 1; }
 .eye-seg { display: inline-flex; padding: 3px; gap: 2px; background: var(--bg); border: 1px solid var(--rule); border-radius: 10px; }
-.eye-seg button { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; min-width: 50px; height: 40px; padding: 0 8px; border: 0; border-radius: 7px;
+.eye-seg button { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; min-width: 46px; height: 36px; padding: 0 8px; border: 0; border-radius: 7px;
   background: transparent; color: var(--ink-soft); font: inherit; font-family: var(--font-mono); font-size: 13px; font-weight: 700; line-height: 1.05; cursor: pointer; transition: background .15s, color .15s; }
 .eye-seg button small { font-family: var(--font-body); font-size: 10px; font-weight: 500; color: var(--ink-muted); }
 .eye-seg button:hover { color: var(--ink); }
@@ -216,15 +217,15 @@ body:not(.pro-on) #btn-mode-capture .ic, body.pro-on #btn-pro .ic { color: var(-
 .eye-seg button[data-eye="OS"].on { color: var(--os); box-shadow: inset 0 0 0 1.5px var(--os); }
 .eye-seg button[data-eye="OU"].on { color: var(--ou); box-shadow: inset 0 0 0 1.5px var(--ou); }
 .eye-seg button.on small { color: inherit; opacity: .85; }
-.btn-tool { height: 40px; background: transparent; border-color: transparent; color: var(--ink-soft); padding: 0 11px; }
+.btn-tool { height: 36px; background: transparent; border-color: transparent; color: var(--ink-soft); padding: 0 11px; }
 .btn-tool:hover:not(:disabled) { background: var(--panel-2); border-color: var(--rule); color: var(--ink); }
 .btn.active { background: var(--accent-soft); border-color: rgba(var(--accent-rgb), .5); color: var(--accent-strong); }
 .dock-center { display: flex; align-items: center; gap: 6px; padding: 0 6px; }
-.btn-shutter { height: 46px; padding: 0 18px 0 6px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); border: 0; font-size: 14px; font-weight: 700;
+.btn-shutter { height: 42px; padding: 0 18px 0 6px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); border: 0; font-size: 14px; font-weight: 700;
   box-shadow: 0 6px 18px rgba(var(--accent-rgb), .28), inset 0 -2px 0 rgba(0,0,0,.12); }
 .btn-shutter:hover:not(:disabled) { background: var(--accent-strong); border: 0; }
 .btn-shutter:disabled { box-shadow: none; }
-.shutter-ring { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; background: rgba(255,255,255,.22); box-shadow: inset 0 0 0 2px rgba(255,255,255,.55); }
+.shutter-ring { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: rgba(255,255,255,.22); box-shadow: inset 0 0 0 2px rgba(255,255,255,.55); }
 :root[data-theme="light"] .shutter-ring { background: rgba(255,255,255,.18); }
 .shutter-ring .ic { width: 18px; height: 18px; stroke-width: 2.1; }
 .btn-freeze { color: var(--accent-strong); }
@@ -311,8 +312,8 @@ dialog::backdrop { background: rgba(3, 6, 10, .62); backdrop-filter: blur(4px); 
   .topbar { height: auto; padding: 10px 12px; flex-wrap: wrap; gap: 10px; }
   .top-actions { margin-left: 0; width: 100%; }
   .cam-pick { flex: 1; } .select-bare { min-width: 0; flex: 1; }
-  .pbanner { padding: 10px 12px; }
-  .pb-pick { flex-wrap: wrap; width: 100%; } .search, .search .input, #patient-select { width: 100%; }
+  .pchip { order: 5; flex: 1 1 100%; max-width: none; }
+  .search, .search .input { width: 100%; }
   .workspace { grid-template-columns: 1fr; padding: 12px; }
   .thumbs { max-height: 320px; }
   .dock-center { order: -1; width: 100%; justify-content: center; }
@@ -466,3 +467,68 @@ body.pro-on .pro-info { display: none; }   /* 환자 정보는 상단 배너에 
   background: repeating-linear-gradient(to bottom, transparent 0, transparent 10mm, #e2e8f0 10mm, #e2e8f0 calc(10mm + 1px));
   -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 .rp-foot { display: flex; justify-content: space-between; margin-top: 10px; padding-top: 6px; border-top: 1px solid #cbd5e1; font-size: 8.5pt; color: #475569; }
+
+/* ===================== 상단 환자 칩 · 환자 목록 · 전체 화면 ===================== */
+.pchip { display: flex; align-items: center; gap: 9px; min-width: 0; max-width: 460px; flex: 0 1 auto; height: 42px; padding: 0 12px 0 4px;
+  border: 1px solid var(--rule); border-radius: 21px; background: var(--panel-2); color: var(--ink); font: inherit; cursor: pointer; text-align: left;
+  transition: border-color .15s, background .15s; }
+.pchip:hover { border-color: var(--rule-strong); background: var(--raised); }
+.pchip:focus-visible { outline: none; box-shadow: var(--ring); }
+.pchip .pb-avatar { width: 34px; height: 34px; font-size: 14px; }
+.pchip .pb-main { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; }
+.pchip .pb-name { font-size: 14px; }
+.pchip .pb-meta { flex-wrap: nowrap; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; font-size: 11.5px; margin-top: 1px; }
+.pchip .pb-meta > span { margin-right: 10px; }
+@media (max-width: 1500px) { .folder-status { display: none; } }
+@media (max-width: 1280px) { #btn-patients { padding: 0 8px; } .pchip { max-width: 300px; } .modeswitch .ms-btn { padding: 0 10px; } }
+
+dialog.pdrawer { margin: 0 0 0 auto; width: min(860px, 96vw); max-width: none; height: 100vh; max-height: 100vh; border-radius: 0;
+  border: 0; border-left: 1px solid var(--rule-strong); display: none; flex-direction: column; }
+dialog.pdrawer[open] { display: flex; animation: pd-in .18s ease-out; }
+@keyframes pd-in { from { transform: translateX(24px); opacity: .6; } to { transform: none; opacity: 1; } }
+.pd-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--rule); }
+.pd-head .dialog-title { display: flex; align-items: center; gap: 8px; }
+.pd-tools { display: flex; gap: 8px; padding: 12px 18px; border-bottom: 1px solid var(--rule); }
+.pd-tools .search { flex: 1; } .pd-tools .search .input { width: 100%; }
+.pd-table-wrap { flex: 1; overflow: auto; }
+.pd-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.pd-table th { position: sticky; top: 0; z-index: 1; background: var(--panel-2); color: var(--ink-muted); font-size: 11.5px; font-weight: 700; text-align: left;
+  padding: 9px 12px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+.pd-table td { padding: 10px 12px; border-bottom: 1px solid var(--rule); white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.pd-table tbody tr { cursor: pointer; transition: background .12s; }
+.pd-table tbody tr:hover { background: var(--panel-2); }
+.pd-table tbody tr:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent); }
+.pd-table tbody tr.on { background: var(--accent-soft); }
+.pd-table tbody tr.on td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+.pd-table .pd-name { font-weight: 700; }
+.pd-table .pd-chart { font-family: var(--font-mono); color: var(--ink-soft); }
+.pd-table .pd-dx { color: var(--ink); }
+.pd-table .pd-edit { width: 30px; height: 28px; padding: 0; }
+.pd-empty { padding: 40px; text-align: center; color: var(--ink-muted); }
+.pd-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 18px; border-top: 1px solid var(--rule); background: var(--panel-2); }
+.pd-hint { font-size: 12px; color: var(--ink-muted); }
+
+/* 전체 화면 */
+.video-frame:fullscreen, .pro-display:fullscreen { border-radius: 0; box-shadow: none; background: #000; }
+.fs-bar { position: absolute; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 3; display: none; align-items: center; gap: 8px;
+  padding: 8px 10px; border-radius: 999px; background: rgba(8, 11, 16, .72); backdrop-filter: blur(10px); box-shadow: 0 10px 40px rgba(0,0,0,.5), inset 0 0 0 1px rgba(255,255,255,.08); }
+.video-frame:fullscreen .fs-bar { display: flex; }
+.fs-bar .btn-tool { color: #e7eaf0; }
+.fs-bar .btn-tool:hover:not(:disabled) { background: rgba(255,255,255,.08); border-color: transparent; color: #fff; }
+.fs-eye { font-family: var(--font-mono); font-size: 13px; font-weight: 700; color: #c7cdd8; padding: 0 8px; }
+.video-frame:fullscreen .hud { top: 18px; } .video-frame:fullscreen .hud-tl { left: 18px; } .video-frame:fullscreen .hud-tr { right: 18px; }
+/* 상단바 줄바꿈 방지 — 칩만 줄어들고 나머지는 고정 */
+.topbar > .brand, .topbar > .modeswitch, #btn-patients, #btn-new-patient, .top-actions, .top-actions > * { flex-shrink: 0; }
+.ms-btn, .brand-title, .brand-sub, .tf, .th-title { white-space: nowrap; }
+.topbar .pchip { flex: 1 1 auto; min-width: 160px; }
+.top-actions { margin-left: 0; }
+.tf { padding: 0 2px; font-size: 11px; }
+@media (max-width: 1640px) {
+  .brand-sub { display: none; }
+  .brand-title { font-size: 14px; }
+  .select-bare { min-width: 130px; max-width: 190px; }
+}
+@media (max-width: 1440px) {
+  #btn-folder { padding: 0 8px; }
+  .ms-btn { padding: 0 11px; }
+}

@@ -65,6 +65,7 @@
     } catch (_) {}
     syncThemeIcon();
     syncStorageUI();
+    try { if (localStorage.getItem('slitlamp-hint-closed') === '1' && !LOCAL_MODE) $('hint').style.display = 'none'; } catch (_) {}
     bindEvents();
     syncEye();
     if (!('showDirectoryPicker' in window)) {
@@ -106,7 +107,21 @@
       document.querySelectorAll('#thumb-filter .tf').forEach((x) => x.classList.toggle('on', x === b));
       renderThumbs();
     }));
-    $('hint-close').addEventListener('click', () => $('hint').style.display = 'none');
+    $('hint-close').addEventListener('click', () => {
+      $('hint').style.display = 'none';
+      try { localStorage.setItem('slitlamp-hint-closed', '1'); } catch (_) {}
+    });
+    // 환자 목록 · 전체 화면
+    $('pb-chip').addEventListener('click', openPatientList);
+    $('btn-patients').addEventListener('click', openPatientList);
+    $('pd-close').addEventListener('click', () => $('patient-drawer').close());
+    $('pd-new').addEventListener('click', () => openPatientDialog(null));
+    $('btn-fullscreen').addEventListener('click', toggleFullscreen);
+    $('btn-fs-exit').addEventListener('click', toggleFullscreen);
+    $('btn-fs-capture').addEventListener('click', () => { if (!$('btn-capture').disabled) capturePhoto(); });
+    $('btn-fs-freeze').addEventListener('click', () => $('btn-freeze').click());
+    $('btn-fs-record').addEventListener('click', () => $('btn-record').click());
+    document.addEventListener('fullscreenchange', syncFullscreen);
     $('btn-folder').addEventListener('click', pickFolder);
 
     $('btn-start-camera').addEventListener('click', () => startCamera());
@@ -126,8 +141,9 @@
     $('viewer-close-2').addEventListener('click', () => $('viewer-dialog').close());
 
     document.addEventListener('keydown', (e) => {
-      if (e.target.matches('input, textarea, select')) return;
+      if (e.target.matches('input, textarea, select') || document.querySelector('dialog[open]')) return;
       if (document.body.classList.contains('pro-on')) return;   // Pro 모드는 pro.js가 처리
+      if (e.key.toLowerCase() === 'f' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); toggleFullscreen(); return; }
       if (e.key === ' ') { e.preventDefault(); togglePause(); }
       else if (e.key.toLowerCase() === 'c') { if (!$('btn-capture').disabled) { e.preventDefault(); capturePhoto(); } }
       else if (e.key.toLowerCase() === 'r') { if (!$('btn-record').disabled) { e.preventDefault(); toggleRecord(); } }
@@ -183,8 +199,65 @@
       sel.value = String(state.currentPatientId);
     }
     updateCaptureButtons();
+    renderPatientTable();
     await renderThumbs();
     emitPatient();
+  }
+
+  // ---- 환자 목록 (표) ----
+  const SEX_KO = { M: '남', F: '여', O: '기타' };
+  function openPatientList() {
+    renderPatientTable();
+    const d = $('patient-drawer');
+    if (!d.open) d.showModal();
+    setTimeout(() => $('patient-search').focus(), 30);
+  }
+  function renderPatientTable() {
+    const tb = $('pd-rows');
+    tb.innerHTML = '';
+    $('pd-count').textContent = state.patients.length;
+    $('pd-empty').hidden = state.patients.length > 0;
+    $('pd-empty').textContent = ($('patient-search').value || '').trim() ? '검색 결과가 없습니다' : '등록된 환자가 없습니다';
+    for (const p of state.patients) {
+      const tr = document.createElement('tr');
+      tr.tabIndex = 0;
+      tr.classList.toggle('on', p.id === state.currentPatientId);
+      const age = ageOf(p.birth_date);
+      const sexAge = [SEX_KO[p.sex] || '', age != null ? age + '세' : ''].filter(Boolean).join(' · ');
+      tr.innerHTML = `<td class="pd-name">${escHtml(p.name)}</td><td class="pd-chart">${escHtml(p.chart_no || '-')}</td>`
+        + `<td>${escHtml(sexAge || '-')}</td><td>${escHtml(p.birth_date || '-')}</td>`
+        + `<td class="pd-dx" title="${escHtml(p.diagnosis || '')}">${escHtml(p.diagnosis || '-')}</td><td>${escHtml(p.doctor || '-')}</td>`
+        + '<td><button class="btn btn-sm btn-ghost pd-edit" title="정보 수정" aria-label="정보 수정"><svg class="ic"><use href="#i-edit"/></svg></button></td>';
+      tr.addEventListener('click', (e) => {
+        if (e.target.closest('.pd-edit')) { openPatientDialog(p); return; }
+        selectPatient(p.id);
+        $('patient-drawer').close();
+      });
+      tr.addEventListener('keydown', (e) => { if (e.key === 'Enter') { selectPatient(p.id); $('patient-drawer').close(); } });
+      tb.appendChild(tr);
+    }
+  }
+  function selectPatient(id) {
+    state.currentPatientId = id;
+    $('patient-select').value = String(id);
+    renderPatientTable();
+    renderThumbs();
+    updateCaptureButtons();
+    emitPatient();
+  }
+
+  // ---- 전체 화면 ----
+  function toggleFullscreen() {
+    const el = document.body.classList.contains('pro-on') ? $('pro-display') : $('video-frame');
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    else if (el.requestFullscreen) el.requestFullscreen().catch((e) => toast('전체 화면을 열 수 없습니다: ' + e.message, 'error'));
+  }
+  function syncFullscreen() {
+    const on = !!document.fullscreenElement;
+    for (const id of ['btn-fullscreen', 'pro-fullscreen']) {
+      const b = $(id);
+      if (b) b.innerHTML = on ? '<svg class="ic"><use href="#i-shrink"/></svg>전체 화면 끝' : '<svg class="ic"><use href="#i-expand"/></svg>전체 화면';
+    }
   }
 
   function emitPatient() {
@@ -226,7 +299,6 @@
     $('pb-meta').innerHTML = bits.join('');
     $('hud-patient').textContent = `${p.name}${p.chart_no ? '  ·  ' + p.chart_no : ''}`;
   }
-  const EYE_TEXT = { OD: 'OD 우안', OS: 'OS 좌안', OU: 'OU 양안', NA: '안구 미지정' };
   function setEye(v) {
     const sel = $('eye-select');
     if (sel.value !== v) { sel.value = v; }
@@ -238,8 +310,8 @@
       const on = b.dataset.eye === v;
       b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on));
     });
-    const chip = $('hud-eye');
-    chip.dataset.eye = v; chip.textContent = EYE_TEXT[v] || v;
+    const fs = $('fs-eye');
+    if (fs) fs.textContent = v === 'NA' ? '안구 —' : v;
   }
 
   function openPatientDialog(patient) {
@@ -499,6 +571,7 @@
     $('rec-badge').classList.add('on');
     $('btn-record').classList.add('recording');
     $('rec-btn-label').textContent = '녹화 중지';
+    $('btn-fs-record').classList.toggle('recording', true); $('fs-rec-label').textContent = true ? '녹화 중지' : '녹화';
     setStatus('녹화 중', 'recording');
     state.recordTimer = setInterval(() => {
       const s = Math.floor((Date.now() - state.recordStart) / 1000);
@@ -515,6 +588,7 @@
     $('rec-time').textContent = '00:00';
     $('btn-record').classList.remove('recording');
     $('rec-btn-label').textContent = '녹화 시작';
+    $('btn-fs-record').classList.toggle('recording', false); $('fs-rec-label').textContent = false ? '녹화 중지' : '녹화';
   }
 
   // 서버 + 지정 폴더 동시 저장
@@ -840,6 +914,9 @@
     $('btn-capture').disabled = !has;
     $('btn-record').disabled = !has;
     $('btn-pause').disabled = !state.stream;
+    $('btn-fs-capture').disabled = !has;
+    $('btn-fs-freeze').disabled = !has;
+    $('btn-fs-record').disabled = !has;
     $('video-frame').classList.toggle('live', !!state.stream);
     $('btn-freeze').disabled = !has;
     $('btn-save-quad').disabled = !has;
