@@ -112,6 +112,14 @@ body:not(.pro-on) #btn-mode-capture .ic, body.pro-on #btn-pro .ic { color: var(-
 .btn-sm { height: 30px; padding: 0 10px; font-size: 12.5px; }
 .btn-sm .ic { width: 14px; height: 14px; }
 
+.storage-btn.local { color: var(--accent-strong); background: var(--accent-soft); border-color: rgba(var(--accent-rgb), .45); }
+.storage-opt { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border: 1px solid var(--rule); border-radius: 10px; cursor: pointer; }
+.storage-opt:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.storage-opt input { margin-top: 4px; accent-color: var(--accent); }
+.storage-opt > span > b { display: block; font-size: 14px; }
+.storage-opt small b { color: var(--ink); }
+.storage-opt small { display: block; color: var(--ink-soft); font-size: 12.5px; line-height: 1.6; margin-top: 3px; }
+.storage-note { margin: 0; font-size: 12px; color: var(--ink-muted); }
 .folder-status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-muted); white-space: nowrap; }
 .folder-status.linked { color: var(--success); }
 .folder-status .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }

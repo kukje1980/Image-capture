@@ -15,6 +15,11 @@ DB_PATH = Path(os.environ.get("SLITLAMP_DB_PATH", DATA_DIR / "slitlamp.db"))
 # 접속 비밀번호 (인터넷에 올릴 때 설정 권장). 비어 있으면 로그인 없이 열린다.
 PASSWORD = os.environ.get("SLITLAMP_PASSWORD", "")
 
+# 저장 방식: choice(화면에서 선택, 기본) | local(항상 이 PC 에만 저장 — 서버엔 환자 정보·영상을 보내지 않음) | server
+STORAGE_POLICY = os.environ.get("SLITLAMP_STORAGE", "choice").strip().lower()
+if STORAGE_POLICY not in ("choice", "local", "server"):
+    STORAGE_POLICY = "choice"
+
 # 사진 저장 경로 규칙: <media>/<chart_no>_<patient_id>/<YYYY-MM-DD>/<파일>
 SUBFOLDER_TEMPLATE = "{chart_no}_{patient_id}/{date}"
 

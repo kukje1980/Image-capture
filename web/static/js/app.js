@@ -40,7 +40,10 @@
   };
 
   // ---- API helper ----
+  const LOCAL_MODE = !!(window.SlitLocal && window.SlitLocal.mode() === 'local');
   async function api(path, options = {}) {
+    // '이 PC에만 저장' 모드: 서버로 보내지 않고 브라우저 저장소(IndexedDB)에서 처리
+    if (LOCAL_MODE) return window.SlitLocal.api(path, options);
     const res = await fetch(`${API}${path}`, {
       headers: options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' },
       ...options,
@@ -61,6 +64,7 @@
       if (saved) document.documentElement.setAttribute('data-theme', saved);
     } catch (_) {}
     syncThemeIcon();
+    syncStorageUI();
     bindEvents();
     syncEye();
     if (!('showDirectoryPicker' in window)) {
@@ -91,6 +95,10 @@
     $('patient-delete').addEventListener('click', deletePatient);
 
     $('btn-theme').addEventListener('click', toggleTheme);
+    $('btn-storage').addEventListener('click', openStorageDialog);
+    $('storage-x').addEventListener('click', () => $('storage-dialog').close());
+    $('storage-cancel').addEventListener('click', () => $('storage-dialog').close());
+    $('storage-apply').addEventListener('click', applyStorage);
     document.querySelectorAll('#eye-seg [data-eye]').forEach((b) => b.addEventListener('click', () => setEye(b.dataset.eye)));
     $('eye-select').addEventListener('change', syncEye);
     document.querySelectorAll('#thumb-filter .tf').forEach((b) => b.addEventListener('click', () => {
@@ -293,6 +301,37 @@
     } catch (err) {
       toast(err.message, 'error');
     }
+  }
+
+  // ---- 저장 방식 (서버 / 이 PC에만) ----
+  function syncStorageUI() {
+    const btn = $('btn-storage');
+    $('storage-label').textContent = LOCAL_MODE ? '저장: 이 PC 전용' : '저장: 서버';
+    btn.classList.toggle('local', LOCAL_MODE);
+    if (window.SlitLocal.policy !== 'choice') {
+      btn.disabled = true;
+      btn.title = '이 사이트는 저장 방식이 고정되어 있습니다 (' + (LOCAL_MODE ? '이 PC 전용' : '서버') + ')';
+    }
+    if (LOCAL_MODE) {
+      $('hint-body').innerHTML = '<strong>이 PC 전용 모드</strong> — 환자 정보·사진·동영상을 인터넷 서버로 보내지 않고 이 PC의 브라우저에만 보관합니다. '
+        + '브라우저 기록 삭제 시 함께 지워지므로 상단 <strong>"저장 폴더"</strong>를 지정해 PC 폴더에도 파일을 남기세요(Chrome/Edge).';
+    }
+  }
+  async function openStorageDialog() {
+    document.querySelectorAll('input[name="storage"]').forEach((r) => { r.checked = r.value === (LOCAL_MODE ? 'local' : 'server'); });
+    const u = await window.SlitLocal.usage();
+    $('storage-note').textContent = u && LOCAL_MODE
+      ? `이 PC 저장소 사용량: ${(u.used / 1048576).toFixed(1)}MB / 사용 가능 ${(u.quota / 1073741824).toFixed(1)}GB`
+      : '바꾸면 화면을 다시 불러옵니다. 두 저장 방식의 기록은 서로 옮겨지지 않습니다.';
+    $('storage-dialog').showModal();
+  }
+  async function applyStorage() {
+    const v = (document.querySelector('input[name="storage"]:checked') || {}).value || 'server';
+    $('storage-dialog').close();
+    if ((v === 'local') === LOCAL_MODE) return;
+    window.SlitLocal.setMode(v);
+    if (v === 'local') await window.SlitLocal.persist();   // 브라우저가 저장소를 임의로 비우지 않도록 요청
+    location.reload();
   }
 
   // ---- theme ----
@@ -516,7 +555,7 @@
     // 지정 폴더에는 원본(무손실 PNG), 인터넷 서버에는 고화질 JPEG(약 1/3 크기)로 올려 저장 시간을 줄인다
     const folderBlob = blob, folderExt = ext;
     let upBlob = blob, upExt = ext;
-    if (!IS_LOCAL && mediaType === 'photo' && ext === 'png') {
+    if (!IS_LOCAL && !LOCAL_MODE && mediaType === 'photo' && ext === 'png') {
       const j = await shrinkPhoto(blob);
       if (j) { upBlob = j; upExt = 'jpg'; }
     }
@@ -539,7 +578,7 @@
         await api('/captures', { method: 'POST', body: fd });
         return true;
       } catch (err) {
-        toast('서버 저장 실패: ' + err.message, 'error');
+        toast((LOCAL_MODE ? '이 PC 저장 실패: ' : '서버 저장 실패: ') + err.message, 'error');
         return false;
       }
     })();
@@ -567,7 +606,8 @@
     if (serverOk) document.dispatchEvent(new CustomEvent('slit:captures'));
     if (serverOk && !opts.silent) {
       renderThumbs();                      // 기다리지 않음 — 미리 보인 썸네일을 서버 목록으로 교체
-      const where = folderOk ? '서버 + 지정 폴더' : (state.dirHandle ? '서버(폴더 실패)' : '서버');
+      const base = LOCAL_MODE ? '이 PC' : '서버';
+      const where = folderOk ? `${base} + 지정 폴더` : (state.dirHandle ? `${base}(폴더 실패)` : base);
       setStatus(`${mediaType === 'photo' ? '사진' : '동영상'} 저장됨 · ${where}`, 'ready', true);
     }
     return serverOk;
@@ -790,7 +830,7 @@
     }
     const dl = $('viewer-download');
     dl.href = c.url;
-    dl.download = (c.url.split('/').pop()) || 'capture';
+    dl.download = c.filename || (c.url.split('/').pop()) || 'capture';
     dlg.showModal();
   }
 
