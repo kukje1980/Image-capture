@@ -47,7 +47,7 @@
     <h1>접속 비밀번호를 입력하세요</h1>
     <input type="hidden" name="next" value="{{ next }}">
     <input class="input" type="password" name="password" placeholder="비밀번호" autocomplete="current-password" autofocus required aria-label="비밀번호">
-    {% if error %}<div class="err" role="alert">비밀번호가 맞지 않습니다.</div>{% endif %}
+    {% if error == 2 %}<div class="err" role="alert">여러 번 틀려 잠시 막혔습니다. 1분 뒤 다시 시도하세요.</div>{% elif error %}<div class="err" role="alert">비밀번호가 맞지 않습니다.</div>{% endif %}
     <button class="btn btn-primary" type="submit">들어가기</button>
     <div class="note">환자 정보 보호를 위해 비밀번호로 보호된 페이지입니다. 이 브라우저에서는 30일 동안 로그인이 유지됩니다.</div>
   </form>

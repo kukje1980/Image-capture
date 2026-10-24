@@ -152,6 +152,7 @@
     });
 
     $('viewer-close').addEventListener('click', () => $('viewer-dialog').close());
+    $('viewer-dialog').addEventListener('close', () => { $('viewer-body').innerHTML = ''; });   // 닫으면 동영상 재생·내려받기 중지
     $('viewer-close-2').addEventListener('click', () => $('viewer-dialog').close());
 
     // 단축키 (사용자 지정 — 단축키 설정 창)
@@ -216,6 +217,7 @@
   }
   function onShortcutKey(e) {
     if (capturingKey) return;
+    if (e.repeat) return;                              // 키·발판을 누르고 있어도 한 번만 실행
     if ((e.target instanceof Element && e.target.matches('input, textarea, select')) || document.querySelector('dialog[open]')) return;
     const name = keyName(e);
     if (!name) return;
@@ -288,11 +290,14 @@
 
   // ---- patients ----
   function currentPatient() {
-    return state.patients.find(p => p.id === state.currentPatientId);
+    return state.patients.find(p => p.id === state.currentPatientId)
+      || (state.selectedPatient && state.selectedPatient.id === state.currentPatientId ? state.selectedPatient : undefined);
   }
 
   async function loadPatients() {
     const q = ($('patient-search').value || '').trim();
+    const prev = currentPatient();
+    if (prev) state.selectedPatient = prev;           // 검색 결과에 없어도 현재 환자 정보는 유지
     try {
       state.patients = await api(`/patients?q=${encodeURIComponent(q)}`);
     } catch (e) {
@@ -306,7 +311,7 @@
       opt.textContent = q ? '(검색 결과 없음)' : '(등록된 환자 없음)';
       opt.disabled = true;
       sel.appendChild(opt);
-      state.currentPatientId = null;
+      if (!q) state.currentPatientId = null;          // 검색 중에는 선택한 환자를 바꾸지 않는다
     } else {
       for (const p of state.patients) {
         const opt = document.createElement('option');
@@ -326,7 +331,8 @@
           sel.insertBefore(opt, sel.firstChild);
         } catch (_) { inList = null; }
       }
-      state.currentPatientId = inList ? state.currentPatientId : state.patients[0].id;
+      // 검색 결과에 현재 환자가 없어도 선택은 유지 (검색만 하고 닫았는데 다른 환자로 바뀌어 촬영되는 일 방지)
+      if (!inList && !(q && state.currentPatientId)) state.currentPatientId = state.patients[0].id;
       sel.value = String(state.currentPatientId);
     }
     updateCaptureButtons();
@@ -369,7 +375,12 @@
     }
   }
   function selectPatient(id) {
+    if (state.isRecording && state.recordPatientId !== id) {   // 다른 환자로 바꾸면 녹화를 끝내 앞 환자에게 저장
+      stopRecording();
+      toast('환자를 바꿔 녹화를 끝내고 이전 환자에게 저장했습니다.', 'success');
+    }
     state.currentPatientId = id;
+    state.selectedPatient = state.patients.find((p) => p.id === id) || null;
     $('patient-select').value = String(id);
     renderPatientTable();
     renderThumbs();
@@ -582,14 +593,19 @@
 
   // ---- camera ----
   // ---- 카메라 (소니 USB 스트리밍 자동 인식 · 해상도) ----
-  const SONY_RE = /sony|zv-?e10|ilme|fx3|fx30|ilce|a7|alpha/i;
-  const isSony = (label) => SONY_RE.test(label || '');
+  // 장치 이름 끝의 USB id '(054c:0e10)' 는 떼고 단어 단위로 비교 (웹캠 id 의 'a7' 오인식 방지). 054c = 소니 제조사 id
+  const SONY_RE = /\bsony\b|\bzv-?e10|\bilme\b|\bfx30?\b|\bilce\b|\ba7\w*\b|\balpha\b/i;
+  const isSony = (label) => /\(054c:[0-9a-f]{4}\)/i.test(label || '') || SONY_RE.test((label || '').replace(/\([0-9a-f]{4}:[0-9a-f]{4}\)/ig, ''));
   const RES = { '2160': [3840, 2160], '1080': [1920, 1080], '720': [1280, 720] };
   function prefGet(k) { try { return localStorage.getItem(k); } catch (_) { return null; } }
   function prefSet(k, v) { try { localStorage.setItem(k, v); } catch (_) { /* 저장 불가 */ } }
 
+  let camGen = 0;
   async function startCamera(deviceId) {
+    const gen = ++camGen;                              // 연달아 바꿀 때 늦게 끝난 이전 요청의 스트림은 버린다
+    const stale = (st) => { if (gen === camGen) return false; if (st) st.getTracks().forEach((t) => t.stop()); return true; };
     if (state.isRecording) stopRecording();
+    if (state.isPaused) togglePause();                 // 정지 화면이 새 카메라 영상 위에 남지 않게
     if (state.stream) { state.stream.getTracks().forEach(t => t.stop()); state.stream = null; }
     try {
       const video = $('video');
@@ -601,16 +617,20 @@
         stream = await navigator.mediaDevices.getUserMedia({ video: deviceId ? { ...want, deviceId: { exact: deviceId } } : want, audio: false });
       } catch (e) {
         if (!deviceId) throw e;
+        if (stale()) return;
         stream = await navigator.mediaDevices.getUserMedia({ video: want, audio: false });   // 저장된 장치가 없어졌으면 기본 장치
       }
+      if (stale(stream)) return;
       // 처음 권한을 받은 뒤 소니 카메라(USB 스트리밍)가 연결돼 있으면 그쪽으로 자동 전환
       if (!deviceId && !prefGet('slitlamp-cam')) {
         const cams = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput');
+        if (stale(stream)) return;
         const cur = stream.getVideoTracks()[0];
         const sony = cams.find((c) => isSony(c.label));
         if (sony && !isSony(cur && cur.label)) {
           stream.getTracks().forEach((t) => t.stop());
           stream = await navigator.mediaDevices.getUserMedia({ video: { ...want, deviceId: { exact: sony.deviceId } }, audio: false });
+          if (stale(stream)) return;
           toast(`소니 카메라를 찾아 연결했습니다: ${sony.label}`, 'success');
         }
       }
@@ -627,6 +647,9 @@
       await populateCameraSelect();
       updateCaptureButtons();
     } catch (err) {
+      if (gen !== camGen) return;
+      $('video').srcObject = null;                     // 멈춘 이전 영상으로 촬영되지 않게 버튼도 끈다
+      updateCaptureButtons();
       showHintError(`카메라 접근 실패: ${err.message || err.name} (HTTPS/localhost 필요)`);
       $('video-placeholder').style.display = 'flex';
       setStatus('대기 중', 'idle');
@@ -746,16 +769,18 @@
     } catch (err) { toast('녹화 시작 실패: ' + (err.message || err.name), 'error'); return; }
     const chunks = [];
     recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+    const eye = $('eye-select').value, start = Date.now();   // 시작할 때의 안구·시각으로 저장
     recorder.onstop = async () => {
       const blob = new Blob(chunks, { type: recorder.mimeType || 'video/webm' });
-      const durationMs = Date.now() - state.recordStart;
+      const durationMs = (recorder.stoppedAt || Date.now()) - start;
       const ext = (blob.type && blob.type.includes('mp4')) ? 'mp4' : 'webm';
-      await persistCapture(patient, 'video', blob, ext, $('eye-select').value, durationMs);
+      await persistCapture(patient, 'video', blob, ext, eye, durationMs);
     };
     recorder.start();
     state.recorder = recorder;
     state.isRecording = true;
-    state.recordStart = Date.now();
+    state.recordStart = start;
+    state.recordPatientId = patient.id;
     $('rec-badge').classList.add('on');
     $('btn-record').classList.add('recording');
     $('rec-btn-label').textContent = '녹화 중지';
@@ -769,6 +794,7 @@
 
   function stopRecording() {
     if (!state.isRecording || !state.recorder) return;
+    state.recorder.stoppedAt = Date.now();
     state.recorder.stop();
     state.isRecording = false;
     clearInterval(state.recordTimer);
@@ -865,6 +891,7 @@
       } catch (_) { /* 내려받기도 불가한 환경 */ }
     }
 
+    if (!serverOk && !opts.silent) setStatus('저장 실패', 'idle', true);
     if (serverOk) document.dispatchEvent(new CustomEvent('slit:captures'));
     if (serverOk && !opts.silent) {
       renderThumbs();                      // 기다리지 않음 — 미리 보인 썸네일을 서버 목록으로 교체
@@ -1017,11 +1044,14 @@
   // ---- thumbnails ----
   const DOW = ['일', '월', '화', '수', '목', '금', '토'];
   const hms = (d) => [d.getHours(), d.getMinutes(), d.getSeconds()].map((n) => String(n).padStart(2, '0')).join(':');
+  let thumbSeq = 0;
   async function renderThumbs() {
+    const my = ++thumbSeq, pid = state.currentPatientId;
     const list = $('thumb-list');
     const empty = $('thumb-empty');
-    Array.from(list.querySelectorAll('.thumb, .thumb-day')).forEach(n => n.remove());
-    if (!state.currentPatientId) {
+    const clear = () => Array.from(list.querySelectorAll('.thumb, .thumb-day')).forEach(n => n.remove());
+    if (!pid) {
+      clear();
       empty.style.display = 'block';
       empty.querySelector('div').innerHTML = '환자를 선택하세요';
       $('thumb-count').textContent = '0';
@@ -1029,10 +1059,12 @@
     }
     let items = [];
     try {
-      items = await api(`/captures?patient_id=${state.currentPatientId}&order=desc`);
+      items = await api(`/captures?patient_id=${pid}&order=desc`);
     } catch (e) {
-      toast('촬영 목록 조회 실패: ' + e.message, 'error');
+      if (my === thumbSeq) toast('촬영 목록 조회 실패: ' + e.message, 'error');
     }
+    if (my !== thumbSeq || pid !== state.currentPatientId) return;   // 그 사이 다른 환자·필터로 바뀜 → 늦은 결과는 버림
+    clear();
     $('thumb-count').textContent = items.length;
     const f = state.thumbFilter || 'all';
     const shown = items.filter((c) => f === 'all' || (f === 'video' ? c.media_type === 'video' : c.eye === f));
@@ -1130,8 +1162,9 @@
     if (state.statusResetTimer) clearTimeout(state.statusResetTimer);
     if (transient) {
       state.statusResetTimer = setTimeout(() => {
-        const v = $('video');
-        if (v.videoWidth) setStatus(`${v.videoWidth}×${v.videoHeight}`, 'ready');
+        const v = $('video'), tr = state.stream && state.stream.getVideoTracks()[0];
+        if (state.isRecording) setStatus('녹화 중', 'recording');
+        else if (v.videoWidth) setStatus(`${v.videoWidth}×${v.videoHeight}${isSony(tr && tr.label) ? ' · Sony' : ''}`, 'ready');
         else setStatus('대기 중', 'idle');
       }, 2500);
     }

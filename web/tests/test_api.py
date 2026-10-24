@@ -169,3 +169,45 @@ def test_delete_patient_removes_media_files(client):
     assert not f.exists()
     assert not f.parent.exists()                      # 빈 날짜 폴더도 정리
     assert client.get(cap["url"]).status_code == 404
+
+
+def test_update_keeps_unsent_fields(client):
+    """화면에 없는 patient_id 를 보내지 않고 수정해도 기존 값이 지워지지 않는다."""
+    r = client.post("/api/v1/patients", json={"chart_no": "K1", "name": "가", "patient_id": "H-77"})
+    pid = r.json()["id"]
+    client.put(f"/api/v1/patients/{pid}", json={"chart_no": "K1", "name": "나"})
+    got = client.get(f"/api/v1/patients/{pid}").json()
+    assert got["name"] == "나" and got["patient_id"] == "H-77"
+
+
+def test_same_millisecond_uploads_do_not_overwrite(client, monkeypatch):
+    from datetime import datetime
+    from app import config
+    p = _make_patient(client, chart="T1")
+    monkeypatch.setattr(config, "now", lambda: datetime(2026, 1, 2, 3, 4, 5, 6000))
+    urls = []
+    for body in (b"one", b"two"):
+        r = client.post("/api/v1/captures", data={"patient_id": p["id"], "media_type": "photo", "ext": "png"},
+                        files={"file": ("a.png", io.BytesIO(body), "image/png")})
+        assert r.status_code == 201, r.text
+        urls.append(r.json()["url"])
+    assert urls[0] != urls[1]
+    assert [client.get(u).content for u in urls] == [b"one", b"two"]
+    assert r.json()["captured_at"] == "2026-01-02 03:04:05"
+
+
+def test_upload_size_limit(client, monkeypatch):
+    from app import config
+    p = _make_patient(client, chart="T2")
+    monkeypatch.setattr(config, "MAX_UPLOAD_MB", 1)
+    r = client.post("/api/v1/captures", data={"patient_id": p["id"], "media_type": "video", "ext": "mp4"},
+                    files={"file": ("a.mp4", io.BytesIO(b"0" * (1024 * 1024 + 10)), "video/mp4")})
+    assert r.status_code == 413
+    assert not list(config.MEDIA_DIR.rglob("*.mp4"))                  # 잘린 파일이 남지 않음
+
+
+def test_now_uses_korea_time():
+    from datetime import datetime, timedelta, timezone
+    from app import config
+    kst = datetime.now(timezone(timedelta(hours=9))).replace(tzinfo=None)
+    assert abs((config.now() - kst).total_seconds()) < 5

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import quote
@@ -77,7 +78,29 @@ async def _gate(request: Request, call_next):
         if path.startswith(("/api/", "/media/")):
             return JSONResponse({"detail": "로그인이 필요합니다."}, status_code=401)
         return RedirectResponse(f"/login?next={quote(path)}", status_code=303)
+    # '이 PC 에만 저장' 정책이면 서버는 환자 정보·영상을 받지 않는다 (예전 화면·직접 호출 포함)
+    if config.STORAGE_POLICY == "local" and path.startswith("/api/") and request.method not in ("GET", "HEAD", "OPTIONS"):
+        return JSONResponse({"detail": "이 서버는 'PC에만 저장' 모드라 환자 정보·영상을 받지 않습니다."}, status_code=403)
     return await call_next(request)
+
+
+# 로그인 비밀번호 무차별 대입 방지: 같은 주소에서 5번 틀리면 1분간 막음
+_LOGIN_FAILS: dict[str, tuple[int, float]] = {}
+
+
+def _login_blocked(ip: str) -> bool:
+    n, until = _LOGIN_FAILS.get(ip, (0, 0.0))
+    return n >= 5 and time.time() < until
+
+
+def _login_failed(ip: str) -> None:
+    n, until = _LOGIN_FAILS.get(ip, (0, 0.0))
+    if n >= 5 and time.time() >= until:
+        n = 0
+    n += 1
+    _LOGIN_FAILS[ip] = (n, time.time() + 60)
+    if len(_LOGIN_FAILS) > 10000:
+        _LOGIN_FAILS.clear()
 
 
 @app.get("/login", response_class=HTMLResponse, include_in_schema=False)
@@ -88,15 +111,20 @@ def login_page(request: Request, next: str = "/", error: int = 0):
     b = _brand_for_path(dest)
     if b is BRAND:
         b = _brand_for_host(request)
-    return templates.TemplateResponse(request, "login.html", {"next": dest, "error": bool(error),
+    return templates.TemplateResponse(request, "login.html", {"next": dest, "error": int(error or 0),
                                                              "brand": b, "brand_public": brands.public(b)})
 
 
 @app.post("/login", include_in_schema=False)
 def login_submit(request: Request, password: str = Form(""), next: str = Form("/")):
     dest = _safe_next(next)
+    ip = request.client.host if request.client else "-"
+    if _login_blocked(ip):
+        return RedirectResponse(f"/login?error=2&next={quote(dest)}", status_code=303)
     if not config.PASSWORD or not hmac.compare_digest(password.encode("utf-8"), config.PASSWORD.encode("utf-8")):
+        _login_failed(ip)
         return RedirectResponse(f"/login?error=1&next={quote(dest)}", status_code=303)
+    _LOGIN_FAILS.pop(ip, None)
     resp = RedirectResponse(dest, status_code=303)
     resp.set_cookie(AUTH_COOKIE, _auth_token(), max_age=30 * 24 * 3600, httponly=True, samesite="lax",
                     secure=request.url.scheme == "https")

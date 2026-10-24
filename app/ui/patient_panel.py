@@ -147,14 +147,19 @@ class PatientPanel(QFrame):
 
     def _reload(self, *_):
         q = self.search.text().strip()
-        self._patients = self.db.patients.search(q) if q else self.db.patients.list_all()
+        prev = self.current_patient() if hasattr(self, "_patients") else None
+        self._patients = list(self.db.patients.search(q) if q else self.db.patients.list_all())
+        # 검색어를 쳐도 지금 환자 선택은 유지 (검색 결과에 없으면 맨 앞에 남겨 둔다) — 다른 환자로 촬영되는 일 방지
+        if prev is not None and q and not any(p.id == prev.id for p in self._patients):
+            self._patients.insert(0, prev)
         self.combo.blockSignals(True)
         self.combo.clear()
         for p in self._patients:
             self.combo.addItem(f"{p.name} ({p.chart_no or '-'})")
-        self.combo.blockSignals(False)
+        sel = next((i for i, p in enumerate(self._patients) if prev is not None and p.id == prev.id), 0)
         if self._patients:
-            self.combo.setCurrentIndex(0)
+            self.combo.setCurrentIndex(sel)
+        self.combo.blockSignals(False)
         self._on_select()
 
     def _on_select(self, *_):

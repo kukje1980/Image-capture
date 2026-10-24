@@ -409,6 +409,17 @@ class MainWindow(QMainWindow):
         idx = None
         if cfg.camera_name and cfg.camera_name in names:
             idx = names.index(cfg.camera_name)          # 장치 순서가 바뀌어도 같은 카메라
+        elif cfg.camera_name:
+            # 저장한 카메라가 안 보이면 같은 번호의 다른 장치(노트북 웹캠 등)로 몰래 바뀌지 않게 알린다
+            cur = names[cfg.camera_index] if 0 <= cfg.camera_index < len(names) else "없음"
+            msg = (f"설정한 카메라 '{cfg.camera_name}' 를 찾지 못했습니다.\n"
+                   f"연결을 확인하세요. 지금은 '{cur}' 로 연결합니다 (설정에서 바꿀 수 있습니다).")
+            log.warning(msg)
+            self.statusBar().showMessage(msg.replace("\n", " "), 15000)
+            box = QMessageBox(QMessageBox.Icon.Warning, "카메라", msg, QMessageBox.StandardButton.Ok, self)
+            box.setModal(False)                 # 시작을 막지 않게 (창은 떠 있고 확인만 누르면 됨)
+            box.show()
+            return
         elif not cfg.camera_name:
             idx = find_sony_index(names)
             if idx is not None:
@@ -438,6 +449,14 @@ class MainWindow(QMainWindow):
         # 처리되지 않는다. _running(bool)을 직접 내려 루프가 즉시 빠져나오게 한다.
         if self.worker is not None:
             self.worker.stop()
+            # 늦게 멈추는 이전 워커의 프레임·오류가 새 카메라 화면에 섞이지 않게 연결을 끊는다
+            for sig, slot in ((self.worker.frame_ready, self._on_frame_ready),
+                              (self.worker.opened, self._on_camera_opened),
+                              (self.worker.error, self._on_camera_error)):
+                try:
+                    sig.disconnect(slot)
+                except (RuntimeError, TypeError):
+                    pass
         if self.cam_thread is not None:
             self.cam_thread.quit()
             if not self.cam_thread.wait(3000):
@@ -446,6 +465,8 @@ class MainWindow(QMainWindow):
         self.cam_thread = None
 
     def _restart_camera(self) -> None:
+        if self._recording:                  # 카메라·해상도가 바뀌기 전에 지금 녹화를 마무리해 저장
+            self._stop_recording()
         self._stop_camera()
         self.video_view.clear()
         self._start_camera()
@@ -488,6 +509,8 @@ class MainWindow(QMainWindow):
     def _on_patient_changed(self, patient) -> None:
         self._current_patient = patient
         self.control_bar.set_capture_enabled(patient is not None)
+        if self._recording:                  # 녹화 중에는 언제든 멈출 수 있어야 한다
+            self.control_bar.btn_record.setEnabled(True)
         self.video_view.set_hud(patient=(f"{patient.name}  ·  {patient.chart_no}" if patient and patient.chart_no
                                          else (patient.name if patient else "환자 미선택")))
         self.thumbnail_panel.set_patient(patient.id if patient else None)
@@ -675,7 +698,9 @@ class MainWindow(QMainWindow):
 
     def _on_recorder_error(self, msg: str) -> None:
         log.error("recorder error: %s", msg)
-        self.statusBar().showMessage(f"녹화 오류: {msg}", 8000)
+        if self._recording:                  # 녹화가 이어지는 것처럼 보이지 않게 멈추고 쓴 부분까지만 저장
+            self._stop_recording()
+        self.statusBar().showMessage(f"녹화 오류로 녹화를 멈췄습니다: {msg}", 10000)
 
     def _on_thumbnail_clicked(self, capture) -> None:
         ImageViewerDialog(capture, self).exec()

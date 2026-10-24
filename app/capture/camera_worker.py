@@ -33,12 +33,17 @@ class CameraWorker(QObject):
         self._factory = source_factory
         self._source: FrameSource | None = None
         self._running = False
+        self._stop_requested = False      # 여는 도중(수 초)에 온 정지 요청도 잊지 않도록 따로 기억
 
     @Slot()
     def run(self) -> None:
         try:
             self._source = self._factory()
             self._source.open()
+            if self._stop_requested:
+                self._source.release()
+                self.stopped.emit()
+                return
             w, h = self._source.size
             self.opened.emit(int(w), int(h), float(self._source.fps))
         except Exception as e:  # noqa: BLE001
@@ -48,7 +53,7 @@ class CameraWorker(QObject):
 
         self._running = True
         fails = 0
-        while self._running:
+        while self._running and not self._stop_requested:
             try:
                 ok, frame = self._source.read()
             except Exception as e:  # noqa: BLE001
@@ -74,4 +79,5 @@ class CameraWorker(QObject):
 
     @Slot()
     def stop(self) -> None:
+        self._stop_requested = True
         self._running = False

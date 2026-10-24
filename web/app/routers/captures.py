@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import re
+import secrets
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
@@ -70,18 +71,36 @@ async def create_capture(
     if media_type not in ("photo", "video"):
         raise HTTPException(status_code=400, detail="media_type은 photo 또는 video 여야 합니다.")
 
-    ts = datetime.now()
+    ts = config.now()
     file_ext = (ext or _EXT[media_type]).strip().lower().lstrip(".")
     if file_ext not in _ALLOWED_EXT[media_type]:
         raise HTTPException(status_code=400, detail=f"허용되지 않는 파일 형식입니다: {file_ext}")
     rel_path, abs_path = _target_paths(patient, media_type, ts, file_ext)
     abs_path.parent.mkdir(parents=True, exist_ok=True)
 
-    data = await file.read()
-    abs_path.write_bytes(data)
+    # 같은 밀리초에 두 장이 올라와도 덮어쓰지 않게 새 파일로만 연다 ('x'), 겹치면 짧은 꼬리표를 붙인다
+    try:
+        out = open(abs_path, "xb")
+    except FileExistsError:
+        abs_path = abs_path.with_name(f"{abs_path.stem}_{secrets.token_hex(3)}{abs_path.suffix}")
+        rel_path = rel_path.with_name(abs_path.name)
+        out = open(abs_path, "xb")
+    # 통째로 메모리에 올리지 않고 나눠서 기록 + 크기 제한
+    limit, size = config.MAX_UPLOAD_MB * 1024 * 1024, 0
+    try:
+        with out:
+            while chunk := await file.read(1024 * 1024):
+                size += len(chunk)
+                if size > limit:
+                    raise HTTPException(status_code=413, detail=f"파일이 너무 큽니다 (최대 {config.MAX_UPLOAD_MB}MB).")
+                out.write(chunk)
+    except BaseException:
+        abs_path.unlink(missing_ok=True)
+        raise
 
     url = "/media/" + str(rel_path).replace("\\", "/")
-    cid = db.create_capture({
+    try:
+        cid = db.create_capture({
         "patient_id": patient_id,
         "media_type": media_type,
         "file_path": str(rel_path).replace("\\", "/"),
@@ -90,7 +109,10 @@ async def create_capture(
         "eye": eye if eye in ("OD", "OS", "OU", "NA") else "NA",
         "duration_ms": duration_ms,
         "note": note,
-    })
+        })
+    except Exception:                                   # 기록 실패(그 사이 환자 삭제 등) → 파일만 남지 않게
+        abs_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=409, detail="저장하지 못했습니다 (환자가 삭제되었을 수 있습니다).")
     return db.get_capture(cid)
 
 
