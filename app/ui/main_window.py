@@ -33,7 +33,9 @@ from app.ui.patient_panel import PatientPanel
 from app.ui.pro.pro_workspace import ProWorkspace
 from app.ui.quad_view import QuadView
 from app.ui.settings_dialog import SettingsDialog
+from app.ui.shortcuts_dialog import ShortcutsDialog
 from app import brand as app_brand
+from app import shortcuts
 from app.ui import icons
 from app.ui.theme import ICON, ICON_ACCENT, build_qss, make_app_icon
 from app.ui.thumbnail_panel import ThumbnailPanel
@@ -86,7 +88,8 @@ class MainWindow(QMainWindow):
         outer = QVBoxLayout(central)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
-        outer.addWidget(self._build_topbar())
+        self.topbar = self._build_topbar()
+        outer.addWidget(self.topbar)
         self.patient_panel = PatientPanel(self.db)
         outer.addWidget(self.patient_panel)          # 단일/Pro 공통 환자 배너
 
@@ -143,6 +146,8 @@ class MainWindow(QMainWindow):
         self._rec_timer.timeout.connect(self._update_rec_hud)
 
         self._on_patient_changed(self.patient_panel.current_patient())
+        self._fullscreen = False
+        self._install_shortcuts()
 
     def _build_topbar(self) -> QFrame:
         """브랜드 + 촬영/Pro 검토 전환 스위치 + 설정·재연결·테마."""
@@ -179,7 +184,6 @@ class MainWindow(QMainWindow):
         # 촬영 / Pro 검토 전환 (act_pro 는 체크형 액션으로 유지)
         self.act_pro = QAction("Pro 검토", self)
         self.act_pro.setCheckable(True)
-        self.act_pro.setShortcut("F2")
         self.act_pro.setToolTip("전문가용 영상 검토 화면 (MULTI·비교·보정·편집·인쇄)")
         self.act_pro.toggled.connect(self._on_pro_toggled)
         self.addAction(self.act_pro)
@@ -202,7 +206,7 @@ class MainWindow(QMainWindow):
             grp.addButton(b)
             sl.addWidget(b)
         self.btn_mode_capture.setChecked(True)
-        self.btn_mode_pro.setToolTip(self.act_pro.toolTip() + "  (F2)")
+        self.btn_mode_pro.setToolTip(self.act_pro.toolTip())
         self.btn_mode_capture.clicked.connect(lambda: self.act_pro.setChecked(False))
         self.btn_mode_pro.clicked.connect(lambda: self.act_pro.setChecked(True))
         lay.addWidget(sw)
@@ -220,6 +224,7 @@ class MainWindow(QMainWindow):
             return b
 
         tool("카메라 재연결", "videocam", "캡처 장비 다시 연결", self._restart_camera)
+        tool("", "keyboard", "단축키 설정 (캡처·녹화·안구 등)", self._open_shortcuts)
         tool("설정", "sliders", "카메라·저장 위치·형식 설정", self._open_settings)
         self.act_theme = QAction(self)
         self.act_theme.triggered.connect(self._toggle_theme)
@@ -269,6 +274,114 @@ class MainWindow(QMainWindow):
             self.video_view.set_hud(state="paused")
         else:
             self.video_view.set_hud(state="live")
+
+    # ---- 단축키 (사용자 지정) ----
+    def _install_shortcuts(self) -> None:
+        from PySide6.QtGui import QKeySequence, QShortcut
+
+        for sc in getattr(self, "_shortcut_objs", {}).values():
+            sc.setEnabled(False)
+            sc.deleteLater()
+        self._keys = shortcuts.load(self.config)
+        self._shortcut_objs = {}
+        for aid, key in self._keys.items():
+            if not key:
+                continue
+            sc = QShortcut(QKeySequence(key), self)
+            sc.setContext(Qt.ShortcutContext.WindowShortcut)
+            sc.setAutoRepeat(False)
+            sc.activated.connect(lambda aid=aid: self._run_action(aid))
+            self._shortcut_objs[aid] = sc
+        if not hasattr(self, "_esc_fullscreen"):
+            self._esc_fullscreen = QShortcut(QKeySequence("Esc"), self)
+            self._esc_fullscreen.activated.connect(lambda: self._set_fullscreen(False))
+        self._sync_shortcut_scope()
+        self._apply_key_hints()
+
+    def _sync_shortcut_scope(self) -> None:
+        """촬영 화면 전용 단축키는 Pro 화면에서 끈다 (Pro 의 Space 등과 겹치지 않게)."""
+        capture = self.mode_stack.currentIndex() == 0
+        for aid, sc in self._shortcut_objs.items():
+            sc.setEnabled(capture or shortcuts.scope(aid) == "all")
+        self._esc_fullscreen.setEnabled(self._fullscreen)
+
+    def _apply_key_hints(self) -> None:
+        cb = self.control_bar
+        hints = {"capture": cb.btn_capture, "record": cb.btn_record, "pause": cb.btn_pause,
+                 "freeze": cb.btn_freeze, "quad": cb.btn_quad, "mode": self.btn_mode_pro}
+        for aid, w in hints.items():
+            base = w.property("tipBase")
+            if base is None:
+                base = w.toolTip()
+                w.setProperty("tipBase", base)
+            key = self._keys.get(aid)
+            w.setToolTip(f"{base} ({key})" if key else base)
+        for code, b in cb.eye_buttons.items():
+            hints[f"eye{code}"] = b
+        for aid, w in hints.items():
+            if aid.startswith("eye"):
+                base = w.property("tipBase")
+                if base is None:
+                    base = w.toolTip()
+                    w.setProperty("tipBase", base)
+                key = self._keys.get(aid)
+                w.setToolTip(f"{base} ({key})" if key else base)
+
+    def _run_action(self, aid: str) -> None:
+        cb = self.control_bar
+        if aid.startswith("eye"):
+            code = aid[3:]
+            if self.mode_stack.currentIndex() == 1:
+                self.pro.c_eye.setCurrentIndex(["NA", "OD", "OS", "OU"].index(code))
+            else:
+                cb.set_eye(code)
+            self.statusBar().showMessage(f"안구: {'미지정' if code == 'NA' else code}", 2000)
+        elif aid == "capture" and cb.btn_capture.isEnabled():
+            self._on_capture()
+        elif aid == "record" and cb.btn_record.isEnabled():
+            cb.btn_record.toggle()
+        elif aid == "pause" and cb.btn_pause.isVisible() and cb.btn_pause.isEnabled():
+            cb.btn_pause.toggle()
+        elif aid == "freeze" and cb.btn_freeze.isEnabled():
+            self._on_freeze()
+        elif aid == "quad":
+            cb.btn_quad.toggle()
+        elif aid == "fullscreen":
+            self._set_fullscreen(not self._fullscreen)
+        elif aid == "mode":
+            self.act_pro.toggle()
+        elif aid == "patients":
+            self.patient_panel.search.setFocus()
+            self.patient_panel.search.selectAll()
+            self.patient_panel.combo.showPopup()
+        elif aid == "newPatient":
+            self.patient_panel._new_patient()
+
+    def _set_fullscreen(self, on: bool) -> None:
+        """영상 전체 화면: 창을 화면 가득 채우고 상단바·환자 배너·썸네일·상태바를 숨김 (Esc 로 해제)."""
+        if on == self._fullscreen:
+            return
+        self._fullscreen = on
+        for w in (self.topbar, self.patient_panel, self.thumbnail_panel, self.statusBar()):
+            w.setVisible(not on)
+        if on:
+            self._was_maximized = self.isMaximized()
+            self.showFullScreen()
+            self.statusBar().showMessage("전체 화면 — Esc 로 나가기", 3000)
+        else:
+            self.showMaximized() if getattr(self, "_was_maximized", False) else self.showNormal()
+        self._esc_fullscreen.setEnabled(on)
+
+    def _open_shortcuts(self) -> None:
+        dlg = ShortcutsDialog(self._keys, self)
+        if dlg.exec():
+            self.config.shortcuts = dlg.values()
+            try:
+                self.config.save()
+            except Exception:  # noqa: BLE001
+                log.warning("shortcut save failed", exc_info=True)
+            self._install_shortcuts()
+            self.statusBar().showMessage("단축키를 저장했습니다", 3000)
 
     # ---- 카메라 스레드 ----
     def _source_factory(self):
@@ -384,6 +497,8 @@ class MainWindow(QMainWindow):
     def _on_pro_toggled(self, on: bool) -> None:
         self.mode_stack.setCurrentIndex(1 if on else 0)
         (self.btn_mode_pro if on else self.btn_mode_capture).setChecked(True)
+        if hasattr(self, "_shortcut_objs"):
+            self._sync_shortcut_scope()
         if on:
             self.pro.reload(select_last=False)
             if self._last_frame is not None:

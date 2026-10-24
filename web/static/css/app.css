@@ -544,3 +544,17 @@ dialog.pdrawer[open] { display: flex; animation: pd-in .18s ease-out; }
 .sony-body p { margin: 0; font-size: 13.5px; }
 .sony-body small { color: var(--ink-soft); }
 .sony-note { font-size: 12.5px !important; color: var(--ink-soft); line-height: 1.7; background: var(--panel-2); border: 1px solid var(--rule); border-radius: 8px; padding: 10px 12px; }
+
+/* 단축키 설정 */
+.keys-dialog { max-width: 600px; }
+.keys-note { margin: 0; font-size: 12.5px; color: var(--ink-soft); line-height: 1.7; }
+.keys-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.keys-table th { text-align: left; font-size: 11.5px; color: var(--ink-muted); font-weight: 700; padding: 6px 8px; border-bottom: 1px solid var(--rule); }
+.keys-table td { padding: 8px; border-bottom: 1px solid var(--rule); vertical-align: middle; }
+.keys-table td small { display: block; font-size: 11px; color: var(--ink-muted); }
+.keys-table kbd { display: inline-block; min-width: 34px; padding: 3px 9px; border-radius: 6px; text-align: center; font-family: var(--font-mono); font-size: 12.5px; font-weight: 700;
+  background: var(--raised); color: var(--ink); box-shadow: inset 0 -2px 0 var(--rule-strong), inset 0 0 0 1px var(--rule-strong); }
+.keys-table kbd.none { color: var(--ink-muted); font-weight: 500; }
+.keys-table kbd.waiting { background: var(--accent-soft); color: var(--accent-strong); box-shadow: inset 0 0 0 1px var(--accent); animation: pulse 1.2s infinite; }
+.keys-act { text-align: right; white-space: nowrap; }
+.keys-act .btn { margin-left: 4px; }
