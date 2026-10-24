@@ -69,6 +69,7 @@
   <symbol id="i-expand" viewBox="0 0 24 24"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></symbol>
   <symbol id="i-shrink" viewBox="0 0 24 24"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/></symbol>
   <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></symbol>
+  <symbol id="i-keyboard" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2.5"/><path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 12.5h.01M10 12.5h.01M14 12.5h.01M18 12.5h.01M8 16h8"/></symbol>
   <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M4 21h16"/></symbol>
 </svg>
 
@@ -117,6 +118,7 @@
       <button class="btn btn-sm btn-quiet storage-btn" id="btn-storage" title="촬영본·환자 정보를 어디에 저장할지 선택"><svg class="ic"><use href="#i-save"/></svg><span id="storage-label">저장: 서버</span></button>
       <button class="btn btn-sm btn-quiet" id="btn-folder"><svg class="ic"><use href="#i-folder"/></svg>저장 폴더</button>
       <span class="folder-status" id="folder-status" title="브라우저가 직접 저장할 로컬 폴더"><span class="dot"></span> 폴더 미지정</span>
+      <button class="btn btn-icon btn-quiet" id="btn-keys" title="단축키 설정 (캡처·녹화·안구 등)" aria-label="단축키 설정"><svg class="ic"><use href="#i-keyboard"/></svg></button>
       <button class="btn btn-icon btn-quiet" id="btn-theme" title="밝은/어두운 테마" aria-label="테마 전환">
         <svg class="ic" id="theme-icon-light" style="display:block"><use href="#i-sun"/></svg>
         <svg class="ic" id="theme-icon-dark" style="display:none"><use href="#i-moon"/></svg>
@@ -448,6 +450,22 @@
     · 카메라 자체 셔터로 <b>고해상도 원본(2,400만 화소)</b>을 찍는 원격 제어는 소니 Camera Remote SDK 로 데스크탑 앱에 추가 예정입니다.</p>
   </div>
   <div class="dialog-footer"><button type="button" class="btn btn-primary" id="sony-ok">확인</button></div>
+</dialog>
+
+<dialog id="keys-dialog" class="keys-dialog" aria-labelledby="keys-title">
+  <div class="dialog-header">
+    <div class="dialog-title" id="keys-title">단축키 설정</div>
+    <button class="btn btn-ghost btn-icon" type="button" id="keys-x" aria-label="닫기"><svg class="ic"><use href="#i-x"/></svg></button>
+  </div>
+  <div class="dialog-body">
+    <p class="keys-note">[변경]을 누른 뒤 원하는 키를 누르세요. F1~F12, 숫자패드, Ctrl/Alt/Shift 조합도 됩니다.
+      <b>USB 발판 스위치</b>처럼 키를 보내는 장치도 같은 방법으로 지정할 수 있습니다. 한글 입력 상태에서도 동작합니다.</p>
+    <table class="keys-table"><thead><tr><th>동작</th><th>단축키</th><th></th></tr></thead><tbody id="keys-rows"></tbody></table>
+  </div>
+  <div class="dialog-footer">
+    <button type="button" class="btn btn-ghost" id="keys-reset" style="margin-right:auto">기본값으로</button>
+    <button type="button" class="btn btn-primary" id="keys-ok">확인</button>
+  </div>
 </dialog>
 
 <dialog id="storage-dialog" aria-labelledby="storage-title">

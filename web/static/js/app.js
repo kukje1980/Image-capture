@@ -65,6 +65,7 @@
     } catch (_) {}
     syncThemeIcon();
     syncStorageUI();
+    applyKeyHints();
     try { if (localStorage.getItem('slitlamp-hint-closed') === '1' && !LOCAL_MODE) $('hint').style.display = 'none'; } catch (_) {}
     bindEvents();
     syncEye();
@@ -148,14 +149,124 @@
     $('viewer-close').addEventListener('click', () => $('viewer-dialog').close());
     $('viewer-close-2').addEventListener('click', () => $('viewer-dialog').close());
 
-    document.addEventListener('keydown', (e) => {
-      if (e.target.matches('input, textarea, select') || document.querySelector('dialog[open]')) return;
-      if (document.body.classList.contains('pro-on')) return;   // Pro 모드는 pro.js가 처리
-      if (e.key.toLowerCase() === 'f' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); toggleFullscreen(); return; }
-      if (e.key === ' ') { e.preventDefault(); togglePause(); }
-      else if (e.key.toLowerCase() === 'c') { if (!$('btn-capture').disabled) { e.preventDefault(); capturePhoto(); } }
-      else if (e.key.toLowerCase() === 'r') { if (!$('btn-record').disabled) { e.preventDefault(); toggleRecord(); } }
+    // 단축키 (사용자 지정 — 단축키 설정 창)
+    document.addEventListener('keydown', onShortcutKey);
+    $('btn-keys').addEventListener('click', openKeysDialog);
+    $('keys-x').addEventListener('click', () => $('keys-dialog').close());
+    $('keys-ok').addEventListener('click', () => $('keys-dialog').close());
+    $('keys-reset').addEventListener('click', () => { keymap = defaultKeymap(); saveKeymap(); renderKeysTable(); applyKeyHints(); });
+  }
+
+  // ---- 단축키 (사용자 지정) ----
+  // 물리 키 기준(e.code)으로 읽어서 한글 입력 상태에서도 동작한다. USB 발판 스위치처럼 키를 보내는 장치도 지정 가능.
+  const KEY_ACTIONS = [
+    { id: 'capture', label: '사진 캡처', def: 'C', scope: 'capture', btns: ['btn-capture', 'btn-fs-capture'],
+      run: () => { if (!$('btn-capture').disabled) capturePhoto(); } },
+    { id: 'record', label: '녹화 시작 / 중지', def: 'R', scope: 'capture', btns: ['btn-record', 'btn-fs-record'],
+      run: () => { if (!$('btn-record').disabled) toggleRecord(); } },
+    { id: 'pause', label: '일시정지 / 재개', def: 'Space', scope: 'capture', btns: ['btn-pause'], run: () => togglePause() },
+    { id: 'freeze', label: '정지영상 (4분할 칸 채우기)', def: 'X', scope: 'capture', btns: ['btn-freeze', 'btn-fs-freeze'],
+      run: () => { if (!$('btn-freeze').disabled) freezeFrame(); } },
+    { id: 'quad', label: '4분할 켜기 / 끄기', def: 'Q', scope: 'capture', btns: ['btn-quad'], run: () => toggleQuad() },
+    { id: 'eyeOD', label: '안구 OD (우안)', def: '1', scope: 'all', run: () => setEyeAny('OD') },
+    { id: 'eyeOS', label: '안구 OS (좌안)', def: '2', scope: 'all', run: () => setEyeAny('OS') },
+    { id: 'eyeOU', label: '안구 OU (양안)', def: '3', scope: 'all', run: () => setEyeAny('OU') },
+    { id: 'eyeNA', label: '안구 미지정', def: '0', scope: 'all', run: () => setEyeAny('NA') },
+    { id: 'fullscreen', label: '전체 화면', def: 'F', scope: 'all', btns: ['btn-fullscreen', 'pro-fullscreen'], run: () => toggleFullscreen() },
+    { id: 'mode', label: '촬영 ↔ Pro 검토 전환', def: 'P', scope: 'all', btns: ['btn-pro'], run: () => $('btn-pro').click() },
+    { id: 'patients', label: '환자 목록', def: 'L', scope: 'all', btns: ['btn-patients'], run: () => openPatientList() },
+    { id: 'newPatient', label: '신규 환자', def: 'N', scope: 'all', btns: ['btn-new-patient'], run: () => openPatientDialog(null) },
+  ];
+  const RESERVED = new Set(['Escape', 'Tab', 'Ctrl+Z', 'Ctrl+Y', 'Ctrl+Shift+Z', 'Meta+Z', 'Meta+Y', 'ArrowLeft', 'ArrowRight']);
+  const defaultKeymap = () => Object.fromEntries(KEY_ACTIONS.map((a) => [a.id, a.def]));
+  let keymap = defaultKeymap();
+  try { keymap = { ...keymap, ...JSON.parse(localStorage.getItem('slitlamp-keys') || '{}') }; } catch (_) { /* 기본값 */ }
+  function saveKeymap() { try { localStorage.setItem('slitlamp-keys', JSON.stringify(keymap)); } catch (_) { /* 저장 불가 */ } }
+
+  /** 키 이벤트 → 'Ctrl+Shift+C', 'Space', 'F5', 'Num1' 같은 이름 (수정키만 누르면 null) */
+  function keyName(e) {
+    if (['Control', 'Shift', 'Alt', 'Meta', 'Process'].includes(e.key) || e.isComposing && !e.code) return null;
+    let k;
+    if (/^Key[A-Z]$/.test(e.code)) k = e.code.slice(3);
+    else if (/^Digit\d$/.test(e.code)) k = e.code.slice(5);
+    else if (/^Numpad\d$/.test(e.code)) k = 'Num' + e.code.slice(6);
+    else if (e.code === 'Space') k = 'Space';
+    else if (e.key && e.key.length === 1) k = e.key.toUpperCase();
+    else k = e.key || e.code;
+    const mods = [e.ctrlKey && 'Ctrl', e.altKey && 'Alt', e.shiftKey && 'Shift', e.metaKey && 'Meta'].filter(Boolean);
+    return [...mods, k].join('+');
+  }
+  function setEyeAny(v) {
+    if (document.body.classList.contains('pro-on')) {
+      const s = $('pro-eye'); if (s) s.value = v;
+      toast(`안구: ${v === 'NA' ? '미지정' : v}`, 'success');
+    } else setEye(v);
+  }
+  function onShortcutKey(e) {
+    if (capturingKey) return;
+    if ((e.target instanceof Element && e.target.matches('input, textarea, select')) || document.querySelector('dialog[open]')) return;
+    const name = keyName(e);
+    if (!name) return;
+    const pro = document.body.classList.contains('pro-on');
+    const act = KEY_ACTIONS.find((a) => keymap[a.id] === name && (a.scope === 'all' || (a.scope === 'capture' && !pro)));
+    if (!act) return;
+    e.preventDefault();
+    act.run();
+  }
+  /** 버튼 툴팁에 현재 단축키 표시 */
+  function applyKeyHints() {
+    for (const a of KEY_ACTIONS) {
+      for (const id of a.btns || []) {
+        const b = $(id); if (!b) continue;
+        const base = (b.dataset.tip ??= (b.title || '').replace(/\s*\([^)]*\)\s*$/, ''));
+        b.title = keymap[a.id] ? `${base} (${keymap[a.id]})` : base;
+      }
+    }
+    document.querySelectorAll('#eye-seg [data-eye]').forEach((b) => {
+      const k = keymap['eye' + b.dataset.eye];
+      b.title = (b.dataset.tip ??= b.title) + (k ? ` (${k})` : '');
     });
+  }
+
+  let capturingKey = null;
+  function openKeysDialog() { renderKeysTable(); $('keys-dialog').showModal(); }
+  function renderKeysTable() {
+    const tb = $('keys-rows');
+    tb.innerHTML = '';
+    for (const a of KEY_ACTIONS) {
+      const tr = document.createElement('tr');
+      const k = keymap[a.id];
+      tr.innerHTML = `<td>${escHtml(a.label)}<small>${a.scope === 'capture' ? '촬영 화면' : '모든 화면'}</small></td>`
+        + `<td><kbd class="${k ? '' : 'none'}">${escHtml(k || '없음')}</kbd></td>`
+        + '<td class="keys-act"><button class="btn btn-sm" data-act="set">변경</button><button class="btn btn-sm btn-ghost" data-act="clear" title="단축키 없애기">지우기</button></td>';
+      tr.querySelector('[data-act="set"]').addEventListener('click', () => startCapture(a, tr));
+      tr.querySelector('[data-act="clear"]').addEventListener('click', () => { keymap[a.id] = ''; saveKeymap(); renderKeysTable(); applyKeyHints(); });
+      tb.appendChild(tr);
+    }
+  }
+  function startCapture(action, tr) {
+    const kbd = tr.querySelector('kbd');
+    kbd.textContent = '키를 누르세요… (Esc 취소)'; kbd.className = 'waiting';
+    const handler = (e) => {
+      e.preventDefault(); e.stopPropagation();
+      if (e.key === 'Escape') { finish(); return; }
+      const name = keyName(e);
+      if (!name) return;                              // 수정키만 눌렀으면 계속 기다림
+      if (RESERVED.has(name)) { kbd.textContent = `${name} 는 쓸 수 없습니다 — 다른 키`; return; }
+      const other = KEY_ACTIONS.find((a) => a.id !== action.id && keymap[a.id] === name);
+      if (other) { keymap[other.id] = ''; toast(`'${other.label}'에 쓰던 ${name} 를 옮겼습니다`, 'success'); }
+      keymap[action.id] = name;
+      saveKeymap(); applyKeyHints();
+      finish();
+    };
+    function finish() {
+      document.removeEventListener('keydown', handler, true);
+      capturingKey = null;
+      renderKeysTable();
+    }
+    if (capturingKey) capturingKey();
+    capturingKey = finish;
+    document.addEventListener('keydown', handler, true);
   }
 
   function debounce(fn, ms) {

@@ -1101,14 +1101,13 @@
 
   document.addEventListener('slit:patient', () => { if (P.on) reload(false); });
   document.addEventListener('keydown', (e) => {
-    if (!P.on || e.target.matches('input, textarea, select') || document.querySelector('dialog[open]')) return;
+    if (!P.on || (e.target instanceof Element && e.target.matches('input, textarea, select')) || document.querySelector('dialog[open]')) return;
     if (e.key === 'ArrowLeft') { e.preventDefault(); step(-1); }
     else if (e.key === 'ArrowRight') { e.preventDefault(); step(1); }
     else if (e.key === ' ' && P.mode === 'live') { e.preventDefault(); toggleCapture(); }
     else if (e.key === 'Escape') setTool('pan');
-    else if (e.key.toLowerCase() === 'f' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); $('pro-fullscreen').click(); }
-    else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); (e.shiftKey ? redo : undo)(); }
-    else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); }
+    else if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ') { e.preventDefault(); (e.shiftKey ? redo : undo)(); }   // 한글 입력 상태에서도
+    else if ((e.ctrlKey || e.metaKey) && e.code === 'KeyY') { e.preventDefault(); redo(); }
   });
 
   setTool('pan');
