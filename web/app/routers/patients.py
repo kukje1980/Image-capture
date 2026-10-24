@@ -42,10 +42,12 @@ def get_patient(request: Request, pid: int):
 @router.put("/{pid}", response_model=PatientOut)
 def update_patient(request: Request, pid: int, patient: PatientIn):
     db = _db(request)
-    if not db.get_patient(pid):
+    cur = db.get_patient(pid)
+    if not cur:
         raise HTTPException(status_code=404, detail="환자를 찾을 수 없습니다.")
     try:
-        db.update_patient(pid, patient.model_dump())
+        # 보내지 않은 항목(예: 화면에 없는 patient_id)은 기존 값을 유지
+        db.update_patient(pid, {**cur, **patient.model_dump(exclude_unset=True)})
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"수정 실패: {e}")
     return db.get_patient(pid)

@@ -53,7 +53,7 @@
     const d = new Date(), p = (n) => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
   };
-  const PATIENT_FIELDS = ['chart_no', 'name', 'birth_date', 'sex', 'phone', 'memo', 'symptoms', 'diagnosis', 'doctor'];
+  const PATIENT_FIELDS = ['chart_no', 'patient_id', 'name', 'birth_date', 'sex', 'phone', 'memo', 'symptoms', 'diagnosis', 'doctor'];
 
   // 저장된 Blob → 화면에서 쓸 주소 (세션 동안 재사용)
   const urls = new Map();
@@ -82,7 +82,8 @@
       if (seg.length === 1 && method === 'GET') {
         const q = (u.searchParams.get('q') || '').trim().toLowerCase();
         const all = await tx('patients', 'readonly', (s) => done(s.getAll()));
-        return all.filter((p) => !q || (p.name || '').toLowerCase().includes(q) || (p.chart_no || '').toLowerCase().includes(q))
+        const hit = (v) => (v || '').toString().toLowerCase().includes(q);   // 서버와 같이 이름·차트번호·연락처·환자ID 검색
+        return all.filter((p) => !q || hit(p.name) || hit(p.chart_no) || hit(p.phone) || hit(p.patient_id))
           .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ko')).slice(0, 500);
       }
       if (seg.length === 1 && method === 'POST') {

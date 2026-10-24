@@ -46,3 +46,44 @@ def test_recording_matches_real_time(tmp_path):
     _, count, duration = rec.stop()
     expected = duration / 1000 * 30
     assert abs(count - expected) <= 0.25 * expected, (count, expected)
+
+
+def test_wrong_size_frames_dropped(tmp_path):
+    """카메라·해상도가 바뀌어 크기가 다른 프레임은 녹화 파일에 넣지 않는다."""
+    rec = VideoRecorder()
+    try:
+        rec.start(tmp_path / "s.mp4", fps=15.0, size=(320, 240))
+    except Exception as e:  # pragma: no cover
+        pytest.skip(f"사용 가능한 인코더 없음: {e}")
+    rec.feed(_frame(480, 640))
+    time.sleep(0.05)
+    rec.feed(_frame())
+    _, count, _ = rec.stop()
+    assert count >= 1
+
+
+def test_writer_error_stops_cleanly(tmp_path):
+    rec = VideoRecorder()
+    try:
+        rec.start(tmp_path / "e.mp4", fps=15.0, size=(320, 240))
+    except Exception as e:  # pragma: no cover
+        pytest.skip(f"사용 가능한 인코더 없음: {e}")
+    errors = []
+    from PySide6.QtCore import Qt
+    rec.error.connect(errors.append, Qt.ConnectionType.DirectConnection)   # 이벤트 루프 없이 바로 받기
+
+    def boom(_):
+        raise RuntimeError("disk full")
+    rec._write = boom
+    rec._fallback_to_cv2 = lambda: False
+    rec.feed(_frame())
+    for _ in range(50):
+        if errors:
+            break
+        time.sleep(0.02)
+    for _ in range(200):                     # 실패 뒤에도 큐가 막혀 stop 이 멈추지 않는다
+        rec.feed(_frame())
+    t = time.time()
+    _, count, duration = rec.stop()
+    assert errors and count == 0 and duration == 0
+    assert time.time() - t < 3

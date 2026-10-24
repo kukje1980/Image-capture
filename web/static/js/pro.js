@@ -27,6 +27,7 @@
   const SHARP_AMOUNT = { 1: 0.6, 2: 1.2, 3: 2.0 };
   const CLAHE_CLIP = { 1: 1.6, 2: 2.6, 3: 4.0 };
   const HISTORY_MAX = 20;
+  const HISTORY_PIXELS = 120e6;                              // 실행 취소용으로 보관하는 편집 단계 영상의 총 화소 (약 480MB)
   const ANN_COLOR = '#facc15', MEAS_COLOR = '#22d3ee';
   const DRAG_TOOLS = new Set(['arrow', 'circle', 'length', 'crop', 'calibrate']);
   // 도구별 사용 가능 모드 (윈도우앱 _TOOLS 와 동일)
@@ -365,7 +366,7 @@
     setSource(src, adj = P.adj) {
       this.mbOverlay = null; this.mbAuto = null; this.poly = null;
       this.orig = src ? toCanvas(src) : null; this.base = this.orig;
-      this.adj = { ...IDENTITY, ...adj }; this.ann = []; this.apts = []; this.temp = null;
+      this.adj = { ...IDENTITY, ...adj }; this.ann = []; this.apts = []; this.temp = null; this.drag = null; this.lens = null;
       this.undoStack = []; this.redoStack = []; this.lastKind = null; this.dn = {};
       this.reprocess();
       this.autofit = true; this.fit(); this.draw(); this.edited();
@@ -375,17 +376,25 @@
     edited() { if (this.onEdit) this.onEdit(this); }
     geometryChanged() { return !!this.base && this.base !== this.orig; }
     isModified() { return !!this.base && (this.geometryChanged() || !isIdentity(this.adj) || this.ann.length > 0); }
-    snapshot() { return { base: this.base, adj: { ...this.adj }, ann: this.ann.map((a) => ({ ...a })) }; }
+    snapshot() { return { base: this.base, adj: { ...this.adj }, ann: this.ann.map((a) => ({ ...a })), mbOverlay: this.mbOverlay, mbAuto: this.mbAuto }; }
     record(kind) {
       const now = performance.now();
       if (kind === 'adj' && this.lastKind === 'adj' && now - this.lastT < 1000) { this.lastT = now; return; }
       this.undoStack.push(this.snapshot());
-      if (this.undoStack.length > HISTORY_MAX) this.undoStack.shift();
       this.redoStack = []; this.lastKind = kind; this.lastT = now;
+      // 회전·자르기마다 전체 해상도 캔버스가 쌓이므로 개수와 함께 총 화소 수로도 제한 (대용량 영상에서 탭이 멈추지 않게)
+      const px = () => { const seen = new Set([this.orig, this.base]); let t = 0;
+        for (const x of [...this.undoStack, ...this.redoStack]) if (x.base && !seen.has(x.base)) { seen.add(x.base); t += x.base.width * x.base.height; }
+        return t; };
+      while (this.undoStack.length > HISTORY_MAX || (this.undoStack.length > 1 && px() > HISTORY_PIXELS)) this.undoStack.shift();
     }
     restore(s) {
       const geo = s.base !== this.base;
+      this.apts = []; this.poly = null; this.temp = null; this.drag = null;   // 그리던 도형은 좌표가 달라지므로 취소
       this.base = s.base; this.adj = s.adj; this.ann = s.ann; this.lastKind = null;
+      const hasTarsus = s.ann.some((a) => a.type === 'tarsus');
+      this.mbOverlay = hasTarsus && 'mbOverlay' in s ? s.mbOverlay : null;
+      this.mbAuto = hasTarsus && 'mbAuto' in s ? s.mbAuto : null;
       this.reprocess();
       if (geo) { this.autofit = true; this.fit(); }
       this.draw(); this.edited();
@@ -395,7 +404,7 @@
     restoreOriginal() {
       if (!this.isModified()) return false;
       this.record('orig');
-      this.restore({ base: this.orig, adj: { ...IDENTITY }, ann: [] });
+      this.restore({ base: this.orig, adj: { ...IDENTITY }, ann: [], mbOverlay: null, mbAuto: null });
       return true;
     }
     setAdjust(a, record = false) {
@@ -405,9 +414,10 @@
       this.adj = { ...a }; this.reprocess(); this.draw(); this.edited();
     }
     addAnn(a) { this.record('ann'); this.ann.push(a); this.draw(); this.edited(); }
-    clearAnn() { if (!this.ann.length) return; this.record('ann'); this.ann = []; this.draw(); this.edited(); }
+    clearAnn() { if (!this.ann.length) return; this.record('ann'); this.ann = []; this.mbOverlay = null; this.mbAuto = null; this.draw(); this.edited(); }
     geom(newBase, f) {
       this.record('geo');
+      this.apts = []; this.poly = null; this.temp = null; this.drag = null;
       this.mbOverlay = null; this.mbAuto = null;
       this.base = newBase; this.ann = mapAnn(this.ann, f);
       this.reprocess(); this.autofit = true; this.fit(); this.draw(); this.edited();
@@ -537,7 +547,7 @@
       if (!this.drag) { if (P.tool === 'angle' && this.apts.length) this.anglePreview(this.toImg(e)); return; }
       const p = this.toImg(e);
       if (this.drag.lens) { this.lens = { sx: p.sx, sy: p.sy }; this.draw(); return; }
-      if (this.drag.shape) { this.temp.x2 = p.x; this.temp.y2 = p.y; this.draw(); return; }
+      if (this.drag.shape) { if (this.temp) { this.temp.x2 = p.x; this.temp.y2 = p.y; this.draw(); } return; }
       this.pan(p.sx - this.drag.sx, p.sy - this.drag.sy);
       this.drag = { sx: p.sx, sy: p.sy };
     }
@@ -555,7 +565,7 @@
       }
       this.draw();
     }
-    cancelTemp() { this.apts = []; this.poly = null; this.temp = null; this.lens = null; this.draw(); }
+    cancelTemp() { this.apts = []; this.poly = null; this.temp = null; this.lens = null; this.drag = null; this.draw(); }
     // ---- 그리기 ----
     annScale() { return Math.max(1, Math.max(this.iw, this.ih) / 900); }
     drawAnn(ctx, s, withTemp = true) {
@@ -643,22 +653,25 @@
 
   const pageCount = () => Math.max(1, Math.ceil(P.caps.length / P.per));
 
+  let reloadSeq = 0;
   async function reload(selectLast = false) {
+    const tok = ++reloadSeq;
     const p = App.currentPatient() || null;
     const changed = !p || !P.patient || p.id !== P.patient.id;
-    P.patient = p;
-    if (!p) P.caps = [];
-    else {
-      try { P.caps = (await App.api(`/captures?patient_id=${p.id}&order=asc`)).filter((c) => c.media_type === 'photo'); }
-      catch (e) { App.toast('영상 목록 조회 실패: ' + e.message, 'error'); P.caps = []; }
+    let caps = [];
+    if (p) {
+      try { caps = (await App.api(`/captures?patient_id=${p.id}&order=asc`)).filter((c) => c.media_type === 'photo'); }
+      catch (e) { if (tok === reloadSeq) App.toast('영상 목록 조회 실패: ' + e.message, 'error'); }
     }
+    if (tok !== reloadSeq) return;                       // 더 최근 요청(다른 환자)이 있으면 늦은 결과는 버림
+    P.patient = p; P.caps = caps;
     if (changed) P.sel = [];
     P.sel = P.sel.filter((i) => i < P.caps.length);
     if (selectLast || changed || P.idx < 0 || P.idx >= P.caps.length) P.idx = P.caps.length - 1;
     P.page = (selectLast || changed) ? pageCount() - 1 : Math.min(P.page, pageCount() - 1);
     updateInfo();
     renderMulti();
-    if (P.mode === 'single') await showCurrent();
+    if (P.mode === 'single') await showCurrent(!changed && !selectLast);
     if (P.mode === 'compare' && changed) await setMode('multi');
     updateSide();
   }
@@ -699,8 +712,11 @@
   }
 
   // ================= 모드 =================
+  let modeSeq = 0;
   async function setMode(mode) {
+    const tok = ++modeSeq;
     if (mode === 'compare' && !(await prepareCompare())) mode = P.mode === 'compare' ? 'multi' : P.mode;
+    if (tok !== modeSeq) return;                        // 비교 영상을 불러오는 사이 다른 모드를 고름
     P.mode = mode;
     document.querySelectorAll('#pro-display .pro-view').forEach((v) => v.classList.toggle('on', v.dataset.view === mode));
     document.querySelectorAll('#pro-modes .pbtn').forEach((b) => b.classList.toggle('on', b.dataset.mode === mode));
@@ -719,17 +735,23 @@
     updateSide();
   }
 
-  async function showCurrent() {
+  let showSeq = 0;
+  async function showCurrent(keepEdits = false) {
+    const tok = ++showSeq;
     const c = P.caps[P.idx];
-    if (!c) { V.single.caption = ''; V.single.setSource(null); updateSide(); return; }
+    if (!c) { V.single.caption = ''; V.single.capId = null; V.single.setSource(null); updateSide(); return; }
+    if (keepEdits && V.single.capId === c.id && V.single.orig) {   // 같은 영상이면 편집 중인 내용 유지 (환자정보 수정 등)
+      V.single.caption = caption(c, P.idx + 1); V.single.draw(); updateSide(); return;
+    }
     try {
       const im = await loadImage(c.url);
+      if (tok !== showSeq) return;                     // 그 사이 다른 영상으로 넘어감 → 늦게 온 영상은 버림
       V.single.caption = caption(c, P.idx + 1);
+      V.single.capId = c.id;
       V.single.setSource(im);
-      if (/하안검/.test(c.note || '')) $('mb-lid').value = 'lower';
-      else if (/상안검/.test(c.note || '')) $('mb-lid').value = 'upper';
+      $('mb-lid').value = /하안검/.test(c.note || '') ? 'lower' : 'upper';
       mbRender();
-    } catch (e) { App.toast(e.message, 'error'); }
+    } catch (e) { if (tok === showSeq) App.toast(e.message, 'error'); }
     updateSide();
   }
 
@@ -1163,6 +1185,7 @@
   async function saveEdited() {
     const p = App.currentPatient();
     if (!p) { App.toast('환자를 먼저 선택하세요.', 'error'); return 0; }
+    if (!P.patient || P.patient.id !== p.id) { App.toast('환자 영상 목록을 불러오는 중입니다. 잠시 후 다시 저장하세요.', 'error'); return 0; }
     const pairs = P.mode === 'single' ? [[V.single, P.caps[P.idx]]]
       : P.mode === 'compare' ? [[V.left, P.pair[0]], [V.right, P.pair[1]]] : [];
     let n = 0;
@@ -1270,6 +1293,7 @@
     App.toast("인쇄 창에서 '대상: PDF로 저장'을 고르면 PDF 보고서가 됩니다.", 'success');
     try { window.print(); } catch (_) { App.toast('이 환경에서는 인쇄 창을 열 수 없습니다.', 'error'); }
   }
+  window.addEventListener('afterprint', () => { const a = $('print-area'); if (a) a.innerHTML = ''; });   // 큰 보고서 이미지 메모리 해제
 
   // ================= 토글 · 이벤트 =================
   async function setPro(on) {
@@ -1323,7 +1347,11 @@
 
   document.addEventListener('slit:patient', () => { if (P.on) reload(false); });
   document.addEventListener('keydown', (e) => {
-    if (!P.on || (e.target instanceof Element && e.target.matches('input, textarea, select')) || document.querySelector('dialog[open]')) return;
+    if (!P.on || document.querySelector('dialog[open]')) return;
+    const el = e.target instanceof Element ? e.target : null;
+    if (el && el.matches('input:not([type=range]):not([type=checkbox]), textarea')) return;   // 글자 입력 중
+    const ctrl = e.ctrlKey || e.metaKey;
+    if (!ctrl && el && el.matches('input, select')) return;     // 슬라이더·선택 상자의 화살표 키는 그대로 (Ctrl+Z/Y 는 허용)
     if (e.key === 'ArrowLeft') { e.preventDefault(); step(-1); }
     else if (e.key === 'ArrowRight') { e.preventDefault(); step(1); }
     else if (e.key === ' ' && P.mode === 'live') { e.preventDefault(); toggleCapture(); }

@@ -108,3 +108,34 @@ def test_storage_policy_injected(monkeypatch, tmp_path):
     app = _load(monkeypatch, tmp_path, "")
     with TestClient(app) as c:
         assert 'window.SLIT_STORAGE_POLICY = "choice"' in c.get("/").text
+
+
+def test_local_policy_rejects_writes(monkeypatch, tmp_path):
+    """'PC에만 저장' 정책이면 서버는 환자·영상 쓰기를 거부한다 (화면만이 아니라 서버에서도)."""
+    monkeypatch.setenv("SLITLAMP_STORAGE", "local")
+    app = _load(monkeypatch, tmp_path, "")
+    with TestClient(app) as c:
+        assert c.post("/api/v1/patients", json={"chart_no": "A", "name": "x"}).status_code == 403
+        assert c.get("/api/v1/patients").status_code == 200
+
+
+def test_vercel_defaults_to_local_policy(monkeypatch):
+    monkeypatch.delenv("SLITLAMP_DATA_DIR", raising=False)
+    monkeypatch.delenv("SLITLAMP_STORAGE", raising=False)
+    monkeypatch.setenv("VERCEL", "1")
+    from app import config as config_mod
+    importlib.reload(config_mod)
+    assert config_mod.STORAGE_POLICY == "local"
+    monkeypatch.setenv("SLITLAMP_STORAGE", "server")              # 명시하면 그대로
+    importlib.reload(config_mod)
+    assert config_mod.STORAGE_POLICY == "server"
+
+
+def test_login_rate_limit(monkeypatch, tmp_path):
+    app = _load(monkeypatch, tmp_path, "right-pw")
+    with TestClient(app) as c:
+        for _ in range(5):
+            r = c.post("/login", data={"password": "wrong"}, follow_redirects=False)
+            assert "error=1" in r.headers["location"]
+        r = c.post("/login", data={"password": "right-pw"}, follow_redirects=False)
+        assert "error=2" in r.headers["location"]                 # 잠김: 맞는 비밀번호도 1분간 거부

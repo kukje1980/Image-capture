@@ -486,7 +486,8 @@ body.pro-on .pro-info { display: none; }   /* 환자 정보는 상단 배너에 
 .rp-imgs.c1 { grid-template-columns: 1fr; }
 .rp-imgs.c2 { grid-template-columns: 1fr 1fr; }
 .rp-fig { margin: 0; break-inside: avoid; }
-.rp-fig img { display: block; width: 100%; border: 1px solid #cbd5e1; }
+.rp-fig img { display: block; width: 100%; max-height: 200mm; object-fit: contain; background: #fff; border: 1px solid #cbd5e1; }
+.rp-imgs.c2 .rp-fig img { max-height: 98mm; }   /* 세로 영상도 4장이 A4 한 장에 들어가게 */
 .rp-fig figcaption { margin-top: 3px; text-align: center; font-size: 8.5pt; color: #334155; }
 .rp-notes { flex: 1; display: flex; flex-direction: column; margin-top: 12px; }
 .rp-notes h4 { margin: 0 0 4px; font-size: 10pt; }

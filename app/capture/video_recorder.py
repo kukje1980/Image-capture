@@ -53,6 +53,7 @@ class VideoRecorder(QObject):
         self._queued = 0
         self._start_ts = 0.0
         self._recording = False
+        self._failed = False
 
     @property
     def is_recording(self) -> bool:
@@ -66,6 +67,7 @@ class VideoRecorder(QObject):
         self._size = (int(size[0]), int(size[1]))
         self._count = 0
         self._queued = 0
+        self._failed = False
         self._open_writer()
         self._queue = queue.Queue(maxsize=_QUEUE_MAX)
         self._recording = True
@@ -99,7 +101,10 @@ class VideoRecorder(QObject):
         raise RuntimeError("사용 가능한 동영상 인코더가 없습니다 (imageio/opencv 필요).")
 
     def feed(self, frame: np.ndarray) -> None:
-        if not self._recording or self._queue is None:
+        if not self._recording or self._queue is None or self._failed:
+            return
+        h, w = frame.shape[:2]
+        if (w, h) != self._size:                 # 카메라·해상도가 바뀐 프레임은 이 파일에 넣지 않는다
             return
         # 실제 경과 시간에 해당하는 프레임 번호까지 채운다
         target = int((time.time() - self._start_ts) * self._fps) + 1
@@ -112,23 +117,40 @@ class VideoRecorder(QObject):
                 break  # 인코더가 못 따라오면 드롭 → 다음 프레임에서 반복으로 메움
 
     def _worker(self) -> None:
-        while True:
-            item = self._queue.get()
-            if item is _SENTINEL:
-                break
-            try:
-                self._write(item)
-            except Exception as e:  # noqa: BLE001
-                # imageio 는 첫 프레임에서 ffmpeg 를 띄우므로 실패가 여기서 드러난다 → cv2 로 한 번 폴백
-                if self._backend == "ffmpeg" and self._count == 0 and self._fallback_to_cv2():
-                    try:
-                        self._write(item)
-                        continue
-                    except Exception:  # noqa: BLE001
-                        pass
-                log.exception("frame write failed")
-                self.error.emit(str(e))
-                break
+        try:
+            while True:
+                item = self._queue.get()
+                if item is _SENTINEL:
+                    break
+                if self._failed:
+                    continue                     # 실패 뒤에는 남은 프레임을 버리고 종료 신호만 기다린다
+                try:
+                    self._write(item)
+                except Exception as e:  # noqa: BLE001
+                    # imageio 는 첫 프레임에서 ffmpeg 를 띄우므로 실패가 여기서 드러난다 → cv2 로 한 번 폴백
+                    if self._backend == "ffmpeg" and self._count == 0 and self._fallback_to_cv2():
+                        try:
+                            self._write(item)
+                            continue
+                        except Exception:  # noqa: BLE001
+                            pass
+                    log.exception("frame write failed")
+                    self._failed = True
+                    self.error.emit(str(e))
+        finally:
+            self._close_writer()                 # 쓰는 스레드가 직접 닫는다 (쓰는 중에 다른 스레드가 닫지 않게)
+
+    def _close_writer(self) -> None:
+        w, self._writer = self._writer, None
+        if w is None:
+            return
+        try:
+            if self._backend == "ffmpeg":
+                w.close()
+            else:
+                w.release()
+        except Exception:  # noqa: BLE001
+            log.warning("writer close failed", exc_info=True)
 
     def _fallback_to_cv2(self) -> bool:
         if cv2 is None:
@@ -166,14 +188,13 @@ class VideoRecorder(QObject):
             pass
         if self._thread is not None:
             self._thread.join(timeout=10)
-        try:
-            if self._backend == "ffmpeg":
-                self._writer.close()
-            else:
-                self._writer.release()
-        except Exception:  # noqa: BLE001
-            log.warning("writer close failed", exc_info=True)
+            if self._thread.is_alive():
+                log.warning("인코더가 아직 쓰는 중 — 끝나면 스레드가 파일을 닫습니다")
+        else:
+            self._close_writer()
         duration_ms = int((time.time() - self._start_ts) * 1000)
+        if self._failed:                         # 실패한 녹화는 실제로 쓴 길이만큼만
+            duration_ms = int(self._count / self._fps * 1000)
         path, count = self._path or "", self._count
         log.info("recording stopped: %s frames=%s duration=%sms", path, count, duration_ms)
         self.finished.emit(path, count, duration_ms)
