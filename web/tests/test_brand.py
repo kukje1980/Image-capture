@@ -103,3 +103,16 @@ def test_official_logo_files_present():
     assert b["logo"].endswith("logo.svg") and b["logo_dark"].endswith("logo-dark.svg")
     svg = (brands.STATIC_DIR / "brand" / "keeler" / "logo.svg").read_text(encoding="utf-8")
     assert "#052133" in svg and "#ed6f1e" in svg and "#6cbce8" in svg
+
+
+def test_keeler_header_shows_logo_only(monkeypatch, tmp_path):
+    html = _client(monkeypatch, tmp_path, "keeler").get("/").text
+    header = html[html.index('<header class="topbar">'):html.index("</header>")]
+    assert "brand-logo" in header
+    assert "brand-title" not in header and "brand-badge" not in header and "brand-divider" not in header
+
+
+def test_default_header_keeps_title(monkeypatch, tmp_path):
+    html = _client(monkeypatch, tmp_path, None).get("/").text
+    header = html[html.index('<header class="topbar">'):html.index("</header>")]
+    assert "brand-title" in header and "슬릿램프 영상 시스템" in header

@@ -28,7 +28,7 @@
       {% if brand.logo %}
       <img class="brand-logo brand-logo-light" src="{{ brand.logo }}" alt="{{ brand.wordmark or brand.app_name }}">
       <img class="brand-logo brand-logo-dark" src="{{ brand.logo_dark }}" alt="{{ brand.wordmark or brand.app_name }}">
-      <span class="brand-divider" aria-hidden="true"></span>
+      {% if not brand.logo_only %}<span class="brand-divider" aria-hidden="true"></span>{% endif %}
       {% elif brand.wordmark %}
       <span class="brand-wordmark">{{ brand.wordmark }}</span>
       <span class="brand-divider" aria-hidden="true"></span>
@@ -37,10 +37,12 @@
         <svg class="ic" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
       </div>
       {% endif %}
+      {% if not (brand.logo and brand.logo_only) %}
       <div class="brand-text">
         <div class="brand-title">{{ brand.app_name if not brand.wordmark else "슬릿램프 영상 시스템" }}</div>
         <div class="brand-sub">{{ brand.sub }} <span class="brand-badge">{{ brand.badge }}</span></div>
       </div>
+      {% endif %}
     </div>
     <h1>접속 비밀번호를 입력하세요</h1>
     <input type="hidden" name="next" value="{{ next }}">

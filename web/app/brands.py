@@ -31,7 +31,8 @@ BRANDS: dict[str, dict] = {
         "badge": "Keeler",
         "wordmark": "Keeler",
         "report_title": "Keeler 슬릿램프 영상 보고서",
-        "theme_color": "#071a3d",
+        "theme_color": "#052133",
+        "logo_only": True,          # 로고가 있으면 옆의 프로그램 이름·배지를 숨김
     },
 }
 
