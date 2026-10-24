@@ -45,3 +45,36 @@ def test_mac_bundle_files_present():
     for f in ("build_mac.sh", "run_mac.command", "web/run_web.command", "web/run_web.sh"):
         out = subprocess.run(["git", "ls-files", "-s", f], cwd=root, capture_output=True, text=True).stdout
         assert out.startswith("100755"), f"{f} 실행 권한 없음 ({out.strip() or '추적 안 됨'})"
+
+
+DSHOW_NEW = '''[dshow @ 000001] "Integrated Camera" (video)
+[dshow @ 000001]   Alternative name "@device_pnp_\\\\?\\usb#vid_04f2"
+[dshow @ 000001] "ZV-E10M2" (video)
+[dshow @ 000001]   Alternative name "@device_pnp_\\\\?\\usb#vid_054c"
+[dshow @ 000001] "Microphone (Realtek)" (audio)
+'''
+DSHOW_OLD = '''[dshow @ 0x1] DirectShow video devices (some may be both video and audio devices)
+[dshow @ 0x1]  "USB Video"
+[dshow @ 0x1]     Alternative name "@device_pnp_x"
+[dshow @ 0x1]  "ILME-FX3"
+[dshow @ 0x1] DirectShow audio devices
+[dshow @ 0x1]  "Mic"
+'''
+AVF = '''[AVFoundation indev @ 0x7f] AVFoundation video devices:
+[AVFoundation indev @ 0x7f] [0] FaceTime HD Camera
+[AVFoundation indev @ 0x7f] [1] ZV-E10M2
+[AVFoundation indev @ 0x7f] [2] Capture screen 0
+[AVFoundation indev @ 0x7f] AVFoundation audio devices:
+[AVFoundation indev @ 0x7f] [0] MacBook Pro Microphone
+'''
+
+
+def test_device_name_parsing_and_sony_pick():
+    from app.capture import frame_utils as fu
+    assert fu.parse_dshow_devices(DSHOW_NEW) == ["Integrated Camera", "ZV-E10M2"]
+    assert fu.parse_dshow_devices(DSHOW_OLD) == ["USB Video", "ILME-FX3"]
+    assert fu.parse_avfoundation_devices(AVF) == ["FaceTime HD Camera", "ZV-E10M2"]
+    assert fu.find_sony_index(["FaceTime HD Camera", "ZV-E10M2"]) == 1
+    assert fu.find_sony_index(["USB Video", "ILME-FX3"]) == 1
+    assert fu.find_sony_index(["Integrated Camera"]) is None
+    assert fu.device_names("linux") == []

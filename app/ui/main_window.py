@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.capture.camera_worker import CameraWorker
+from app.capture.frame_utils import device_names, find_sony_index
 from app.capture.sources import DeviceSource, FileSource, SyntheticSource
 from app.capture.video_recorder import VideoRecorder
 from app.services.capture_service import CaptureService
@@ -76,6 +77,7 @@ class MainWindow(QMainWindow):
         self.recorder.error.connect(self._on_recorder_error)
 
         self._build_ui()
+        self._pick_camera()
         self._start_camera()
 
     # ---- UI 구성 ----
@@ -282,6 +284,30 @@ class MainWindow(QMainWindow):
                                 cfg.capture_width, cfg.capture_height)
 
         return factory
+
+    def _pick_camera(self) -> None:
+        """카메라 자동 선택: 저장된 이름으로 다시 찾고, 처음이면 소니(USB 스트리밍) 카메라를 우선."""
+        cfg = self.config
+        if cfg.source_mode != "device":
+            return
+        names = device_names()
+        if not names:
+            return
+        idx = None
+        if cfg.camera_name and cfg.camera_name in names:
+            idx = names.index(cfg.camera_name)          # 장치 순서가 바뀌어도 같은 카메라
+        elif not cfg.camera_name:
+            idx = find_sony_index(names)
+            if idx is not None:
+                self.statusBar().showMessage(f"소니 카메라를 찾아 연결합니다: {names[idx]}", 8000)
+        if idx is None or idx >= len(names):
+            return
+        if idx != cfg.camera_index or cfg.camera_name != names[idx]:
+            cfg.camera_index, cfg.camera_name = idx, names[idx]
+            try:
+                cfg.save()
+            except Exception:  # noqa: BLE001
+                log.warning("camera selection save failed", exc_info=True)
 
     def _start_camera(self) -> None:
         self.cam_thread = QThread(self)

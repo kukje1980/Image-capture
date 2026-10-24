@@ -109,7 +109,11 @@
       <label class="cam-pick" title="캡처 장비 (HDMI 캡처보드 / 웹캠)">
         <svg class="ic"><use href="#i-videocam"/></svg>
         <select class="select select-bare" id="camera-select" aria-label="카메라 선택"><option>—</option></select>
+        <select class="select select-bare res-select" id="res-select" aria-label="해상도" title="실시간 영상 해상도 (카메라가 지원하는 범위에서)">
+          <option value="2160">4K</option><option value="1080" selected>1080p</option><option value="720">720p</option>
+        </select>
       </label>
+      <button class="btn btn-icon btn-quiet btn-sony-help" title="소니 카메라(ZV-E10 II · FX3) 연결 방법" aria-label="소니 카메라 연결 방법"><svg class="ic"><use href="#i-info"/></svg></button>
       <button class="btn btn-sm btn-quiet storage-btn" id="btn-storage" title="촬영본·환자 정보를 어디에 저장할지 선택"><svg class="ic"><use href="#i-save"/></svg><span id="storage-label">저장: 서버</span></button>
       <button class="btn btn-sm btn-quiet" id="btn-folder"><svg class="ic"><use href="#i-folder"/></svg>저장 폴더</button>
       <span class="folder-status" id="folder-status" title="브라우저가 직접 저장할 로컬 폴더"><span class="dot"></span> 폴더 미지정</span>
@@ -145,6 +149,7 @@
           <div class="ph-title">카메라 대기 중</div>
           <p>캡처 장비(HDMI 캡처보드 또는 웹캠)에 접근할 수 있게 권한을 허용해 주세요.</p>
           <button class="btn btn-primary" id="btn-start-camera"><svg class="ic"><use href="#i-videocam"/></svg>카메라 시작</button>
+          <button class="btn btn-sm btn-quiet btn-sony-help" style="color:#a3acba">소니 카메라(ZV-E10 II · FX3) 연결 방법</button>
         </div>
         <div class="hud hud-tl">
           <span class="hud-chip" id="hud-patient">환자 미선택</span>
@@ -423,6 +428,26 @@
     <button class="btn btn-sm" id="btn-edit-patient"><svg class="ic"><use href="#i-edit"/></svg>선택 환자 정보 수정</button>
   </div>
   <select class="sr-only" id="patient-select" aria-label="환자 선택" tabindex="-1"></select>
+</dialog>
+
+<dialog id="sony-dialog" class="sony-dialog" aria-labelledby="sony-title">
+  <div class="dialog-header">
+    <div class="dialog-title" id="sony-title">소니 카메라 연결 (ZV-E10 II · FX3 · USB 스트리밍)</div>
+    <button class="btn btn-ghost btn-icon" type="button" id="sony-x" aria-label="닫기"><svg class="ic"><use href="#i-x"/></svg></button>
+  </div>
+  <div class="dialog-body sony-body">
+    <p>소니 카메라는 <b>USB 케이블 하나</b>로 웹캠처럼 연결됩니다(별도 캡처보드·드라이버 불필요).</p>
+    <ol>
+      <li><b>카메라 설정</b>: MENU → <b>설정(Setup)</b> → <b>USB</b> → <b>USB 연결 모드</b> → <b>USB 스트리밍</b>
+        <br><small>(또는 '연결 시 선택'으로 두고 연결할 때 'USB 스트리밍'을 고름 · FX3는 펌웨어 Ver.2.00 이상 필요)</small></li>
+      <li><b>해상도</b>: 같은 USB 메뉴의 <b>USB 스트리밍 출력 해상도/프레임</b>을 <b>4K(2160p)</b> 또는 <b>HD(1080p)</b>로 설정</li>
+      <li>카메라 <b>USB-C 단자</b>와 PC를 연결합니다 (4K는 USB 3 케이블·포트 권장). 카메라 화면에 'USB 스트리밍'이 표시됩니다.</li>
+      <li>이 프로그램에서 <b>카메라 시작</b> → 목록에 <b>★ 표시된 소니 카메라</b>가 자동으로 선택됩니다. 상단에서 <b>4K / 1080p</b>를 고를 수 있습니다.</li>
+    </ol>
+    <p class="sony-note">· 촬영 중 카메라 화면이 꺼지지 않게 <b>자동 전원 끄기 온도: 높음</b>(MicroREC 설정 안내와 동일)을 권장합니다.<br>
+    · 카메라 자체 셔터로 <b>고해상도 원본(2,400만 화소)</b>을 찍는 원격 제어는 소니 Camera Remote SDK 로 데스크탑 앱에 추가 예정입니다.</p>
+  </div>
+  <div class="dialog-footer"><button type="button" class="btn btn-primary" id="sony-ok">확인</button></div>
 </dialog>
 
 <dialog id="storage-dialog" aria-labelledby="storage-title">

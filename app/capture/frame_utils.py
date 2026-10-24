@@ -1,8 +1,10 @@
 """프레임 변환/썸네일/장치 열거 유틸."""
 from __future__ import annotations
 
+import re
+import subprocess
 import sys
-from typing import List
+from typing import List, Optional
 
 import numpy as np
 from PySide6.QtGui import QImage
@@ -76,3 +78,77 @@ def enumerate_devices(max_probe: int = 8, backend: str = "dshow") -> List[int]:
             if cap is not None:
                 cap.release()
     return devices
+
+
+# ---------- 장치 이름 (소니 USB 스트리밍 카메라 자동 인식) ----------
+SONY_RE = re.compile(r"sony|zv-?e10|ilme|fx30?\b|ilce|alpha", re.IGNORECASE)
+
+
+def is_sony(name: str | None) -> bool:
+    return bool(name and SONY_RE.search(name))
+
+
+def parse_dshow_devices(text: str) -> List[str]:
+    """ffmpeg -list_devices (DirectShow) 출력 → 비디오 장치 이름 (OpenCV CAP_DSHOW 인덱스 순서)."""
+    names: List[str] = []
+    in_video = False
+    for line in text.splitlines():
+        if "DirectShow video devices" in line:
+            in_video = True
+            continue
+        if "DirectShow audio devices" in line:
+            in_video = False
+            continue
+        m = re.search(r'"([^"]+)"\s*(\((video|audio|none)\))?', line)
+        if not m or "Alternative name" in line:
+            continue
+        kind = m.group(3)
+        if kind == "video" or (kind is None and in_video):
+            names.append(m.group(1))
+    return names
+
+
+def parse_avfoundation_devices(text: str) -> List[str]:
+    """ffmpeg -f avfoundation -list_devices 출력 → 비디오 장치 이름 (인덱스 순서, 화면 캡처 제외)."""
+    names: List[str] = []
+    in_video = False
+    for line in text.splitlines():
+        if "AVFoundation video devices" in line:
+            in_video = True
+            continue
+        if "AVFoundation audio devices" in line:
+            break
+        m = re.search(r"\]\s*\[(\d+)\]\s*(.+)$", line)
+        if in_video and m:
+            names.append(m.group(2).strip())
+    return [n for n in names if not n.lower().startswith("capture screen")]
+
+
+def device_names(platform: str | None = None, timeout: float = 8.0) -> List[str]:
+    """연결된 카메라 이름 목록 (Windows DirectShow / macOS AVFoundation). 실패하면 빈 목록."""
+    plat = platform or sys.platform
+    try:
+        import imageio_ffmpeg
+        exe = imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:  # noqa: BLE001
+        return []
+    if plat.startswith("win"):
+        args, parse = [exe, "-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy"], parse_dshow_devices
+    elif plat == "darwin":
+        args, parse = [exe, "-hide_banner", "-f", "avfoundation", "-list_devices", "true", "-i", ""], parse_avfoundation_devices
+    else:
+        return []
+    try:
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        out = subprocess.run(args, capture_output=True, text=True, timeout=timeout,
+                             encoding="utf-8", errors="replace", creationflags=flags)
+        return parse((out.stderr or "") + (out.stdout or ""))
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def find_sony_index(names: List[str]) -> Optional[int]:
+    for i, n in enumerate(names):
+        if is_sony(n):
+            return i
+    return None

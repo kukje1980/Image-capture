@@ -125,7 +125,15 @@
     $('btn-folder').addEventListener('click', pickFolder);
 
     $('btn-start-camera').addEventListener('click', () => startCamera());
-    $('camera-select').addEventListener('change', (e) => startCamera(e.target.value));
+    $('camera-select').addEventListener('change', (e) => { prefSet('slitlamp-cam', e.target.value); startCamera(e.target.value); });
+    $('res-select').value = prefGet('slitlamp-res') || '1080';
+    $('res-select').addEventListener('change', (e) => {
+      prefSet('slitlamp-res', e.target.value);
+      if (state.stream) startCamera($('camera-select').value || undefined);
+    });
+    document.querySelectorAll('.btn-sony-help').forEach((b) => b.addEventListener('click', () => $('sony-dialog').showModal()));
+    $('sony-x').addEventListener('click', () => $('sony-dialog').close());
+    $('sony-ok').addEventListener('click', () => $('sony-dialog').close());
     $('btn-pause').addEventListener('click', togglePause);
     $('btn-capture').addEventListener('click', capturePhoto);
     $('btn-record').addEventListener('click', toggleRecord);
@@ -449,20 +457,49 @@
   }
 
   // ---- camera ----
+  // ---- 카메라 (소니 USB 스트리밍 자동 인식 · 해상도) ----
+  const SONY_RE = /sony|zv-?e10|ilme|fx3|fx30|ilce|a7|alpha/i;
+  const isSony = (label) => SONY_RE.test(label || '');
+  const RES = { '2160': [3840, 2160], '1080': [1920, 1080], '720': [1280, 720] };
+  function prefGet(k) { try { return localStorage.getItem(k); } catch (_) { return null; } }
+  function prefSet(k, v) { try { localStorage.setItem(k, v); } catch (_) { /* 저장 불가 */ } }
+
   async function startCamera(deviceId) {
     if (state.isRecording) stopRecording();
     if (state.stream) { state.stream.getTracks().forEach(t => t.stop()); state.stream = null; }
     try {
       const video = $('video');
-      const constraints = {
-        video: deviceId ? { deviceId: { exact: deviceId } } : { width: { ideal: 1920 }, height: { ideal: 1080 } },
-        audio: false,
-      };
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      const [w, h] = RES[$('res-select').value] || RES['1080'];
+      deviceId = deviceId || prefGet('slitlamp-cam') || undefined;
+      const want = { width: { ideal: w }, height: { ideal: h }, frameRate: { ideal: 30 } };
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: deviceId ? { ...want, deviceId: { exact: deviceId } } : want, audio: false });
+      } catch (e) {
+        if (!deviceId) throw e;
+        stream = await navigator.mediaDevices.getUserMedia({ video: want, audio: false });   // 저장된 장치가 없어졌으면 기본 장치
+      }
+      // 처음 권한을 받은 뒤 소니 카메라(USB 스트리밍)가 연결돼 있으면 그쪽으로 자동 전환
+      if (!deviceId && !prefGet('slitlamp-cam')) {
+        const cams = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput');
+        const cur = stream.getVideoTracks()[0];
+        const sony = cams.find((c) => isSony(c.label));
+        if (sony && !isSony(cur && cur.label)) {
+          stream.getTracks().forEach((t) => t.stop());
+          stream = await navigator.mediaDevices.getUserMedia({ video: { ...want, deviceId: { exact: sony.deviceId } }, audio: false });
+          toast(`소니 카메라를 찾아 연결했습니다: ${sony.label}`, 'success');
+        }
+      }
       state.stream = stream;
       video.srcObject = stream;
+      const track = stream.getVideoTracks()[0];
+      const set = track && track.getSettings ? track.getSettings() : {};
+      if (set.deviceId) prefSet('slitlamp-cam', set.deviceId);
       $('video-placeholder').style.display = 'none';
-      video.onloadedmetadata = () => setStatus(`${video.videoWidth}×${video.videoHeight}`, 'ready');
+      video.onloadedmetadata = () => {
+        const sonyTag = isSony(track && track.label) ? ' · Sony' : '';
+        setStatus(`${video.videoWidth}×${video.videoHeight}${sonyTag}`, 'ready');
+      };
       await populateCameraSelect();
       updateCaptureButtons();
     } catch (err) {
@@ -482,7 +519,7 @@
       cams.forEach((c, i) => {
         const opt = document.createElement('option');
         opt.value = c.deviceId;
-        opt.textContent = c.label || `카메라 ${i + 1}`;
+        opt.textContent = (isSony(c.label) ? '★ ' : '') + (c.label || `카메라 ${i + 1}`);
         sel.appendChild(opt);
       });
       if (cams.length === 0) {
