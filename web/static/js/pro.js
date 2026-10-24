@@ -34,7 +34,9 @@
     pan: ['single', 'compare', 'multi', 'live'], magnify: ['single', 'compare'], crop: ['single'],
     text: ['single', 'compare'], arrow: ['single', 'compare'], circle: ['single', 'compare'],
     length: ['single', 'compare'], angle: ['single', 'compare'], calibrate: ['single'],
+    tarsus: ['single'], dropout: ['single'],               // 마이봄: 검판 영역 / 소실 영역 (다각형)
   };
+  const POLY_TOOLS = new Set(['tarsus', 'dropout']);
 
   const P = {
     on: false, mode: 'multi', patient: null, caps: [], idx: -1,
@@ -234,6 +236,7 @@
     return list.map((a) => {
       const b = { ...a };
       for (const [kx, ky] of PT_KEYS) if (kx in b) [b[kx], b[ky]] = f(b[kx], b[ky]);
+      if (Array.isArray(b.pts)) b.pts = b.pts.map(([x, y]) => f(x, y));
       return b;
     });
   }
@@ -308,6 +311,28 @@
       ctx.beginPath(); ctx.arc(a.x2, a.y2, r, t1, t1 + d, d < 0); ctx.stroke();
       const bis = t1 + d / 2;
       boxedLabel(ctx, `${angleDeg(a).toFixed(1)}°`, a.x2 + Math.cos(bis) * (r + 30 * s), a.y2 + Math.sin(bis) * (r + 30 * s), s, MEAS_COLOR);
+    } else if (a.type === 'tarsus' || a.type === 'dropout') {
+      // 마이봄: 검판(관심 영역) = 하늘색 점선, 소실 영역 = 붉은 채움
+      const pts = a.pts || [];
+      if (!pts.length) return;
+      ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+      for (const [x, y] of pts.slice(1)) ctx.lineTo(x, y);
+      if (!a.open) ctx.closePath();
+      ctx.lineWidth = 2.5 * s; ctx.lineJoin = 'round';
+      if (a.type === 'tarsus') {
+        ctx.setLineDash([10 * s, 6 * s]); ctx.strokeStyle = '#22d3ee'; ctx.stroke(); ctx.setLineDash([]);
+      } else {
+        if (!a.open) { ctx.fillStyle = 'rgba(239,68,68,.32)'; ctx.fill(); }
+        ctx.strokeStyle = '#ef4444'; ctx.stroke();
+      }
+      for (const [x, y] of a.open ? pts : []) { ctx.fillStyle = a.type === 'tarsus' ? '#22d3ee' : '#ef4444'; ctx.beginPath(); ctx.arc(x, y, 4 * s, 0, Math.PI * 2); ctx.fill(); }
+    } else if (a.type === 'mbsum') {
+      ctx.font = `bold ${Math.round(17 * s)}px ${FONT}`; ctx.textBaseline = 'top';
+      const lines = String(a.text).split('\n'), lh = 24 * s;
+      const w = Math.max(...lines.map((l) => ctx.measureText(l).width)) + 20 * s;
+      ctx.fillStyle = 'rgba(0,0,0,.72)'; ctx.fillRect(a.x, a.y, w, lines.length * lh + 12 * s);
+      ctx.fillStyle = '#fef08a';
+      lines.forEach((l, i) => ctx.fillText(l, a.x + 10 * s, a.y + 6 * s + i * lh));
     } else if (a.type === 'crop') {
       ctx.strokeStyle = '#fff'; ctx.lineWidth = 2 * s; ctx.setLineDash([8 * s, 6 * s]);
       ctx.strokeRect(Math.min(a.x1, a.x2), Math.min(a.y1, a.y2), Math.abs(a.x2 - a.x1), Math.abs(a.y2 - a.y1));
@@ -326,6 +351,7 @@
       this.lens = null; this.apts = [];
       canvas.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
       canvas.addEventListener('pointerdown', (e) => this.onDown(e));
+      canvas.addEventListener('dblclick', () => { if (this.poly) this.finishPoly(); });
       canvas.addEventListener('pointermove', (e) => this.onMove(e));
       canvas.addEventListener('pointerup', (e) => this.onUp(e));
       canvas.addEventListener('pointercancel', () => { this.drag = null; this.temp = null; this.lens = null; this.draw(); });
@@ -337,6 +363,7 @@
     get src() { return this.orig; }
     // ---- 상태 ----
     setSource(src, adj = P.adj) {
+      this.mbOverlay = null; this.mbAuto = null; this.poly = null;
       this.orig = src ? toCanvas(src) : null; this.base = this.orig;
       this.adj = { ...IDENTITY, ...adj }; this.ann = []; this.apts = []; this.temp = null;
       this.undoStack = []; this.redoStack = []; this.lastKind = null; this.dn = {};
@@ -381,6 +408,7 @@
     clearAnn() { if (!this.ann.length) return; this.record('ann'); this.ann = []; this.draw(); this.edited(); }
     geom(newBase, f) {
       this.record('geo');
+      this.mbOverlay = null; this.mbAuto = null;
       this.base = newBase; this.ann = mapAnn(this.ann, f);
       this.reprocess(); this.autofit = true; this.fit(); this.draw(); this.edited();
     }
@@ -455,6 +483,18 @@
         if (t && t.trim()) this.addAnn({ type: 'text', x: p.x, y: p.y, text: t.trim() });
         return;
       }
+      if (POLY_TOOLS.has(tool)) {                      // 다각형: 클릭으로 점 추가, 첫 점 클릭·더블클릭·Enter 로 닫기
+        const poly = this.poly || (this.poly = { type: tool, pts: [] });
+        const first = poly.pts[0];
+        const nearFirst = first && Math.hypot((first[0] - p.x) * this.zoom, (first[1] - p.y) * this.zoom) < 12;
+        if (poly.pts.length >= 3 && nearFirst) { this.finishPoly(); return; }
+        const last = poly.pts[poly.pts.length - 1];       // 더블클릭의 두 번째 클릭은 같은 점 — 무시
+        if (last && Math.hypot((last[0] - p.x) * this.zoom, (last[1] - p.y) * this.zoom) < 4) return;
+        poly.pts.push([p.x, p.y]);
+        this.temp = { type: tool, pts: [...poly.pts], open: true };
+        this.draw();
+        return;
+      }
       if (tool === 'angle') {
         this.apts.push([p.x, p.y]);
         if (this.apts.length === 3) {
@@ -476,7 +516,24 @@
         : { type: 'angle', x1: a[0], y1: a[1], x2: p.x, y2: p.y };
       this.draw();
     }
+    finishPoly() {
+      const poly = this.poly;
+      this.poly = null; this.temp = null;
+      if (!poly || poly.pts.length < 3) { this.draw(); return; }
+      if (poly.type === 'tarsus') {                     // 검판 영역은 하나만 (다시 그리면 교체)
+        this.record('ann');
+        this.ann = this.ann.filter((a) => a.type !== 'tarsus' && a.type !== 'mbsum');
+        this.ann.push({ type: 'tarsus', pts: poly.pts });
+        this.mbOverlay = null; this.mbAuto = null;
+        this.draw(); this.edited();
+      } else this.addAnn({ type: poly.type, pts: poly.pts });
+    }
     onMove(e) {
+      if (!this.drag && this.poly) {
+        const p = this.toImg(e);
+        this.temp = { type: this.poly.type, pts: [...this.poly.pts, [p.x, p.y]], open: true };
+        this.draw(); return;
+      }
       if (!this.drag) { if (P.tool === 'angle' && this.apts.length) this.anglePreview(this.toImg(e)); return; }
       const p = this.toImg(e);
       if (this.drag.lens) { this.lens = { sx: p.sx, sy: p.sy }; this.draw(); return; }
@@ -498,7 +555,7 @@
       }
       this.draw();
     }
-    cancelTemp() { this.apts = []; this.temp = null; this.lens = null; this.draw(); }
+    cancelTemp() { this.apts = []; this.poly = null; this.temp = null; this.lens = null; this.draw(); }
     // ---- 그리기 ----
     annScale() { return Math.max(1, Math.max(this.iw, this.ih) / 900); }
     drawAnn(ctx, s, withTemp = true) {
@@ -516,6 +573,7 @@
       c.translate(this.px, this.py); c.scale(this.zoom, this.zoom);
       c.imageSmoothingQuality = 'high';
       c.drawImage(this.proc, 0, 0);
+      if (this.mbOverlay) c.drawImage(this.mbOverlay, 0, 0, this.iw, this.ih);
       this.drawAnn(c, this.annScale());
     }
     draw() {
@@ -551,6 +609,7 @@
       if (!this.proc) return null;
       const c = newCanvas(this.iw, this.ih), x = c.getContext('2d');
       x.drawImage(this.proc, 0, 0);
+      if (this.mbOverlay) x.drawImage(this.mbOverlay, 0, 0, this.iw, this.ih);
       this.drawAnn(x, this.annScale(), false);
       return c;
     }
@@ -667,6 +726,9 @@
       const im = await loadImage(c.url);
       V.single.caption = caption(c, P.idx + 1);
       V.single.setSource(im);
+      if (/하안검/.test(c.note || '')) $('mb-lid').value = 'lower';
+      else if (/상안검/.test(c.note || '')) $('mb-lid').value = 'upper';
+      mbRender();
     } catch (e) { App.toast(e.message, 'error'); }
     updateSide();
   }
@@ -815,6 +877,7 @@
   }
 
   function onViewerEdited(v) {
+    if (v === V.single) mbRender();
     if (v !== active()) return;
     syncControls(v.adj);
     refreshEdit();
@@ -835,7 +898,7 @@
     $('ed-redo').disabled = !v?.redoStack.length;
     $('ed-orig').disabled = !v?.isModified();
     $('pro-clear').disabled = !targets().some((x) => x.ann.length);
-    document.querySelectorAll('#pro-tools [data-tool]').forEach((b) => { b.disabled = !TOOL_MODES[b.dataset.tool].includes(P.mode); });
+    document.querySelectorAll('.pro-side [data-tool]').forEach((b) => { b.disabled = !TOOL_MODES[b.dataset.tool].includes(P.mode); });
     $('adj-auto').disabled = !v?.base;
     cancelAnimationFrame(histRaf); histRaf = requestAnimationFrame(drawHist);
   }
@@ -891,10 +954,162 @@
   function setTool(t) {
     if (!TOOL_MODES[t] || (!TOOL_MODES[t].includes(P.mode) && t !== 'pan')) t = 'pan';
     P.tool = t;
-    document.querySelectorAll('#pro-tools [data-tool]').forEach((b) => b.classList.toggle('on', b.dataset.tool === t));
+    document.querySelectorAll('.pro-side [data-tool]').forEach((b) => b.classList.toggle('on', b.dataset.tool === t));
     for (const v of Object.values(V)) { v.cancelTemp(); v.cv.style.cursor = cursorFor(t); }
   }
   function clearAnn() { for (const v of targets()) v.clearAnn(); refreshEdit(); }
+  // ================= 마이봄샘 분석 (적외선 meibography) =================
+  // 검판(tarsal plate) 영역 안에서 샘이 없는 면적 비율 = 소실률(gland dropout)
+  //   Arita meiboscore: 0 소실 없음 · 1 < 1/3 · 2 1/3~2/3 · 3 > 2/3  (안검별, 상+하 합산 = 눈별 0~6)
+  //   Pult meiboscale: 0% · <25% · 25~50% · 51~75% · >75%
+  const LID_KO = { upper: '상안검', lower: '하안검' };
+  function polyMask(polys, w, h, sc) {
+    const c = newCanvas(w, h), x = c.getContext('2d');
+    x.fillStyle = '#fff';
+    for (const pts of polys) {
+      x.beginPath(); x.moveTo(pts[0][0] * sc, pts[0][1] * sc);
+      for (const [px, py] of pts.slice(1)) x.lineTo(px * sc, py * sc);
+      x.closePath(); x.fill();
+    }
+    const d = x.getImageData(0, 0, w, h).data, m = new Uint8Array(w * h);
+    for (let i = 0; i < m.length; i++) m[i] = d[i * 4 + 3] > 127 ? 1 : 0;
+    return m;
+  }
+  /** 이진 마스크 팽창 (정사각 반경 r) — 행·열 누적합으로 O(N) */
+  function dilate(m, w, h, r) {
+    const tmp = new Uint8Array(w * h), out = new Uint8Array(w * h), row = new Int32Array(w + 1), col = new Int32Array(h + 1);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) row[x + 1] = row[x] + m[y * w + x];
+      for (let x = 0; x < w; x++) tmp[y * w + x] = row[Math.min(w, x + r + 1)] - row[Math.max(0, x - r)] > 0 ? 1 : 0;
+    }
+    for (let x = 0; x < w; x++) {
+      for (let y = 0; y < h; y++) col[y + 1] = col[y] + tmp[y * w + x];
+      for (let y = 0; y < h; y++) out[y * w + x] = col[Math.min(h, y + r + 1)] - col[Math.max(0, y - r)] > 0 ? 1 : 0;
+    }
+    return out;
+  }
+  const erode = (m, w, h, r) => { const inv = m.map((v) => 1 - v), d = dilate(inv, w, h, r); return d.map((v) => 1 - v); };
+  const scaleOf = (v) => Math.min(1, 900 / Math.max(v.base.width, v.base.height));
+
+  /** 자동 분석 (추정): CLAHE 대비 향상 → 배경 대비 밝은 샘 검출 → 샘 주변이 아닌 검판 면적 = 소실 */
+  function mbAuto(v) {
+    const tar = v.ann.find((a) => a.type === 'tarsus');
+    if (!v.base || !tar) return null;
+    const sc = scaleOf(v), w = Math.max(8, Math.round(v.base.width * sc)), h = Math.max(8, Math.round(v.base.height * sc));
+    const c = newCanvas(w, h); ctx2d(c).drawImage(v.base, 0, 0, w, h);
+    const im = pixels(c), d = im.data, N = w * h;
+    for (let i = 0; i < d.length; i += 4) { const y = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]; d[i] = d[i + 1] = d[i + 2] = y; }
+    clahe(d, w, h, 3.0);
+    const Y = new Float32Array(N);
+    for (let j = 0; j < N; j++) Y[j] = d[j * 4];
+    // 배경(큰 상자 평균) — 적분 영상
+    const r = Math.max(4, Math.round(w / 30)), I = new Float64Array((w + 1) * (h + 1));
+    for (let y = 0; y < h; y++) { let rs = 0; for (let x = 0; x < w; x++) { rs += Y[y * w + x]; I[(y + 1) * (w + 1) + x + 1] = I[y * (w + 1) + x + 1] + rs; } }
+    const roi = polyMask([tar.pts], w, h, sc);
+    const diff = new Float32Array(N);
+    let n = 0, sum = 0, sum2 = 0;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const x0 = Math.max(0, x - r), x1 = Math.min(w, x + r + 1), y0 = Math.max(0, y - r), y1 = Math.min(h, y + r + 1);
+      const area = (x1 - x0) * (y1 - y0);
+      const bg = (I[y1 * (w + 1) + x1] - I[y0 * (w + 1) + x1] - I[y1 * (w + 1) + x0] + I[y0 * (w + 1) + x0]) / area;
+      const j = y * w + x, dv = Y[j] - bg;
+      diff[j] = dv;
+      if (roi[j]) { n++; sum += dv; sum2 += dv * dv; }
+    }
+    if (n < 50) return null;
+    const mean = sum / n, sd = Math.sqrt(Math.max(0, sum2 / n - mean * mean));
+    const thr = mean + 0.3 * sd;
+    let gland = new Uint8Array(N);
+    for (let j = 0; j < N; j++) gland[j] = roi[j] && diff[j] > thr ? 1 : 0;
+    gland = dilate(erode(gland, w, h, 1), w, h, 1);              // 잡티 제거 (열림)
+    const R = Math.max(3, Math.round(w / 50));
+    const cov = dilate(gland, w, h, R);
+    let lost = 0;
+    const ov = newCanvas(w, h), ox = ov.getContext('2d'), od = ox.createImageData(w, h);
+    for (let j = 0; j < N; j++) {
+      if (!roi[j]) continue;
+      const o = j * 4;
+      if (gland[j]) { od.data[o] = 34; od.data[o + 1] = 211; od.data[o + 2] = 238; od.data[o + 3] = 120; }
+      else if (!cov[j]) { lost++; od.data[o] = 239; od.data[o + 1] = 68; od.data[o + 2] = 68; od.data[o + 3] = 95; }
+    }
+    ox.putImageData(od, 0, 0);
+    // 샘 개수(추정): 검판 세로 중앙 부근 가로선 7개에서 샘 구간 수의 중앙값
+    let ys = [], minY = h, maxY = 0;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (roi[y * w + x]) { if (y < minY) minY = y; if (y > maxY) maxY = y; }
+    for (let k = 0; k < 7; k++) {
+      const y = Math.round(minY + (maxY - minY) * (0.3 + 0.4 * k / 6));
+      let runs = 0, inRun = false, len = 0;
+      for (let x = 0; x < w; x++) {
+        const g = gland[y * w + x] && roi[y * w + x];
+        if (g) { len++; if (!inRun && len >= 2) { runs++; inRun = true; } } else { inRun = false; len = 0; }
+      }
+      ys.push(runs);
+    }
+    ys.sort((a, b) => a - b);
+    return { loss: lost / n * 100, count: ys[3], overlay: ov };
+  }
+  function mbResult(v) {
+    const tar = v.ann.find((a) => a.type === 'tarsus');
+    if (!tar || !v.base) return null;
+    const drops = v.ann.filter((a) => a.type === 'dropout' && a.pts && a.pts.length >= 3);
+    let loss, method;
+    if (drops.length) {                                         // 수동 소실 영역이 있으면 그 값을 우선
+      const sc = scaleOf(v), w = Math.round(v.base.width * sc), h = Math.round(v.base.height * sc);
+      const roi = polyMask([tar.pts], w, h, sc), dm = polyMask(drops.map((a) => a.pts), w, h, sc);
+      let n = 0, k = 0;
+      for (let j = 0; j < roi.length; j++) if (roi[j]) { n++; if (dm[j]) k++; }
+      loss = n ? k / n * 100 : 0; method = '수동';
+    } else if (v.mbAuto) { loss = v.mbAuto.loss; method = '자동 추정'; }
+    else return { method: null };
+    const arita = loss < 1 ? 0 : loss < 100 / 3 ? 1 : loss <= 200 / 3 ? 2 : 3;
+    const pult = loss < 1 ? '0%' : loss < 25 ? '<25%' : loss <= 50 ? '25–50%' : loss <= 75 ? '51–75%' : '>75%';
+    return { loss, method, arita, pult, count: v.mbAuto ? v.mbAuto.count : null, lid: $('mb-lid').value };
+  }
+  const mbNote = (m) => `마이봄 분석 ${LID_KO[m.lid] || ''} · 소실 ${m.loss.toFixed(0)}% · Arita ${m.arita}`;
+  function mbRender() {
+    const v = V.single, box = $('mb-result');
+    if (!box) return;
+    if (P.mode !== 'single' || !v.base) { box.innerHTML = '<span class="mb-muted">1화면에서 마이봄 영상을 여세요.</span>'; return; }
+    const m = mbResult(v);
+    if (!m) { box.innerHTML = '<span class="mb-muted">① [검판 영역]으로 눈꺼풀 검판(샘이 있는 판) 둘레를 클릭해 그리세요.</span>'; return; }
+    if (!m.method) { box.innerHTML = '<span class="mb-muted">② [자동 분석]을 누르거나 [소실 영역]으로 샘이 없어진 부분을 그리세요.</span>'; return; }
+    box.innerHTML = `<div class="mb-big">${m.loss.toFixed(1)}<small>%</small></div><div class="mb-cap">샘 소실률 (${m.method})</div>`
+      + `<div class="mb-grid"><span>Arita meiboscore</span><b>${m.arita} / 3</b><span>Pult meiboscale</span><b>${m.pult}</b>`
+      + (m.count != null ? `<span>샘 개수 (추정)</span><b>${m.count}</b>` : '') + `<span>안검</span><b>${LID_KO[m.lid]}</b></div>`;
+  }
+  function mbEnhance() {
+    if (P.mode !== 'single') return;
+    setAdj({ ...IDENTITY, channel: 'gray', enhance: 3, sharpen: 1 });
+    autoContrast();
+  }
+  function mbRunAuto() {
+    const v = V.single;
+    if (P.mode !== 'single' || !v.base) return null;
+    if (!v.ann.some((a) => a.type === 'tarsus')) { App.toast('먼저 [검판 영역]을 그리세요.', 'error'); setTool('tarsus'); return null; }
+    const r = mbAuto(v);
+    if (!r) { App.toast('검판 영역이 너무 작습니다.', 'error'); return null; }
+    v.mbAuto = { loss: r.loss, count: r.count }; v.mbOverlay = r.overlay;
+    v.draw(); mbRender();
+    return v.mbAuto;
+  }
+  function mbClear() {
+    const v = V.single;
+    if (!v.ann.some((a) => ['tarsus', 'dropout', 'mbsum'].includes(a.type)) && !v.mbOverlay) return;
+    v.record('ann');
+    v.ann = v.ann.filter((a) => !['tarsus', 'dropout', 'mbsum'].includes(a.type));
+    v.mbOverlay = null; v.mbAuto = null;
+    v.draw(); v.edited(); mbRender();
+  }
+  async function mbSave() {
+    const v = V.single, m = P.mode === 'single' ? mbResult(v) : null;
+    if (!m || !m.method) { App.toast('분석 결과가 없습니다 (검판 영역 + 자동 분석 또는 소실 영역).', 'error'); return 0; }
+    const tar = v.ann.find((a) => a.type === 'tarsus');
+    const x = Math.max(4, Math.min(...tar.pts.map((p) => p[0]))), y = Math.max(4, Math.min(...tar.pts.map((p) => p[1])) - 110 * v.annScale());
+    v.ann = v.ann.filter((a) => a.type !== 'mbsum');
+    v.ann.push({ type: 'mbsum', x, y: Math.max(4, y), text: `${LID_KO[m.lid]} 마이봄샘 소실 ${m.loss.toFixed(1)}% (${m.method})\nArita ${m.arita}/3 · Pult ${m.pult}${m.count != null ? ` · 샘 ${m.count}개` : ''}` });
+    return saveEdited();
+  }
+
   function setTab(name) {
     document.querySelectorAll('.ptab').forEach((b) => { const on = b.dataset.tab === name; b.classList.toggle('on', on); b.setAttribute('aria-selected', String(on)); });
     document.querySelectorAll('.ppane').forEach((p) => p.classList.toggle('on', p.dataset.pane === name));
@@ -955,7 +1170,9 @@
     for (const [v, src] of pairs) {
       if (!v.proc || !src || !v.isModified()) continue;
       const kinds = new Set(v.ann.map((a) => a.type));
-      const note = kinds.has('length') || kinds.has('angle') ? '측정'
+      const mb = kinds.has('tarsus') ? mbResult(v) : null;
+      const note = mb ? mbNote(mb)
+        : kinds.has('length') || kinds.has('angle') ? '측정'
         : kinds.size ? '주석' : v.geometryChanged() ? '편집본' : '보정본';
       const blob = await new Promise((r) => v.renderFull().toBlob(r, 'image/png'));
       if (blob && await App.persistCapture(p, 'photo', blob, 'png', src.eye || 'NA', null, note, { silent: true })) { n++; done.push(v); }
@@ -1066,7 +1283,7 @@
   $('btn-pro').addEventListener('click', () => setPro(!P.on));
   $('btn-mode-capture').addEventListener('click', () => { if (P.on) setPro(false); });
   document.querySelectorAll('#pro-modes .pbtn').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
-  document.querySelectorAll('#pro-tools [data-tool]').forEach((b) => b.addEventListener('click', () => setTool(b.dataset.tool)));
+  document.querySelectorAll('.pro-side [data-tool]').forEach((b) => b.addEventListener('click', () => setTool(b.dataset.tool)));
   $('pro-capture').addEventListener('click', toggleCapture);
   $('pro-save').addEventListener('click', saveLive);
   $('pro-prev').addEventListener('click', () => step(-1));
@@ -1075,6 +1292,11 @@
   $('pro-comment').addEventListener('click', editComment);
   $('pro-patient').addEventListener('click', editPatient);
   $('pro-print').addEventListener('click', doPrint);
+  $('mb-enhance').addEventListener('click', mbEnhance);
+  $('mb-auto').addEventListener('click', mbRunAuto);
+  $('mb-clear').addEventListener('click', mbClear);
+  $('mb-save').addEventListener('click', mbSave);
+  $('mb-lid').addEventListener('change', mbRender);
   $('pro-fullscreen').addEventListener('click', () => {
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     else $('pro-display').requestFullscreen().catch((e) => App.toast('전체 화면을 열 수 없습니다: ' + e.message, 'error'));
@@ -1105,6 +1327,7 @@
     if (e.key === 'ArrowLeft') { e.preventDefault(); step(-1); }
     else if (e.key === 'ArrowRight') { e.preventDefault(); step(1); }
     else if (e.key === ' ' && P.mode === 'live') { e.preventDefault(); toggleCapture(); }
+    else if (e.key === 'Enter' && V.single.poly) { e.preventDefault(); V.single.finishPoly(); }
     else if (e.key === 'Escape') setTool('pan');
     else if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ') { e.preventDefault(); (e.shiftKey ? redo : undo)(); }   // 한글 입력 상태에서도
     else if ((e.ctrlKey || e.metaKey) && e.code === 'KeyY') { e.preventDefault(); redo(); }
@@ -1120,5 +1343,5 @@
   // 자동화 테스트·디버깅용 핸들
   window.SlitPro = { state: P, viewers: V, setPro, setMode, setPer, openIndex, step, toggleSel, setAdj,
     setTool, saveEdited, setComment, buildReport, reload, active, autoContrast, rotate, flip, undo, redo,
-    original: restoreOriginal, setPxPerMm, clearAnn, setTab };
+    original: restoreOriginal, setPxPerMm, clearAnn, setTab, mbRunAuto, mbResult: () => mbResult(V.single), mbSave, mbClear };
 })();
