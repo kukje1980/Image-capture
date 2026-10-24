@@ -32,6 +32,7 @@ from app.ui.patient_panel import PatientPanel
 from app.ui.pro.pro_workspace import ProWorkspace
 from app.ui.quad_view import QuadView
 from app.ui.settings_dialog import SettingsDialog
+from app import brand as app_brand
 from app.ui import icons
 from app.ui.theme import ICON, ICON_ACCENT, build_qss, make_app_icon
 from app.ui.thumbnail_panel import ThumbnailPanel
@@ -48,7 +49,8 @@ class MainWindow(QMainWindow):
         self.config = config
         self.db = db
         self.service = CaptureService(db, config)
-        self.setWindowTitle("슬릿램프 디지털 영상 시스템")
+        self.brand = app_brand.current()
+        self.setWindowTitle(self.brand["window_title"])
         self.setWindowIcon(make_app_icon())
         self.resize(1280, 800)
 
@@ -147,19 +149,29 @@ class MainWindow(QMainWindow):
         lay = QHBoxLayout(bar)
         lay.setContentsMargins(16, 9, 12, 9)
         lay.setSpacing(12)
-        logo = QLabel()
-        logo.setPixmap(make_app_icon().pixmap(34, 34))
-        logo.setFixedSize(34, 34)
-        brand = QVBoxLayout()
-        brand.setSpacing(0)
-        t1 = QLabel("슬릿램프 영상 시스템")
-        t1.setObjectName("BrandTitle")
-        t2 = QLabel("SLIT LAMP IMAGING")
-        t2.setObjectName("BrandSub")
-        brand.addWidget(t1)
-        brand.addWidget(t2)
-        lay.addWidget(logo)
-        lay.addLayout(brand)
+        b = self.brand
+        self.brand_logo = None
+        if app_brand.asset(b.get("logo")):
+            # 브랜드 로고 (테마에 맞춰 밝은/어두운 배경용을 바꿔 그림)
+            self.brand_logo = QLabel()
+            self.brand_logo.setObjectName("BrandLogo")
+            lay.addWidget(self.brand_logo)
+            self._render_brand_logo()
+        else:
+            logo = QLabel()
+            logo.setPixmap(make_app_icon().pixmap(34, 34))
+            logo.setFixedSize(34, 34)
+            lay.addWidget(logo)
+        if not (self.brand_logo and b.get("logo_only")):
+            brand = QVBoxLayout()
+            brand.setSpacing(0)
+            t1 = QLabel("슬릿램프 영상 시스템")
+            t1.setObjectName("BrandTitle")
+            t2 = QLabel("SLIT LAMP IMAGING")
+            t2.setObjectName("BrandSub")
+            brand.addWidget(t1)
+            brand.addWidget(t2)
+            lay.addLayout(brand)
         lay.addSpacing(12)
 
         # 촬영 / Pro 검토 전환 (act_pro 는 체크형 액션으로 유지)
@@ -212,6 +224,29 @@ class MainWindow(QMainWindow):
         self.btn_theme = tool("", "sun", "밝은/어두운 테마 전환", self._toggle_theme)
         self._sync_theme_button()
         return bar
+
+    def _render_brand_logo(self) -> None:
+        if self.brand_logo is None:
+            return
+        from PySide6.QtCore import QRectF
+        from PySide6.QtGui import QPainter, QPixmap
+        from PySide6.QtSvg import QSvgRenderer
+        key = "logo_dark" if self.config.theme == "dark" else "logo"
+        path = app_brand.asset(self.brand.get(key)) or app_brand.asset(self.brand.get("logo"))
+        r = QSvgRenderer(path)
+        size = r.defaultSize()
+        h = 40
+        w = max(1, round(size.width() * h / max(1, size.height())))
+        ratio = 2
+        pm = QPixmap(w * ratio, h * ratio)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        r.render(p, QRectF(0, 0, w * ratio, h * ratio))
+        p.end()
+        pm.setDevicePixelRatio(ratio)
+        self.brand_logo.setPixmap(pm)
+        self.brand_logo.setFixedSize(w, h)
 
     def _sync_theme_button(self) -> None:
         dark = self.config.theme == "dark"
@@ -510,6 +545,7 @@ class MainWindow(QMainWindow):
         if app is not None:
             app.setStyleSheet(build_qss(self.config.theme))
         self._sync_theme_button()
+        self._render_brand_logo()
         try:
             self.config.save()
         except Exception:  # noqa: BLE001

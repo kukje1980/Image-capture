@@ -1,0 +1,78 @@
+# Windows 설치파일(.exe) 자동 빌드 — 기본 / Keeler 전용
+#   Actions 탭 → "Build Windows installer" → Run workflow 로 수동 실행하거나, 아래 경로가 바뀐 push 때 실행된다.
+#   결과물: 실행 화면 아래 Artifacts 의 SlitLampImaging-windows / KeelerSlitLamp-windows (설치파일)
+name: Build Windows installer
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "app/**"
+      - "assets/**"
+      - "build.spec"
+      - "installer/**"
+      - "tools/rthooks/**"
+      - "requirements.txt"
+      - "tests/**"
+      - ".github/workflows/build-windows.yml"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - brand: default
+            app: SlitLampImaging
+            iss: installer\slitlamp.iss
+          - brand: keeler
+            app: KeelerSlitLamp
+            iss: installer\keeler.iss
+    runs-on: windows-latest
+    env:
+      SLITLAMP_BUILD_BRAND: ${{ matrix.brand }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 의존성
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: 테스트 (오프스크린)
+        if: matrix.brand == 'default'
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest -q tests
+
+      - name: PyInstaller 번들
+        run: pyinstaller --noconfirm build.spec
+
+      - name: 번들 실행 확인 (합성 영상으로 기동)
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          $p = Start-Process -FilePath "dist\${{ matrix.app }}\${{ matrix.app }}.exe" -ArgumentList "--source","synthetic" -PassThru
+          Start-Sleep -Seconds 10
+          if ($p.HasExited) { Write-Error "앱이 바로 종료됨 (exit $($p.ExitCode))"; exit 1 }
+          Stop-Process -Id $p.Id -Force
+
+      - name: Inno Setup 설치
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
+
+      - name: 설치파일 만들기
+        shell: pwsh
+        run: '& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "${{ matrix.iss }}"'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.app }}-windows
+          path: dist/installer/*.exe
+          if-no-files-found: error

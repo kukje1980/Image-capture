@@ -55,6 +55,19 @@ Finder 에서 `run_mac.command` 더블클릭(처음 한 번 자동 설치). 하�
   상단 **카메라 재연결**을 누르세요(소스 실행 시에는 '터미널'에 권한을 줍니다).
 - 단축키는 맥 관례대로 Ctrl 대신 **⌘(Command)** 를 씁니다(⌘Z 실행 취소, ⌘Y 다시 실행). 촬영/Pro 전환은 F2(fn+F2).
 
+## Keeler 전용 버전 (윈도우 · 맥)
+같은 프로그램을 Keeler 공식 로고·브랜드 색(네이비 #052133 · 파랑 #1981b7 · 주황 #ed6f1e)으로 만든 전용판입니다.
+상단은 로고만, 창 제목·인쇄 보고서는 "Keeler 슬릿램프 영상 시스템 / 보고서", 아이콘은 로고 마크로 바뀝니다.
+기본판과 이름·설치 위치가 달라 **한 PC에 나란히 설치**할 수 있습니다.
+
+| 받는 곳 (GitHub → Actions) | 파일 |
+|------|------|
+| **Build Windows installer** → Artifacts | `KeelerSlitLamp-windows` (설치파일 `KeelerSlitLamp-Setup-0.1.0.exe`) |
+| **Build macOS app** → Artifacts | `KeelerSlitLamp-mac-arm64`(M1/M2/M3) · `KeelerSlitLamp-mac-x86_64`(Intel) |
+
+직접 만들기: 윈도우 `build_installer.bat keeler` · 맥 `./build_mac.sh keeler`
+기존 설치본을 Keeler 화면으로 쓰기: 실행 옵션 `--brand keeler` 또는 `config.json` 에 `"brand": "keeler"`
+
 ## 화면 디자인 (Clinical Graphite)
 안과 영상 프로그램(VK-2, EyeSuite, IMAGEnet 등)처럼 **어두운 그래파이트 작업 공간**을 기본으로 해 영상에 시선이 모이게 했습니다(상단 테마 버튼으로 밝은 테마 전환).
 

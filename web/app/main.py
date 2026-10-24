@@ -26,6 +26,7 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 BRAND = brands.get_brand()            # SLITLAMP_BRAND 환경변수 (기본 / keeler …)
 templates.env.globals["brand"] = BRAND
 templates.env.globals["brand_public"] = brands.public(BRAND)
+templates.env.globals["storage_policy"] = config.STORAGE_POLICY
 
 
 def _ensure_db(app: FastAPI) -> None:

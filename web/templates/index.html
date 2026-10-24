@@ -10,7 +10,7 @@
   <link rel="shortcut icon" href="/static/favicon.ico">
   <link rel="stylesheet" href="/static/css/app.css">
   {% if brand.css %}<link rel="stylesheet" href="{{ brand.css }}">{% endif %}
-  <script>window.SLIT_BRAND = {{ brand_public | tojson }};</script>
+  <script>window.SLIT_BRAND = {{ brand_public | tojson }}; window.SLIT_STORAGE_POLICY = {{ storage_policy | tojson }};</script>
 </head>
 <body class="brand-{{ brand.key }}">
 <!-- 아이콘 스프라이트 (선형 24px) -->
@@ -97,6 +97,7 @@
         <svg class="ic"><use href="#i-videocam"/></svg>
         <select class="select select-bare" id="camera-select" aria-label="카메라 선택"><option>—</option></select>
       </label>
+      <button class="btn btn-sm btn-quiet storage-btn" id="btn-storage" title="촬영본·환자 정보를 어디에 저장할지 선택"><svg class="ic"><use href="#i-save"/></svg><span id="storage-label">저장: 서버</span></button>
       <button class="btn btn-sm btn-quiet" id="btn-folder"><svg class="ic"><use href="#i-folder"/></svg>저장 폴더</button>
       <span class="folder-status" id="folder-status" title="브라우저가 직접 저장할 로컬 폴더"><span class="dot"></span> 폴더 미지정</span>
       <button class="btn btn-icon btn-quiet" id="btn-theme" title="밝은/어두운 테마" aria-label="테마 전환">
@@ -399,8 +400,29 @@
   </div>
 </dialog>
 
+<dialog id="storage-dialog" aria-labelledby="storage-title">
+  <div class="dialog-header">
+    <div class="dialog-title" id="storage-title">저장 방식</div>
+    <button class="btn btn-ghost btn-icon" type="button" id="storage-x" aria-label="닫기"><svg class="ic"><use href="#i-x"/></svg></button>
+  </div>
+  <div class="dialog-body">
+    <label class="storage-opt"><input type="radio" name="storage" value="server">
+      <span><b>서버에 저장</b><small>환자 정보·사진을 이 웹 서버에 저장합니다. 여러 PC에서 같은 기록을 볼 수 있습니다.
+      (무료 인터넷 서버는 재시작 때 기록이 지워질 수 있어 '저장 폴더' 지정을 권장)</small></span></label>
+    <label class="storage-opt"><input type="radio" name="storage" value="local">
+      <span><b>이 PC에만 저장</b><small>환자 정보·사진·동영상을 <b>인터넷 서버로 보내지 않고</b> 지금 쓰는 PC의 브라우저 저장소에만 보관합니다.
+      다른 PC에서는 보이지 않으며, 브라우저 '인터넷 사용 기록 삭제(사이트 데이터)' 시 함께 지워지므로 상단 <b>저장 폴더</b>를 꼭 지정해 PC 폴더에도 파일을 남기세요.</small></span></label>
+    <p class="storage-note" id="storage-note"></p>
+  </div>
+  <div class="dialog-footer">
+    <button type="button" class="btn" id="storage-cancel">취소</button>
+    <button type="button" class="btn btn-primary" id="storage-apply">적용</button>
+  </div>
+</dialog>
+
 <div class="toast-wrap" id="toast-wrap" aria-live="polite"></div>
 
+<script src="/static/js/localstore.js"></script>
 <script src="/static/js/app.js"></script>
 <script src="/static/js/pro.js"></script>
 </body>

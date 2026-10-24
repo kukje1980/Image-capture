@@ -94,3 +94,17 @@ def test_deploy_files():
     svc = r["services"][0]
     assert svc["rootDir"] == "web" and "$PORT" in svc["startCommand"]
     assert any(e["key"] == "SLITLAMP_PASSWORD" for e in svc["envVars"])
+
+
+def test_storage_policy_injected(monkeypatch, tmp_path):
+    """SLITLAMP_STORAGE=local 이면 화면이 항상 '이 PC 전용' 모드로 동작하도록 정책을 내려준다."""
+    monkeypatch.setenv("SLITLAMP_STORAGE", "local")
+    app = _load(monkeypatch, tmp_path, "")
+    with TestClient(app) as c:
+        html = c.get("/").text
+        assert 'window.SLIT_STORAGE_POLICY = "local"' in html
+        assert "/static/js/localstore.js" in html and c.get("/static/js/localstore.js").status_code == 200
+    monkeypatch.setenv("SLITLAMP_STORAGE", "bogus")
+    app = _load(monkeypatch, tmp_path, "")
+    with TestClient(app) as c:
+        assert 'window.SLIT_STORAGE_POLICY = "choice"' in c.get("/").text

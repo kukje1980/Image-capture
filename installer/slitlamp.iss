@@ -1,4 +1,4 @@
-; Inno Setup 스크립트 — 슬릿램프 영상 시스템 Windows 설치 마법사
+﻿; Inno Setup 스크립트 — 슬릿램프 영상 시스템 Windows 설치 마법사
 ;
 ; 사용 전제: 먼저 PyInstaller로 dist\SlitLampImaging\ 폴더가 생성되어 있어야 합니다.
 ;   pyinstaller --noconfirm build.spec
