@@ -54,7 +54,12 @@ rm -rf "$STAGE" "$DMG"
 mkdir -p "$STAGE"
 cp -R "dist/$APP.app" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
-hdiutil create -volname "$VOL $VERSION" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
+# macOS 의 디스크 이미지 도구가 가끔 "Resource busy" 로 실패한다 → 잠시 쉬었다가 최대 5번 다시 시도
+for try in 1 2 3 4 5; do
+  if hdiutil create -volname "$VOL $VERSION" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null; then break; fi
+  if [ "$try" = 5 ]; then echo "dmg 생성 실패" >&2; exit 1; fi
+  echo "  dmg 생성 재시도 ($try/5)..."; sleep $((try * 5))
+done
 rm -rf "$STAGE"
 
 echo
