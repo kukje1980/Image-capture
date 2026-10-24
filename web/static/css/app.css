@@ -536,3 +536,11 @@ dialog.pdrawer[open] { display: flex; animation: pd-in .18s ease-out; }
 /* 썸네일 머리글 제거 — 필터 줄이 맨 위 (전체 개수는 '전체' 탭에) */
 .thumb-filter { padding-top: 10px; }
 .tf-count { font-variant-numeric: tabular-nums; color: var(--accent-strong); font-weight: 700; margin-left: 2px; }
+
+/* 해상도 선택 · 소니 안내 */
+.res-select { min-width: 74px !important; max-width: 84px !important; border-left: 1px solid var(--rule) !important; border-radius: 0 !important; padding-left: 8px !important; }
+.sony-dialog { max-width: 600px; }
+.sony-body ol { margin: 0; padding-left: 20px; display: grid; gap: 10px; font-size: 13.5px; line-height: 1.6; }
+.sony-body p { margin: 0; font-size: 13.5px; }
+.sony-body small { color: var(--ink-soft); }
+.sony-note { font-size: 12.5px !important; color: var(--ink-soft); line-height: 1.7; background: var(--panel-2); border: 1px solid var(--rule); border-radius: 8px; padding: 10px 12px; }

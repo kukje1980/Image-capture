@@ -13,6 +13,7 @@ CONFIG_FILE = "config.json"
 @dataclass
 class AppConfig:
     camera_index: int = 0
+    camera_name: str = ""                    # 선택한 카메라 이름 (장치 순서가 바뀌어도 이름으로 다시 찾음)
     camera_backend: str = "dshow"            # dshow(Windows; macOS에선 자동으로 AVFoundation) | avfoundation | any
     capture_width: int = 1920
     capture_height: int = 1080
