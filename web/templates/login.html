@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>로그인 · {{ brand.app_name }}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <link rel="icon" type="image/png" href="{{ brand.favicon or '/static/favicon.png' }}">
+  <link rel="stylesheet" href="/static/css/app.css">
+  {% if brand.css %}<link rel="stylesheet" href="{{ brand.css }}">{% endif %}
+  <style>
+    body { overflow: auto; display: grid; place-items: center; min-height: 100vh; padding: 16px;
+      background: radial-gradient(ellipse at top, var(--panel-2), var(--bg) 70%); }
+    .login { width: min(380px, 100%); background: var(--panel); border: 1px solid var(--rule); border-radius: 16px;
+      box-shadow: var(--shadow-strong); padding: 28px 26px 24px; display: grid; gap: 16px; }
+    .login .brand { gap: 12px; }
+    .login h1 { font-size: 15px; font-weight: 600; color: var(--ink-soft); margin: 4px 0 0; }
+    .login .input { width: 100%; height: 42px; font-size: 15px; }
+    .login .btn { width: 100%; height: 42px; font-size: 15px; }
+    .login .err { color: var(--record); font-size: 13px; font-weight: 600; }
+    .login .note { color: var(--ink-muted); font-size: 12px; line-height: 1.6; }
+  </style>
+  <script>try { var t = localStorage.getItem('slitlamp-theme'); if (t) document.documentElement.setAttribute('data-theme', t); } catch (e) {}</script>
+</head>
+<body class="brand-{{ brand.key }}">
+  <form class="login" method="post" action="/login">
+    <div class="brand">
+      {% if brand.logo %}
+      <img class="brand-logo brand-logo-light" src="{{ brand.logo }}" alt="{{ brand.wordmark or brand.app_name }}">
+      <img class="brand-logo brand-logo-dark" src="{{ brand.logo_dark }}" alt="{{ brand.wordmark or brand.app_name }}">
+      {% if not brand.logo_only %}<span class="brand-divider" aria-hidden="true"></span>{% endif %}
+      {% elif brand.wordmark %}
+      <span class="brand-wordmark">{{ brand.wordmark }}</span>
+      <span class="brand-divider" aria-hidden="true"></span>
+      {% else %}
+      <div class="brand-icon" aria-hidden="true">
+        <svg class="ic" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
+      </div>
+      {% endif %}
+      {% if not (brand.logo and brand.logo_only) %}
+      <div class="brand-text">
+        <div class="brand-title">{{ brand.app_name if not brand.wordmark else "슬릿램프 영상 시스템" }}</div>
+        <div class="brand-sub">{{ brand.sub }} <span class="brand-badge">{{ brand.badge }}</span></div>
+      </div>
+      {% endif %}
+    </div>
+    <h1>접속 비밀번호를 입력하세요</h1>
+    <input type="hidden" name="next" value="{{ next }}">
+    <input class="input" type="password" name="password" placeholder="비밀번호" autocomplete="current-password" autofocus required aria-label="비밀번호">
+    {% if error %}<div class="err" role="alert">비밀번호가 맞지 않습니다.</div>{% endif %}
+    <button class="btn btn-primary" type="submit">들어가기</button>
+    <div class="note">환자 정보 보호를 위해 비밀번호로 보호된 페이지입니다. 이 브라우저에서는 30일 동안 로그인이 유지됩니다.</div>
+  </form>
+</body>
+</html>

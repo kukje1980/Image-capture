@@ -1,0 +1,29 @@
+# Render 배포 설정 (MedFix 와 같은 방식) — 웹앱(web/)을 인터넷 주소로 띄운다.
+#   Render 대시보드 → New → Blueprint → 이 저장소 선택 → 브랜치 선택 → Apply
+#   배포 후 https://<서비스이름>.onrender.com 으로 접속 (HTTPS 라 어느 PC에서나 카메라 사용 가능)
+services:
+  - type: web
+    name: slitlamp-imaging
+    runtime: python
+    rootDir: web
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips="*"
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      # 접속 비밀번호 — 배포할 때 Render 가 입력을 요청한다 (환자 정보 보호를 위해 꼭 설정)
+      - key: SLITLAMP_PASSWORD
+        sync: false
+    # ── 서버에 영상을 영구 보관하려면 (유료 Starter 플랜 이상) ──
+    # 무료 플랜은 재시작·재배포 때 서버에 저장된 DB·영상이 지워진다.
+    # 영구 보관이 필요하면 위의 plan 을 starter 로 바꾸고 아래 주석을 풀어 디스크를 붙인다.
+    #   (무료 플랜에서도 화면 상단 '저장 폴더'를 지정하면 촬영본이 PC 폴더에 그대로 남는다)
+    # disk:
+    #   name: slitlamp-data
+    #   mountPath: /var/data
+    #   sizeGB: 5
+    # 그리고 envVars 에 추가:
+    #   - key: SLITLAMP_DATA_DIR
+    #     value: /var/data
