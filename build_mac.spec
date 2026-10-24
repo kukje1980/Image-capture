@@ -1,11 +1,19 @@
 # PyInstaller 스펙 (macOS, .app 번들).
 #   빌드:  ./build_mac.sh   (또는 pyinstaller build_mac.spec)
-#   결과:  dist/SlitLampImaging.app
+#   결과:  dist/SlitLampImaging.app  (SLITLAMP_BUILD_BRAND=keeler 이면 dist/KeelerSlitLamp.app)
 #
 # Windows 용 build.spec 과 같은 구성에 macOS 번들 정보(카메라 권한 문구·아이콘)를 더한다.
+import os
+
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
 
 APP_VERSION = "0.1.0"
+BRAND = os.environ.get("SLITLAMP_BUILD_BRAND", "default").lower()
+KEELER = BRAND == "keeler"
+APP_NAME = "KeelerSlitLamp" if KEELER else "SlitLampImaging"
+DISPLAY_NAME = "Keeler 슬릿램프 영상 시스템" if KEELER else "슬릿램프 영상 시스템"
+APP_ICON = "assets/brand/keeler/app.icns" if KEELER else "assets/icons/app.icns"
+BUNDLE_ID = "com.kukjemd.keelerslitlamp" if KEELER else "com.kukjemd.slitlampimaging"
 
 datas = []
 binaries = []
@@ -20,6 +28,7 @@ datas += [("app/db/schema.sql", "app/db")]
 
 # 앱 아이콘 동봉
 datas += [("assets/icons/app.png", "assets/icons")]
+datas += [("assets/brand", "assets/brand")]
 
 a = Analysis(
     ["run.py"],
@@ -28,7 +37,7 @@ a = Analysis(
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
-    runtime_hooks=[],
+    runtime_hooks=["tools/rthooks/brand_keeler.py"] if KEELER else [],
     excludes=[],
 )
 
@@ -39,7 +48,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="SlitLampImaging",
+    name=APP_NAME,
     console=False,
     argv_emulation=False,
     target_arch=None,          # 빌드하는 Mac 의 아키텍처 (Apple Silicon = arm64, Intel = x86_64)
@@ -50,18 +59,18 @@ coll = COLLECT(
     a.binaries,
     a.zipfiles,
     a.datas,
-    name="SlitLampImaging",
+    name=APP_NAME,
 )
 
 app = BUNDLE(
     coll,
-    name="SlitLampImaging.app",
-    icon="assets/icons/app.icns",
-    bundle_identifier="com.kukjemd.slitlampimaging",
+    name=f"{APP_NAME}.app",
+    icon=APP_ICON,
+    bundle_identifier=BUNDLE_ID,
     version=APP_VERSION,
     info_plist={
-        "CFBundleName": "SlitLampImaging",
-        "CFBundleDisplayName": "슬릿램프 영상 시스템",
+        "CFBundleName": APP_NAME,
+        "CFBundleDisplayName": DISPLAY_NAME,
         "CFBundleShortVersionString": APP_VERSION,
         "CFBundleVersion": APP_VERSION,
         "LSMinimumSystemVersion": "11.0",

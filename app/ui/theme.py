@@ -9,6 +9,8 @@ from __future__ import annotations
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QIcon, QPainter, QPen, QPixmap
 
+from app import brand as _brand
+
 # 팔레트 (웹 app.css 토큰과 동일)
 DARK = {
     "bg": "#0b0e13", "panel": "#12161d", "panel2": "#181d26", "raised": "#1d2330",
@@ -29,16 +31,19 @@ LIGHT = {
     "od": "#2563eb", "os": "#c2410c", "ou": "#7c3aed",
 }
 
-# 아이콘 색 (양쪽 테마에서 모두 읽히는 중간 톤)
+# 아이콘 색 (양쪽 테마에서 모두 읽히는 중간 톤) — 브랜드가 강조색을 바꿀 수 있음
+_B = _brand.current()
 ICON = "#98a2b3"
-ICON_ACCENT = "#2fb5a5"
+ICON_ACCENT = _B.get("icon_accent", "#2fb5a5")
 ICON_RECORD = "#ef4f4c"
-ICON_ON_ACCENT = "#06231f"
+ICON_ON_ACCENT = _B.get("icon_on_accent", "#06231f")
 EYE_COLORS = {"OD": "#5aa9ff", "OS": "#f5a524", "OU": "#b18cff"}
 
 
 def palette(mode: str) -> dict:
-    return DARK if mode == "dark" else LIGHT
+    base = DARK if mode == "dark" else LIGHT
+    over = _brand.current().get("palette", {}).get("dark" if mode == "dark" else "light", {})
+    return {**base, **over}
 
 
 def build_qss(mode: str = "dark") -> str:
@@ -242,7 +247,10 @@ def build_qss(mode: str = "dark") -> str:
 
 
 def make_app_icon() -> QIcon:
-    """슬릿램프를 상징하는 눈(eye) 아이콘을 벡터로 그려 QIcon 생성."""
+    """앱 아이콘. 브랜드 아이콘 파일이 있으면 그것을, 없으면 눈(eye) 아이콘을 벡터로 그려 생성."""
+    path = _brand.asset(_brand.current().get("icon"))
+    if path:
+        return QIcon(path)
     icon = QIcon()
     for size in (16, 24, 32, 48, 64, 128, 256):
         icon.addPixmap(_render_icon(size))

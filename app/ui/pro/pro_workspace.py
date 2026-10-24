@@ -44,6 +44,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.capture.image_process import Adjust, apply_adjust, auto_levels, histogram
+from app import brand as app_brand
 from app.ui import icons
 from app.ui.patient_dialog import PatientDialog
 from app.ui.pro import print_util
@@ -1061,7 +1062,9 @@ class ProWorkspace(QWidget):
             return 0
         printer = print_util.make_pdf_printer(path)
         return print_util.render_report(printer, self._patient, items,
-                                        clinic=getattr(self.config, "clinic_name", "") or "")
+                                        clinic=getattr(self.config, "clinic_name", "") or "",
+                                        title=app_brand.current()["report_title"],
+                                        rule_color=app_brand.current().get("report_rule", "#0d9488"))
 
     def _default_pdf_path(self) -> str:
         base = getattr(self.config, "export_root", "") or os.path.expanduser("~")
@@ -1085,4 +1088,6 @@ class ProWorkspace(QWidget):
         printer = QPrinter(QPrinter.PrinterMode.HighResolution)
         if QPrintDialog(printer, self).exec():
             print_util.render_report(printer, self._patient, items,
-                                     clinic=getattr(self.config, "clinic_name", "") or "")
+                                     clinic=getattr(self.config, "clinic_name", "") or "",
+                                     title=app_brand.current()["report_title"],
+                                     rule_color=app_brand.current().get("report_rule", "#0d9488"))

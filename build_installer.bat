@@ -2,8 +2,21 @@
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
+rem 사용:  build_installer.bat          기본 버전
+rem        build_installer.bat keeler   Keeler 전용 버전
+set "BRAND=%~1"
+if /i "%BRAND%"=="keeler" (
+  set "SLITLAMP_BUILD_BRAND=keeler"
+  set "ISS=installer\keeler.iss"
+  set "OUTNAME=KeelerSlitLamp"
+) else (
+  set "SLITLAMP_BUILD_BRAND=default"
+  set "ISS=installer\slitlamp.iss"
+  set "OUTNAME=SlitLampImaging"
+)
+
 echo ====================================================
-echo  슬릿램프 영상 시스템 - Windows 설치파일 빌드
+echo  슬릿램프 영상 시스템 - Windows 설치파일 빌드 (!SLITLAMP_BUILD_BRAND!)
 echo ====================================================
 echo.
 
@@ -26,12 +39,12 @@ if not exist "!ISCC!" (
   echo        https://jrsoftware.org/isdl.php 에서 설치한 뒤 다시 실행하세요.
   pause & exit /b 1
 )
-"!ISCC!" installer\slitlamp.iss
+"!ISCC!" "!ISS!"
 if errorlevel 1 ( echo. & echo [오류] 설치파일 생성 실패 & pause & exit /b 1 )
 
 echo.
 echo ====================================================
 echo  완료! 설치파일 위치:
-echo    dist\installer\SlitLampImaging-Setup-0.1.0.exe
+echo    dist\installer\!OUTNAME!-Setup-0.1.0.exe
 echo ====================================================
 pause

@@ -1,6 +1,6 @@
 # macOS 앱(.app) + 설치 디스크 이미지(.dmg) 자동 빌드
 #   Actions 탭 → "Build macOS app" → Run workflow 로 수동 실행하거나, 아래 경로가 바뀐 push 때 실행된다.
-#   결과물은 실행 화면 아래 Artifacts 에서 내려받는다 (Apple Silicon / Intel 각각).
+#   결과물은 실행 화면 아래 Artifacts 에서 내려받는다 (기본 / Keeler 전용 × Apple Silicon / Intel).
 name: Build macOS app
 
 on:
@@ -11,6 +11,7 @@ on:
       - "assets/**"
       - "build_mac.spec"
       - "build_mac.sh"
+      - "tools/rthooks/**"
       - "requirements.txt"
       - ".github/workflows/build-mac.yml"
 
@@ -19,11 +20,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        brand: [default, keeler]
+        runner: [macos-15, macos-15-intel]      # Apple Silicon (M1/M2/M3…) / Intel
         include:
-          - runner: macos-15        # Apple Silicon (M1/M2/M3…)
+          - runner: macos-15
             arch: arm64
-          - runner: macos-15-intel  # Intel
+          - runner: macos-15-intel
             arch: x86_64
+          - brand: default
+            app: SlitLampImaging
+          - brand: keeler
+            app: KeelerSlitLamp
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -33,6 +40,7 @@ jobs:
           python-version: "3.12"
 
       - name: 테스트 (오프스크린)
+        if: matrix.brand == 'default'
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
@@ -41,13 +49,13 @@ jobs:
           python -m pytest -q tests
 
       - name: 앱 번들 + dmg 빌드
-        run: ./build_mac.sh
+        run: ./build_mac.sh ${{ matrix.brand }}
 
       - name: 번들 실행 확인 (합성 영상으로 3초 기동)
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
-          ./dist/SlitLampImaging.app/Contents/MacOS/SlitLampImaging --source synthetic &
+          ./dist/${{ matrix.app }}.app/Contents/MacOS/${{ matrix.app }} --source synthetic &
           PID=$!
           sleep 8
           kill -0 $PID   # 아직 살아 있으면 정상 기동
@@ -55,6 +63,6 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: SlitLampImaging-mac-${{ matrix.arch }}
+          name: ${{ matrix.app }}-mac-${{ matrix.arch }}
           path: dist/*.dmg
           if-no-files-found: error

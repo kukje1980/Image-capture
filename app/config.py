@@ -29,6 +29,7 @@ class AppConfig:
     theme: str = "dark"                      # dark(기본, 영상 작업 공간) | light
     clinic_name: str = ""                    # 인쇄 보고서 머리말 기관명
     px_per_mm: float = 0.0                   # 측정 눈금 보정 (0 = 미보정, px 단위)
+    brand: str = ""                          # 화면 브랜드 (비면 기본, "keeler" = Keeler 전용)
 
     @classmethod
     def config_path(cls) -> Path:

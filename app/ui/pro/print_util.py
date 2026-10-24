@@ -37,7 +37,7 @@ def patient_line(patient) -> str:
 
 
 def render_report(printer, patient, items: list, title: str = "슬릿램프 영상 보고서",
-                  clinic: str = "") -> int:
+                  clinic: str = "", rule_color: str = "#0d9488") -> int:
     """items: [(bgr ndarray, caption str), ...]. 반환값: 출력 페이지 수."""
     if not items:
         return 0
@@ -70,7 +70,7 @@ def render_report(printer, patient, items: list, title: str = "슬릿램프 영�
         painter.drawText(QRectF(m, y, W - 2 * m, fm.height()),
                          Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom, f"출력 {printed}")
         y += fm.height() + m * 0.3
-        painter.setPen(QPen(QColor("#0d9488"), max(2.0, W / 900)))
+        painter.setPen(QPen(QColor(rule_color), max(2.0, W / 900)))
         painter.drawLine(int(m), int(y), int(W - m), int(y))
         y += m * 0.6
 
