@@ -532,3 +532,7 @@ dialog.pdrawer[open] { display: flex; animation: pd-in .18s ease-out; }
   #btn-folder { padding: 0 8px; }
   .ms-btn { padding: 0 11px; }
 }
+
+/* 썸네일 머리글 제거 — 필터 줄이 맨 위 (전체 개수는 '전체' 탭에) */
+.thumb-filter { padding-top: 10px; }
+.tf-count { font-variant-numeric: tabular-nums; color: var(--accent-strong); font-weight: 700; margin-left: 2px; }
