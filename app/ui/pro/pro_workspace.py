@@ -5,6 +5,12 @@
   1화면    단일 영상. PREV/NEXT(←/→)로 이동, 확대·이동, 보정, 텍스트/화살표 주석
   MULTI    16장(4×4) / 36장(6×6) 그리드. 클릭=비교 선택(최대 2), 더블클릭=1화면
   비교     선택한 2장 좌우 비교. 확대·스크롤 동기화, 보정 동일 적용
+스마트 캡처 (사이드 '스마트' 탭 · LIVE)
+  초점 판정(중앙 ROI 선명도) · Best Shot(최근 1초 중 가장 선명한 프레임) · Smart Freeze / Auto Save
+  포커스 피킹 · 실시간 화질 점검(초점·노출·안정·반사)  — app/capture/smart_capture.py
+분석 (사이드 '분석' 탭)
+  조명 모드 태그 · 형광 염색 면적 · 충혈 지수 · 경과 비교(고스트 겹치기·위치 정렬·깜빡임 전환)
+  모두 측정·기록 보조이며 진단을 하지 않는다 — app/capture/analysis.py
 기타
   보정본 저장  보정·주석을 반영한 새 영상으로 저장(원본 보존, 코멘트 '보정본'/'주석')
   코멘트       영상별 코멘트 편집      환자정보  진단명·담당의 등 편집
@@ -14,11 +20,22 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from datetime import datetime
 
 import numpy as np
-from PySide6.QtCore import QPointF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QIcon, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QShortcut
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import (
+    QColor,
+    QIcon,
+    QImage,
+    QKeySequence,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+    QShortcut,
+)
 from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -33,23 +50,27 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
-    QSizePolicy,
-    QToolButton,
     QScrollArea,
+    QSizePolicy,
     QSlider,
     QStackedWidget,
     QTabWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
-from app.capture.image_process import Adjust, apply_adjust, auto_levels, histogram
 from app import brand as app_brand
+from app.capture import analysis
+from app.capture.frame_utils import bgr_to_qimage
+from app.capture.image_process import Adjust, apply_adjust, auto_levels, histogram
+from app.capture.smart_capture import SmartCaptureEngine, SmartSettings, peaking_mask, roi_rect
 from app.ui import icons
 from app.ui.patient_dialog import PatientDialog
 from app.ui.pro import print_util
 from app.ui.pro.image_canvas import ImageCanvas
 from app.ui.pro.multi_grid import MultiGrid
+from app.ui.pro.smart_panel import PEAKING_COLORS, AnalysisTab, SmartTab
 from app.ui.theme import ICON, ICON_ACCENT, ICON_ON_ACCENT
 
 try:
@@ -98,6 +119,15 @@ def caption_of(cap, number=None, total=None) -> str:
     return f"[{number}/{total}]  {text}" if number else text
 
 
+def _mask_qimage(mask, rgb, alpha: int) -> QImage:
+    """bool 마스크 → 색을 입힌 반투명 ARGB 이미지 (표시 전용 레이어)."""
+    h, w = mask.shape[:2]
+    arr = np.zeros((h, w, 4), np.uint8)
+    r, g, b = rgb
+    arr[mask] = (b, g, r, alpha)                        # ARGB32 = 메모리상 BGRA
+    return QImage(arr.data, w, h, 4 * w, QImage.Format.Format_ARGB32).copy()
+
+
 def load_bgr(path: str | None):
     if not path or cv2 is None or not os.path.exists(path):
         return None
@@ -128,6 +158,20 @@ class ProWorkspace(QWidget):
         self._pair = (None, None)
         self._adj = Adjust()
         self._tool = "pan"
+        # 스마트 캡처 · 분석 상태
+        self.engine = SmartCaptureEngine(SmartSettings(
+            roi_frac=float(getattr(config, "smart_roi_frac", 0.5) or 0.5),
+            auto_mode=getattr(config, "smart_auto_mode", "off") or "off"))
+        self._smart_last = None
+        self._peak_tick = 0
+        self._analysis_mask = None           # 마지막 측정 마스크 (단일 화면 표시용)
+        self._analysis_text = ""             # 마지막 측정 결과 (코멘트 기록용)
+        self._tag = ""                       # 조명 모드 추정
+        self._blink_timer = QTimer(self)
+        self._blink_timer.setInterval(500)
+        self._blink_timer.timeout.connect(self._blink_tick)
+        self._blink_on = False
+        self._pending_best = False           # Best Shot 버튼·자동 정지로 들어온 정지 요청
         self._build()
         self._cmp_active = self.cmp_left
         for cv in self._canvases():
@@ -324,6 +368,20 @@ class ProWorkspace(QWidget):
         self.tabs.addTab(self._scroll(self._tab_adjust()), "보정")
         self.tabs.addTab(self._scroll(self._tab_filter()), "필터")
         self.tabs.addTab(self._scroll(self._tab_edit()), "편집")
+        self.smart = SmartTab(self.config)
+        self.analysis = AnalysisTab()
+        self.tabs.addTab(self._scroll(self.smart), "스마트")
+        self.tabs.addTab(self._scroll(self.analysis), "분석")
+        self.smart.settingsChanged.connect(self._on_smart_settings)
+        self.smart.bestShotClicked.connect(self.freeze_best_shot)
+        self.analysis.fluoClicked.connect(self.measure_fluorescein)
+        self.analysis.rednessClicked.connect(self.measure_redness)
+        self.analysis.addNoteClicked.connect(self.record_measurement)
+        self.analysis.clearClicked.connect(self.clear_analysis)
+        self.analysis.ghostChanged.connect(self.set_ghost)
+        self.analysis.alignClicked.connect(self.align_pair)
+        self.analysis.blinkToggled.connect(self.set_blink)
+        self.analysis.set_enabled_for(self._mode)
         lay.addWidget(self.tabs, 1)
 
         self.lbl_sel = QLabel("MULTI에서 영상 2장을 클릭해 선택한 뒤 '비교'를 누르세요.")
@@ -619,6 +677,12 @@ class ProWorkspace(QWidget):
                 self.live_canvas.set_image(self._live, keep_view=True)
         if getattr(self, "_tool", "pan") != "pan":
             self.set_tool(self._tool)            # 이 모드에서 못 쓰는 도구면 이동으로
+        if not live:
+            self.live_canvas.set_hud([], None)
+            self.live_canvas.set_overlay(None)
+        if mode != "compare":
+            self.set_blink(False)
+        self.analysis.set_enabled_for(mode)
         self._update_side()
         self._refresh_edit_state()
 
@@ -631,6 +695,9 @@ class ProWorkspace(QWidget):
         self.single_canvas.set_image(load_bgr(cap.file_path))
         self.single_canvas.set_adjust(self._adj)
         self.single_canvas.set_caption(caption_of(cap, self._idx + 1, len(self._caps)))
+        self._analysis_mask, self._analysis_text = None, ""
+        self.analysis.lbl_result.setText("-")
+        self._update_tag()
         self._update_side()
         self._refresh_edit_state()
 
@@ -649,7 +716,8 @@ class ProWorkspace(QWidget):
                     for i, c in enumerate(self._pair) if c]
             self.lbl_img.setText("2장 비교 (확대·이동 동기화)\n" + "\n".join(rows))
         elif self._mode == "live":
-            self.lbl_img.setText("LIVE — " + ("정지됨 · SAVE로 저장" if self._frozen else "실시간"))
+            auto = {"freeze": " · Smart Freeze", "save": " · Auto Save"}.get(self.engine.s.auto_mode, "")
+            self.lbl_img.setText("LIVE — " + ("정지됨 · SAVE로 저장" if self._frozen else "실시간" + auto))
         else:
             self.lbl_img.setText("영상이 없습니다")
 
@@ -700,6 +768,8 @@ class ProWorkspace(QWidget):
             cv.set_image(load_bgr(cap.file_path))
             cv.set_adjust(self._adj)
             cv.set_caption(caption_of(cap, num, len(self._caps)))
+        self.analysis.lbl_cmp.setText("")
+        self.set_ghost(self.analysis.s_ghost.value())
         return True
 
     # ================= 보정 · 편집 대상 =================
@@ -913,13 +983,108 @@ class ProWorkspace(QWidget):
     # ================= LIVE =================
     def set_live_frame(self, frame) -> None:
         self._live = frame
-        if self._mode == "live" and not self._frozen:
+        if self._mode != "live" or frame is None:
+            return
+        res = None
+        try:
+            res = self.engine.push(frame, time.monotonic())
+        except Exception:  # noqa: BLE001
+            log.warning("smart capture 분석 실패", exc_info=True)
+        self._smart_last = res
+        if not self._frozen:
             self.live_canvas.set_image(frame, keep_view=True)
+            if res is not None:
+                self._show_smart(frame, res)
+                if res.triggered:
+                    self._auto_trigger()
+        if res is not None:
+            self.smart.show_quality(res.quality)
+
+    def _show_smart(self, frame, res) -> None:
+        h, w = frame.shape[:2]
+        x, y, rw, rh = roi_rect(w, h, self.engine.s.roi_frac)
+        rel = res.rel_focus
+        col = "#3ccf7a" if rel >= 85 else ("#ffd08a" if rel >= 60 else "#f0524f")
+        lines = [(f"초점 {rel:.0f}", col)]
+        mode = self.engine.s.auto_mode
+        if mode == "freeze":
+            lines.append(("AUTO FREEZE", ICON_ACCENT))
+        elif mode == "save":
+            lines.append(("AUTO SAVE", ICON_ACCENT))
+        if res.metrics.blink:
+            lines.append(("깜빡임", "#ffd08a"))
+        self.live_canvas.set_hud(lines, QRectF(x, y, rw, rh))
+        if self.smart.peaking():
+            self._peak_tick += 1
+            if self._peak_tick % 2 == 0:             # 피킹은 2프레임마다 (영상 표시는 매 프레임)
+                self.live_canvas.set_overlay(self._peaking_image(frame), 0.85)
+        elif self.live_canvas.has_overlay():
+            self.live_canvas.set_overlay(None)
+
+    def _peaking_image(self, frame) -> QImage:
+        mask = peaking_mask(frame, self.smart.sensitivity())
+        r, g, b = PEAKING_COLORS.get(self.smart.color_key(), PEAKING_COLORS["red"])[1]
+        return _mask_qimage(mask > 0, (r, g, b), 230)
+
+    def _on_smart_settings(self) -> None:
+        self.engine.s.auto_mode = self.smart.auto_mode()
+        self.engine.s.roi_frac = self.smart.roi_frac()
+        if not self.smart.peaking():
+            self.live_canvas.set_overlay(None)
+        self.smart.apply_to_config(self.config)
+        try:
+            self.config.save()
+        except Exception:  # noqa: BLE001
+            log.warning("smart capture 설정 저장 실패", exc_info=True)
+
+    def _best_frame(self):
+        """Best Shot 이 켜져 있으면 최근 1초 중 가장 선명한 프레임, 아니면 현재 프레임."""
+        if self.smart.best_shot():
+            f, m = self.engine.best()
+            if f is not None:
+                return f.copy(), m
+        return (None if self._live is None else self._live.copy()), None
+
+    def freeze_best_shot(self) -> None:
+        if self._mode != "live" or self._live is None:
+            return
+        if self._frozen:
+            self.b_capture.setChecked(False)
+        self._pending_best = True
+        self.b_capture.setChecked(True)
+
+    def _auto_trigger(self) -> None:
+        if self._mode != "live" or self._frozen:
+            return
+        if self.engine.s.auto_mode == "freeze":
+            self._pending_best = True
+            self.b_capture.setChecked(True)
+            self.smart.log(f"자동 정지 {datetime.now():%H:%M:%S} — 확인 후 SAVE 또는 RESUME")
+        elif self.engine.s.auto_mode == "save" and self._patient is not None:
+            frame, m = self._best_frame()
+            if frame is None:
+                return
+            try:
+                self.service.save_photo(frame, self._patient, eye=self.current_eye(), note="자동 촬영")
+            except Exception:  # noqa: BLE001
+                log.exception("auto save failed")
+                return
+            self.reload()
+            self.savedCapture.emit()
+            self.smart.log(f"자동 저장 {datetime.now():%H:%M:%S} (영상 {len(self._caps)}장)")
 
     def _on_capture_toggled(self, on: bool) -> None:
         self._frozen = on
         if on:
-            self._frozen_frame = None if self._live is None else self._live.copy()
+            use_best = getattr(self, "_pending_best", False) or self.smart.best_shot()
+            self._pending_best = False
+            if use_best:
+                self._frozen_frame, m = self._best_frame()
+                if m is not None and self._smart_last is not None:
+                    self.live_canvas.set_hud([("FREEZE · Best Shot", "#9ccaff")], None)
+            else:
+                self._frozen_frame = None if self._live is None else self._live.copy()
+            self.live_canvas.set_overlay(None)
             if self._frozen_frame is not None:
                 self.live_canvas.set_image(self._frozen_frame, keep_view=True)
             self.b_capture.setText(icons.gap("RESUME"))
@@ -959,6 +1124,117 @@ class ProWorkspace(QWidget):
         if self._frozen:
             self.b_capture.setChecked(False)
         return cap
+
+    # ================= 분석 (측정 보조) =================
+    def _update_tag(self) -> None:
+        img = self.single_canvas.image()
+        if img is None:
+            self._tag = ""
+            self.analysis.lbl_tag.setText("1화면에서 영상을 열면 자동으로 추정합니다.")
+            return
+        try:
+            self._tag = analysis.classify_illumination(img)
+        except Exception:  # noqa: BLE001
+            self._tag = ""
+        name = analysis.ILLUMINATION_LABELS.get(self._tag, "-")
+        self.analysis.lbl_tag.setText(f"추정 조명: {name}  (색 분포 기준 · 코멘트 기록 시 함께 저장)")
+
+    def _measure_roi(self):
+        """'원' 주석의 마지막 것을 측정 영역으로 (없으면 전체)."""
+        circles = [a for a in self.single_canvas.annotations() if a.get("kind") == "circle"]
+        if not circles:
+            return None
+        a = circles[-1]
+        return (a["x1"], a["y1"], a["x2"], a["y2"])
+
+    def measure_fluorescein(self) -> dict | None:
+        img = self.single_canvas.image()
+        if self._mode != "single" or img is None:
+            return None
+        r = analysis.fluorescein_area(img, self._measure_roi(), self.config.px_per_mm or 0.0)
+        mm = f", {r['area_mm2']:.2f} mm²" if r["area_mm2"] is not None else " (눈금 보정 시 mm²)"
+        area = "측정 영역" if self._measure_roi() else "전체"
+        self._analysis_text = f"형광 염색 면적 {r['ratio']:.1f}% ({area}){mm}"
+        self._show_result(r["mask"], (52, 211, 153))
+        return r
+
+    def measure_redness(self) -> dict | None:
+        img = self.single_canvas.image()
+        if self._mode != "single" or img is None:
+            return None
+        r = analysis.redness_index(img, self._measure_roi())
+        area = "측정 영역" if self._measure_roi() else "전체"
+        self._analysis_text = f"충혈 지수 {r['index']:.0f}/100 · 혈관 화소 {r['vessel_pct']:.1f}% ({area})"
+        self._show_result(r["mask"], (255, 59, 48))
+        return r
+
+    def _show_result(self, mask, rgb) -> None:
+        self._analysis_mask = mask
+        self.single_canvas.set_overlay(_mask_qimage(mask, rgb, 150), 1.0)
+        self.analysis.lbl_result.setText(self._analysis_text + "\n(표시 레이어는 저장본에 들어가지 않습니다)")
+
+    def clear_analysis(self) -> None:
+        self._analysis_mask, self._analysis_text = None, ""
+        self.single_canvas.set_overlay(None)
+        self.analysis.lbl_result.setText("-")
+
+    def record_measurement(self) -> None:
+        if not (self._mode == "single" and 0 <= self._idx < len(self._caps)) or not self._analysis_text:
+            return
+        cap = self._caps[self._idx]
+        tag = analysis.ILLUMINATION_LABELS.get(self._tag)
+        entry = f"[{tag}] {self._analysis_text}" if tag else self._analysis_text
+        note = f"{cap.note} | {entry}" if cap.note else entry
+        self.set_comment(note)
+        self.analysis.lbl_result.setText(self._analysis_text + "\n코멘트에 기록했습니다.")
+
+    # ---- 경과 비교 ----
+    def set_ghost(self, percent: int) -> None:
+        if self._mode != "compare" or self.cmp_left.image() is None or self.cmp_right.image() is None:
+            return
+        if percent <= 0 and not self._blink_timer.isActive():
+            self.cmp_right.set_overlay(None)
+            return
+        if not self.cmp_right.has_overlay():
+            self.cmp_right.set_overlay(bgr_to_qimage(self.cmp_left.processed()), percent / 100.0)
+        else:
+            self.cmp_right.set_overlay_opacity(percent / 100.0)
+
+    def align_pair(self) -> bool:
+        a, b = self.cmp_left.image(), self.cmp_right.image()
+        if self._mode != "compare" or a is None or b is None:
+            return False
+        aligned, ok = analysis.align_to(a, b)
+        self.cmp_left.set_image(aligned, keep_view=True)
+        self.cmp_left.set_adjust(self._adj)
+        self.cmp_left.set_caption(caption_of(self._pair[0]) + "  ·  정렬됨" if self._pair[0] else "정렬됨")
+        self.analysis.lbl_cmp.setText("이전 영상을 현재 영상에 맞춰 정렬했습니다." if ok
+                                      else "정렬 실패 — 두 영상의 겹치는 구조가 부족합니다 (크기만 맞춤).")
+        self.cmp_right.set_overlay(None)
+        self.set_ghost(self.analysis.s_ghost.value())
+        return ok
+
+    def set_blink(self, on: bool) -> None:
+        if on and self._mode == "compare" and self.cmp_right.image() is not None:
+            self._blink_on = False
+            self._blink_timer.start()
+            self._blink_tick()
+        else:
+            self._blink_timer.stop()
+            if self.analysis.b_blink.isChecked():
+                self.analysis.b_blink.setChecked(False)
+            if self._mode == "compare":
+                self.cmp_right.set_overlay(None)
+                self.set_ghost(self.analysis.s_ghost.value())
+
+    def _blink_tick(self) -> None:
+        if self._mode != "compare" or self.cmp_left.processed() is None:
+            self.set_blink(False)
+            return
+        self._blink_on = not self._blink_on
+        if not self.cmp_right.has_overlay():
+            self.cmp_right.set_overlay(bgr_to_qimage(self.cmp_left.processed()), 1.0)
+        self.cmp_right.set_overlay_opacity(1.0 if self._blink_on else 0.0)
 
     # ================= 편집 저장 / 코멘트 / 환자 =================
     def save_edited(self) -> list:

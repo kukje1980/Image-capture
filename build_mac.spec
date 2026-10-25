@@ -7,7 +7,7 @@ import os
 
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
 
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.2.0"
 BRAND = os.environ.get("SLITLAMP_BUILD_BRAND", "default").lower()
 KEELER = BRAND == "keeler"
 APP_NAME = "KeelerSlitLamp" if KEELER else "SlitLampImaging"
