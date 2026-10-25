@@ -19,7 +19,7 @@ def test_pro_js_ids_exist_in_template():
 def test_edit_tabs_and_tools_present():
     tabs = re.findall(r'class="ptab[^"]*"[^>]*data-tab="(\w+)"', HTML)
     panes = re.findall(r'class="ppane[^"]*"\s+data-pane="(\w+)"', HTML)
-    assert tabs == ["adj", "flt", "edit", "meibo", "smart", "anal", "ref"] and panes == tabs
+    assert tabs == ["smart", "adj", "flt", "edit", "meibo", "anal", "ref"] and sorted(panes) == sorted(tabs)
     tools = re.findall(r'data-tool="(\w+)"', HTML)
     assert set(tools) == {"pan", "magnify", "crop", "text", "arrow", "circle", "length", "angle", "calibrate", "tarsus", "dropout"}
     for t in tools:                                 # 모든 도구에 사용 가능 모드 정의
@@ -102,6 +102,8 @@ def test_tabs_in_toolbar_and_reference_tab_wired():
     side = HTML[HTML.index('<aside class="pro-side">'):HTML.index("</aside>")]
     assert 'class="ptabs"' in toolbar and 'class="ptabs"' not in side
     assert len(re.findall(r'class="ptab(?: on)?"', toolbar)) == 7
+    modes = HTML[HTML.index('id="pro-modes"'):HTML.index("</div>", HTML.index('id="pro-modes"'))]
+    assert re.search(r'data-mode="live".*?</button>\s*<button class="ptab"[^>]*data-tab="smart"', modes, re.S)   # 스마트는 LIVE 바로 옆
     REFS_JS = (WEB / "static/js/refs.js").read_text(encoding="utf-8")
     used = set(re.findall(r"\$\('([a-z0-9-]+)'\)", REFS_JS))
     assert {"ref-list", "ref-cmp-cur", "ref-cmp-normal", "ref-add-cur", "ref-add-file", "ref-file"} <= used

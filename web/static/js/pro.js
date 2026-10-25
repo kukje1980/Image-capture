@@ -1371,6 +1371,8 @@
   $('ed-orig').addEventListener('click', restoreOriginal);
   $('pro-calib-clear').addEventListener('click', () => setPxPerMm(0));
   document.querySelectorAll('.ptab').forEach((b) => b.addEventListener('click', () => setTab(b.dataset.tab)));
+  // 스마트 캡처는 실시간 영상에 쓰므로 LIVE 옆 버튼을 누르면 LIVE 화면으로 함께 전환
+  document.querySelectorAll('#pro-modes .ptab[data-tab="smart"]').forEach((b) => b.addEventListener('click', () => { if (P.mode !== 'live') setMode('live'); }));
   $('pro-start-camera').addEventListener('click', async () => { await App.startCamera(); attachLive(); });
 
   document.addEventListener('slit:patient', () => { if (P.on) reload(false); });
