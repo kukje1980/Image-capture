@@ -54,5 +54,5 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" out/* --clobber
           else
-            gh release create "$TAG" out/* --target "${{ github.sha }}" --latest --title "SlitLamp ${TAG} 통합판" --notes-file docs/RELEASE-1.8.0.md
+            gh release create "$TAG" out/* --target "${{ github.sha }}" --latest --title "SlitLamp ${TAG} 통합판" --notes-file "docs/RELEASE-${VERSION}.md"
           fi
