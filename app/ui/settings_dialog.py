@@ -1,7 +1,8 @@
-"""설정 다이얼로그: 소스 모드, 카메라, 해상도, 사진 형식, export 폴더."""
+"""설정 다이얼로그: 소스 모드, 카메라, 해상도, 사진 형식, export 폴더, 효과음."""
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -69,6 +70,9 @@ class SettingsDialog(QDialog):
 
         self.test_file = QLineEdit(config.test_file_path)
 
+        self.sounds = QCheckBox("사진 캡처 찰칵 · 정지영상 · 녹화 시작/중지 소리")
+        self.sounds.setChecked(bool(config.sounds_enabled))
+
         form.addRow("소스 모드", self.source_mode)
         form.addRow("카메라", self.camera_index)
         form.addRow("가로 해상도", self.width)
@@ -76,6 +80,7 @@ class SettingsDialog(QDialog):
         form.addRow("사진 형식", self.photo_format)
         form.addRow("저장 폴더(export)", exp_w)
         form.addRow("테스트 파일(file 모드)", self.test_file)
+        form.addRow("효과음", self.sounds)
 
         btns = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -111,5 +116,6 @@ class SettingsDialog(QDialog):
         c.photo_format = self.photo_format.currentText()
         c.export_root = self.export.text().strip()
         c.test_file_path = self.test_file.text().strip()
+        c.sounds_enabled = self.sounds.isChecked()
         c.save()
         return c
