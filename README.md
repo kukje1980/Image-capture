@@ -97,19 +97,18 @@ Finder 에서 `run_mac.command` 더블클릭(처음 한 번 자동 설치). 하�
 > 웹은 물리 키 기준이라 **한글 입력 상태에서도** 그대로 동작합니다. Pro 화면의 ←/→(이동), Ctrl+Z/Y(실행 취소), Esc 는 고정입니다.
 
 ## 효과음
-촬영 동작마다 짧은 소리가 납니다 (외부 음원 없이 합성한 WAV, `assets/sounds/`).
+촬영 동작마다 짧은 소리가 납니다 (`assets/sounds/`, 출처·라이선스는 `assets/sounds/SOURCES.md`).
 
 | 동작 | 소리 |
 |------|------|
-| 사진 캡처 · 4분할 저장 · Pro SAVE | 예전 필름 카메라의 **찰칵** (미러 '찰' + 셔터막 '칵') |
-| 정지영상(스틸) · Pro CAPTURE | 가벼운 **틱** 과 짧은 여운 |
-| 녹화 시작 | 캠코더식 **삐** 한 번 |
-| 녹화 중지 | 낮은 **삐삐** 두 번 |
+| 사진 캡처 · 4분할 저장 · Pro SAVE | 실제 카메라 셔터 녹음 (Firefox OS 카메라 앱, Apache 2.0) |
+| 정지영상(스틸) · Pro CAPTURE | 가벼운 **틱** 과 짧은 여운 (합성) |
+| 녹화 시작 / 중지 | 안드로이드 카메라의 녹화 시작/중지음 (AOSP, Apache 2.0) |
 
 - 윈도우·맥 앱: **설정 → 효과음** 체크로 켜고 끕니다 (`config.json` 의 `sounds_enabled`).
   재생은 Windows `winsound` → Qt `QSoundEffect` → `afplay`/`paplay` 순으로 가능한 수단을 쓰고, 없으면 조용히 생략합니다.
 - 웹: **설정 → 효과음** 버튼 (브라우저에 저장, `slitlamp-sounds`). Web Audio 로 재생해 지연이 거의 없습니다.
-- 소리를 다시 만들려면 `python tools/generate_sounds.py` (데스크탑·웹 두 곳에 같은 파일을 씁니다).
+- 소리를 바꾸려면 `tools/sound_candidates/` 의 다른 후보(실제 녹음 16종, README 에 출처)를 `tools/generate_sounds.py` 의 `REAL` 에 지정하고 실행합니다 (데스크탑·웹 두 곳에 같은 파일을 씁니다).
 
 ## Smart Capture (데스크탑 앱)
 초점이 맞는 순간을 놓치지 않게 돕는 촬영 보조 기능입니다. 영상 아래 **Smart** 도구줄에서 켭니다.

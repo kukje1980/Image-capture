@@ -52,19 +52,14 @@ def test_wav_files_exist_and_are_short_mono_pcm():
     assert set(sounds.LABELS) == set(sounds.NAMES)
 
 
-def test_shutter_has_two_clicks():
-    """필름 카메라 '찰칵' — 미러('찰') 뒤 약 70ms 에 셔터막('칵') 두 번째 타격이 있어야 한다."""
-    import numpy as np
-
-    with wave.open(str(sounds.sound_path("shutter"))) as w:
-        sr = w.getframerate()
-        x = np.abs(np.frombuffer(w.readframes(w.getnframes()), "<i2").astype(float))
-    win = int(sr * 0.005)
-    env = np.convolve(x, np.ones(win) / win, mode="same")
-    first = env[: int(sr * 0.05)].max()
-    gap = env[int(sr * 0.05): int(sr * 0.065)].max()
-    second = env[int(sr * 0.07): int(sr * 0.12)].max()
-    assert gap < first * 0.4 and second > gap * 2
+def test_real_recordings_are_the_chosen_candidates():
+    """사진 캡처·녹화 소리는 사용자가 고른 실제 녹음(tools/sound_candidates) 과 같아야 한다."""
+    cand = sounds.assets_dir().parent / "tools" / "sound_candidates"
+    chosen = {"shutter": "firefoxos_shutter.wav", "rec_start": "android_rec_start.wav",
+              "rec_stop": "android_rec_stop.wav"}
+    for name, src in chosen.items():
+        assert sounds.sound_path(name).read_bytes() == (cand / src).read_bytes(), name
+    assert (sounds.assets_dir() / "sounds" / "SOURCES.md").exists()        # 출처·라이선스 동봉
 
 
 def test_play_respects_enabled_and_names(fake):
