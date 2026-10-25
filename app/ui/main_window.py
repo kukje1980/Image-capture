@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from pathlib import Path
 from collections import deque
 
 from PySide6.QtCore import QSize, Qt, QThread, QTimer, QUrl
@@ -310,6 +311,7 @@ class MainWindow(QMainWindow):
 
         tool("카메라 재연결", "videocam", "캡처 장비 다시 연결", self._restart_camera)
         tool("", "keyboard", "단축키 설정 (캡처·녹화·안구 등)", self._open_shortcuts)
+        tool("샘플", "image", "질환별 샘플 사진 가져오기 (받아 둔 폴더 선택)", self._import_samples)
         tool("설정", "sliders", "카메라·저장 위치·형식 설정", self._open_settings)
         self.act_theme = QAction(self)
         self.act_theme.triggered.connect(self._toggle_theme)
@@ -1281,6 +1283,28 @@ class MainWindow(QMainWindow):
             self._apply_agent(save=False)
             self.events.log("settings", source="dialog")
             self._restart_camera()
+
+    def _import_samples(self) -> None:
+        """받아 둔 샘플 사진 폴더(질환별 하위 폴더 + metadata.json)를 질환별 샘플 환자로 등록."""
+        from app.services.sample_import import import_samples
+        start = Path.home() / "Downloads"           # 받아 둔 폴더는 보통 '다운로드'에 있다
+        folder = QFileDialog.getExistingDirectory(
+            self, "샘플 사진 폴더 선택 (질환별 하위 폴더 + metadata.json)",
+            str(start if start.is_dir() else Path.home()))
+        if not folder:
+            return
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            result = import_samples(self.db, self.config, folder)
+        except (OSError, ValueError) as e:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.warning(self, "샘플 사진", f"샘플 사진을 가져오지 못했습니다.\n{e}")
+            return
+        QApplication.restoreOverrideCursor()
+        self.patient_panel._reload()
+        QMessageBox.information(
+            self, "샘플 사진",
+            result.summary() + "\n\n환자 목록에서 '샘플 · 질환명' 환자를 고르면 사진을 볼 수 있습니다.")
 
     # ---- 종료 ----
     def closeEvent(self, event) -> None:  # noqa: N802

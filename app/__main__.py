@@ -5,6 +5,7 @@
     python -m app --source file        # 설정의 test_file_path 재생
     python -m app --brand keeler       # Keeler 전용 화면 (로고·색)
     python -m app --edition agent      # AI 에이전트 에디션 (별도 데이터 폴더 SlitLampAgent)
+    python -m app --import-samples <폴더|zip>   # 질환별 샘플 사진을 등록하고 끝냄 (화면 없음)
 """
 from __future__ import annotations
 
@@ -26,6 +27,42 @@ def _apply_cli_overrides(argv, config: AppConfig) -> None:
             config.source_mode = argv[i + 1]
         elif a.startswith("--source="):
             config.source_mode = a.split("=", 1)[1]
+
+
+def _import_samples_arg(argv):
+    for i, a in enumerate(argv):
+        if a == "--import-samples" and i + 1 < len(argv):
+            return argv[i + 1]
+        if a.startswith("--import-samples="):
+            return a.split("=", 1)[1]
+    return None
+
+
+def _run_sample_import(config, source, log) -> int:
+    """화면 없이 샘플 사진만 등록하고 끝낸다. 프로그램이 켜져 있으면 같은 DB 에 동시에 쓰지 않도록 멈춘다."""
+    from app.services.sample_import import import_samples
+
+    lock = QLockFile(str(paths.get_appdata_dir() / "app.lock"))
+    lock.setStaleLockTime(0)
+    if not lock.tryLock(500):
+        print("프로그램이 실행 중입니다. 프로그램을 닫은 뒤 다시 실행하세요.", file=sys.stderr)
+        return 1
+    try:
+        db = Database(config.db_path).init()
+    except DatabaseError as e:
+        log.critical("database open failed: %s", e)
+        print(f"데이터베이스를 열지 못했습니다: {e}", file=sys.stderr)
+        lock.unlock()
+        return 1
+    try:
+        print(import_samples(db, config, source).summary())
+        return 0
+    except (OSError, ValueError) as e:
+        print(f"샘플 사진을 가져오지 못했습니다: {e}", file=sys.stderr)
+        return 1
+    finally:
+        db.close()
+        lock.unlock()
 
 
 class _ErrorNotifier:
@@ -61,6 +98,10 @@ def main(argv=None) -> int:
     from app.ui.theme import build_qss, make_app_icon
     log.info("source_mode=%s media_root=%s export_root=%s db=%s",
              config.source_mode, config.media_root, config.export_root, config.db_path)
+
+    samples = _import_samples_arg(argv)
+    if samples:
+        return _run_sample_import(config, samples, log)
 
     app = QApplication(argv)
     app.setApplicationName(b["app_name"] + ed["title_suffix"])
