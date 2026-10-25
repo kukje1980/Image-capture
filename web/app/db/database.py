@@ -209,6 +209,36 @@ class Database:
             self._conn.execute("DELETE FROM measurements WHERE id=?", (mid,))
 
 
+    # ---- ref_samples (참조 샘플 라이브러리) ----
+    def create_ref(self, r: dict) -> int:
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                """INSERT INTO ref_samples (region, condition, disease, note, file_path, url, created_at)
+                   VALUES (:region, :condition, :disease, :note, :file_path, :url, :created_at)""", r)
+            return cur.lastrowid
+
+    def list_refs(self, region: Optional[str] = None, condition: Optional[str] = None) -> List[dict]:
+        q, args = "SELECT * FROM ref_samples WHERE 1=1", []
+        if region:
+            q += " AND region=?"
+            args.append(region)
+        if condition:
+            q += " AND condition=?"
+            args.append(condition)
+        with self._lock:
+            rows = self._conn.execute(q + " ORDER BY region, condition DESC, disease, id", args).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_ref(self, rid: int) -> Optional[dict]:
+        with self._lock:
+            r = self._conn.execute("SELECT * FROM ref_samples WHERE id=?", (rid,)).fetchone()
+        return dict(r) if r else None
+
+    def delete_ref(self, rid: int) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM ref_samples WHERE id=?", (rid,))
+
+
 def _measurement(r) -> dict:
     d = dict(r)
     for k in ("detail", "locs"):

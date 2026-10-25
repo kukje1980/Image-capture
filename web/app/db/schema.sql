@@ -43,6 +43,19 @@ CREATE TABLE IF NOT EXISTS measurements (
 );
 
 CREATE INDEX IF NOT EXISTS idx_measure_patient ON measurements(patient_id, kind, eye, measured_at);
+-- 참조 샘플 (부위별 · 정상/비정상 대표 영상) — 환자와 무관한 비교용 라이브러리
+CREATE TABLE IF NOT EXISTS ref_samples (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    region      TEXT NOT NULL,               -- eyelid | conjunctiva | cornea | ac | iris | lens | meibo | other
+    condition   TEXT NOT NULL CHECK (condition IN ('normal','abnormal')),
+    disease     TEXT,                        -- 비정상일 때 질환명 (사용자가 붙이는 분류 이름)
+    note        TEXT,
+    file_path   TEXT NOT NULL,
+    url         TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_ref_region ON ref_samples(region, condition);
 CREATE INDEX IF NOT EXISTS idx_captures_patient ON captures(patient_id);
 CREATE INDEX IF NOT EXISTS idx_captures_capdate ON captures(patient_id, captured_at);
 CREATE INDEX IF NOT EXISTS idx_patients_name    ON patients(name);

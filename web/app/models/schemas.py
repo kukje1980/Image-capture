@@ -45,6 +45,16 @@ class MeasurementOut(MeasurementIn):
     measured_at: str
 
 
+class RefOut(BaseModel):
+    id: int
+    region: str
+    condition: str
+    disease: Optional[str] = None
+    note: Optional[str] = None
+    url: str
+    created_at: str
+
+
 class CaptureOut(BaseModel):
     id: int
     patient_id: int

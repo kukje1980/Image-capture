@@ -9,7 +9,8 @@
  *  편집     회전·반전·자르기, 텍스트/화살표/원 주석, 길이·각도 측정(mm 눈금 보정), 돋보기,
  *           실행 취소/다시 실행(20단계), 원본 복원
  *  편집본 저장 · 코멘트 · 환자정보 · 인쇄/PDF(A4 보고서)
- *  스마트 · 분석 탭은 smart.js (이 파일의 window.SlitPro 와 'slit:pro-*' 이벤트를 사용)
+ *  스마트 · 분석 탭은 smart.js, 참조 탭(부위별 정상/비정상 샘플 비교)은 refs.js
+ *  (이 파일의 window.SlitPro 와 'slit:pro-*' 이벤트를 사용)
  *
  * app.js 의 window.SlitApp API 와 'slit:patient' 이벤트에 의존한다.
  */
@@ -708,7 +709,7 @@
       el.textContent = `페이지 ${P.page + 1} / ${pageCount()}  ·  ${P.per}장 보기\n전체 ${P.caps.length}장  ·  선택 ${P.sel.length}장`;
     } else if (P.mode === 'compare') {
       el.textContent = '2장 비교 (확대·이동 동기화)\n' +
-        P.pair.filter(Boolean).map((x, i) => `${i ? '우' : '좌'}: ${x.captured_at} ${EYE_KO[x.eye] || ''}`).join('\n');
+        P.pair.filter(Boolean).map((x, i) => `${i ? '우' : '좌'}: ${x.captured_at} ${x.ref ? '· ' + x.note : EYE_KO[x.eye] || ''}`).join('\n');
     } else if (P.mode === 'live') {
       el.textContent = 'LIVE — ' + (P.frozen ? '정지됨 · SAVE로 저장' : '실시간');
     } else el.textContent = '영상이 없습니다';
@@ -721,7 +722,8 @@
   let modeSeq = 0;
   async function setMode(mode) {
     const tok = ++modeSeq;
-    if (mode === 'compare' && !(await prepareCompare())) mode = P.mode === 'compare' ? 'multi' : P.mode;
+    if (mode === 'compare' && pendingPair) applyPair();          // 참조 샘플 비교 등 지정한 두 장
+    else if (mode === 'compare' && !(await prepareCompare())) mode = P.mode === 'compare' ? 'multi' : P.mode;
     if (tok !== modeSeq) return;                        // 비교 영상을 불러오는 사이 다른 모드를 고름
     P.mode = mode;
     document.querySelectorAll('#pro-display .pro-view').forEach((v) => v.classList.toggle('on', v.dataset.view === mode));
@@ -831,6 +833,20 @@
   }
 
   // ================= 비교 =================
+  /** 지정한 두 영상을 비교 화면에 — { src(이미지·캔버스), cap(영상 레코드 또는 {ref:true, captured_at, note}) } */
+  let pendingPair = null;
+  function applyPair() {
+    const [l, r] = pendingPair;
+    pendingPair = null;
+    P.pair = [l.cap, r.cap];
+    V.left.caption = l.caption || caption(l.cap); V.right.caption = r.caption || caption(r.cap);
+    V.left.setSource(l.src); V.right.setSource(r.src);
+    P.active = V.left;
+  }
+  function compareImages(left, right) {
+    pendingPair = [left, right];
+    return setMode('compare');
+  }
   async function prepareCompare() {
     let i, j;
     if (P.sel.length === 2) [i, j] = [...P.sel].sort((a, b) => a - b);
@@ -1203,7 +1219,7 @@
     let n = 0;
     const done = [];
     for (const [v, src] of pairs) {
-      if (!v.proc || !src || !v.isModified()) continue;
+      if (!v.proc || !src || src.ref || !v.isModified()) continue;   // 참조 샘플은 환자 영상으로 저장하지 않음
       const kinds = new Set(v.ann.map((a) => a.type));
       const mb = kinds.has('tarsus') ? mbResult(v) : null;
       const note = mb ? mbNote(mb)
@@ -1355,6 +1371,8 @@
   $('ed-orig').addEventListener('click', restoreOriginal);
   $('pro-calib-clear').addEventListener('click', () => setPxPerMm(0));
   document.querySelectorAll('.ptab').forEach((b) => b.addEventListener('click', () => setTab(b.dataset.tab)));
+  // 스마트 캡처는 실시간 영상에 쓰므로 LIVE 옆 버튼을 누르면 LIVE 화면으로 함께 전환
+  document.querySelectorAll('#pro-modes .ptab[data-tab="smart"]').forEach((b) => b.addEventListener('click', () => { if (P.mode !== 'live') setMode('live'); }));
   $('pro-start-camera').addEventListener('click', async () => { await App.startCamera(); attachLive(); });
 
   document.addEventListener('slit:patient', () => { if (P.on) reload(false); });
@@ -1384,5 +1402,5 @@
   window.SlitPro = { state: P, viewers: V, setPro, setMode, setPer, openIndex, step, toggleSel, setAdj,
     setTool, saveEdited, setComment, buildReport, reload, active, autoContrast, rotate, flip, undo, redo,
     original: restoreOriginal, setPxPerMm, clearAnn, setTab, mbRunAuto, mbResult: () => mbResult(V.single), mbSave, mbClear,
-    toggleCapture, saveLive, grabVideo, loadImage, caption, prepareCompare };
+    toggleCapture, saveLive, grabVideo, loadImage, caption, prepareCompare, compareImages };
 })();

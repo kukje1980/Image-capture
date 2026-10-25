@@ -19,7 +19,7 @@ def test_pro_js_ids_exist_in_template():
 def test_edit_tabs_and_tools_present():
     tabs = re.findall(r'class="ptab[^"]*"[^>]*data-tab="(\w+)"', HTML)
     panes = re.findall(r'class="ppane[^"]*"\s+data-pane="(\w+)"', HTML)
-    assert tabs == ["adj", "flt", "edit", "meibo", "smart", "anal"] and panes == tabs
+    assert tabs == ["smart", "adj", "flt", "edit", "meibo", "anal", "ref"] and sorted(panes) == sorted(tabs)
     tools = re.findall(r'data-tool="(\w+)"', HTML)
     assert set(tools) == {"pan", "magnify", "crop", "text", "arrow", "circle", "length", "angle", "calibrate", "tarsus", "dropout"}
     for t in tools:                                 # 모든 도구에 사용 가능 모드 정의
@@ -84,13 +84,31 @@ def test_smart_and_analysis_tabs_wired():
     assert len(used) > 30
     missing = sorted(used - HTML_IDS)
     assert not missing, f"템플릿에 없는 id: {missing}"
-    order = [HTML.index(f"/static/js/{n}.js") for n in ("app", "pro", "smartcv", "smart")]
+    order = [HTML.index(f"/static/js/{n}.js") for n in ("app", "pro", "smartcv", "smart", "refs")]
     assert order == sorted(order)                                   # pro.js → smartcv.js → smart.js
     # pro.js 연결점: Best Shot 으로 CAPTURE/SAVE, 표시 전용 레이어는 저장본(renderFull)에 넣지 않음
     assert "window.SlitSmart && window.SlitSmart.bestFrame()" in PRO_JS
     rf = PRO_JS[PRO_JS.index("renderFull() {"):PRO_JS.index("const cursorFor")]
     assert "aOverlay" not in rf and "ghost" not in rf
     assert "'slit:pro-mode'" in PRO_JS and "'slit:pro-image'" in PRO_JS
-    # 진단 표현을 쓰지 않는다 (측정·기록 보조)
-    for word in ("백내장 3등급", "정상입니다", "비정상", "진단 결과"):
+    # 프로그램이 판정하는 진단 표현을 쓰지 않는다 (측정·기록 보조). '정상/비정상' 은 참조 샘플에 사용자가 붙이는 분류 라벨로만 쓴다
+    for word in ("백내장 3등급", "정상입니다", "비정상입니다", "진단 결과"):
         assert word not in SMART_JS and word not in HTML
+
+
+def test_tabs_in_toolbar_and_reference_tab_wired():
+    """탭 메뉴는 상단 Pro 도구줄에, 참조 탭(부위별 정상/비정상 샘플)의 요소가 모두 있어야 한다."""
+    toolbar = HTML[HTML.index('class="pro-toolbar"'):HTML.index('class="pro-body"')]
+    side = HTML[HTML.index('<aside class="pro-side">'):HTML.index("</aside>")]
+    assert 'class="ptabs"' in toolbar and 'class="ptabs"' not in side
+    assert len(re.findall(r'class="ptab(?: on)?"', toolbar)) == 7
+    modes = HTML[HTML.index('id="pro-modes"'):HTML.index("</div>", HTML.index('id="pro-modes"'))]
+    assert re.search(r'data-mode="live".*?</button>\s*<button class="ptab"[^>]*data-tab="smart"', modes, re.S)   # 스마트는 LIVE 바로 옆
+    REFS_JS = (WEB / "static/js/refs.js").read_text(encoding="utf-8")
+    used = set(re.findall(r"\$\('([a-z0-9-]+)'\)", REFS_JS))
+    assert {"ref-list", "ref-cmp-cur", "ref-cmp-normal", "ref-add-cur", "ref-add-file", "ref-file"} <= used
+    missing = sorted(used - HTML_IDS)
+    assert not missing, f"템플릿에 없는 id: {missing}"
+    regions = re.findall(r'<option value="(\w+)"', HTML[HTML.index('id="ref-region"'):HTML.index("</select>", HTML.index('id="ref-region"'))])
+    assert set(regions) == {"eyelid", "conjunctiva", "cornea", "ac", "iris", "lens", "meibo", "other"}
+    assert "compareImages" in PRO_JS and "src.ref" in PRO_JS                # 참조 샘플은 환자 영상으로 저장하지 않음

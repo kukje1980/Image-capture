@@ -259,3 +259,28 @@ def test_db_failed_write_rolls_back(client):
     assert db._conn.execute("PRAGMA busy_timeout").fetchone()[0] >= 10000
     r = client.post("/api/v1/patients", json={"chart_no": "RB2", "name": "c"})
     assert r.status_code == 201
+
+
+def test_reference_samples_library(client):
+    """참조 샘플: 부위·정상/비정상·질환명으로 등록, 필터 조회, 파일 제공, 삭제 (환자와 무관)."""
+    png = b"\x89PNG\r\n\x1a\n" + b"0" * 64
+    def up(region, cond, disease=None, ext="png"):
+        data = {"region": region, "condition": cond, "ext": ext}
+        if disease:
+            data["disease"] = disease
+        return client.post("/api/v1/refs", data=data, files={"file": ("a.png", png, "image/png")})
+    r1 = up("cornea", "normal")
+    assert r1.status_code == 201, r1.text
+    r2 = up("cornea", "abnormal", "각막염")
+    up("lens", "abnormal", "핵백내장")
+    assert up("retina", "normal").status_code == 400                 # 모르는 부위
+    assert up("cornea", "suspect").status_code == 400                # 구분은 normal/abnormal
+    assert up("cornea", "normal", ext="html").status_code == 400     # 영상 형식만
+    cornea = client.get("/api/v1/refs?region=cornea").json()
+    assert [x["condition"] for x in cornea] == ["normal", "abnormal"] and cornea[1]["disease"] == "각막염"
+    assert len(client.get("/api/v1/refs?condition=abnormal").json()) == 2
+    url = r2.json()["url"]
+    assert url.startswith("/media/_reference/cornea/") and client.get(url).content == png
+    assert client.delete(f"/api/v1/refs/{r2.json()['id']}").status_code == 204
+    assert client.get(url).status_code == 404
+    assert len(client.get("/api/v1/refs").json()) == 2
