@@ -72,6 +72,12 @@ class SettingsDialog(QDialog):
 
         self.sounds = QCheckBox("사진 캡처 찰칵 · 정지영상 · 녹화 시작/중지 소리")
         self.sounds.setChecked(bool(config.sounds_enabled))
+        self.agent = QCheckBox("AI 에이전트 (장면 인식 · 자동 촬영 · 전후 클립 · 추천 프레임)")
+        self.agent.setChecked(bool(config.agent_enabled))
+        self.agent_clips = QCheckBox("촬영 전후 클립(mp4) 도 환자 영상으로 저장")
+        self.agent_clips.setChecked(bool(config.agent_save_clips))
+        self.agent_logging = QCheckBox("사용 기록 수집 (익명 세션 · 환자 정보 없음 · 학습용)")
+        self.agent_logging.setChecked(bool(config.agent_logging))
 
         form.addRow("소스 모드", self.source_mode)
         form.addRow("카메라", self.camera_index)
@@ -81,6 +87,9 @@ class SettingsDialog(QDialog):
         form.addRow("저장 폴더(export)", exp_w)
         form.addRow("테스트 파일(file 모드)", self.test_file)
         form.addRow("효과음", self.sounds)
+        form.addRow("AI 에이전트", self.agent)
+        form.addRow("", self.agent_clips)
+        form.addRow("", self.agent_logging)
 
         btns = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -117,5 +126,8 @@ class SettingsDialog(QDialog):
         c.export_root = self.export.text().strip()
         c.test_file_path = self.test_file.text().strip()
         c.sounds_enabled = self.sounds.isChecked()
+        c.agent_enabled = self.agent.isChecked()
+        c.agent_save_clips = self.agent_clips.isChecked()
+        c.agent_logging = self.agent_logging.isChecked()
         c.save()
         return c
