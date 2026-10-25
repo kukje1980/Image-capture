@@ -12,6 +12,8 @@ ACTIONS: list[tuple[str, str, str, str]] = [
     ("pause", "일시정지 / 재개", "Space", "capture"),
     ("freeze", "정지영상 (4분할 칸 채우기)", "X", "capture"),
     ("quad", "4분할 켜기 / 끄기", "Q", "capture"),
+    ("smart", "Smart 자동 촬영 모드 (끄기 → 자동 정지 → 자동 저장)", "S", "capture"),
+    ("peaking", "포커스 피킹 켜기 / 끄기", "P", "capture"),
     ("eyeOD", "안구 OD (우안)", "1", "all"),
     ("eyeOS", "안구 OS (좌안)", "2", "all"),
     ("eyeOU", "안구 OU (양안)", "3", "all"),

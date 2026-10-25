@@ -137,6 +137,15 @@ def build_qss(mode: str = "dark") -> str:
     QPushButton#EyeBtn[eye="OD"]:checked {{ color: {c['od']}; border: 1px solid {c['od']}; }}
     QPushButton#EyeBtn[eye="OS"]:checked {{ color: {c['os']}; border: 1px solid {c['os']}; }}
     QPushButton#EyeBtn[eye="OU"]:checked {{ color: {c['ou']}; border: 1px solid {c['ou']}; }}
+    QPushButton#SmartBtn {{
+        background: transparent; border: 1px solid transparent; border-radius: 7px; padding: 2px 10px; min-height: 28px;
+        color: {c['ink_soft']}; font-weight: 600;
+    }}
+    QPushButton#SmartBtn:hover {{ color: {c['ink']}; }}
+    QPushButton#SmartBtn:checked {{ background: {c['accent_soft']}; border: 1px solid {c['accent']}; color: {c['accent_hover'] if mode == 'dark' else c['accent']}; }}
+    QLabel#SmartTitle {{ color: {c['ink']}; font-weight: 700; padding-right: 4px; }}
+    QLabel#SmartMeter {{ color: {c['ink_soft']}; font-family: Menlo, Consolas, "JetBrains Mono", monospace; font-size: 12px; padding: 0 3px; }}
+    QLabel#SmartHint {{ color: {c['ink_soft']}; font-size: 12px; padding-left: 6px; }}
     QPushButton#ToolBtn, QPushButton#Pause, QPushButton#Freeze {{
         background: transparent; border: 1px solid transparent; color: {c['ink_soft']}; padding: 8px 12px;
     }}
@@ -218,6 +227,13 @@ def build_qss(mode: str = "dark") -> str:
     }}
     QTabWidget#ProTabs QTabBar::tab:selected {{ background: {c['raised']}; color: {c['ink']}; border: 1px solid {c['rule_strong']}; }}
     QTabWidget#ProTabs QTabBar::tab:hover {{ color: {c['ink']}; }}
+    QFrame#ProTabGrid {{ background: {c['bg']}; border: 1px solid {c['rule']}; border-radius: 9px; }}
+    QPushButton#ProTabBtn {{
+        background: transparent; color: {c['ink_soft']}; padding: 5px 0; min-height: 22px;
+        border: 1px solid transparent; border-radius: 6px; font-weight: 700;
+    }}
+    QPushButton#ProTabBtn:checked {{ background: {c['raised']}; color: {c['ink']}; border: 1px solid {c['rule_strong']}; }}
+    QPushButton#ProTabBtn:hover {{ color: {c['ink']}; }}
     QLabel#Histogram {{ background: #070a0f; border: 1px solid {c['rule']}; border-radius: 7px; }}
     QFrame#MultiCell {{ background: #0a0d12; border: 1px solid #1d242f; border-radius: 6px; }}
     QFrame#MultiCell:hover {{ border: 2px solid {c['accent']}; }}

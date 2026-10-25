@@ -28,6 +28,34 @@ CREATE TABLE IF NOT EXISTS captures (
     note           TEXT
 );
 
+-- 측정 기록 (수정체 혼탁 지수 등) — 경과 그래프 + 의사 입력 LOCS III 등급(라벨 데이터)
+CREATE TABLE IF NOT EXISTS measurements (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    patient_id  INTEGER NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+    capture_id  INTEGER REFERENCES captures(id) ON DELETE SET NULL,
+    eye         TEXT,
+    kind        TEXT NOT NULL,               -- nuclear | cortical | fluorescein | redness
+    value       REAL NOT NULL,               -- 지수(0~100) / 면적 %
+    detail      TEXT,                        -- JSON (비율·밝기·동공 직경 등)
+    locs        TEXT,                        -- JSON 의사 입력 LOCS III 등급
+    conditions  TEXT,                        -- 촬영 조건 메모 (슬릿 폭·각도·배율·노출)
+    measured_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_measure_patient ON measurements(patient_id, kind, eye, measured_at);
+-- 참조 샘플 (부위별 · 정상/비정상 대표 영상) — 환자와 무관한 비교용 라이브러리
+CREATE TABLE IF NOT EXISTS ref_samples (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    region      TEXT NOT NULL,               -- eyelid | conjunctiva | cornea | ac | iris | lens | meibo | other
+    condition   TEXT NOT NULL CHECK (condition IN ('normal','abnormal')),
+    disease     TEXT,                        -- 비정상일 때 질환명 (사용자가 붙이는 분류 이름)
+    note        TEXT,
+    file_path   TEXT NOT NULL,
+    url         TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_ref_region ON ref_samples(region, condition);
 CREATE INDEX IF NOT EXISTS idx_captures_patient ON captures(patient_id);
 CREATE INDEX IF NOT EXISTS idx_captures_capdate ON captures(patient_id, captured_at);
 CREATE INDEX IF NOT EXISTS idx_patients_name    ON patients(name);

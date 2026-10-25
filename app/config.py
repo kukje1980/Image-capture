@@ -31,10 +31,24 @@ class AppConfig:
     thumbnail_max_side: int = 120
     newest_on_top: bool = True
     theme: str = "dark"                      # dark(기본, 영상 작업 공간) | light
+    sounds_enabled: bool = True              # 효과음 (캡처 찰칵 · 정지영상 · 녹화 시작/중지)
     clinic_name: str = ""                    # 인쇄 보고서 머리말 기관명
     px_per_mm: float = 0.0                   # 측정 눈금 보정 (0 = 미보정, px 단위)
     brand: str = ""                          # 화면 브랜드 (비면 기본, "keeler" = Keeler 전용)
     shortcuts: dict = field(default_factory=dict)   # 사용자 지정 단축키 {동작 id: "키"} (app/shortcuts.py)
+    # 스마트 캡처 (Pro LIVE) — app/capture/smart_capture.py
+    smart_auto_mode: str = "off"             # off | freeze(초점 맞으면 자동 정지) | save(자동 저장)
+    smart_roi_frac: float = 0.5              # 초점 판정 관심 영역 (화면 중앙 비율 0.2~1.0)
+    pro_smart_peaking_sensitivity: int = 2       # 1(적게) ~ 3(많이)
+    # Smart Capture (app/capture/smart_capture.py)
+    smart_mode: str = "off"                  # off | freeze(초점 맞는 순간 자동 정지) | snapshot(자동 저장)
+    smart_peaking: bool = False              # 포커스 피킹 표시
+    smart_peaking_sensitivity: int = 50      # 0~100
+    smart_peaking_color: str = "red"         # red | green | yellow | cyan
+    smart_roi: list = field(default_factory=list)   # 정규화 [x, y, w, h] (비면 화면 중앙 60%)
+    smart_best_shot: bool = True             # 사진 캡처 시 최근 0.6초 중 가장 선명한 프레임 저장
+    smart_ready_pct: float = 85.0            # 초점 판정 기준 (최근 최고 선명도 대비 %)
+    smart_cooldown_s: float = 2.5            # 자동 촬영 사이 최소 간격(초)
 
     @classmethod
     def config_path(cls) -> Path:
@@ -47,6 +61,11 @@ class AppConfig:
         if p.exists():
             try:
                 data = json.loads(p.read_text(encoding="utf-8"))
+                # v0.2 Pro 설정의 1~3 감도를 별도 필드로 이관한다.
+                old_sens = data.get("smart_peaking_sensitivity")
+                if "smart_mode" not in data and isinstance(old_sens, int) and 1 <= old_sens <= 3:
+                    data.setdefault("pro_smart_peaking_sensitivity", old_sens)
+                    data["smart_peaking_sensitivity"] = 50
                 defaults = cls()
                 for f in fields(cls):
                     if f.name not in data:
