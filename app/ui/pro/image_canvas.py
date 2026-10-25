@@ -8,6 +8,8 @@
 - 실행 취소 / 다시 실행(최대 20단계), 원본 복원
 - render_to_bgr(): 보정 + 주석·측정을 편집 이미지 해상도로 합성 (편집본 저장·인쇄용)
 - link(other): 2장 비교 시 확대·스크롤 동기화
+- set_overlay(): 표시 전용 겹침 레이어 (포커스 피킹·이전 영상 고스트·분석 마스크) — 저장본에는 안 들어감
+- set_hud(): 영상 위 상태 칩·관심 영역(ROI) 테두리 (스마트 캡처)
 """
 from __future__ import annotations
 
@@ -17,7 +19,18 @@ import time
 
 import numpy as np
 from PySide6.QtCore import QLineF, QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QFont, QImage, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
+from PySide6.QtGui import (
+    QBrush,
+    QColor,
+    QFont,
+    QImage,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+    QPolygonF,
+    QTransform,
+)
 from PySide6.QtWidgets import (
     QGraphicsPixmapItem,
     QGraphicsScene,
@@ -83,7 +96,16 @@ class ImageCanvas(QGraphicsView):
         self.setScene(self._scene)
         self._pix = QGraphicsPixmapItem()
         self._pix.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
+        self._pix.setZValue(-2)
         self._scene.addItem(self._pix)
+        self._overlay = QGraphicsPixmapItem()          # 주석보다 아래, 영상보다 위
+        self._overlay.setZValue(-1)
+        self._overlay.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
+        self._overlay.setVisible(False)
+        self._scene.addItem(self._overlay)
+        self._ov_shape: tuple = ()
+        self._hud: list = []                           # [(text, color)]
+        self._hud_roi: QRectF | None = None
         self._orig: np.ndarray | None = None
         self._base: np.ndarray | None = None
         self._proc: np.ndarray | None = None
@@ -162,6 +184,8 @@ class ImageCanvas(QGraphicsView):
             self._pix.setPixmap(QPixmap.fromImage(bgr_to_qimage(self._proc)))
             h, w = self._base.shape[:2]
             self._scene.setSceneRect(QRectF(0, 0, w, h))
+        if self._base is None or self._base.shape[:2] != self._ov_shape:
+            self.set_overlay(None)                     # 다른 크기의 영상이면 겹침 레이어는 맞지 않음
         self._rebuild_overlay()
         self.viewport().update()
 
@@ -242,6 +266,7 @@ class ImageCanvas(QGraphicsView):
         h, w = self._base.shape[:2]
         self._push()
         self._base = ip.rotate90(self._base, k)
+        self.set_overlay(None)
         if k == 1:
             self._ann = _map_points(self._ann, lambda x, y: (h - y, x))
         else:
@@ -256,6 +281,7 @@ class ImageCanvas(QGraphicsView):
         h, w = self._base.shape[:2]
         self._push()
         self._base = ip.flip(self._base, horizontal)
+        self.set_overlay(None)
         f = (lambda x, y: (w - x, y)) if horizontal else (lambda x, y: (x, h - y))
         self._ann = _map_points(self._ann, f)
         self._refresh()
@@ -271,6 +297,7 @@ class ImageCanvas(QGraphicsView):
             return False
         self._push()
         self._base = ip.crop(self._base, xa, ya, xb, yb)
+        self.set_overlay(None)
         self._ann = _map_points(self._ann, lambda x, y: (x - xa, y - ya))
         self._refresh()
         self.reset_view()
@@ -316,6 +343,33 @@ class ImageCanvas(QGraphicsView):
         other.horizontalScrollBar().valueChanged.connect(self.horizontalScrollBar().setValue)
         self.verticalScrollBar().valueChanged.connect(other.verticalScrollBar().setValue)
         other.verticalScrollBar().valueChanged.connect(self.verticalScrollBar().setValue)
+
+    # ================= 겹침 레이어 · HUD =================
+    def set_overlay(self, img: QImage | None, opacity: float = 1.0) -> None:
+        """영상 위 표시 전용 레이어. 크기가 달라도 영상 크기에 맞춰 늘려 그린다 (None = 끄기)."""
+        if img is None or img.isNull() or self._base is None:
+            self._ov_shape = ()
+            self._overlay.setVisible(False)
+            self._overlay.setPixmap(QPixmap())
+            return
+        h, w = self._base.shape[:2]
+        self._ov_shape = (h, w)
+        self._overlay.setPixmap(QPixmap.fromImage(img))
+        self._overlay.setTransform(QTransform.fromScale(w / max(1, img.width()), h / max(1, img.height())))
+        self._overlay.setOpacity(max(0.0, min(1.0, opacity)))
+        self._overlay.setVisible(True)
+
+    def set_overlay_opacity(self, opacity: float) -> None:
+        self._overlay.setOpacity(max(0.0, min(1.0, opacity)))
+
+    def has_overlay(self) -> bool:
+        return self._overlay.isVisible()
+
+    def set_hud(self, lines: list | None = None, roi: QRectF | None = None) -> None:
+        """우측 상단 상태 칩 [(text, color)] 과 ROI 테두리 (이미지 좌표)."""
+        self._hud = list(lines or [])
+        self._hud_roi = roi
+        self.viewport().update()
 
     def set_caption(self, text: str) -> None:
         self._caption = text
@@ -602,9 +656,35 @@ class ImageCanvas(QGraphicsView):
                 painter.fillRect(8, 8, w, fm.height() + 8, QColor(0, 0, 0, 160))
                 painter.setPen(QColor("#e2e8f0"))
                 painter.drawText(16, 8 + 4 + fm.ascent(), self._caption)
+            if self._hud_roi is not None:
+                poly = self.mapFromScene(self._hud_roi)
+                pen = QPen(QColor(255, 255, 255, 150), 1.4, Qt.PenStyle.DashLine)
+                painter.setPen(pen)
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawPolygon(poly)
+            if self._hud:
+                self._draw_hud(painter)
             if self._lens is not None and not self._pix.pixmap().isNull():
                 self._draw_lens(painter)
         painter.restore()
+
+    def _draw_hud(self, painter: QPainter) -> None:
+        f = QFont(self.font())
+        f.setPointSize(10)
+        f.setBold(True)
+        painter.setFont(f)
+        fm = painter.fontMetrics()
+        y = 8
+        right = self.viewport().width() - 8
+        for text, color in self._hud:
+            w = fm.horizontalAdvance(text) + 18
+            r = QRectF(right - w, y, w, fm.height() + 10)
+            painter.setPen(QPen(QColor(color), 1.2))
+            painter.setBrush(QColor(8, 11, 16, 175))
+            painter.drawRoundedRect(r, 6, 6)
+            painter.setPen(QColor(color))
+            painter.drawText(r, Qt.AlignmentFlag.AlignCenter, text)
+            y += fm.height() + 14
 
     def _draw_lens(self, painter: QPainter) -> None:
         vp = self._lens
@@ -636,6 +716,8 @@ class ImageCanvas(QGraphicsView):
         temp, self._temp = self._temp, []
         for it in temp:
             it.setVisible(False)
+        ov = self._overlay.isVisible()
+        self._overlay.setVisible(False)              # 피킹·고스트·분석 마스크는 저장본에 넣지 않음
         h, w = self._base.shape[:2]
         qimg = QImage(w, h, QImage.Format.Format_RGB888)
         qimg.fill(QColor("#000000"))
@@ -646,5 +728,6 @@ class ImageCanvas(QGraphicsView):
         p.end()
         for it in temp:
             it.setVisible(True)
+        self._overlay.setVisible(ov)
         self._temp = temp
         return qimage_to_bgr(qimg)
