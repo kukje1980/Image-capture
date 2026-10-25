@@ -2,16 +2,26 @@
 
 FastAPI는 여러 스레드에서 요청을 처리하므로 check_same_thread=False +
 Lock 직렬화. 단일 클리닉 PC / 저빈도 쓰기라 충분하다.
+
+안전성: busy_timeout(다른 프로세스가 잠근 동안 대기), 쓰기는 `with lock, conn:` 로 실패 시 롤백,
+시작 시 quick_check 로 손상 감지, WAL + synchronous=FULL.
 """
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import threading
 from pathlib import Path
 from typing import List, Optional
 
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
+BUSY_TIMEOUT_SEC = 10.0
+log = logging.getLogger(__name__)
+
+
+class DatabaseError(RuntimeError):
+    """DB 를 열 수 없거나 손상된 경우."""
 
 
 class Database:
@@ -22,21 +32,40 @@ class Database:
 
     def init(self) -> "Database":
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA foreign_keys=ON")
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        with self._lock:
-            self._conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
-            _add_missing_columns(self._conn, "patients", {"diagnosis": "TEXT", "doctor": "TEXT"})
-            self._conn.commit()
+        conn = sqlite3.connect(self.db_path, timeout=BUSY_TIMEOUT_SEC, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute(f"PRAGMA busy_timeout={int(BUSY_TIMEOUT_SEC * 1000)}")
+            conn.execute("PRAGMA foreign_keys=ON")
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=FULL")
+            try:
+                rows = conn.execute("PRAGMA quick_check").fetchall()
+                problems = [r[0] for r in rows if r[0] != "ok"]
+            except sqlite3.DatabaseError as e:
+                raise DatabaseError(
+                    f"데이터베이스 파일이 손상되었거나 SQLite 파일이 아닙니다: {self.db_path} ({e})") from e
+            if problems:
+                raise DatabaseError(f"데이터베이스 손상이 감지되었습니다: {self.db_path} — "
+                                    + "; ".join(problems[:5]))
+            conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+            with conn:
+                _add_missing_columns(conn, "patients", {"diagnosis": "TEXT", "doctor": "TEXT"})
+        except Exception:
+            conn.close()
+            raise
+        self._conn = conn
         return self
 
     def close(self) -> None:
         if self._conn is not None:
             with self._lock:
-                self._conn.close()
-                self._conn = None
+                conn, self._conn = self._conn, None
+                try:
+                    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                except sqlite3.Error:
+                    log.warning("wal_checkpoint 실패", exc_info=True)
+                conn.close()
 
     # ---- patients ----
     def list_patients(self, q: str = "") -> List[dict]:
@@ -61,7 +90,7 @@ class Database:
         return dict(r) if r else None
 
     def create_patient(self, p: dict) -> int:
-        with self._lock:
+        with self._lock, self._conn:
             cur = self._conn.execute(
                 """INSERT INTO patients
                    (chart_no, patient_id, name, birth_date, sex, phone, memo, symptoms,
@@ -70,13 +99,12 @@ class Database:
                            :diagnosis, :doctor)""",
                 _patient_params(p),
             )
-            self._conn.commit()
             return cur.lastrowid
 
     def update_patient(self, pid: int, p: dict) -> None:
         params = _patient_params(p)
         params["id"] = pid
-        with self._lock:
+        with self._lock, self._conn:
             self._conn.execute(
                 """UPDATE patients SET
                      chart_no=:chart_no, patient_id=:patient_id, name=:name,
@@ -86,21 +114,19 @@ class Database:
                    WHERE id=:id""",
                 params,
             )
-            self._conn.commit()
 
     def delete_patient(self, pid: int) -> List[str]:
         """환자 삭제 (영상 레코드는 CASCADE). 지워야 할 미디어 파일 경로 목록을 돌려준다."""
-        with self._lock:
+        with self._lock, self._conn:
             rows = self._conn.execute(
                 "SELECT file_path FROM captures WHERE patient_id=?", (pid,)
             ).fetchall()
             self._conn.execute("DELETE FROM patients WHERE id=?", (pid,))
-            self._conn.commit()
         return [r["file_path"] for r in rows if r["file_path"]]
 
     # ---- captures ----
     def create_capture(self, c: dict) -> int:
-        with self._lock:
+        with self._lock, self._conn:
             cur = self._conn.execute(
                 """INSERT INTO captures
                    (patient_id, media_type, file_path, url, captured_at, eye, duration_ms, note)
@@ -116,7 +142,6 @@ class Database:
                     "note": c.get("note"),
                 },
             )
-            self._conn.commit()
             return cur.lastrowid
 
     def list_captures(self, patient_id: int, order: str = "desc") -> List[dict]:
@@ -135,23 +160,21 @@ class Database:
         return dict(r) if r else None
 
     def update_capture_note(self, cid: int, note: Optional[str]) -> None:
-        with self._lock:
+        with self._lock, self._conn:
             self._conn.execute("UPDATE captures SET note=? WHERE id=?", (note, cid))
-            self._conn.commit()
 
     def delete_capture(self, cid: int) -> Optional[dict]:
-        with self._lock:
+        with self._lock, self._conn:
             r = self._conn.execute(
                 "SELECT file_path FROM captures WHERE id=?", (cid,)
             ).fetchone()
             self._conn.execute("DELETE FROM captures WHERE id=?", (cid,))
-            self._conn.commit()
         return dict(r) if r else None
 
 
     # ---- measurements (혼탁 지수 등 측정 기록) ----
     def create_measurement(self, m: dict) -> int:
-        with self._lock:
+        with self._lock, self._conn:
             cur = self._conn.execute(
                 """INSERT INTO measurements
                    (patient_id, capture_id, eye, kind, value, detail, locs, conditions, measured_at)
@@ -161,7 +184,6 @@ class Database:
                  json.dumps(m.get("locs") or {}, ensure_ascii=False),
                  m.get("conditions") or "", m["measured_at"]),
             )
-            self._conn.commit()
             return cur.lastrowid
 
     def list_measurements(self, patient_id: int, kind: Optional[str] = None,
@@ -183,9 +205,8 @@ class Database:
         return _measurement(r) if r else None
 
     def delete_measurement(self, mid: int) -> None:
-        with self._lock:
+        with self._lock, self._conn:
             self._conn.execute("DELETE FROM measurements WHERE id=?", (mid,))
-            self._conn.commit()
 
 
 def _measurement(r) -> dict:

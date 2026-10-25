@@ -243,3 +243,19 @@ def test_measurements_record_list_and_cascade(client):
     assert client.delete(f"/api/v1/measurements/{m['id']}").status_code == 204
     client.delete(f"/api/v1/patients/{pid}")
     assert client.get(f"/api/v1/measurements?patient_id={pid}").json() == []
+
+
+def test_db_failed_write_rolls_back(client):
+    """차트번호 중복 등 실패한 쓰기가 트랜잭션을 열어 둔 채 남기지 않는다."""
+    import sqlite3
+
+    import pytest
+    db = client.app.state.db
+    r = client.post("/api/v1/patients", json={"chart_no": "RB1", "name": "a"})
+    assert r.status_code == 201
+    with pytest.raises(sqlite3.IntegrityError):
+        db.create_patient({"chart_no": "RB1", "name": "b"})
+    assert not db._conn.in_transaction
+    assert db._conn.execute("PRAGMA busy_timeout").fetchone()[0] >= 10000
+    r = client.post("/api/v1/patients", json={"chart_no": "RB2", "name": "c"})
+    assert r.status_code == 201

@@ -34,7 +34,7 @@ class MeasurementsDAO:
     def insert(self, m: Measurement) -> int:
         if not m.measured_at:
             m.measured_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with self._lock:
+        with self._lock, self._c:
             cur = self._c.execute(
                 """INSERT INTO measurements
                    (patient_id, capture_id, eye, kind, value, detail, locs, conditions, measured_at)
@@ -43,7 +43,6 @@ class MeasurementsDAO:
                  json.dumps(m.detail, ensure_ascii=False), json.dumps(m.locs, ensure_ascii=False),
                  m.conditions or "", m.measured_at),
             )
-            self._c.commit()
             m.id = cur.lastrowid
             return m.id
 
@@ -67,9 +66,8 @@ class MeasurementsDAO:
         return items[-1] if items else None
 
     def delete_by_capture(self, cid: int) -> None:
-        with self._lock:
+        with self._lock, self._c:
             self._c.execute("DELETE FROM measurements WHERE capture_id=?", (cid,))
-            self._c.commit()
 
     @staticmethod
     def _row(r) -> Measurement:
