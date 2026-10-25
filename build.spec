@@ -28,6 +28,8 @@ datas += [("assets/icons/app.ico", "assets/icons"),
           ("assets/icons/app.png", "assets/icons")]
 # 브랜드 로고·아이콘 (Keeler 등)
 datas += [("assets/brand", "assets/brand")]
+# 효과음 (캡처 찰칵 · 정지영상 · 녹화 삐)
+datas += [("assets/sounds", "assets/sounds")]
 
 block_cipher = None
 

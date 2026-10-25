@@ -29,6 +29,8 @@ datas += [("app/db/schema.sql", "app/db")]
 # 앱 아이콘 동봉
 datas += [("assets/icons/app.png", "assets/icons")]
 datas += [("assets/brand", "assets/brand")]
+# 효과음 (캡처 찰칵 · 정지영상 · 녹화 삐)
+datas += [("assets/sounds", "assets/sounds")]
 
 a = Analysis(
     ["run.py"],

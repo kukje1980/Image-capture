@@ -5,7 +5,7 @@
 **환자 데이터베이스에 연결 저장**함과 동시에 **지정한 폴더에도 저장**하는 진료실용
 네이티브 데스크탑 앱입니다. 단일 PC에서 오프라인으로 동작합니다.
 
-- 화면 좌측: 실시간 영상 + 컨트롤(안구 선택 / 일시정지 / 사진 캡처 / 녹화)
+- 화면 좌측: 실시간 영상 + 컨트롤(안구 선택 / 일시정지 / 사진 캡처 / 녹화) — 캡처 '찰칵' · 정지영상 · 녹화 효과음
 - 화면 우측: 선택한 환자의 캡처 사진을 작은 썸네일 세로줄로(최신이 위) 표시, 클릭 시 크게 보기
 - 상단: 환자 검색/선택/신규/수정, **라이트/다크 테마 전환**(설정에 저장)
 - 전용 앱 아이콘(`assets/icons/app.ico`) — 실행파일·바로가기·설치 마법사에 적용
@@ -87,6 +87,21 @@ Finder 에서 `run_mac.command` 더블클릭(처음 한 번 자동 설치). 하�
 
 > 웹은 물리 키 기준이라 **한글 입력 상태에서도** 그대로 동작합니다. Pro 화면의 ←/→(이동), Ctrl+Z/Y(실행 취소), Esc 는 고정입니다.
 
+## 효과음
+촬영 동작마다 짧은 소리가 납니다 (외부 음원 없이 합성한 WAV, `assets/sounds/`).
+
+| 동작 | 소리 |
+|------|------|
+| 사진 캡처 · 4분할 저장 · Pro SAVE | 예전 필름 카메라의 **찰칵** (미러 '찰' + 셔터막 '칵') |
+| 정지영상(스틸) · Pro CAPTURE | 가벼운 **틱** 과 짧은 여운 |
+| 녹화 시작 | 캠코더식 **삐** 한 번 |
+| 녹화 중지 | 낮은 **삐삐** 두 번 |
+
+- 윈도우·맥 앱: **설정 → 효과음** 체크로 켜고 끕니다 (`config.json` 의 `sounds_enabled`).
+  재생은 Windows `winsound` → Qt `QSoundEffect` → `afplay`/`paplay` 순으로 가능한 수단을 쓰고, 없으면 조용히 생략합니다.
+- 웹: **설정 → 효과음** 버튼 (브라우저에 저장, `slitlamp-sounds`). Web Audio 로 재생해 지연이 거의 없습니다.
+- 소리를 다시 만들려면 `python tools/generate_sounds.py` (데스크탑·웹 두 곳에 같은 파일을 씁니다).
+
 ## Keeler 전용 버전 (윈도우 · 맥)
 같은 프로그램을 Keeler 공식 로고·브랜드 색(네이비 #052133 · 파랑 #1981b7 · 주황 #ed6f1e)으로 만든 전용판입니다.
 상단은 로고만, 창 제목·인쇄 보고서는 "Keeler 슬릿램프 영상 시스템 / 보고서", 아이콘은 로고 마크로 바뀝니다.
@@ -140,7 +155,7 @@ Finder 에서 `run_mac.command` 더블클릭(처음 한 번 자동 설치). 하�
 
 `config.json` 주요 항목: `camera_index`, `source_mode`(device|file|synthetic),
 `capture_width/height`, `photo_format`(png|jpg), `media_root`(기본 저장),
-`export_root`(동시 저장 폴더), `db_path`, `subfolder_template`.
+`export_root`(동시 저장 폴더), `db_path`, `subfolder_template`, `sounds_enabled`(효과음).
 
 저장 경로 규칙(기본): `<root>/<차트번호>_<환자ID>/YYYY-MM-DD/<HHMMSS>_<OD|OS|NA>.<확장자>`
 (`export_root`에도 동일 구조로 복사)

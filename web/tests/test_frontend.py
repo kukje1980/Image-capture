@@ -46,3 +46,29 @@ def test_meibo_mode_wired():
     assert "100 / 3" in PRO_JS and "200 / 3" in PRO_JS
     for cat in ("'0%'", "'<25%'", "'25–50%'", "'51–75%'", "'>75%'"):
         assert cat in PRO_JS
+
+
+def test_sounds_wired():
+    """효과음: 사진 캡처 '찰칵' · 정지영상 · 녹화 시작/중지 — 파일·스크립트·설정 버튼이 모두 있어야 한다."""
+    APP_JS = (WEB / "static/js/app.js").read_text(encoding="utf-8")
+    SND_JS = (WEB / "static/js/sounds.js").read_text(encoding="utf-8")
+    for name in ("shutter", "freeze", "rec_start", "rec_stop"):
+        f = WEB / "static" / "sounds" / f"{name}.wav"
+        assert f.exists() and f.read_bytes()[:4] == b"RIFF", name
+        assert f"/static/sounds/{name}.wav" in SND_JS
+    assert '<script src="/static/js/sounds.js"></script>' in HTML
+    assert HTML.index("sounds.js") < HTML.index("js/app.js")      # app.js 보다 먼저
+    assert 'id="btn-sounds"' in HTML and 'id="sounds-label"' in HTML
+
+    def body(start, end=None):
+        i = APP_JS.index(start)
+        return APP_JS[i:APP_JS.index(end, i)] if end else APP_JS[i:]
+
+    # 촬영 동작마다 효과음
+    assert "sfx('shutter')" in body("async function capturePhoto", "function toggleRecord")
+    assert "sfx('shutter')" in body("async function saveQuad")
+    assert "sfx('rec_start')" in body("function startRecording", "function stopRecording")
+    assert "sfx('rec_stop')" in body("function stopRecording", "// 서버 + 지정 폴더 동시 저장")
+    assert "sfx('freeze')" in body("function togglePause", "// ---- 효과음")
+    assert "sfx('freeze')" in body("function freezeFrame", "function setQuadActive")
+    assert "App.sfx('freeze')" in PRO_JS and "App.sfx('shutter')" in PRO_JS
