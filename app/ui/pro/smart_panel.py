@@ -2,6 +2,7 @@
 
 스마트 캡처  자동 촬영 모드 · 관심 영역 · Best Shot · 포커스 피킹 · 실시간 화질 점검(초점/노출/안정/반사)
 분석         조명 모드 태그 · 형광 염색 면적 · 충혈 지수 · 경과 비교(고스트 겹치기 · 정렬 · 깜빡임 전환)
+             · 백내장: 수정체 혼탁 지수(핵·피질) · 촬영 조건 메모 · LOCS III 의사 입력(라벨) · 경과 그래프 · LIVE 촬영 가이드
 """
 from __future__ import annotations
 
@@ -13,9 +14,11 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QProgressBar,
     QPushButton,
     QSlider,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -181,6 +184,10 @@ class AnalysisTab(QWidget):
     ghostChanged = Signal(int)           # 0~100 (0 = 끄기)
     alignClicked = Signal()
     blinkToggled = Signal(bool)
+    nuclearClicked = Signal()
+    corticalClicked = Signal()
+    cataractRecordClicked = Signal()
+    guideToggled = Signal(bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -241,9 +248,63 @@ class AnalysisTab(QWidget):
         lay.addLayout(g2)
         self.lbl_cmp = _muted("")
         lay.addWidget(self.lbl_cmp)
+        lay.addWidget(_sub("백내장 — 수정체 혼탁 지수"))
+        g3 = QGridLayout()
+        g3.setSpacing(4)
+        self.b_nuclear = QPushButton("핵 · 슬릿")
+        self.b_nuclear.setToolTip("슬릿 단면 사진: 수정체 띠 밝기 ÷ 각막 띠 밝기 → 0~100 (각막을 기준자로 정규화)")
+        self.b_cortical = QPushButton("피질 · 역조명")
+        self.b_cortical.setToolTip("역조명 사진: 편집 탭 '원'으로 동공을 표시한 뒤 — 동공 안 어두운 얼룩 면적 %")
+        for b in (self.b_nuclear, self.b_cortical):
+            b.setObjectName("ProBtn")
+            b.setMinimumHeight(32)
+        g3.addWidget(self.b_nuclear, 0, 0)
+        g3.addWidget(self.b_cortical, 0, 1)
+        lay.addLayout(g3)
+        self.lbl_cat = _muted("-")
+        lay.addWidget(self.lbl_cat)
+        self.e_cond = QLineEdit()
+        self.e_cond.setPlaceholderText("촬영 조건 (예: 슬릿 0.2mm · 45° · 16× · 노출 고정)")
+        self.e_cond.setToolTip("지수는 같은 조건에서만 비교 의미가 있습니다. 다음 검사 때 LIVE 가이드에 표시됩니다.")
+        lay.addWidget(self.e_cond)
+        lay.addWidget(_muted("LOCS III 의사 입력 (1~6, 라벨 데이터)"))
+        g4 = QGridLayout()
+        g4.setSpacing(4)
+        self.locs = {}
+        for i, key in enumerate(("NO", "NC", "C", "P")):
+            sb = QSpinBox()
+            sb.setRange(0, 6)
+            sb.setSpecialValueText("-")
+            sb.setToolTip(f"의사 입력 {key} 등급 1~6 (0 = 미입력). 등급 추정 모델 학습용 라벨로 쌓입니다")
+            sb.setMinimumWidth(48)
+            self.locs[key] = sb
+            lbl = _muted(key)
+            lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            g4.addWidget(lbl, i // 2, (i % 2) * 2)
+            g4.addWidget(sb, i // 2, (i % 2) * 2 + 1)
+        lay.addLayout(g4)
+        self.b_cat_record = QPushButton("측정 기록")
+        self.b_cat_record.setObjectName("ProPrimary")
+        self.b_cat_record.setMinimumHeight(32)
+        self.b_cat_record.setToolTip("지수 · 촬영 조건 · LOCS 입력을 이 영상의 측정 기록으로 저장하고 코멘트에 추가")
+        lay.addWidget(self.b_cat_record)
+        self.trend = QLabel()
+        self.trend.setFixedSize(236, 84)
+        self.trend.setObjectName("Histogram")
+        lay.addWidget(self.trend)
+        self.lbl_trend = _muted("")
+        lay.addWidget(self.lbl_trend)
+        self.chk_guide = QCheckBox("LIVE 촬영 가이드 (백내장 모드)")
+        self.chk_guide.setToolTip("라이브 화면에 슬릿 위치 가이드와 지난 검사의 촬영 조건을 표시합니다")
+        lay.addWidget(self.chk_guide)
         lay.addWidget(_muted("측정값은 기록 보조용이며 질환 판정(진단)을 하지 않습니다. "
-                             "조명·배율·각도가 다른 영상의 차이는 병변 변화로 해석하지 마세요."))
+                             "조명·배율·각도가 다른 영상의 차이는 병변 변화로 해석하지 마세요. "
+                             "혼탁 지수는 LOCS 등급이 아닙니다."))
         lay.addStretch(1)
+        self.b_nuclear.clicked.connect(self.nuclearClicked.emit)
+        self.b_cortical.clicked.connect(self.corticalClicked.emit)
+        self.b_cat_record.clicked.connect(self.cataractRecordClicked.emit)
+        self.chk_guide.toggled.connect(self.guideToggled.emit)
 
         self.b_fluo.clicked.connect(self.fluoClicked.emit)
         self.b_red.clicked.connect(self.rednessClicked.emit)
@@ -260,9 +321,17 @@ class AnalysisTab(QWidget):
     def set_enabled_for(self, mode: str) -> None:
         single = mode == "single"
         cmp = mode == "compare"
-        for b in (self.b_fluo, self.b_red, self.b_note, self.b_clear):
+        for b in (self.b_fluo, self.b_red, self.b_note, self.b_clear, self.b_nuclear, self.b_cortical,
+                  self.b_cat_record):
             b.setEnabled(single)
         for w in (self.s_ghost, self.b_align, self.b_blink):
             w.setEnabled(cmp)
         if not cmp and self.b_blink.isChecked():
             self.b_blink.setChecked(False)
+
+    def locs_values(self) -> dict:
+        return {k: sb.value() for k, sb in self.locs.items() if sb.value() > 0}
+
+    def set_locs(self, values: dict | None) -> None:
+        for k, sb in self.locs.items():
+            sb.setValue(int((values or {}).get(k, 0) or 0))

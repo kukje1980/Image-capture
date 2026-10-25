@@ -61,10 +61,11 @@ from PySide6.QtWidgets import (
 )
 
 from app import brand as app_brand
-from app.capture import analysis
+from app.capture import analysis, cataract
 from app.capture.frame_utils import bgr_to_qimage
 from app.capture.image_process import Adjust, apply_adjust, auto_levels, histogram
 from app.capture.smart_capture import SmartCaptureEngine, SmartSettings, peaking_mask, roi_rect
+from app.db.measurements_dao import Measurement
 from app.ui import icons
 from app.ui.patient_dialog import PatientDialog
 from app.ui.pro import print_util
@@ -167,6 +168,7 @@ class ProWorkspace(QWidget):
         self._analysis_mask = None           # 마지막 측정 마스크 (단일 화면 표시용)
         self._analysis_text = ""             # 마지막 측정 결과 (코멘트 기록용)
         self._tag = ""                       # 조명 모드 추정
+        self._cat = None                     # 마지막 혼탁 지수 결과 (kind, dict)
         self._blink_timer = QTimer(self)
         self._blink_timer.setInterval(500)
         self._blink_timer.timeout.connect(self._blink_tick)
@@ -381,6 +383,10 @@ class ProWorkspace(QWidget):
         self.analysis.ghostChanged.connect(self.set_ghost)
         self.analysis.alignClicked.connect(self.align_pair)
         self.analysis.blinkToggled.connect(self.set_blink)
+        self.analysis.nuclearClicked.connect(self.measure_nuclear)
+        self.analysis.corticalClicked.connect(self.measure_cortical)
+        self.analysis.cataractRecordClicked.connect(self.record_cataract)
+        self.analysis.guideToggled.connect(lambda _on: self._update_side())
         self.analysis.set_enabled_for(self._mode)
         lay.addWidget(self.tabs, 1)
 
@@ -611,6 +617,7 @@ class ProWorkspace(QWidget):
         self.multi.clear_selection()
         self.reload()
         self._update_info()
+        self._update_trend()
 
     def reload(self, select_last: bool = True) -> None:
         if self._patient is None:
@@ -697,7 +704,10 @@ class ProWorkspace(QWidget):
         self.single_canvas.set_caption(caption_of(cap, self._idx + 1, len(self._caps)))
         self._analysis_mask, self._analysis_text = None, ""
         self.analysis.lbl_result.setText("-")
+        self._cat = None
+        self.analysis.lbl_cat.setText("-")
         self._update_tag()
+        self._update_trend()
         self._update_side()
         self._refresh_edit_state()
 
@@ -1013,6 +1023,14 @@ class ProWorkspace(QWidget):
             lines.append(("AUTO SAVE", ICON_ACCENT))
         if res.metrics.blink:
             lines.append(("깜빡임", "#ffd08a"))
+        if self.analysis.chk_guide.isChecked():
+            lines.append(("백내장 모드 · 슬릿을 중앙 띠에, 45°", "#c9b3ff"))
+            cond = self._last_conditions()
+            if cond:
+                lines.append((f"지난 검사: {cond}", "#c9b3ff"))
+            gw = max(8, w // 40)
+            self.live_canvas.set_hud(lines, QRectF(w / 2 - gw / 2, h * 0.08, gw, h * 0.84))
+            return
         self.live_canvas.set_hud(lines, QRectF(x, y, rw, rh))
         if self.smart.peaking():
             self._peak_tick += 1
@@ -1187,6 +1205,128 @@ class ProWorkspace(QWidget):
         note = f"{cap.note} | {entry}" if cap.note else entry
         self.set_comment(note)
         self.analysis.lbl_result.setText(self._analysis_text + "\n코멘트에 기록했습니다.")
+
+    # ---- 백내장: 수정체 혼탁 지수 ----
+    def _last_conditions(self) -> str:
+        if self._patient is None:
+            return ""
+        eye = self.current_eye()
+        for kind in ("nuclear", "cortical"):
+            m = self.db.measurements.latest(self._patient.id, kind, eye if eye != "NA" else None)
+            if m and m.conditions:
+                return m.conditions
+        return ""
+
+    def measure_nuclear(self) -> dict | None:
+        img = self.single_canvas.image()
+        if self._mode != "single" or img is None:
+            return None
+        r = cataract.nuclear_opacity(img, self._measure_roi())
+        self._cat = ("nuclear", r)
+        if r["lens_band"] is None:
+            self.analysis.lbl_cat.setText("슬릿 띠를 찾지 못했습니다 — 슬릿 단면(광학 절단면) 사진인지, "
+                                          "'원'으로 측정 영역을 좁혀 보세요.")
+            return r
+        ref = "각막 기준" if r["has_cornea"] else "각막 띠 없음 · 절대 밝기 참고값"
+        self._analysis_text = f"핵 혼탁 지수 {r['index']:.0f} (수정체/각막 밝기비 {r['ratio']:.2f}, {ref})"
+        self._show_result(r["mask"], (201, 179, 255))
+        self.analysis.lbl_cat.setText(self._analysis_text + self._trend_delta("nuclear", r["index"]))
+        return r
+
+    def measure_cortical(self) -> dict | None:
+        img = self.single_canvas.image()
+        if self._mode != "single" or img is None:
+            return None
+        pupil = self._measure_roi()
+        if pupil is None:
+            self.analysis.lbl_cat.setText("편집 탭 '원' 도구로 동공을 먼저 표시하세요 (역조명 사진).")
+            return None
+        r = cataract.cortical_opacity(img, pupil, self.config.px_per_mm or 0.0)
+        self._cat = ("cortical", r)
+        d = (f"동공 {r['pupil_diameter_mm']:.1f} mm" if r["pupil_diameter_mm"] is not None
+             else f"동공 {r['pupil_diameter_px']:.0f} px")
+        warn = " · 산동 부족 → 참고용" if r["small_pupil"] else ""
+        self._analysis_text = f"피질 혼탁 지수 {r['index']:.0f} (어두운 얼룩 {r['area_pct']:.1f}%, {d}{warn})"
+        self._show_result(r["mask"], (255, 59, 48))
+        self.analysis.lbl_cat.setText(self._analysis_text + self._trend_delta("cortical", r["index"]))
+        return r
+
+    def _trend_delta(self, kind: str, value: float) -> str:
+        if self._patient is None:
+            return ""
+        cap = self._caps[self._idx] if 0 <= self._idx < len(self._caps) else None
+        eye = (cap.eye if cap and cap.eye and cap.eye != "NA" else None)
+        prev = [m for m in self.db.measurements.list_by_patient(self._patient.id, kind, eye)
+                if not (cap and m.capture_id == cap.id)]
+        if not prev:
+            return ""
+        d = value - prev[-1].value
+        return f"\n지난 검사({prev[-1].measured_at[:10]}) 대비 {d:+.0f}"
+
+    def record_cataract(self):
+        if self._cat is None or not (self._mode == "single" and 0 <= self._idx < len(self._caps)):
+            QMessageBox.information(self, "측정 기록", "먼저 '핵 혼탁' 또는 '피질 혼탁'을 측정하세요.")
+            return None
+        kind, r = self._cat
+        cap = self._caps[self._idx]
+        detail = {k: (round(v, 4) if isinstance(v, float) else v) for k, v in r.items()
+                  if k != "mask" and v is not None and not isinstance(v, (tuple, list))}
+        m = Measurement(patient_id=self._patient.id, capture_id=cap.id, eye=cap.eye or "NA", kind=kind,
+                        value=float(r["index"]), detail=detail, locs=self.analysis.locs_values(),
+                        conditions=self.analysis.e_cond.text().strip())
+        self.db.measurements.insert(m)
+        parts = [self._analysis_text]
+        if m.conditions:
+            parts.append(f"조건: {m.conditions}")
+        if m.locs:
+            parts.append("LOCS " + " ".join(f"{k}{v}" for k, v in m.locs.items()))
+        entry = " · ".join(parts)
+        tag = analysis.ILLUMINATION_LABELS.get(self._tag)
+        entry = f"[{tag}] {entry}" if tag else entry
+        self.set_comment(f"{cap.note} | {entry}" if cap.note else entry)
+        self._update_trend()
+        self.analysis.lbl_cat.setText(self._analysis_text + "\n측정 기록에 저장했습니다.")
+        return m
+
+    def _update_trend(self) -> None:
+        """환자·안구별 혼탁 지수 경과 그래프 (핵 = 보라, 피질 = 빨강)."""
+        lbl = self.analysis.trend
+        W, H = lbl.width(), lbl.height()
+        pm = QPixmap(W, H)
+        pm.fill(QColor("#0b1220"))
+        text = ""
+        if self._patient is not None:
+            cap = self._caps[self._idx] if 0 <= self._idx < len(self._caps) else None
+            eye = cap.eye if cap and cap.eye and cap.eye != "NA" else None
+            series = {k: self.db.measurements.list_by_patient(self._patient.id, k, eye)
+                      for k in ("nuclear", "cortical")}
+            n = sum(len(v) for v in series.values())
+            if n:
+                p = QPainter(pm)
+                p.setRenderHint(QPainter.RenderHint.Antialiasing)
+                p.setPen(QPen(QColor("#334155"), 1))
+                for frac in (0.25, 0.5, 0.75):
+                    p.drawLine(QPointF(0, H * frac), QPointF(W, H * frac))
+                for kind, col in (("nuclear", "#c9b3ff"), ("cortical", "#f87171")):
+                    ms = series[kind]
+                    if not ms:
+                        continue
+                    k = max(1, len(ms) - 1)
+                    pts = [QPointF(8 + i * (W - 16) / k, H - 6 - (H - 12) * min(100.0, m.value) / 100)
+                           for i, m in enumerate(ms)]
+                    p.setPen(QPen(QColor(col), 2))
+                    if len(pts) > 1:
+                        p.drawPolyline(pts)
+                    p.setBrush(QColor(col))
+                    for pt in pts:
+                        p.drawEllipse(pt, 3, 3)
+                p.end()
+                last = {k: v[-1] for k, v in series.items() if v}
+                text = "  ·  ".join(f"{'핵' if k == 'nuclear' else '피질'} {m.value:.0f} ({m.measured_at[:10]})"
+                                   for k, m in last.items())
+                text += f"  ·  기록 {n}건" + (f" · {eye}" if eye else "")
+        lbl.setPixmap(pm)
+        self.analysis.lbl_trend.setText(text or "측정 기록이 없습니다 (같은 안구 · 같은 촬영 조건끼리 비교)")
 
     # ---- 경과 비교 ----
     def set_ghost(self, percent: int) -> None:
