@@ -5,16 +5,7 @@ name: Build macOS app
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - "app/**"
-      - "assets/**"
-      - "build_mac.spec"
-      - "build_mac.sh"
-      - "tools/rthooks/**"
-      - "requirements.txt"
-      - "tests/**"
-      - ".github/workflows/build-mac.yml"
+  workflow_call:
 
 jobs:
   build:

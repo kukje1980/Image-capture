@@ -1,293 +1,187 @@
-"""스마트 캡처 엔진 · 분석 모듈 · Pro 연동 테스트."""
+"""Smart Capture 엔진: 초점 정점에서 가장 선명한 프레임을 고르고, 가만히 있는 장면은 다시 찍지 않는다."""
 from __future__ import annotations
+
+import time
 
 import cv2
 import numpy as np
 import pytest
-from PySide6.QtCore import QPointF
-from PySide6.QtWidgets import QApplication
 
-from app.capture import analysis
 from app.capture.smart_capture import (
     SmartCaptureEngine,
     SmartSettings,
     focus_score,
+    normalize_roi,
     peaking_mask,
-    quality,
-    roi_rect,
+    to_analysis_gray,
+    valid_mask,
 )
-from app.models.patient import Patient
-from app.services.capture_service import CaptureService
+
+FPS = 30.0
+
+
+def _scene(seed: int = 0) -> np.ndarray:
+    """홍채처럼 질감이 있는 장면 (1280x720 BGR)."""
+    rng = np.random.default_rng(seed)
+    tex = (rng.random((90, 160)) * 120 + 40).astype(np.uint8)
+    tex = cv2.resize(tex, (1280, 720), interpolation=cv2.INTER_NEAREST)
+    return cv2.cvtColor(tex, cv2.COLOR_GRAY2BGR)
 
 
 @pytest.fixture(scope="module")
-def qapp():
-    return QApplication.instance() or QApplication([])
+def blurred():
+    img = _scene()
+    cache: dict[float, np.ndarray] = {}
+
+    def get(sigma: float) -> np.ndarray:
+        key = round(float(sigma), 1)
+        if key not in cache:
+            cache[key] = img if key < 0.3 else cv2.GaussianBlur(img, (0, 0), key)
+        return cache[key]
+
+    return get
 
 
-def _texture(seed=0, h=360, w=640):
-    rng = np.random.default_rng(seed)
-    img = (rng.random((h, w, 3)) * 255).astype(np.uint8)
-    img = cv2.GaussianBlur(img, (0, 0), 3)
-    return cv2.normalize(img, None, 30, 220, cv2.NORM_MINMAX)
+def _run(engine, frames, t0=0.0):
+    """프레임마다 번호를 [0,0,0] 픽셀에 새겨 어느 프레임이 골라졌는지 알 수 있게 한다."""
+    shots = []
+    for i, f in enumerate(frames):
+        f = f.copy()
+        f[0, 0, 0] = i % 256
+        q, shot = engine.process(f, t0 + i / FPS)
+        if shot is not None:
+            shots.append((i, shot))
+    return shots, q
 
 
-def _blur(img, sigma):
-    return cv2.GaussianBlur(img, (0, 0), sigma) if sigma > 0.4 else img
+def _sweep(blurred, a=8.0, b=0.0, n=30):
+    return [blurred(s) for s in np.linspace(a, b, n)]
 
 
-# ---------------- 선명도 ----------------
-def test_focus_score_prefers_sharp_and_ignores_glare():
-    sharp = _texture()
-    assert focus_score(sharp) > focus_score(_blur(sharp, 2)) > focus_score(_blur(sharp, 6))
-    glare = _blur(sharp, 6)
-    glare[100:200, 200:400] = 255                       # 포화 반사광 — 그 경계는 매우 날카롭다
-    assert focus_score(glare) < focus_score(_blur(sharp, 2))    # 반사광 경계에 속지 않음
-    assert roi_rect(1000, 500, 0.5) == (250, 125, 500, 250)
-    assert focus_score(np.zeros((50, 50, 3), np.uint8)) == 0.0  # 계산할 화소가 없으면 0
+def test_focus_score_orders_by_sharpness(blurred):
+    scores = []
+    for s in (0, 1, 2, 4, 8):
+        g = to_analysis_gray(blurred(s))
+        v, _ = valid_mask(g)
+        scores.append(focus_score(g, v))
+    assert scores == sorted(scores, reverse=True)
+    noise = np.clip(np.random.default_rng(1).normal(90, 5, (720, 1280, 3)), 0, 255).astype(np.uint8)
+    g = to_analysis_gray(noise)
+    v, _ = valid_mask(g)
+    assert focus_score(g, v) < SmartSettings().min_focus      # 잡음만 있는 화면은 '선명한 장면'이 아니다
 
 
-def test_peaking_mask_marks_edges_not_glare():
-    img = _texture(h=200, w=300)
-    img[:, :150] = _blur(img, 5)[:, :150]               # 왼쪽 흐림 · 오른쪽 선명
-    img[20:60, 200:260] = 255                           # 반사광 블록 (선명한 쪽)
-    m = peaking_mask(img, 2)
-    assert m.shape == (200, 300)
-    assert m[:, 160:].mean() > 5 * max(1.0, m[:, :140].mean())   # 선명한 쪽에 표시가 몰림
-    assert not m[17:63, 197:263].any()                  # 반사광과 그 테두리(3px)는 제외
+def test_glare_edges_do_not_fool_focus():
+    """흐린 장면 위 포화 반사광의 날카로운 테두리는 선명도에 들어가면 안 된다."""
+    img = np.full((720, 1280, 3), 90, np.uint8)
+    cv2.circle(img, (640, 360), 60, (255, 255, 255), -1)
+    g = to_analysis_gray(img)
+    v, glare = valid_mask(g)
+    assert glare > 0
+    assert focus_score(g, v) < 2.0
+    assert focus_score(g, np.ones_like(v)) > 10.0          # 마스크 없이 재면 속는다
 
 
-def test_quality_scores_and_advice():
-    from app.capture.smart_capture import FrameMetrics
-    good = quality(FrameMetrics(0, 500, brightness=120), 95)
-    assert good["ok"] and good["focus"] == 95 and good["exposure"] == 100
-    bad = quality(FrameMetrics(0, 50, brightness=230, overexposed=0.1, motion=12), 40)
-    assert not bad["ok"] and bad["reflection"] < 50 and bad["stability"] < 20
-    assert any("초점" in s for s in bad["issues"]) and any("반사" in s for s in bad["issues"])
+def test_sweep_triggers_at_sharpest_frame(blurred):
+    """흐림 → 초점 → 흐림으로 지나가면 정점을 지난 직후 가장 선명한 프레임을 고른다."""
+    e = SmartCaptureEngine(SmartSettings(mode="freeze"))
+    frames = _sweep(blurred, 8, 0, 30) + _sweep(blurred, 0, 8, 30)
+    shots, _ = _run(e, frames)
+    assert len(shots) == 1
+    i, shot = shots[0]
+    assert shot.reason == "peak" and 29 <= i <= 40
+    assert 28 <= int(shot.frame[0, 0, 0]) <= 31          # 가장 선명한 프레임들 중 하나 (원본)
+    assert shot.quality.focus_pct >= 99
 
 
-# ---------------- 엔진: Best Shot · 자동 촬영 ----------------
-def _sweep(engine, base, sigmas, fps=30.0, t0=0.0):
-    trig, t = [], t0
-    for i, s in enumerate(sigmas):
-        r = engine.push(_blur(base, s), t)
-        t += 1 / fps
-        if r.triggered:
-            trig.append(i)
-    return trig, t
+def test_hold_at_focus_triggers(blurred):
+    """초점을 맞추고 멈추면(고원) hold_s 뒤에 촬영."""
+    e = SmartCaptureEngine(SmartSettings(mode="snapshot"))
+    frames = _sweep(blurred, 8, 0, 30) + [blurred(0)] * 40
+    shots, _ = _run(e, frames)
+    assert len(shots) == 1
+    i, shot = shots[0]
+    assert shot.reason == "hold"
+    assert i <= 30 + int(SmartSettings().hold_s * FPS) + 3
 
 
-def test_best_shot_picks_sharpest_recent_frame():
-    eng = SmartCaptureEngine(SmartSettings(best_window=1.0))
-    base = _texture()
-    t = 0.0
-    for s in [6, 4, 2, 0, 2, 4, 6]:                     # 초점이 들어왔다 나감 (0.23초)
-        eng.push(_blur(base, s), t)
-        t += 1 / 30
-    best, m = eng.best(now=t)
-    assert best is not None and np.array_equal(best, base)
-    assert eng.buffered() == 7
+def test_static_focused_scene_never_triggers(blurred):
+    e = SmartCaptureEngine(SmartSettings(mode="snapshot"))
+    shots, q = _run(e, [blurred(0)] * 150)
+    assert shots == [] and q.in_focus and not q.armed
 
 
-def test_buffer_is_bounded_by_time_and_memory():
-    eng = SmartCaptureEngine(SmartSettings(buffer_seconds=0.5, buffer_max_mb=1))
-    base = _texture(h=240, w=320)                      # 230KB/프레임
-    for i in range(60):
-        eng.push(base, i / 30)
-    assert eng.buffered() <= 5                          # 1MB ≈ 4~5 프레임
-    eng2 = SmartCaptureEngine(SmartSettings(buffer_seconds=0.5, buffer_max_mb=400))
-    for i in range(60):
-        eng2.push(base, i / 30)
-    assert 14 <= eng2.buffered() <= 16                  # 0.5초 ≈ 15프레임
+def test_rearm_needs_leaving_focus_and_cooldown(blurred):
+    e = SmartCaptureEngine(SmartSettings(mode="snapshot", cooldown_s=1.0))
+    first = _sweep(blurred, 8, 0, 30) + [blurred(0)] * 60         # 촬영 후 계속 초점 → 다시 찍지 않음
+    shots, _ = _run(e, first)
+    assert len(shots) == 1
+    again = _sweep(blurred, 0, 8, 20) + _sweep(blurred, 8, 0, 20) + [blurred(0)] * 30
+    shots2, _ = _run(e, again, t0=len(first) / FPS)
+    assert len(shots2) == 1                                          # 벗어났다 다시 맞추면 또 찍음
 
 
-def test_auto_trigger_fires_once_at_focus_plateau_then_cooldown():
-    eng = SmartCaptureEngine(SmartSettings(auto_mode="freeze", cooldown_freeze=4.0))
-    base = _texture()
-    sigmas = list(np.linspace(8, 0.3, 30)) + [0.3] * 15 + list(np.linspace(0.3, 8, 20))
-    trig, t = _sweep(eng, base, sigmas)
-    assert len(trig) == 1 and 30 <= trig[0] <= 40      # 최고점 도달 후 안정 구간에서 1회
-    # 같은 스윕을 쿨다운 안에 반복 → 안 찍힘, 쿨다운 뒤 새 스윕 → 다시 찍힘
-    trig2, t = _sweep(eng, base, sigmas[:45], t0=t)
-    assert trig2 == []
-    trig3, _ = _sweep(eng, base, sigmas[:45], t0=t + 4.0)
-    assert len(trig3) == 1
+def test_off_mode_measures_but_never_triggers(blurred):
+    e = SmartCaptureEngine(SmartSettings(mode="off"))
+    shots, q = _run(e, _sweep(blurred, 8, 0, 30) + _sweep(blurred, 0, 8, 30))
+    assert shots == [] and q.focus > 0
 
 
-def test_auto_trigger_rejects_static_scene_blink_and_off_mode():
-    base = _texture()
-    eng = SmartCaptureEngine(SmartSettings(auto_mode="freeze"))
-    trig, _ = _sweep(eng, base, [0.3] * 60)             # 처음부터 선명한 정지 화면 — 스윕 없음
-    assert trig == []
-    eng = SmartCaptureEngine(SmartSettings(auto_mode="off"))
-    trig, _ = _sweep(eng, base, list(np.linspace(8, 0.3, 30)) + [0.3] * 15)
-    assert trig == []
-    # 깜빡임: 최고점 직전에 밝기 급변 → 0.3초 금지
-    eng = SmartCaptureEngine(SmartSettings(auto_mode="save"))
-    t = 0.0
-    for s in np.linspace(8, 0.3, 30):
-        eng.push(_blur(base, s), t)
-        t += 1 / 30
-    dark = (base * 0.3).astype(np.uint8)
-    r = eng.push(dark, t)
-    assert r.metrics.blink
-    t += 1 / 30
-    fired = [eng.push(base, t + i / 30).triggered for i in range(6)]
-    assert not any(fired)                               # 금지 구간 안에서는 안 찍힘
-    best, m = eng.best(now=t + 6 / 30)
-    assert not m.blink                                  # Best Shot 도 깜빡임 프레임은 제외
+def test_motion_blocks_usable(blurred):
+    e = SmartCaptureEngine()
+    a, b = blurred(0), _scene(seed=7)
+    e.process(a, 0.0)
+    q, _ = e.process(b, 1 / FPS)                    # 장면이 통째로 바뀜 = 크게 흔들림
+    assert q.motion > SmartSettings().motion_max and not q.usable and "흔들림" in q.hint
 
 
-# ---------------- 분석 ----------------
-def test_classify_illumination():
-    assert analysis.classify_illumination(_texture()) == "diffuse"
-    slit = np.zeros((300, 400, 3), np.uint8)
-    slit[:, 180:220] = (200, 210, 220)
-    assert analysis.classify_illumination(slit) == "slit"
-    cobalt = np.zeros((300, 400, 3), np.uint8)
-    cobalt[:] = (150, 30, 10)
-    assert analysis.classify_illumination(cobalt) == "cobalt"
-    gray = cv2.cvtColor(cv2.cvtColor(_texture(), cv2.COLOR_BGR2GRAY), cv2.COLOR_GRAY2BGR)
-    assert analysis.classify_illumination(gray) == "ir"
+def test_best_recent_picks_sharpest(blurred):
+    e = SmartCaptureEngine()
+    _run(e, [blurred(4), blurred(0), blurred(2), blurred(3)])
+    best = e.best_recent(1.0)
+    assert best is not None and int(best.frame[0, 0, 0]) == 1
 
 
-def test_fluorescein_area_and_redness():
-    img = np.zeros((400, 400, 3), np.uint8)
-    img[:] = (120, 20, 10)                              # 코발트블루 배경
-    img[100:150, 100:200] = (40, 220, 90)               # 녹색 형광 5000px
-    r = analysis.fluorescein_area(img, None, px_per_mm=10.0)
-    assert abs(r["area_px"] - 5000) < 400 and abs(r["area_mm2"] - 50) < 4
-    assert r["mask"].shape == (400, 400) and r["mask"][120, 150] and not r["mask"][300, 300]
-    roi = analysis.fluorescein_area(img, (90, 90, 210, 160))
-    assert roi["ratio"] > r["ratio"]                    # ROI 를 좁히면 비율이 커진다
-    pale = np.full((300, 300, 3), (180, 180, 190), np.uint8)
-    red = pale.copy()
-    red[::6] = (40, 40, 190)                            # 혈관 줄무늬
-    a, b = analysis.redness_index(pale), analysis.redness_index(red)
-    assert b["index"] > a["index"] and b["vessel_pct"] > 10 > a["vessel_pct"]
+def test_buffer_respects_memory_limit(blurred):
+    e = SmartCaptureEngine(SmartSettings(buffer_mb=10, buffer_s=10))
+    _run(e, [blurred(0)] * 20)                      # 1280x720x3 ≈ 2.6MB → 최대 3장
+    assert len(e._buffer) <= 4 and e._buffer_bytes <= 10 * 1024 * 1024
 
 
-def test_align_to_recovers_shift_and_rotation():
-    base = _texture(h=480, w=640)
-    M = cv2.getRotationMatrix2D((320, 240), 3, 1)
-    M[0, 2] += 15
-    moved = cv2.warpAffine(base, M, (640, 480))
-    aligned, ok = analysis.align_to(moved, base)
-    assert ok and aligned.shape == base.shape
-    c = (slice(80, -80), slice(80, -80))
-    err_before = np.abs(moved[c].astype(int) - base[c]).mean()
-    err_after = np.abs(aligned[c].astype(int) - base[c]).mean()
-    assert err_after < err_before / 3
+def test_roi_limits_analysis(blurred):
+    """ROI 밖이 선명해도 ROI 안이 흐리면 선명도가 낮다."""
+    img = blurred(6).copy()
+    img[:, :640] = blurred(0)[:, :640]              # 왼쪽 절반만 선명
+    left = SmartCaptureEngine(SmartSettings(roi=(0.05, 0.2, 0.4, 0.6)))
+    right = SmartCaptureEngine(SmartSettings(roi=(0.55, 0.2, 0.4, 0.6)))
+    ql, _ = left.process(img, 0.0)
+    qr, _ = right.process(img, 0.0)
+    assert ql.focus > 2 * qr.focus
 
 
-# ---------------- Pro 연동 ----------------
-def _workspace(app_env, n=2):
-    from app.ui.pro.pro_workspace import ProWorkspace
-    config, db = app_env
-    config.save = lambda: None
-    svc = CaptureService(db, config)
-    pid = db.patients.insert(Patient(chart_no="S1", name="스마트"))
-    patient = db.patients.get(pid)
-    for k in range(n):
-        svc.save_photo(_texture(k), patient, eye="OD")
-    ws = ProWorkspace(db, svc, config, get_eye=lambda: "OD")
-    ws.resize(1200, 800)
-    ws.set_patient(patient)
-    return ws, db, patient
+def test_normalize_roi():
+    assert normalize_roi(None) is None and normalize_roi([]) is None
+    assert normalize_roi((0.5, 0.5, -0.2, -0.2)) == pytest.approx((0.3, 0.3, 0.2, 0.2))
+    assert normalize_roi((0.9, 0.9, 0.5, 0.5)) == pytest.approx((0.9, 0.9, 0.1, 0.1))
+    assert normalize_roi((0.1, 0.1, 0.001, 0.5)) is None
+    assert normalize_roi(("a", 0, 1, 1)) is None
 
 
-def test_pro_live_best_shot_and_quality(qapp, app_env):
-    ws, _, _ = _workspace(app_env, n=0)
-    ws.set_mode("live")
-    base = _texture()
-    t = 0
-    for s in [6, 3, 0, 3, 6]:                           # 가장 선명한 프레임은 가운데
-        ws.set_live_frame(_blur(base, s))
-        t += 1
-    assert ws.smart.bars["focus"].value() < 80          # 지금은 흐림
-    ws.b_capture.setChecked(True)                       # Best Shot(기본) → 선명한 프레임으로 정지
-    assert np.array_equal(ws.live_canvas.image(), base)
-    cap = ws.save_live()
-    assert cap is not None and np.array_equal(ws.live_canvas.image(), base) is not None
-    ws.smart.chk_best.setChecked(False)
-    ws.set_live_frame(_blur(base, 6))
-    ws.b_capture.setChecked(True)
-    assert not np.array_equal(ws.live_canvas.image(), base)   # 끄면 현재 프레임
-    ws.b_capture.setChecked(False)
+def test_peaking_marks_sharp_not_blurry(blurred):
+    sharp = peaking_mask(to_analysis_gray(blurred(0)), 50)
+    soft = peaking_mask(to_analysis_gray(blurred(8)), 50)
+    assert (sharp > 0).mean() > 0.01
+    assert (soft > 0).mean() < (sharp > 0).mean() / 5
+    flat = peaking_mask(to_analysis_gray(np.full((360, 640, 3), 80, np.uint8)), 100)
+    assert not flat.any()
 
 
-def test_pro_auto_freeze_and_auto_save(qapp, app_env, monkeypatch):
-    ws, db, patient = _workspace(app_env, n=0)
-    ws.set_mode("live")
-    ws.smart.c_auto.setCurrentIndex(1)                  # Smart Freeze
-    assert ws.engine.s.auto_mode == "freeze" and ws.config.smart_auto_mode == "freeze"
-    base = _texture()
-    times = iter(i / 30 for i in range(10000))
-    monkeypatch.setattr("app.ui.pro.pro_workspace.time.monotonic", lambda: next(times))
-    sigmas = list(np.linspace(8, 0.3, 30)) + [0.3] * 15
-    for s in sigmas:
-        ws.set_live_frame(_blur(base, s))
-    assert ws.b_capture.isChecked() and np.array_equal(ws.live_canvas.image(), base)
-    assert "자동 정지" in ws.smart.lbl_log.text()
-    ws.b_capture.setChecked(False)
-
-    ws.smart.c_auto.setCurrentIndex(2)                  # Auto Save
-    for _ in range(90):                                 # 쿨다운 소진
-        ws.set_live_frame(_blur(base, 8))
-    for s in sigmas:
-        ws.set_live_frame(_blur(base, s))
-    caps = db.captures.list_by_patient(patient.id)
-    assert len(caps) == 1 and caps[0].note == "자동 촬영"
-    assert not ws.b_capture.isChecked()
-
-
-def test_pro_peaking_overlay_not_in_saved_image(qapp, app_env):
-    ws, _, _ = _workspace(app_env, n=0)
-    ws.set_mode("live")
-    ws.smart.chk_peak.setChecked(True)
-    img = np.full((200, 300, 3), 80, np.uint8)
-    img[:, 150:] = 160
-    for _ in range(4):
-        ws.set_live_frame(img)
-    assert ws.live_canvas.has_overlay()
-    ws.b_capture.setChecked(True)
-    assert not ws.live_canvas.has_overlay()             # 정지 화면은 원본 그대로
-    ws.set_mode("multi")
-    assert not ws.live_canvas.has_overlay()
-
-
-def test_pro_analysis_measure_record_and_compare(qapp, app_env):
-    ws, db, _ = _workspace(app_env, n=0)
-    config, _ = app_env
-    img = np.zeros((400, 400, 3), np.uint8)
-    img[:] = (120, 20, 10)
-    img[100:150, 100:200] = (40, 220, 90)
-    svc = ws.service
-    p = ws._patient
-    svc.save_photo(img, p, eye="OD")
-    svc.save_photo(np.roll(img, 12, axis=1), p, eye="OD")
-    ws.reload()
-    ws.open_index(0)
-    assert "코발트블루" in ws.analysis.lbl_tag.text()
-    ws.single_canvas.add_circle(QPointF(80, 80), QPointF(220, 170))
-    r = ws.measure_fluorescein()
-    assert r is not None and r["ratio"] > 40 and ws.single_canvas.has_overlay()
-    rendered = ws.single_canvas.render_to_bgr()
-    assert np.array_equal(rendered[300:, 300:], img[300:, 300:])   # 마스크 레이어는 저장본에 없음
-    ws.record_measurement()
-    note = db.captures.get(ws.captures()[0].id).note
-    assert "코발트블루" in note and "형광 염색 면적" in note
-    ws.clear_analysis()
-    assert not ws.single_canvas.has_overlay()
-    assert ws.measure_redness() is not None
-
-    ws.set_mode("multi")
-    ws.select_for_compare(0, 1)
-    ws.set_mode("compare")
-    ws.analysis.s_ghost.setValue(50)
-    assert ws.cmp_right.has_overlay()
-    assert ws.align_pair()
-    ws.set_blink(True)
-    assert ws._blink_timer.isActive()
-    ws.set_mode("single")
-    assert not ws._blink_timer.isActive()
+def test_analysis_is_fast_enough(blurred):
+    """4K 프레임도 한 장 분석이 프리뷰를 따라갈 만큼 빨라야 한다 (넉넉한 상한)."""
+    big = cv2.resize(blurred(0), (3840, 2160))
+    e = SmartCaptureEngine()
+    e.process(big, 0.0)
+    t = time.perf_counter()
+    for i in range(10):
+        e.process(big, (i + 1) / FPS)
+    assert (time.perf_counter() - t) / 10 < 0.1

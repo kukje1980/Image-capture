@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.capture.smart_capture import AUTO_MODES
+from app.capture.pro_smart_capture import AUTO_MODES
 
 PEAKING_COLORS = {"red": ("빨강", (255, 59, 48)), "green": ("초록", (52, 211, 153)), "cyan": ("시안", (34, 211, 238))}
 _QUALITY_ROWS = [("focus", "초점"), ("exposure", "노출"), ("stability", "안정"), ("reflection", "반사")]
@@ -91,7 +91,7 @@ class SmartTab(QWidget):
         form2.addRow("", self.chk_peak)
         self.c_sens = QComboBox()
         self.c_sens.addItems(["적게", "보통", "많이"])
-        self.c_sens.setCurrentIndex(min(2, max(0, int(config.smart_peaking_sensitivity) - 1)))
+        self.c_sens.setCurrentIndex(min(2, max(0, int(config.pro_smart_peaking_sensitivity) - 1)))
         form2.addRow("민감도", self.c_sens)
         self.c_color = QComboBox()
         for key, (name, _rgb) in PEAKING_COLORS.items():
@@ -154,7 +154,7 @@ class SmartTab(QWidget):
         config.smart_roi_frac = self.roi_frac()
         config.smart_best_shot = self.best_shot()
         config.smart_peaking = self.peaking()
-        config.smart_peaking_sensitivity = self.sensitivity()
+        config.pro_smart_peaking_sensitivity = self.sensitivity()
         config.smart_peaking_color = self.color_key()
 
     def show_quality(self, q: dict | None) -> None:

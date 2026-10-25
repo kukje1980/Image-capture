@@ -106,6 +106,10 @@ class ImageCanvas(QGraphicsView):
         self._ov_shape: tuple = ()
         self._hud: list = []                           # [(text, color)]
         self._hud_roi: QRectF | None = None
+        self._ana = QGraphicsPixmapItem()        # 분석 결과 오버레이 (영상 위, 주석 아래)
+        self._ana.setZValue(1)
+        self._scene.addItem(self._ana)
+        self._ana_shape = None
         self._orig: np.ndarray | None = None
         self._base: np.ndarray | None = None
         self._proc: np.ndarray | None = None
@@ -138,6 +142,7 @@ class ImageCanvas(QGraphicsView):
     # ================= 이미지 / 상태 =================
     def set_image(self, frame: np.ndarray | None, keep_view: bool = False,
                   keep_annotations: bool = False) -> None:
+        self.set_analysis_overlay(None)
         first = self._base is None
         self._orig = frame
         self._base = frame
@@ -200,6 +205,7 @@ class ImageCanvas(QGraphicsView):
         self._redo.clear()
 
     def _restore(self, snap) -> None:
+        self.set_analysis_overlay(None)
         geom_changed = snap[0] is not self._base
         self._base, adj, ann = snap
         self._adj = adj.copy()
@@ -233,6 +239,7 @@ class ImageCanvas(QGraphicsView):
         return True
 
     def restore_original(self) -> bool:
+        self.set_analysis_overlay(None)
         if self._base is None or not self.is_modified():
             return False
         self._push()
@@ -261,6 +268,7 @@ class ImageCanvas(QGraphicsView):
     # ================= 기하 편집 =================
     def rotate(self, k: int) -> None:
         """k=1 시계 방향 90°, k=-1 반시계 90°."""
+        self.set_analysis_overlay(None)
         if self._base is None:
             return
         h, w = self._base.shape[:2]
@@ -276,6 +284,7 @@ class ImageCanvas(QGraphicsView):
         self.edited.emit()
 
     def flip(self, horizontal: bool) -> None:
+        self.set_analysis_overlay(None)
         if self._base is None:
             return
         h, w = self._base.shape[:2]
@@ -288,6 +297,7 @@ class ImageCanvas(QGraphicsView):
         self.edited.emit()
 
     def crop_to(self, x0: float, y0: float, x1: float, y1: float) -> bool:
+        self.set_analysis_overlay(None)
         if self._base is None:
             return False
         h, w = self._base.shape[:2]
@@ -498,12 +508,33 @@ class ImageCanvas(QGraphicsView):
             return
         for a in self._ann:
             self._ov.extend(self._make_items(a))
+        for it in self._ov:
+            it.setZValue(2)
 
     def _add_ann(self, a: dict) -> None:
         self._push()
         self._ann.append(a)
         self._rebuild_overlay()
         self.edited.emit()
+
+    # ================= 분석 오버레이 =================
+    def set_analysis_overlay(self, bgra: np.ndarray | None) -> None:
+        """분석 결과(BGRA, 편집 이미지와 같은 크기)를 영상 위에 겹쳐 표시. None = 지움.
+
+        편집본 저장·인쇄(render_to_bgr)에도 함께 그려진다.
+        """
+        if bgra is None or self._base is None or bgra.shape[:2] != self._base.shape[:2]:
+            self._ana.setPixmap(QPixmap())
+            self._ana_shape = None
+            return
+        h, w = bgra.shape[:2]
+        buf = np.ascontiguousarray(bgra)
+        self._ana.setPixmap(QPixmap.fromImage(QImage(buf.data, w, h, 4 * w, QImage.Format.Format_ARGB32).copy()))
+        self._ana_shape = (h, w)
+        self.viewport().update()
+
+    def has_analysis_overlay(self) -> bool:
+        return self._ana_shape is not None
 
     def add_text(self, x: float, y: float, text: str) -> None:
         self._add_ann({"kind": "text", "x": x, "y": y, "text": text})
@@ -559,6 +590,8 @@ class ImageCanvas(QGraphicsView):
     def _show_temp(self, a: dict) -> None:
         self._remove(self._temp)
         self._temp = self._make_items(a, temp=True)
+        for it in self._temp:
+            it.setZValue(2)
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
         if self._base is None:
