@@ -66,7 +66,7 @@ class AgentBar(QFrame):
 
         self.scene = QLabel("장면 --")
         self.scene.setObjectName("SmartMeter")
-        self.scene.setMinimumWidth(130)
+        self.scene.setMinimumWidth(190)
         self.scene.setToolTip("지금 화면의 조명·부위 (확신 %)")
         row.addWidget(self.scene)
         row.addWidget(self._sep())
