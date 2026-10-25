@@ -607,3 +607,24 @@ dialog.settings-pop { margin: 64px 14px auto auto; width: min(420px, 94vw); }
   body.meibo-on #btn-pause, body.meibo-on #btn-fullscreen, body.meibo-on #btn-freeze { font-size: 0; gap: 0; padding: 0 10px; }
   body.meibo-on .eye-seg small { display: none; }
 }
+
+/* ---- 스마트 캡처 · 분석 (smart.js) ---- */
+#pro-live-ov { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.ptabs { flex-wrap: wrap; }
+.ptab { flex: 1 1 30%; }
+.sm-bars { display: grid; grid-template-columns: 34px minmax(0, 1fr) 30px; align-items: center; gap: 4px 8px; font-size: 12.5px; color: var(--ink-soft); }
+.sm-bars meter { width: 100%; height: 12px; }
+.sm-bars b { text-align: right; color: var(--ink); font-family: var(--font-mono); font-size: 11.5px; font-weight: 600; }
+.sm-advice { font-size: 12.5px; color: var(--ink-soft); line-height: 1.55; background: var(--panel-2); border: 1px solid var(--rule); border-radius: 8px; padding: 7px 10px; white-space: pre-line; }
+.sm-advice.ok { color: var(--success); }
+.sm-advice.warn { color: var(--warn); }
+.sm-log { font-size: 11.5px; color: var(--ink-muted); line-height: 1.5; white-space: pre-line; min-height: 0; }
+.sm-log:empty { display: none; }
+#an-blink[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.prange.w48 { grid-template-columns: 48px minmax(0, 1fr) 38px; }
+.cat-locs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px 6px; font-size: 12px; color: var(--ink-soft); }
+.cat-locs > span { grid-column: 1 / -1; font-weight: 600; }
+.cat-locs label { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--ink-muted); font-family: var(--font-mono); }
+.cat-locs input { width: 100%; height: 28px; padding: 0 6px; border-radius: 6px; border: 1px solid var(--rule); background: var(--bg); color: var(--ink); font: inherit; font-size: 12.5px; }
+#cat-cond { height: 32px; font-size: 12.5px; }
+#cat-trend { width: 100%; height: 84px; border-radius: 8px; background: #0b1220; border: 1px solid var(--rule); }

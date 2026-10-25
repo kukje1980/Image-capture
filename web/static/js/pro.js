@@ -9,6 +9,7 @@
  *  편집     회전·반전·자르기, 텍스트/화살표/원 주석, 길이·각도 측정(mm 눈금 보정), 돋보기,
  *           실행 취소/다시 실행(20단계), 원본 복원
  *  편집본 저장 · 코멘트 · 환자정보 · 인쇄/PDF(A4 보고서)
+ *  스마트 · 분석 탭은 smart.js (이 파일의 window.SlitPro 와 'slit:pro-*' 이벤트를 사용)
  *
  * app.js 의 window.SlitApp API 와 'slit:patient' 이벤트에 의존한다.
  */
@@ -350,6 +351,7 @@
       this.caption = ''; this.peer = null; this.onEdit = null; this.onActivate = null;
       this.zoom = 1; this.px = 0; this.py = 0; this.autofit = true; this.drag = null; this.temp = null;
       this.lens = null; this.apts = [];
+      this.aOverlay = null; this.ghost = null;           // 표시 전용 (smart.js): 분석 마스크 · 경과 비교 고스트 — 저장본에는 안 들어감
       canvas.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
       canvas.addEventListener('pointerdown', (e) => this.onDown(e));
       canvas.addEventListener('dblclick', () => { if (this.poly) this.finishPoly(); });
@@ -364,7 +366,7 @@
     get src() { return this.orig; }
     // ---- 상태 ----
     setSource(src, adj = P.adj) {
-      this.mbOverlay = null; this.mbAuto = null; this.poly = null;
+      this.mbOverlay = null; this.mbAuto = null; this.poly = null; this.aOverlay = null; this.ghost = null;
       this.orig = src ? toCanvas(src) : null; this.base = this.orig;
       this.adj = { ...IDENTITY, ...adj }; this.ann = []; this.apts = []; this.temp = null; this.drag = null; this.lens = null;
       this.undoStack = []; this.redoStack = []; this.lastKind = null; this.dn = {};
@@ -418,7 +420,7 @@
     geom(newBase, f) {
       this.record('geo');
       this.apts = []; this.poly = null; this.temp = null; this.drag = null;
-      this.mbOverlay = null; this.mbAuto = null;
+      this.mbOverlay = null; this.mbAuto = null; this.aOverlay = null;
       this.base = newBase; this.ann = mapAnn(this.ann, f);
       this.reprocess(); this.autofit = true; this.fit(); this.draw(); this.edited();
     }
@@ -584,6 +586,10 @@
       c.imageSmoothingQuality = 'high';
       c.drawImage(this.proc, 0, 0);
       if (this.mbOverlay) c.drawImage(this.mbOverlay, 0, 0, this.iw, this.ih);
+      if (this.ghost && this.ghost.alpha > 0) {
+        c.globalAlpha = this.ghost.alpha; c.drawImage(this.ghost.cv, 0, 0, this.iw, this.ih); c.globalAlpha = 1;
+      }
+      if (this.aOverlay) c.drawImage(this.aOverlay, 0, 0, this.iw, this.ih);
       this.drawAnn(c, this.annScale());
     }
     draw() {
@@ -733,6 +739,7 @@
     if (av) syncControls(av.adj);
     refreshEdit();
     updateSide();
+    document.dispatchEvent(new CustomEvent('slit:pro-mode', { detail: mode }));
   }
 
   let showSeq = 0;
@@ -751,6 +758,7 @@
       V.single.setSource(im);
       $('mb-lid').value = /하안검/.test(c.note || '') ? 'lower' : 'upper';
       mbRender();
+      document.dispatchEvent(new CustomEvent('slit:pro-image', { detail: c }));
     } catch (e) { if (tok === showSeq) App.toast(e.message, 'error'); }
     updateSide();
   }
@@ -1152,10 +1160,12 @@
     c.getContext('2d').drawImage(vid, 0, 0);
     return c;
   }
-  function toggleCapture() {
+  /** CAPTURE·SAVE 에 쓸 라이브 프레임 — 스마트 탭 Best Shot 이 켜져 있으면 최근 1초 중 가장 선명한 프레임 */
+  const liveFrame = () => (window.SlitSmart && window.SlitSmart.bestFrame()) || grabVideo();
+  function toggleCapture(src = null) {
     const view = document.querySelector('.pro-view[data-view="live"]');
     if (!P.frozen) {
-      const g = grabVideo();
+      const g = src || liveFrame();
       if (!g) { App.toast('라이브 영상이 없습니다.', 'error'); return; }
       const fz = $('pro-freeze');
       fz.width = g.width; fz.height = g.height; fz.getContext('2d').drawImage(g, 0, 0);
@@ -1170,7 +1180,7 @@
   async function saveLive() {
     const p = App.currentPatient();
     if (!p) { App.toast('환자를 먼저 선택하세요.', 'error'); return; }
-    const src = P.frozen ? $('pro-freeze') : grabVideo();
+    const src = P.frozen ? $('pro-freeze') : liveFrame();
     if (!src) { App.toast('저장할 영상이 없습니다.', 'error'); return; }
     App.sfx('shutter');
     const blob = await new Promise((r) => src.toBlob(r, 'image/png'));
@@ -1310,7 +1320,7 @@
   $('btn-mode-capture').addEventListener('click', () => { if (P.on) setPro(false); });
   document.querySelectorAll('#pro-modes .pbtn').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
   document.querySelectorAll('.pro-side [data-tool]').forEach((b) => b.addEventListener('click', () => setTool(b.dataset.tool)));
-  $('pro-capture').addEventListener('click', toggleCapture);
+  $('pro-capture').addEventListener('click', () => toggleCapture());
   $('pro-save').addEventListener('click', saveLive);
   $('pro-prev').addEventListener('click', () => step(-1));
   $('pro-next').addEventListener('click', () => step(1));
@@ -1373,5 +1383,6 @@
   // 자동화 테스트·디버깅용 핸들
   window.SlitPro = { state: P, viewers: V, setPro, setMode, setPer, openIndex, step, toggleSel, setAdj,
     setTool, saveEdited, setComment, buildReport, reload, active, autoContrast, rotate, flip, undo, redo,
-    original: restoreOriginal, setPxPerMm, clearAnn, setTab, mbRunAuto, mbResult: () => mbResult(V.single), mbSave, mbClear };
+    original: restoreOriginal, setPxPerMm, clearAnn, setTab, mbRunAuto, mbResult: () => mbResult(V.single), mbSave, mbClear,
+    toggleCapture, saveLive, grabVideo, loadImage, caption, prepareCompare };
 })();

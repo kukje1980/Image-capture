@@ -25,13 +25,19 @@
   function db() {
     if (dbp) return dbp;
     dbp = new Promise((resolve, reject) => {
-      const rq = indexedDB.open(DB_NAME, 1);
-      rq.onupgradeneeded = () => {
+      const rq = indexedDB.open(DB_NAME, 2);
+      rq.onupgradeneeded = (ev) => {
         const d = rq.result;
-        d.createObjectStore('patients', { keyPath: 'id', autoIncrement: true });
-        const c = d.createObjectStore('captures', { keyPath: 'id', autoIncrement: true });
-        c.createIndex('patient_id', 'patient_id');
-        d.createObjectStore('files');                       // key = capture id → Blob
+        if (ev.oldVersion < 1) {
+          d.createObjectStore('patients', { keyPath: 'id', autoIncrement: true });
+          const c = d.createObjectStore('captures', { keyPath: 'id', autoIncrement: true });
+          c.createIndex('patient_id', 'patient_id');
+          d.createObjectStore('files');                     // key = capture id → Blob
+        }
+        if (ev.oldVersion < 2) {                            // v2: 측정 기록 (혼탁 지수 · LOCS 입력 · 촬영 조건)
+          const m = d.createObjectStore('measurements', { keyPath: 'id', autoIncrement: true });
+          m.createIndex('patient_id', 'patient_id');
+        }
       };
       rq.onsuccess = () => resolve(rq.result);
       rq.onerror = () => reject(rq.error || new Error('브라우저 저장소를 열 수 없습니다.'));
@@ -110,9 +116,10 @@
         return rec;
       }
       if (method === 'DELETE') {
-        await tx(['patients', 'captures', 'files'], 'readwrite', async (p, c, f) => {
+        await tx(['patients', 'captures', 'files', 'measurements'], 'readwrite', async (p, c, f, m) => {
           const caps = await done(c.index('patient_id').getAll(id));
           for (const cap of caps) { c.delete(cap.id); f.delete(cap.id); dropUrl(cap.id); }
+          for (const k of await done(m.index('patient_id').getAllKeys(id))) m.delete(k);
           p.delete(id);
         });
         return null;
@@ -160,6 +167,38 @@
       if (method === 'DELETE') {
         await tx(['captures', 'files'], 'readwrite', (c, f) => { c.delete(id); f.delete(id); });
         dropUrl(id);
+        return null;
+      }
+    }
+    if (seg[0] === 'measurements') {                       // 서버 routers/measurements.py 와 같은 규칙
+      if (seg.length === 1 && method === 'GET') {
+        const pid = Number(u.searchParams.get('patient_id'));
+        const kind = u.searchParams.get('kind'), eye = u.searchParams.get('eye');
+        const all = await tx('measurements', 'readonly', (s) => done(s.index('patient_id').getAll(pid)));
+        return all.filter((m) => (!kind || m.kind === kind) && (!eye || m.eye === eye))
+          .sort((a, b) => (a.measured_at === b.measured_at ? a.id - b.id : a.measured_at < b.measured_at ? -1 : 1));
+      }
+      if (seg.length === 1 && method === 'POST') {
+        const b = json();
+        const p = await tx('patients', 'readonly', (s) => done(s.get(Number(b.patient_id))));
+        if (!p) fail('환자를 찾을 수 없습니다.');
+        if (!['nuclear', 'cortical', 'fluorescein', 'redness'].includes(b.kind)) fail('알 수 없는 측정 종류입니다: ' + b.kind);
+        const locs = {};
+        for (const [k, v] of Object.entries(b.locs || {})) {
+          const f = Number(v);
+          if (['NO', 'NC', 'C', 'P'].includes(k) && f >= 0.1 && f <= 6.9) locs[k] = f;
+        }
+        const rec = {
+          patient_id: p.id, capture_id: b.capture_id ?? null,
+          eye: ['OD', 'OS', 'OU', 'NA'].includes(b.eye) ? b.eye : 'NA', kind: b.kind,
+          value: Math.max(0, Math.min(100, Number(b.value) || 0)), detail: b.detail || {}, locs,
+          conditions: String(b.conditions || '').slice(0, 300), measured_at: now(),
+        };
+        const id = await tx('measurements', 'readwrite', (s) => done(s.add(rec)));
+        return { ...rec, id };
+      }
+      if (seg.length === 2 && method === 'DELETE') {
+        await tx('measurements', 'readwrite', (s) => done(s.delete(Number(seg[1]))));
         return null;
       }
     }

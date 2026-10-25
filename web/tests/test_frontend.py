@@ -19,7 +19,7 @@ def test_pro_js_ids_exist_in_template():
 def test_edit_tabs_and_tools_present():
     tabs = re.findall(r'class="ptab[^"]*"[^>]*data-tab="(\w+)"', HTML)
     panes = re.findall(r'class="ppane[^"]*"\s+data-pane="(\w+)"', HTML)
-    assert tabs == ["adj", "flt", "edit", "meibo"] and panes == tabs
+    assert tabs == ["adj", "flt", "edit", "meibo", "smart", "anal"] and panes == tabs
     tools = re.findall(r'data-tool="(\w+)"', HTML)
     assert set(tools) == {"pan", "magnify", "crop", "text", "arrow", "circle", "length", "angle", "calibrate", "tarsus", "dropout"}
     for t in tools:                                 # 모든 도구에 사용 가능 모드 정의
@@ -72,3 +72,25 @@ def test_sounds_wired():
     assert "sfx('freeze')" in body("function togglePause", "// ---- 효과음")
     assert "sfx('freeze')" in body("function freezeFrame", "function setQuadActive")
     assert "App.sfx('freeze')" in PRO_JS and "App.sfx('shutter')" in PRO_JS
+
+
+def test_smart_and_analysis_tabs_wired():
+    """스마트 캡처 · 분석 탭 (smart.js + smartcv.js): 참조하는 요소가 모두 있고, 스크립트 순서가 맞아야 한다."""
+    SMART_JS = (WEB / "static/js/smart.js").read_text(encoding="utf-8")
+    used = set(re.findall(r"\$\('([a-z0-9-]+)'\)", SMART_JS))
+    used |= {f"sm-q-{k}" for k in ("focus", "exposure", "stability", "reflection")}
+    used |= {f"sm-v-{k}" for k in ("focus", "exposure", "stability", "reflection")}
+    used |= {f"cat-locs-{k}" for k in ("NO", "NC", "C", "P")}
+    assert len(used) > 30
+    missing = sorted(used - HTML_IDS)
+    assert not missing, f"템플릿에 없는 id: {missing}"
+    order = [HTML.index(f"/static/js/{n}.js") for n in ("app", "pro", "smartcv", "smart")]
+    assert order == sorted(order)                                   # pro.js → smartcv.js → smart.js
+    # pro.js 연결점: Best Shot 으로 CAPTURE/SAVE, 표시 전용 레이어는 저장본(renderFull)에 넣지 않음
+    assert "window.SlitSmart && window.SlitSmart.bestFrame()" in PRO_JS
+    rf = PRO_JS[PRO_JS.index("renderFull() {"):PRO_JS.index("const cursorFor")]
+    assert "aOverlay" not in rf and "ghost" not in rf
+    assert "'slit:pro-mode'" in PRO_JS and "'slit:pro-image'" in PRO_JS
+    # 진단 표현을 쓰지 않는다 (측정·기록 보조)
+    for word in ("백내장 3등급", "정상입니다", "비정상", "진단 결과"):
+        assert word not in SMART_JS and word not in HTML

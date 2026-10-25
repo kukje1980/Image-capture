@@ -251,6 +251,7 @@
         <div class="pro-view" data-view="live">
           <video id="pro-video" autoplay muted playsinline></video>
           <canvas id="pro-freeze"></canvas>
+          <canvas id="pro-live-ov" aria-hidden="true"></canvas>
           <div class="pro-empty" id="pro-live-empty">
             <div class="ph-ring"><svg class="ic"><use href="#i-aperture"/></svg></div>
             <p>카메라가 꺼져 있습니다.</p>
@@ -275,6 +276,8 @@
           <button class="ptab" role="tab" data-tab="flt" aria-selected="false"><svg class="ic"><use href="#i-wand"/></svg>필터</button>
           <button class="ptab" role="tab" data-tab="edit" aria-selected="false"><svg class="ic"><use href="#i-edit"/></svg>편집</button>
           <button class="ptab" role="tab" data-tab="meibo" aria-selected="false"><svg class="ic"><use href="#i-meibo"/></svg>마이봄</button>
+          <button class="ptab" role="tab" data-tab="smart" aria-selected="false"><svg class="ic"><use href="#i-aperture"/></svg>스마트</button>
+          <button class="ptab" role="tab" data-tab="anal" aria-selected="false"><svg class="ic"><use href="#i-ruler"/></svg>분석</button>
         </div>
 
         <div class="ppane on" data-pane="adj" role="tabpanel">
@@ -375,6 +378,76 @@
 · Arita: 0 없음 · 1 &lt;1/3 · 2 1/3–2/3 · 3 &gt;2/3 (상+하 합산 0–6)
 · Pult: 0% · &lt;25% · 25–50% · 51–75% · &gt;75%
 · 자동 분석은 영상 품질에 따라 달라지는 추정값입니다. 진단은 의사가 영상을 보고 판단하세요.</p>
+        </div>
+
+        <div class="ppane" data-pane="smart" role="tabpanel">
+          <h4 class="psub">자동 촬영</h4>
+          <label class="prange wide">모드
+            <select class="select" id="sm-auto" title="초점이 흐렸다가 최고점 근처에서 안정되면 자동으로 정지(또는 저장). 깜빡임·반사광 과다·흔들림 중에는 찍지 않음">
+              <option value="off">끄기</option><option value="freeze">Smart Freeze (자동 정지)</option><option value="save">Auto Save (자동 저장)</option>
+            </select>
+          </label>
+          <label class="prange">영역 <input type="range" id="sm-roi" min="20" max="100" value="50" title="초점을 판정할 화면 중앙 영역 (점선)"><output id="o-sm-roi">50%</output></label>
+          <label class="pcheck" title="누르는 순간의 흔들림·셔터 지연을 피합니다 (풋스위치·Space 에도 적용)"><input type="checkbox" id="sm-best" checked> Best Shot (최근 1초 중 가장 선명)</label>
+          <button class="pbtn" id="sm-best-now" title="최근 1초 중 가장 선명한 프레임으로 정지"><svg class="ic"><use href="#i-freeze"/></svg>지금 Best Shot 정지</button>
+          <h4 class="psub">포커스 피킹</h4>
+          <label class="pcheck"><input type="checkbox" id="sm-peak"> 초점이 맞은 경계를 색으로 표시</label>
+          <div class="pside-row">
+            <select class="select" id="sm-sens" title="민감도"><option value="1">적게</option><option value="2" selected>보통</option><option value="3">많이</option></select>
+            <select class="select" id="sm-color" title="색상"><option value="red">빨강</option><option value="green">초록</option><option value="cyan">시안</option></select>
+          </div>
+          <h4 class="psub">실시간 화질 점검</h4>
+          <div class="sm-bars" id="sm-bars">
+            <span>초점</span><meter id="sm-q-focus" min="0" max="100" low="40" high="70" optimum="100" value="0"></meter><b id="sm-v-focus">-</b>
+            <span>노출</span><meter id="sm-q-exposure" min="0" max="100" low="40" high="70" optimum="100" value="0"></meter><b id="sm-v-exposure">-</b>
+            <span>안정</span><meter id="sm-q-stability" min="0" max="100" low="40" high="70" optimum="100" value="0"></meter><b id="sm-v-stability">-</b>
+            <span>반사</span><meter id="sm-q-reflection" min="0" max="100" low="40" high="70" optimum="100" value="0"></meter><b id="sm-v-reflection">-</b>
+          </div>
+          <div class="sm-advice" id="sm-advice">LIVE 화면에서 영상이 들어오면 점검을 시작합니다.</div>
+          <div class="sm-log" id="sm-log"></div>
+          <p class="pside-tip">· 점수는 같은 조명·배율 안에서 비교하는 상대값이며 진단 정보가 아닙니다
+· 계산은 이 브라우저 안에서만 하며 영상을 서버로 보내지 않습니다</p>
+        </div>
+
+        <div class="ppane" data-pane="anal" role="tabpanel">
+          <h4 class="psub">조명 모드 태그</h4>
+          <div class="sm-advice" id="an-tag">1화면에서 영상을 열면 자동으로 추정합니다.</div>
+          <h4 class="psub">측정 (1화면 · 편집 탭 '원' = 측정 영역)</h4>
+          <div class="pside-grid">
+            <button class="pbtn" id="an-fluo" title="코발트블루 + 플루오레세인 영상에서 녹색 형광 화소의 면적·비율 (눈금 보정 시 mm²)">형광 염색 면적</button>
+            <button class="pbtn" id="an-red" title="측정 영역의 붉은 기·혈관 화소 비율 — 같은 조건의 경과 영상끼리 비교하는 상대값">충혈 지수</button>
+            <button class="pbtn" id="an-note" title="마지막 측정 결과를 이 영상의 코멘트에 추가">코멘트에 기록</button>
+            <button class="pbtn" id="an-clear" title="측정 표시 지우기">표시 지우기</button>
+          </div>
+          <div class="sm-advice" id="an-result">-</div>
+          <h4 class="psub">경과 비교 (비교 화면)</h4>
+          <label class="prange w48">고스트 <input type="range" id="an-ghost" min="0" max="100" value="0" title="왼쪽(이전) 영상을 오른쪽(현재) 영상 위에 반투명으로 겹침 (0 = 끄기)"><output id="o-an-ghost">끄기</output></label>
+          <div class="pside-grid">
+            <button class="pbtn" id="an-align" title="이전 영상을 현재 영상에 맞춰 이동·회전 (촬영 위치 차이 보정)">위치 정렬</button>
+            <button class="pbtn" id="an-blink" title="두 영상을 0.5초마다 번갈아 표시 — 변화한 부위가 눈에 띕니다" aria-pressed="false">깜빡임 전환</button>
+          </div>
+          <div class="sm-log" id="an-cmp"></div>
+          <h4 class="psub">백내장 — 수정체 혼탁 지수</h4>
+          <div class="pside-grid">
+            <button class="pbtn" id="cat-nuclear" title="슬릿 단면 사진: 수정체 띠 밝기 ÷ 각막 띠 밝기 → 0~100 (각막을 기준자로 정규화)">핵 · 슬릿</button>
+            <button class="pbtn" id="cat-cortical" title="역조명 사진: 편집 탭 '원'으로 동공을 표시한 뒤 — 동공 안 어두운 얼룩 면적 %">피질 · 역조명</button>
+          </div>
+          <div class="sm-advice" id="cat-result">-</div>
+          <input class="input" id="cat-cond" maxlength="300" placeholder="촬영 조건 (예: 슬릿 0.2mm · 45° · 16× · 노출 고정)" title="지수는 같은 조건에서만 비교 의미가 있습니다. 다음 검사 때 LIVE 가이드에 표시됩니다.">
+          <div class="cat-locs" title="의사 입력 LOCS III 등급 (1~6, 비우면 미입력) — 등급 추정 모델 학습용 라벨로 쌓입니다">
+            <span>LOCS III</span>
+            <label>NO <input type="number" id="cat-locs-NO" min="0.1" max="6.9" step="0.1"></label>
+            <label>NC <input type="number" id="cat-locs-NC" min="0.1" max="6.9" step="0.1"></label>
+            <label>C <input type="number" id="cat-locs-C" min="0.1" max="5.9" step="0.1"></label>
+            <label>P <input type="number" id="cat-locs-P" min="0.1" max="5.9" step="0.1"></label>
+          </div>
+          <button class="pbtn pprimary" id="cat-record" title="지수 · 촬영 조건 · LOCS 입력을 측정 기록으로 저장하고 코멘트에 추가"><svg class="ic"><use href="#i-save"/></svg>측정 기록</button>
+          <canvas id="cat-trend" width="236" height="84" aria-label="혼탁 지수 경과 그래프"></canvas>
+          <div class="sm-log" id="cat-trend-info"></div>
+          <label class="pcheck" title="라이브 화면에 슬릿 위치 가이드와 지난 검사의 촬영 조건을 표시"><input type="checkbox" id="cat-guide"> LIVE 촬영 가이드 (백내장 모드)</label>
+          <p class="pside-tip">· 측정값은 기록 보조용이며 질환 판정(진단)을 하지 않습니다
+· 혼탁 지수는 LOCS 등급이 아닙니다
+· 조명·배율·각도가 다른 영상의 차이는 병변 변화로 해석하지 마세요</p>
         </div>
 
         <div class="pside-note" id="pro-selinfo">MULTI에서 영상 2장을 클릭해 선택한 뒤 '비교'를 누르세요.</div>
@@ -561,5 +634,7 @@
 <script src="/static/js/sounds.js"></script>
 <script src="/static/js/app.js"></script>
 <script src="/static/js/pro.js"></script>
+<script src="/static/js/smartcv.js"></script>
+<script src="/static/js/smart.js"></script>
 </body>
 </html>
