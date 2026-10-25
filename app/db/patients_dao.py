@@ -1,19 +1,21 @@
 from __future__ import annotations
 
 import sqlite3
-import threading
 from typing import List, Optional
 
 from app.models.patient import Patient
 
 
 class PatientsDAO:
-    def __init__(self, conn: sqlite3.Connection, lock: threading.Lock):
+    """patients 테이블 접근. 쓰기는 `with self._lock, self._c:` 로 묶어
+    성공 시 commit, 예외 시 rollback 되게 한다 (차트번호 중복 실패가 다음 저장에 영향 없음)."""
+
+    def __init__(self, conn: sqlite3.Connection, lock):
         self._c = conn
         self._lock = lock
 
     def insert(self, p: Patient) -> int:
-        with self._lock:
+        with self._lock, self._c:
             cur = self._c.execute(
                 """INSERT INTO patients
                    (chart_no, patient_id, name, birth_date, sex, phone, memo, symptoms,
@@ -22,11 +24,10 @@ class PatientsDAO:
                 (p.chart_no, p.patient_id, p.name, p.birth_date, p.sex, p.phone, p.memo, p.symptoms,
                  p.diagnosis, p.doctor),
             )
-            self._c.commit()
             return cur.lastrowid
 
     def update(self, p: Patient) -> None:
-        with self._lock:
+        with self._lock, self._c:
             self._c.execute(
                 """UPDATE patients SET
                      chart_no=?, patient_id=?, name=?, birth_date=?, sex=?, phone=?,
@@ -36,12 +37,10 @@ class PatientsDAO:
                 (p.chart_no, p.patient_id, p.name, p.birth_date, p.sex, p.phone,
                  p.memo, p.symptoms, p.diagnosis, p.doctor, p.id),
             )
-            self._c.commit()
 
     def delete(self, pid: int) -> None:
-        with self._lock:
+        with self._lock, self._c:
             self._c.execute("DELETE FROM patients WHERE id=?", (pid,))
-            self._c.commit()
 
     def get(self, pid: int) -> Optional[Patient]:
         with self._lock:

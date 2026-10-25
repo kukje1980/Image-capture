@@ -6,6 +6,10 @@ cv2.VideoWriter(mp4v)로 폴백한다. 인코딩은 자체 스레드 + 바운디
 
 재생 속도가 실제 시간과 같도록, 들어오는 프레임을 실제 경과 시간 기준으로 맞춘다
 (카메라가 느리거나 프레임이 버려졌으면 직전 프레임을 반복, 빠르면 건너뜀).
+
+안전성: 인코더 스레드는 정지 요청(_stop_evt)을 직접 확인하므로 큐가 가득 차 종료 신호가
+들어가지 못해도 남은 프레임을 다 쓴 뒤 반드시 파일을 닫는다. stop() 이 돌아온 뒤에도
+is_finalizing 이 True 면 파일이 아직 닫히지 않은 것이므로, 호출자는 복사·DB 기록을 미뤄야 한다.
 """
 from __future__ import annotations
 
@@ -54,20 +58,43 @@ class VideoRecorder(QObject):
         self._start_ts = 0.0
         self._recording = False
         self._failed = False
+        self._stop_evt = threading.Event()
 
     @property
     def is_recording(self) -> bool:
         return self._recording
 
+    @property
+    def is_finalizing(self) -> bool:
+        """stop() 뒤에도 인코더 스레드가 남은 프레임을 쓰거나 파일을 닫는 중이면 True."""
+        t = self._thread
+        return t is not None and t.is_alive()
+
+    @property
+    def frame_count(self) -> int:
+        return self._count
+
+    def wait_finalized(self, timeout: float) -> bool:
+        """인코더 스레드가 파일을 닫을 때까지 기다린다. 끝났으면 True."""
+        t = self._thread
+        if t is None:
+            return True
+        t.join(timeout=timeout)
+        return not t.is_alive()
+
     def start(self, path, fps: float, size: Tuple[int, int]) -> None:
         if self._recording:
             return
+        if self.is_finalizing:                   # 직전 녹화 파일을 아직 닫는 중이면 먼저 끝낸다
+            if not self.wait_finalized(10):
+                raise RuntimeError("이전 녹화 파일을 아직 닫는 중입니다. 잠시 후 다시 시도하세요.")
         self._path = str(path)
         self._fps = float(fps) if fps and fps > 0 else 30.0
         self._size = (int(size[0]), int(size[1]))
         self._count = 0
         self._queued = 0
         self._failed = False
+        self._stop_evt.clear()
         self._open_writer()
         self._queue = queue.Queue(maxsize=_QUEUE_MAX)
         self._recording = True
@@ -119,7 +146,13 @@ class VideoRecorder(QObject):
     def _worker(self) -> None:
         try:
             while True:
-                item = self._queue.get()
+                try:
+                    item = self._queue.get(timeout=0.5)
+                except queue.Empty:
+                    # 종료 신호가 큐에 못 들어갔어도 남은 프레임을 다 썼으면 끝낸다
+                    if self._stop_evt.is_set():
+                        break
+                    continue
                 if item is _SENTINEL:
                     break
                 if self._failed:
@@ -183,14 +216,16 @@ class VideoRecorder(QObject):
             return (self._path or "", 0, 0)
         self._recording = False
         stop_ts = time.time()                    # 길이는 멈춘 순간 기준 (인코더가 남은 프레임을 쓰는 시간은 빼고)
+        self._stop_evt.set()
         try:
             self._queue.put(_SENTINEL, timeout=2)
         except Exception:  # noqa: BLE001
-            pass
+            pass                                 # 큐가 가득 참 → 워커가 _stop_evt 를 보고 끝낸다
         if self._thread is not None:
             self._thread.join(timeout=10)
             if self._thread.is_alive():
-                log.warning("인코더가 아직 쓰는 중 — 끝나면 스레드가 파일을 닫습니다")
+                log.warning("인코더가 아직 쓰는 중 — 끝나면 스레드가 파일을 닫습니다 "
+                            "(is_finalizing=True)")
         else:
             self._close_writer()
         duration_ms = int((stop_ts - self._start_ts) * 1000)

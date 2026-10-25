@@ -9,6 +9,7 @@ from collections import deque
 from PySide6.QtCore import QSize, Qt, QThread, QTimer
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
+    QApplication,
     QButtonGroup,
     QFrame,
     QHBoxLayout,
@@ -22,11 +23,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app import brand as app_brand
+from app import shortcuts
 from app.capture.camera_worker import CameraWorker
 from app.capture.frame_utils import device_names, find_sony_index
 from app.capture.sources import DeviceSource, FileSource, SyntheticSource
 from app.capture.video_recorder import VideoRecorder
 from app.services.capture_service import CaptureService
+from app.ui import icons
 from app.ui.control_bar import ControlBar
 from app.ui.image_viewer import ImageViewerDialog
 from app.ui.patient_panel import PatientPanel
@@ -34,14 +38,9 @@ from app.ui.pro.pro_workspace import ProWorkspace
 from app.ui.quad_view import QuadView
 from app.ui.settings_dialog import SettingsDialog
 from app.ui.shortcuts_dialog import ShortcutsDialog
-from app import brand as app_brand
-from app import shortcuts
-from app.ui import icons
 from app.ui.theme import ICON, ICON_ACCENT, build_qss, make_app_icon
 from app.ui.thumbnail_panel import ThumbnailPanel
 from app.ui.video_view import VideoView
-
-from PySide6.QtWidgets import QApplication
 
 log = logging.getLogger(__name__)
 
@@ -72,8 +71,20 @@ class MainWindow(QMainWindow):
         self._first_video_frame = None
         self._video_patient = None
         self._rec_started = 0.0
+        # 인코더가 파일을 닫는 동안 보류한 (path, patient, eye, ts, duration, thumb)
+        self._pending_video = None
+        self._finalize_timer = QTimer(self)
+        self._finalize_timer.setInterval(200)
+        self._finalize_timer.timeout.connect(self._poll_video_finalize)
+        self._finalize_waited = 0.0
         self.cam_thread = None
         self.worker = None
+        self._closing = False
+        # 카메라 자동 재연결 (장비가 빠졌다 다시 꽂히면 버튼을 누르지 않아도 복구)
+        self._reconnect_timer = QTimer(self)
+        self._reconnect_timer.setSingleShot(True)
+        self._reconnect_timer.timeout.connect(self._auto_reconnect)
+        self._reconnect_attempts = 0
 
         self.recorder = VideoRecorder(fallback_fourcc=config.video_fallback_fourcc)
         self.recorder.error.connect(self._on_recorder_error)
@@ -81,6 +92,10 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._pick_camera()
         self._start_camera()
+        warn = self.service.low_space_warning()
+        if warn:
+            log.warning(warn)
+            self.statusBar().showMessage(warn, 20000)
 
     # ---- UI 구성 ----
     def _build_ui(self) -> None:
@@ -434,6 +449,7 @@ class MainWindow(QMainWindow):
                 log.warning("camera selection save failed", exc_info=True)
 
     def _start_camera(self) -> None:
+        self._camera_ok = False
         self.cam_thread = QThread(self)
         self.worker = CameraWorker(self._source_factory())
         self.worker.moveToThread(self.cam_thread)
@@ -465,15 +481,42 @@ class MainWindow(QMainWindow):
         self.cam_thread = None
 
     def _restart_camera(self) -> None:
+        self._reconnect_timer.stop()
+        self._reconnect_attempts = 0
         if self._recording:                  # 카메라·해상도가 바뀌기 전에 지금 녹화를 마무리해 저장
             self._stop_recording()
         self._stop_camera()
         self.video_view.clear()
         self._start_camera()
 
+    _RECONNECT_DELAYS_MS = (2000, 3000, 5000, 8000, 12000)
+
+    def _schedule_reconnect(self) -> None:
+        """실제 장비 모드에서 카메라가 끊기면 점점 긴 간격으로 다시 연결을 시도한다
+        (무한, 최대 12초 간격)."""
+        if self._closing or self.config.source_mode != "device" or self._reconnect_timer.isActive():
+            return
+        delays = self._RECONNECT_DELAYS_MS
+        delay = delays[min(self._reconnect_attempts, len(delays) - 1)]
+        self._reconnect_attempts += 1
+        self.control_bar.set_status(
+            f"카메라 재연결 대기 중… ({delay // 1000}초 후, {self._reconnect_attempts}회)")
+        self._reconnect_timer.start(delay)
+
+    def _auto_reconnect(self) -> None:
+        if self._closing or (self.worker is not None and self._camera_ok):
+            return
+        log.info("camera auto-reconnect attempt %s", self._reconnect_attempts)
+        self._stop_camera()
+        self._start_camera()
+
     # ---- 카메라 신호 처리 ----
     def _on_camera_opened(self, w: int, h: int, fps: float) -> None:
         self._frame_size = (w, h)
+        self._camera_ok = True
+        if self._reconnect_attempts:
+            self.statusBar().showMessage("카메라가 다시 연결되었습니다", 5000)
+        self._reconnect_attempts = 0
         self.control_bar.set_status(f"카메라 {w}x{h} @ {fps:.0f}fps")
 
     def _on_frame_ready(self, frame) -> None:
@@ -491,10 +534,12 @@ class MainWindow(QMainWindow):
             self.video_view.set_frame(frame)
 
     def _on_camera_error(self, msg: str) -> None:
+        self._camera_ok = False
         self.control_bar.set_status(f"오류: {msg}")
         self.statusBar().showMessage(f"카메라 오류: {msg}", 8000)
-        if self._recording:
+        if self._recording:                  # 끊긴 시점까지 녹화된 부분은 저장한다
             self._stop_recording()
+        self._schedule_reconnect()
 
     def _estimate_fps(self) -> float:
         if len(self._frame_times) < 2:
@@ -684,16 +729,40 @@ class MainWindow(QMainWindow):
             self.control_bar.set_status("녹화 실패")
             self.control_bar.reset_record_button()
             return
+        self._pending_video = (self._video_path, self._video_patient, self._video_eye,
+                               self._video_ts, duration, self._first_video_frame)
+        if self.recorder.is_finalizing:
+            # 인코더가 아직 파일을 닫는 중: 지금 복사하면 잘린 mp4 가 export 에 남는다 → 닫힌 뒤 기록
+            self._finalize_waited = 0.0
+            self.control_bar.btn_record.setEnabled(False)
+            self.control_bar.set_status("동영상 파일을 마무리하는 중…")
+            self._finalize_timer.start()
+            return
+        self._finalize_video()
+
+    def _poll_video_finalize(self) -> None:
+        self._finalize_waited += self._finalize_timer.interval() / 1000
+        if self.recorder.is_finalizing and self._finalize_waited < 120:
+            return
+        self._finalize_timer.stop()
+        if self.recorder.is_finalizing:
+            log.error("video encoder did not finish within 120s: %s",
+                      self._pending_video and self._pending_video[0])
+        self._finalize_video()
+
+    def _finalize_video(self) -> None:
+        pending, self._pending_video = self._pending_video, None
+        self.control_bar.btn_record.setEnabled(self._current_patient is not None)
+        if pending is None:
+            return
+        path, patient, eye, ts, duration, thumb = pending
         try:
-            cap = self.service.finish_video(
-                self._video_path, self._video_patient, self._video_eye,
-                self._video_ts, duration, thumb_frame=self._first_video_frame,
-            )
+            cap = self.service.finish_video(path, patient, eye, ts, duration, thumb_frame=thumb)
             self.thumbnail_panel.add_capture(cap)
             self.control_bar.set_status(f"동영상 저장됨 ({duration // 1000}초)")
         except Exception as e:  # noqa: BLE001
             log.exception("finish_video failed")
-            QMessageBox.warning(self, "오류", f"동영상 저장 실패: {e}")
+            QMessageBox.warning(self, "오류", f"동영상 저장 실패: {e}\n파일: {path}")
         self.control_bar.reset_record_button()
 
     def _on_recorder_error(self, msg: str) -> None:
@@ -726,14 +795,21 @@ class MainWindow(QMainWindow):
 
     # ---- 종료 ----
     def closeEvent(self, event) -> None:  # noqa: N802
+        self._closing = True
+        self._reconnect_timer.stop()
         try:
             if self._recording:
                 self._stop_recording()
+            if self._pending_video is not None:          # 닫는 중인 녹화 파일은 끝까지 기다려 기록
+                self._finalize_timer.stop()
+                if not self.recorder.wait_finalized(60):
+                    log.error("video encoder still running at close: %s", self._pending_video[0])
+                self._finalize_video()
         except Exception:  # noqa: BLE001
             log.warning("stop recording on close failed", exc_info=True)
         self._stop_camera()
         try:
             self.db.close()
         except Exception:  # noqa: BLE001
-            pass
+            log.warning("db close failed", exc_info=True)
         event.accept()
