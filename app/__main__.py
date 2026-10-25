@@ -10,12 +10,13 @@ from __future__ import annotations
 import logging
 import sys
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QLockFile
+from PySide6.QtWidgets import QApplication, QMessageBox
 
-from app import brand
+from app import brand, paths
 from app.config import AppConfig
-from app.db.database import Database
-from app.logging_setup import setup_logging
+from app.db.database import Database, DatabaseError
+from app.logging_setup import install_excepthook, setup_logging
 
 
 def _apply_cli_overrides(argv, config: AppConfig) -> None:
@@ -24,6 +25,25 @@ def _apply_cli_overrides(argv, config: AppConfig) -> None:
             config.source_mode = argv[i + 1]
         elif a.startswith("--source="):
             config.source_mode = a.split("=", 1)[1]
+
+
+class _ErrorNotifier:
+    """처리되지 않은 예외를 한 번에 하나씩만 대화상자로 알린다 (연속 오류로 창이 쌓이지 않게)."""
+
+    def __init__(self):
+        self._showing = False
+
+    def __call__(self, text: str) -> None:
+        if self._showing or QApplication.instance() is None:
+            return
+        self._showing = True
+        try:
+            QMessageBox.warning(
+                None, "오류",
+                f"예상치 못한 오류가 발생했습니다. 프로그램은 계속 실행됩니다.\n\n{text}\n\n"
+                f"자세한 내용: {paths.get_appdata_dir() / 'logs' / 'app.log'}")
+        finally:
+            self._showing = False
 
 
 def main(argv=None) -> int:
@@ -37,20 +57,40 @@ def main(argv=None) -> int:
     b = brand.select(brand.key_from(argv, getattr(config, "brand", "")))
     from app.ui.main_window import MainWindow
     from app.ui.theme import build_qss, make_app_icon
-    log.info("source_mode=%s media_root=%s export_root=%s",
-             config.source_mode, config.media_root, config.export_root)
-
-    db = Database(config.db_path).init()
+    log.info("source_mode=%s media_root=%s export_root=%s db=%s",
+             config.source_mode, config.media_root, config.export_root, config.db_path)
 
     app = QApplication(argv)
     app.setApplicationName(b["app_name"])
     app.setStyle("Fusion")
     app.setWindowIcon(make_app_icon())
     app.setStyleSheet(build_qss(config.theme))
+    install_excepthook(_ErrorNotifier())
+
+    # 같은 PC 에서 두 번 실행되면 카메라를 서로 빼앗고 같은 DB 에 동시에 쓰게 된다 → 한 번만 실행
+    lock = QLockFile(str(paths.get_appdata_dir() / "app.lock"))
+    lock.setStaleLockTime(0)                 # 비정상 종료로 남은 잠금은 프로세스가 없으면 자동 해제
+    if not lock.tryLock(500):
+        QMessageBox.information(None, b["app_name"],
+                                "프로그램이 이미 실행 중입니다.\n이미 열려 있는 창을 사용하세요.")
+        return 0
+
+    try:
+        db = Database(config.db_path).init()
+    except DatabaseError as e:
+        log.critical("database open failed: %s", e)
+        QMessageBox.critical(None, "데이터베이스 오류",
+                             f"{e}\n\n로그: {paths.get_appdata_dir() / 'logs' / 'app.log'}")
+        return 1
+    stats = db.stats()
+    log.info("db ready: patients=%s captures=%s backup=%s",
+             stats["patients"], stats["captures"], stats["backup"])
 
     win = MainWindow(config, db)
     win.show()
-    return app.exec()
+    rc = app.exec()
+    lock.unlock()
+    return rc
 
 
 if __name__ == "__main__":
