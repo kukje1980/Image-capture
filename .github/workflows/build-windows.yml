@@ -19,9 +19,14 @@ jobs:
           - brand: keeler
             app: KeelerSlitLamp
             iss: installer\keeler.iss
+          - brand: default
+            edition: agent
+            app: SlitLampAgent
+            iss: installer\agent.iss
     runs-on: windows-latest
     env:
       SLITLAMP_BUILD_BRAND: ${{ matrix.brand }}
+      SLITLAMP_BUILD_EDITION: ${{ matrix.edition || 'standard' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -35,7 +40,7 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: 테스트 (오프스크린)
-        if: matrix.brand == 'default'
+        if: matrix.brand == 'default' && matrix.edition != 'agent'
         env:
           QT_QPA_PLATFORM: offscreen
         run: python -m pytest -q tests

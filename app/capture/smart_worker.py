@@ -103,6 +103,11 @@ class SmartCaptureWorker(QObject):
         with self._lock:
             self._engine.reset()
 
+    def last_quality(self):
+        """가장 최근 분석 결과의 FrameQuality (없으면 None)."""
+        with self._lock:
+            return self._engine.last_quality
+
     def best_recent(self, seconds: float = 0.6) -> Optional[BestShot]:
         with self._lock:
             return self._engine.best_recent(seconds)

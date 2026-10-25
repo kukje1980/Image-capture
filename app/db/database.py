@@ -6,6 +6,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
+from app.db.agent_events_dao import AgentEventsDAO
 from app.db.captures_dao import CapturesDAO
 from app.db.measurements_dao import MeasurementsDAO
 from app.db.patients_dao import PatientsDAO
@@ -81,6 +82,7 @@ class Database:
         self.patients = PatientsDAO(self._conn, self._lock)
         self.captures = CapturesDAO(self._conn, self._lock)
         self.measurements = MeasurementsDAO(self._conn, self._lock)
+        self.agent_events = AgentEventsDAO(self._conn, self._lock)
         return self
 
     def _check_integrity(self, conn: sqlite3.Connection) -> None:
@@ -119,6 +121,7 @@ class Database:
         self.patients = None
         self.captures = None
         self.measurements = None
+        self.agent_events = None
 
     @property
     def is_open(self) -> bool:
