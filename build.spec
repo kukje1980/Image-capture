@@ -1,6 +1,7 @@
 # PyInstaller 스펙 (Windows, one-folder).
 #   빌드:  pyinstaller build.spec                         → dist/SlitLampImaging/SlitLampImaging.exe
 #   Keeler: set SLITLAMP_BUILD_BRAND=keeler && pyinstaller build.spec → dist/KeelerSlitLamp/KeelerSlitLamp.exe
+#   AI 에이전트 에디션: set SLITLAMP_BUILD_EDITION=agent && pyinstaller build.spec → dist/SlitLampAgent/SlitLampAgent.exe
 #
 # imageio-ffmpeg 의 ffmpeg 바이너리와 PySide6 Qt 플러그인을 함께 수집한다.
 import os
@@ -8,9 +9,13 @@ import os
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
 
 BRAND = os.environ.get("SLITLAMP_BUILD_BRAND", "default").lower()
-APP_NAME = "KeelerSlitLamp" if BRAND == "keeler" else "SlitLampImaging"
+EDITION = os.environ.get("SLITLAMP_BUILD_EDITION", "standard").lower()
+AGENT = EDITION == "agent"
+APP_NAME = "SlitLampAgent" if AGENT else ("KeelerSlitLamp" if BRAND == "keeler" else "SlitLampImaging")
 APP_ICON = "assets/brand/keeler/app.ico" if BRAND == "keeler" else "assets/icons/app.ico"
 RTHOOKS = ["tools/rthooks/brand_keeler.py"] if BRAND == "keeler" else []
+if AGENT:
+    RTHOOKS.append("tools/rthooks/edition_agent.py")
 
 datas = []
 binaries = []
@@ -33,6 +38,9 @@ datas += [("assets/icons/app.ico", "assets/icons"),
 datas += [("assets/brand", "assets/brand")]
 # 효과음 (캡처 찰칵 · 정지영상 · 녹화 삐)
 datas += [("assets/sounds", "assets/sounds")]
+# AI 에이전트 장면 모델 (있을 때만 — 없으면 규칙 기반)
+if os.path.isdir("assets/models") and os.listdir("assets/models"):
+    datas += [("assets/models", "assets/models")]
 
 block_cipher = None
 

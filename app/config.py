@@ -13,6 +13,15 @@ CONFIG_FILE = "config.json"
 log = logging.getLogger(__name__)
 
 
+def _agent_edition() -> bool:
+    try:
+        from app import edition
+
+        return edition.is_agent()
+    except Exception:  # noqa: BLE001
+        return False
+
+
 @dataclass
 class AppConfig:
     camera_index: int = 0
@@ -49,6 +58,16 @@ class AppConfig:
     smart_best_shot: bool = True             # 사진 캡처 시 최근 0.6초 중 가장 선명한 프레임 저장
     smart_ready_pct: float = 85.0            # 초점 판정 기준 (최근 최고 선명도 대비 %)
     smart_cooldown_s: float = 2.5            # 자동 촬영 사이 최소 간격(초)
+    # AI 에이전트 (app/agent) — 에이전트 에디션에서 기본 켜짐
+    agent_enabled: bool = False              # 장면 인식·체크리스트·추천 (agent 에디션은 True)
+    agent_auto_capture: bool = True          # 장면 안정 + 초점 → 눈·장면당 한 번 자동 저장
+    agent_logging: bool = True               # 사용 이벤트 로그 (익명 세션, 환자 정보 없음)
+    agent_protocol: str = "basic"            # basic | cataract | dry_eye | meibo | free
+    agent_save_clips: bool = True            # 촬영 전후 클립(mp4) 을 환자 영상으로 함께 저장
+    agent_clip_before_s: float = 4.0
+    agent_clip_after_s: float = 2.0
+    agent_candidates: int = 4                # 추천 프레임 수
+    agent_model_path: str = ""               # 장면 모델 경로 (비면 assets/models, 없으면 규칙)
 
     @classmethod
     def config_path(cls) -> Path:
@@ -58,6 +77,7 @@ class AppConfig:
     def load(cls) -> "AppConfig":
         cfg = cls()
         p = cls.config_path()
+        data: dict = {}
         if p.exists():
             try:
                 data = json.loads(p.read_text(encoding="utf-8"))
@@ -88,6 +108,8 @@ class AppConfig:
                 except OSError:
                     pass
         cfg._apply_defaults()
+        if _agent_edition() and "agent_enabled" not in (data if p.exists() else {}):
+            cfg.agent_enabled = True             # 에이전트 에디션은 처음부터 켜진 상태로 시작
         return cfg
 
     def _apply_defaults(self) -> None:

@@ -47,3 +47,15 @@ CREATE INDEX IF NOT EXISTS idx_captures_patient ON captures(patient_id);
 CREATE INDEX IF NOT EXISTS idx_captures_capdate ON captures(patient_id, captured_at);
 CREATE INDEX IF NOT EXISTS idx_patients_name    ON patients(name);
 CREATE INDEX IF NOT EXISTS idx_patients_chart   ON patients(chart_no);
+
+-- AI 에이전트 사용 이벤트 (익명 세션 ID · 환자 정보 없음). 학습 라벨·사용성 분석의 원천.
+CREATE TABLE IF NOT EXISTS agent_events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id  TEXT NOT NULL,
+    ts          TEXT NOT NULL,
+    type        TEXT NOT NULL,
+    capture_id  INTEGER REFERENCES captures(id) ON DELETE SET NULL,
+    payload     TEXT                            -- JSON
+);
+CREATE INDEX IF NOT EXISTS idx_agent_events_capture ON agent_events(capture_id);
+CREATE INDEX IF NOT EXISTS idx_agent_events_type ON agent_events(type, id);

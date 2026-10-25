@@ -1,19 +1,23 @@
 # PyInstaller 스펙 (macOS, .app 번들).
 #   빌드:  ./build_mac.sh   (또는 pyinstaller build_mac.spec)
-#   결과:  dist/SlitLampImaging.app  (SLITLAMP_BUILD_BRAND=keeler 이면 dist/KeelerSlitLamp.app)
+#   결과:  dist/SlitLampImaging.app  (SLITLAMP_BUILD_BRAND=keeler 이면 dist/KeelerSlitLamp.app,
+#          SLITLAMP_BUILD_EDITION=agent 이면 dist/SlitLampAgent.app — AI 에이전트 에디션)
 #
 # Windows 용 build.spec 과 같은 구성에 macOS 번들 정보(카메라 권한 문구·아이콘)를 더한다.
 import os
 
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
 
-APP_VERSION = "1.11.0"
+APP_VERSION = "1.12.0"
 BRAND = os.environ.get("SLITLAMP_BUILD_BRAND", "default").lower()
 KEELER = BRAND == "keeler"
-APP_NAME = "KeelerSlitLamp" if KEELER else "SlitLampImaging"
-DISPLAY_NAME = "Keeler 슬릿램프 영상 시스템" if KEELER else "슬릿램프 영상 시스템"
+AGENT = os.environ.get("SLITLAMP_BUILD_EDITION", "standard").lower() == "agent"
+APP_NAME = "SlitLampAgent" if AGENT else ("KeelerSlitLamp" if KEELER else "SlitLampImaging")
+DISPLAY_NAME = ("슬릿램프 영상 시스템 AI 에이전트" if AGENT
+                else ("Keeler 슬릿램프 영상 시스템" if KEELER else "슬릿램프 영상 시스템"))
 APP_ICON = "assets/brand/keeler/app.icns" if KEELER else "assets/icons/app.icns"
-BUNDLE_ID = "com.kukjemd.keelerslitlamp" if KEELER else "com.kukjemd.slitlampimaging"
+BUNDLE_ID = ("com.kukjemd.slitlampagent" if AGENT
+             else ("com.kukjemd.keelerslitlamp" if KEELER else "com.kukjemd.slitlampimaging"))
 
 datas = []
 binaries = []
@@ -34,6 +38,8 @@ datas += [("assets/icons/app.png", "assets/icons")]
 datas += [("assets/brand", "assets/brand")]
 # 효과음 (캡처 찰칵 · 정지영상 · 녹화 삐)
 datas += [("assets/sounds", "assets/sounds")]
+if os.path.isdir("assets/models") and os.listdir("assets/models"):
+    datas += [("assets/models", "assets/models")]
 
 a = Analysis(
     ["run.py"],
@@ -42,7 +48,8 @@ a = Analysis(
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
-    runtime_hooks=["tools/rthooks/brand_keeler.py"] if KEELER else [],
+    runtime_hooks=(["tools/rthooks/brand_keeler.py"] if KEELER else [])
+    + (["tools/rthooks/edition_agent.py"] if AGENT else []),
     excludes=[],
 )
 

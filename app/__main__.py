@@ -4,6 +4,7 @@
     python -m app --source synthetic   # 하드웨어 없이 합성 영상으로 실행
     python -m app --source file        # 설정의 test_file_path 재생
     python -m app --brand keeler       # Keeler 전용 화면 (로고·색)
+    python -m app --edition agent      # AI 에이전트 에디션 (별도 데이터 폴더 SlitLampAgent)
     python -m app --import-samples <폴더|zip>   # 질환별 샘플 사진을 등록하고 끝냄 (화면 없음)
 """
 from __future__ import annotations
@@ -14,7 +15,7 @@ import sys
 from PySide6.QtCore import QLockFile
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from app import brand, paths
+from app import brand, edition, paths
 from app.config import AppConfig
 from app.db.database import Database, DatabaseError
 from app.logging_setup import install_excepthook, setup_logging
@@ -88,6 +89,7 @@ def main(argv=None) -> int:
     setup_logging()
     log = logging.getLogger("app")
 
+    ed = edition.select(edition.key_from(argv))       # 데이터 폴더가 달라지므로 설정보다 먼저
     config = AppConfig.load()
     _apply_cli_overrides(argv, config)
     # 브랜드는 UI 모듈을 불러오기 전에 정한다 (아이콘 강조색 등이 import 시점에 정해짐)
@@ -102,7 +104,7 @@ def main(argv=None) -> int:
         return _run_sample_import(config, samples, log)
 
     app = QApplication(argv)
-    app.setApplicationName(b["app_name"])
+    app.setApplicationName(b["app_name"] + ed["title_suffix"])
     app.setStyle("Fusion")
     app.setWindowIcon(make_app_icon())
     app.setStyleSheet(build_qss(config.theme))
