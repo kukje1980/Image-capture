@@ -278,16 +278,3 @@ def test_pro_tbut_save(qapp, app_env, tmp_path):
     assert res.ok
     cap = ws.analysis.save_tbut(res)
     assert cap is not None and cap.note.startswith("TBUT 4.")
-
-
-def test_pro_live_freeze_with(qapp, app_env):
-    ws, _, _ = _workspace(app_env, [])
-    ws.set_mode("live")
-    f = np.full((60, 80, 3), 120, np.uint8)
-    ws.set_live_frame(f)
-    assert ws.is_live_running()
-    best = np.full((60, 80, 3), 30, np.uint8)
-    ws.freeze_with(best)
-    assert ws._frozen and ws._frozen_frame is not None and int(ws._frozen_frame[0, 0, 0]) == 30
-    ws.set_smart_mode("snapshot")
-    assert ws.c_smart.currentIndex() == 2

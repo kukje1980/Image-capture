@@ -5,7 +5,9 @@ name: Build macOS app
 
 on:
   workflow_dispatch:
+  workflow_call:          # release.yml 이 main 에서 호출 (버전 릴리스용)
   push:
+    branches-ignore: [main]   # main 은 release.yml 이 빌드·게시
     paths:
       - "app/**"
       - "assets/**"

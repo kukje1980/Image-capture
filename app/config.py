@@ -45,6 +45,13 @@ class AppConfig:
     smart_best_shot: bool = True             # 사진 캡처 시 최근 0.6초 중 가장 선명한 프레임 저장
     smart_ready_pct: float = 85.0            # 초점 판정 기준 (최근 최고 선명도 대비 %)
     smart_cooldown_s: float = 2.5            # 자동 촬영 사이 최소 간격(초)
+    # Pro LIVE '스마트' 탭 (app/capture/pro_smart.py, app/ui/pro/smart_panel.py) — 촬영 화면 Smart 와 따로 저장
+    pro_smart_auto_mode: str = "off"         # off | freeze(초점 맞으면 자동 정지) | save(자동 저장)
+    pro_smart_roi_frac: float = 0.5          # 초점 판정 관심 영역 (화면 중앙 비율 0.2~1.0)
+    pro_smart_best_shot: bool = True         # CAPTURE 시 최근 1초 중 가장 선명한 프레임 사용
+    pro_smart_peaking: bool = False          # 포커스 피킹 표시
+    pro_smart_peaking_sensitivity: int = 2   # 1(적게) ~ 3(많이)
+    pro_smart_peaking_color: str = "red"     # red | green | cyan
 
     @classmethod
     def config_path(cls) -> Path:

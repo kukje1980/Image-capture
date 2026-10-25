@@ -29,6 +29,20 @@ CREATE TABLE IF NOT EXISTS captures (
     note           TEXT
 );
 
+CREATE TABLE IF NOT EXISTS measurements (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    patient_id  INTEGER NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+    capture_id  INTEGER REFERENCES captures(id) ON DELETE SET NULL,
+    eye         TEXT,
+    kind        TEXT NOT NULL,               -- nuclear | cortical | fluorescein | redness
+    value       REAL NOT NULL,               -- 지수(0~100) / 면적 %
+    detail      TEXT,                        -- JSON (비율·밝기·동공 직경 등)
+    locs        TEXT,                        -- JSON 의사 입력 LOCS III 등급 (라벨 데이터)
+    conditions  TEXT,                        -- 촬영 조건 메모 (슬릿 폭·각도·배율·노출)
+    measured_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_measure_patient ON measurements(patient_id, kind, eye, measured_at);
 CREATE INDEX IF NOT EXISTS idx_captures_patient ON captures(patient_id);
 CREATE INDEX IF NOT EXISTS idx_captures_capdate ON captures(patient_id, captured_at);
 CREATE INDEX IF NOT EXISTS idx_patients_name    ON patients(name);

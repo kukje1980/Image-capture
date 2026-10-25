@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from app.db.captures_dao import CapturesDAO
+from app.db.measurements_dao import MeasurementsDAO
 from app.db.patients_dao import PatientsDAO
 
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
@@ -43,6 +44,7 @@ class Database:
         self.patients: PatientsDAO | None = None
         self.captures: CapturesDAO | None = None
         self.last_backup: Path | None = None
+        self.measurements: MeasurementsDAO | None = None
 
     # ---- 열기 / 닫기 ----
     def init(self, backup: bool = True) -> "Database":
@@ -78,6 +80,7 @@ class Database:
             self.daily_backup()              # 새 DB 는 스키마가 만들어진 뒤 (빈 사본이 남지 않게)
         self.patients = PatientsDAO(self._conn, self._lock)
         self.captures = CapturesDAO(self._conn, self._lock)
+        self.measurements = MeasurementsDAO(self._conn, self._lock)
         return self
 
     def _check_integrity(self, conn: sqlite3.Connection) -> None:

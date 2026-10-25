@@ -1,11 +1,14 @@
 # Windows 설치파일(.exe) 자동 빌드 — 기본 / Keeler 전용
 #   Actions 탭 → "Build Windows installer" → Run workflow 로 수동 실행하거나, 아래 경로가 바뀐 push 때 실행된다.
 #   결과물: 실행 화면 아래 Artifacts 의 SlitLampImaging-windows / KeelerSlitLamp-windows (설치파일)
+#   main 에 반영되면 release.yml 이 이 빌드를 불러 GitHub Release(v<버전>, windows-latest)에 게시한다.
 name: Build Windows installer
 
 on:
   workflow_dispatch:
+  workflow_call:          # release.yml 이 main 에서 호출 (버전 릴리스용)
   push:
+    branches-ignore: [main]   # main 은 release.yml 이 빌드·게시
     paths:
       - "app/**"
       - "assets/**"
@@ -76,29 +79,3 @@ jobs:
           name: ${{ matrix.app }}-windows
           path: dist/installer/*.exe
           if-no-files-found: error
-
-  # main 빌드가 끝나면 설치파일을 '릴리스'에 올린다 — 로그인 없이 받을 수 있는 고정 주소
-  #   https://github.com/<저장소>/releases/tag/windows-latest
-  release:
-    needs: build
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: out
-          merge-multiple: true
-
-      - name: 최신 설치파일 릴리스 갱신
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          ls -la out
-          gh release delete windows-latest --yes --cleanup-tag || true
-          gh release create windows-latest out/*.exe \
-            --target "${{ github.sha }}" --latest \
-            --title "윈도우 설치파일 (최신)" \
-            --notes "main 최신 코드로 자동 빌드된 윈도우 설치파일입니다. 기본판: SlitLampImaging-Setup, Keeler 전용: KeelerSlitLamp-Setup. 받은 .exe 를 실행해 설치하세요. (커밋 ${{ github.sha }})"
