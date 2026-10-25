@@ -5,6 +5,7 @@ Lock 직렬화. 단일 클리닉 PC / 저빈도 쓰기라 충분하다.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 from pathlib import Path
@@ -146,6 +147,56 @@ class Database:
             self._conn.execute("DELETE FROM captures WHERE id=?", (cid,))
             self._conn.commit()
         return dict(r) if r else None
+
+
+    # ---- measurements (혼탁 지수 등 측정 기록) ----
+    def create_measurement(self, m: dict) -> int:
+        with self._lock:
+            cur = self._conn.execute(
+                """INSERT INTO measurements
+                   (patient_id, capture_id, eye, kind, value, detail, locs, conditions, measured_at)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                (m["patient_id"], m.get("capture_id"), m.get("eye"), m["kind"], float(m["value"]),
+                 json.dumps(m.get("detail") or {}, ensure_ascii=False),
+                 json.dumps(m.get("locs") or {}, ensure_ascii=False),
+                 m.get("conditions") or "", m["measured_at"]),
+            )
+            self._conn.commit()
+            return cur.lastrowid
+
+    def list_measurements(self, patient_id: int, kind: Optional[str] = None,
+                          eye: Optional[str] = None) -> List[dict]:
+        q, args = "SELECT * FROM measurements WHERE patient_id=?", [patient_id]
+        if kind:
+            q += " AND kind=?"
+            args.append(kind)
+        if eye:
+            q += " AND eye=?"
+            args.append(eye)
+        with self._lock:
+            rows = self._conn.execute(q + " ORDER BY measured_at ASC, id ASC", args).fetchall()
+        return [_measurement(r) for r in rows]
+
+    def get_measurement(self, mid: int) -> Optional[dict]:
+        with self._lock:
+            r = self._conn.execute("SELECT * FROM measurements WHERE id=?", (mid,)).fetchone()
+        return _measurement(r) if r else None
+
+    def delete_measurement(self, mid: int) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM measurements WHERE id=?", (mid,))
+            self._conn.commit()
+
+
+def _measurement(r) -> dict:
+    d = dict(r)
+    for k in ("detail", "locs"):
+        try:
+            d[k] = json.loads(d.get(k) or "{}")
+        except (TypeError, ValueError):
+            d[k] = {}
+    d["conditions"] = d.get("conditions") or ""
+    return d
 
 
 def _patient_params(p: dict) -> dict:

@@ -211,3 +211,35 @@ def test_now_uses_korea_time():
     from app import config
     kst = datetime.now(timezone(timedelta(hours=9))).replace(tzinfo=None)
     assert abs((config.now() - kst).total_seconds()) < 5
+
+
+def test_measurements_record_list_and_cascade(client):
+    """측정 기록 (혼탁 지수 · 촬영 조건 · LOCS 의사 입력) — 경과 그래프용."""
+    pid = client.post("/api/v1/patients", json={"chart_no": "M1", "name": "측정"}).json()["id"]
+    other = client.post("/api/v1/patients", json={"chart_no": "M2", "name": "다른"}).json()["id"]
+    cap = client.post("/api/v1/captures", data={"patient_id": str(pid), "media_type": "photo", "eye": "OD"},
+                      files={"file": ("a.png", b"\x89PNG\r\n\x1a\n", "image/png")}).json()
+    body = {"patient_id": pid, "capture_id": cap["id"], "eye": "OD", "kind": "nuclear", "value": 42.4,
+            "detail": {"ratio": 0.48, "has_cornea": True}, "locs": {"NO": 3, "NC": "2.5", "X": 1, "C": 9},
+            "conditions": "슬릿 0.2mm · 45°"}
+    r = client.post("/api/v1/measurements", json=body)
+    assert r.status_code == 201, r.text
+    m = r.json()
+    assert m["locs"] == {"NO": 3.0, "NC": 2.5} and m["detail"]["ratio"] == 0.48 and m["measured_at"]
+    client.post("/api/v1/measurements", json={**body, "eye": "OS", "value": 10, "capture_id": None})
+    client.post("/api/v1/measurements", json={**body, "kind": "cortical", "value": 150, "capture_id": None})
+    od = client.get(f"/api/v1/measurements?patient_id={pid}&kind=nuclear&eye=OD").json()
+    assert [x["value"] for x in od] == [42.4]
+    assert len(client.get(f"/api/v1/measurements?patient_id={pid}").json()) == 3
+    cort = client.get(f"/api/v1/measurements?patient_id={pid}&kind=cortical").json()
+    assert cort[0]["value"] == 100.0                                  # 0~100 으로 제한
+    # 잘못된 요청: 없는 환자 · 모르는 종류 · 다른 환자의 영상
+    assert client.post("/api/v1/measurements", json={**body, "patient_id": 9999}).status_code == 404
+    assert client.post("/api/v1/measurements", json={**body, "kind": "diagnosis"}).status_code == 400
+    assert client.post("/api/v1/measurements", json={**body, "patient_id": other}).status_code == 400
+    # 영상을 지워도 측정 기록은 남고(capture_id=NULL), 환자를 지우면 함께 삭제
+    client.delete(f"/api/v1/captures/{cap['id']}")
+    assert client.get(f"/api/v1/measurements?patient_id={pid}&kind=nuclear&eye=OD").json()[0]["capture_id"] is None
+    assert client.delete(f"/api/v1/measurements/{m['id']}").status_code == 204
+    client.delete(f"/api/v1/patients/{pid}")
+    assert client.get(f"/api/v1/measurements?patient_id={pid}").json() == []
