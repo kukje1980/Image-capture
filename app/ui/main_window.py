@@ -36,6 +36,7 @@ from app.ui.settings_dialog import SettingsDialog
 from app.ui.shortcuts_dialog import ShortcutsDialog
 from app import brand as app_brand
 from app import shortcuts
+from app import sounds
 from app.ui import icons
 from app.ui.theme import ICON, ICON_ACCENT, build_qss, make_app_icon
 from app.ui.thumbnail_panel import ThumbnailPanel
@@ -78,7 +79,9 @@ class MainWindow(QMainWindow):
         self.recorder = VideoRecorder(fallback_fourcc=config.video_fallback_fourcc)
         self.recorder.error.connect(self._on_recorder_error)
 
+        sounds.set_enabled(config.sounds_enabled)
         self._build_ui()
+        sounds.preload()
         self._pick_camera()
         self._start_camera()
 
@@ -566,6 +569,7 @@ class MainWindow(QMainWindow):
             return
         if self._quad:
             if self.quad_view.freeze_active(self.control_bar.current_eye()):
+                sounds.play("freeze")
                 if self.quad_view.is_full():
                     self.control_bar.set_status("4칸 모두 채움 · '4분할 저장' 또는 칸 클릭으로 교체")
                 else:
@@ -576,6 +580,7 @@ class MainWindow(QMainWindow):
         # 단일 모드: 현재 프레임을 정지영상으로 고정 / 재개 토글
         self._single_frozen = not self._single_frozen
         if self._single_frozen:
+            sounds.play("freeze")
             self._freeze_frame = self._last_frame
             self.video_view.set_frame(self._freeze_frame)
             self.control_bar.set_freeze_state(True)
@@ -594,6 +599,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "확인", "저장할 정지영상이 없습니다.")
             return
         eye = self.control_bar.current_eye()
+        sounds.play("shutter")
         saved = 0
         try:
             for frame, cell_eye in self.quad_view.images_for_save(eye):
@@ -624,6 +630,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "확인", "표시할 영상이 없습니다.")
             return
         eye = self.control_bar.current_eye()
+        sounds.play("shutter")            # 저장(인코딩) 전에 바로 — 누른 순간 '찰칵'
         try:
             cap = self.service.save_photo(frame, self._current_patient, eye=eye)
         except Exception as e:  # noqa: BLE001
@@ -657,6 +664,7 @@ class MainWindow(QMainWindow):
             self.control_bar.reset_record_button()
             return
         self._recording = True
+        sounds.play("rec_start")
         self._video_path = path
         self._video_ts = ts
         self._video_eye = eye
@@ -671,6 +679,7 @@ class MainWindow(QMainWindow):
         if not self._recording:
             return
         self._recording = False
+        sounds.play("rec_stop")
         self._rec_timer.stop()
         self._refresh_hud_state()
         _, count, duration = self.recorder.stop()
@@ -721,6 +730,7 @@ class MainWindow(QMainWindow):
         dlg = SettingsDialog(self.config, self)
         if dlg.exec():
             dlg.apply_to_config()
+            sounds.set_enabled(self.config.sounds_enabled)
             self.thumbnail_panel.newest_on_top = self.config.newest_on_top
             self._restart_camera()
 
