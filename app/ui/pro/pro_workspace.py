@@ -9,6 +9,8 @@
   보정본 저장  보정·주석을 반영한 새 영상으로 저장(원본 보존, 코멘트 '보정본'/'주석')
   코멘트       영상별 코멘트 편집      환자정보  진단명·담당의 등 편집
   인쇄 / PDF   머리말·환자정보·진단명·꼬리말이 포함된 A4 보고서
+  분석         영상 품질·형광염색·결막 충혈·마이봄샘·수정체 지수, 이전 영상 자동 정렬,
+               가장 선명한 영상 찾기, TBUT(동영상), DICOM 내보내기 (analysis_panel.py)
 """
 from __future__ import annotations
 
@@ -48,6 +50,7 @@ from app import brand as app_brand
 from app.ui import icons
 from app.ui.patient_dialog import PatientDialog
 from app.ui.pro import print_util
+from app.ui.pro.analysis_panel import AnalysisPanel
 from app.ui.pro.image_canvas import ImageCanvas
 from app.ui.pro.multi_grid import MultiGrid
 from app.ui.theme import ICON, ICON_ACCENT, ICON_ON_ACCENT
@@ -60,6 +63,7 @@ except ImportError:  # pragma: no cover
 log = logging.getLogger(__name__)
 
 MODES = ["live", "single", "multi", "compare"]
+_SMART_MODES = ["off", "freeze", "snapshot"]
 _EYE_KO = {"OD": "우안(OD)", "OS": "좌안(OS)", "OU": "양안(OU)"}
 _CHANNELS = ["rgb", "green", "red", "blue", "gray"]
 _DENOISE = ["none", "median", "average"]
@@ -110,6 +114,7 @@ def load_bgr(path: str | None):
 class ProWorkspace(QWidget):
     savedCapture = Signal()
     patientUpdated = Signal(object)
+    smartModeChanged = Signal(str)          # LIVE 의 Smart 자동 촬영 모드 (off | freeze | snapshot)
 
     def __init__(self, db, service, config, get_eye, parent=None):
         super().__init__(parent)
@@ -194,9 +199,13 @@ class ProWorkspace(QWidget):
         self.c_eye = QComboBox()
         self.c_eye.addItems(["안구 미지정", "OD 우안", "OS 좌안", "OU 양안"])
         self.c_eye.setToolTip("저장할 영상의 안구 방향")
+        self.c_smart = QComboBox()
+        self.c_smart.addItems(["Smart 끄기", "Smart 자동 정지", "Smart 자동 저장"])
+        self.c_smart.setToolTip("LIVE 에서 초점이 가장 잘 맞는 순간 자동 정지 / 자동 저장")
         tl.addWidget(self.c_eye)
         tl.addWidget(self.b_capture)
         tl.addWidget(self.b_save)
+        tl.addWidget(self.c_smart)
         tl.addWidget(self._sep())
 
         self.b_prev = self._btn("PREV", "이전 영상 / 페이지 (←)", icon="chev-l")
@@ -283,6 +292,7 @@ class ProWorkspace(QWidget):
         root.addWidget(self.info)
 
         self.b_capture.toggled.connect(self._on_capture_toggled)
+        self.c_smart.currentIndexChanged.connect(lambda i: self.smartModeChanged.emit(_SMART_MODES[i]))
         self.b_save.clicked.connect(self.save_live)
         self.b_prev.clicked.connect(lambda: self.step(-1))
         self.b_next.clicked.connect(lambda: self.step(1))
@@ -324,6 +334,8 @@ class ProWorkspace(QWidget):
         self.tabs.addTab(self._scroll(self._tab_adjust()), "보정")
         self.tabs.addTab(self._scroll(self._tab_filter()), "필터")
         self.tabs.addTab(self._scroll(self._tab_edit()), "편집")
+        self.analysis = AnalysisPanel(self)
+        self.tabs.addTab(self._scroll(self.analysis), "분석")
         lay.addWidget(self.tabs, 1)
 
         self.lbl_sel = QLabel("MULTI에서 영상 2장을 클릭해 선택한 뒤 '비교'를 누르세요.")
@@ -602,6 +614,7 @@ class ProWorkspace(QWidget):
         live = mode == "live"
         self.b_capture.setEnabled(live)
         self.b_save.setEnabled(live)
+        self.c_smart.setEnabled(live)
         self.c_per.setEnabled(mode == "multi")
         ann = mode in ("single", "compare")
         for t, *_x, modes in _TOOLS:
@@ -621,6 +634,7 @@ class ProWorkspace(QWidget):
             self.set_tool(self._tool)            # 이 모드에서 못 쓰는 도구면 이동으로
         self._update_side()
         self._refresh_edit_state()
+        self._analysis_view_changed()
 
     def _show_current(self) -> None:
         if not (0 <= self._idx < len(self._caps)):
@@ -633,6 +647,11 @@ class ProWorkspace(QWidget):
         self.single_canvas.set_caption(caption_of(cap, self._idx + 1, len(self._caps)))
         self._update_side()
         self._refresh_edit_state()
+        self._analysis_view_changed()
+
+    def _analysis_view_changed(self) -> None:
+        if hasattr(self, "analysis"):
+            self.analysis.on_view_changed()
 
     def _update_side(self) -> None:
         if self._mode == "single" and 0 <= self._idx < len(self._caps):
@@ -916,6 +935,21 @@ class ProWorkspace(QWidget):
         if self._mode == "live" and not self._frozen:
             self.live_canvas.set_image(frame, keep_view=True)
 
+    def set_smart_mode(self, mode: str) -> None:
+        blk = self.c_smart.blockSignals(True)
+        self.c_smart.setCurrentIndex(_SMART_MODES.index(mode) if mode in _SMART_MODES else 0)
+        self.c_smart.blockSignals(blk)
+
+    def freeze_with(self, frame) -> None:
+        """LIVE 에서 주어진 프레임(Smart Capture 가 고른 가장 선명한 프레임)으로 정지."""
+        if frame is None or self._mode != "live" or self._frozen:
+            return
+        self._live = frame
+        self.b_capture.setChecked(True)
+
+    def is_live_running(self) -> bool:
+        return self._mode == "live" and not self._frozen
+
     def _on_capture_toggled(self, on: bool) -> None:
         self._frozen = on
         if on:
@@ -929,6 +963,7 @@ class ProWorkspace(QWidget):
             self.b_capture.setText(icons.gap("CAPTURE"))
             self.b_capture.setIcon(_icon("freeze", ICON_ACCENT))
         self._update_side()
+        self._analysis_view_changed()
 
     def current_eye(self) -> str:
         if self.get_eye is not None:

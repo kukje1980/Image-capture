@@ -157,6 +157,8 @@ class MainWindow(QMainWindow):
         self.smart_bar.set_state(cfg.smart_mode, cfg.smart_peaking, cfg.smart_peaking_sensitivity,
                                  cfg.smart_best_shot)
         self.smart_bar.modeChanged.connect(self._on_smart_mode)
+        self.pro.set_smart_mode(cfg.smart_mode)
+        self.pro.smartModeChanged.connect(lambda m: self.smart_bar.set_mode(m))
         self.smart_bar.peakingToggled.connect(self._on_smart_peaking)
         self.smart_bar.sensitivityChanged.connect(self._on_smart_sensitivity)
         self.smart_bar.roiSelectToggled.connect(self.video_view.set_roi_selecting)
@@ -695,7 +697,9 @@ class MainWindow(QMainWindow):
     def _smart_wanted(self) -> bool:
         """분석이 필요한 때만 프레임을 넘긴다 (Pro 화면·일시정지 중에는 쉼)."""
         cfg = self.config
-        if self.mode_stack.currentIndex() != 0 or self._paused:
+        if self.mode_stack.currentIndex() == 1:                 # Pro LIVE: 자동 정지·자동 저장
+            return cfg.smart_mode != "off" and self.pro.is_live_running()
+        if self._paused:
             return False
         return cfg.smart_mode != "off" or cfg.smart_peaking or cfg.smart_best_shot
 
@@ -718,6 +722,7 @@ class MainWindow(QMainWindow):
 
     def _on_smart_mode(self, mode: str) -> None:
         self.config.smart_mode = mode
+        self.pro.set_smart_mode(mode)
         self._apply_smart()
         self.statusBar().showMessage(f"Smart 자동 촬영: {mode_text(mode)}", 3000)
         if mode == "snapshot" and self._current_patient is None:
@@ -744,7 +749,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("초점 영역(ROI)을 지정했습니다" if roi else "초점 영역을 화면 중앙으로 되돌렸습니다", 3000)
 
     def _on_smart_analyzed(self, a) -> None:
-        if not self._smart_wanted():
+        if not self._smart_wanted() or self.mode_stack.currentIndex() != 0:
             return
         q = a.quality
         self.smart_bar.set_quality(q)
@@ -756,12 +761,41 @@ class MainWindow(QMainWindow):
         if cfg.smart_mode != "off" or cfg.smart_peaking:
             self.video_view.set_focus_meter(q.focus_pct if q.usable else 0.0, q.in_focus)
 
+    def _pro_best_shot(self, shot, mode: str) -> None:
+        """Pro LIVE 의 자동 정지(정지 후 SAVE 로 저장) / 자동 저장."""
+        pro = self.pro
+        if not pro.is_live_running():
+            return
+        pct = shot.quality.focus_pct
+        if mode == "freeze":
+            pro.freeze_with(shot.frame)
+            self.statusBar().showMessage(f"Pro LIVE 자동 정지 (초점 {pct:.0f}) · SAVE 로 저장", 5000)
+            return
+        if self._current_patient is None:
+            self.statusBar().showMessage("자동 저장: 환자를 먼저 선택하세요", 4000)
+            return
+        try:
+            self.service.save_photo(shot.frame, self._current_patient, eye=pro.current_eye(),
+                                    note=f"Smart 자동 저장 (초점 {pct:.0f})")
+        except Exception as e:  # noqa: BLE001
+            log.exception("pro smart snapshot failed")
+            self.statusBar().showMessage(f"자동 저장 실패: {e}", 8000)
+            return
+        pro.reload(select_last=False)
+        self._on_pro_saved()
+        self.statusBar().showMessage(f"Pro LIVE 자동 저장 (초점 {pct:.0f})", 4000)
+
     def _on_smart_best_shot(self, shot) -> None:
         """자동 촬영 순간 — 버퍼에서 고른 가장 선명한 원본 프레임."""
         mode = self.config.smart_mode
-        if mode == "off" or self.mode_stack.currentIndex() != 0 or self._paused:
+        if mode == "off":
             return
         pct = shot.quality.focus_pct
+        if self.mode_stack.currentIndex() == 1:
+            self._pro_best_shot(shot, mode)
+            return
+        if self._paused:
+            return
         eye = self.control_bar.current_eye()
         if mode == "snapshot":
             if self._current_patient is None:
