@@ -35,6 +35,15 @@ class AppConfig:
     px_per_mm: float = 0.0                   # 측정 눈금 보정 (0 = 미보정, px 단위)
     brand: str = ""                          # 화면 브랜드 (비면 기본, "keeler" = Keeler 전용)
     shortcuts: dict = field(default_factory=dict)   # 사용자 지정 단축키 {동작 id: "키"} (app/shortcuts.py)
+    # Smart Capture (app/capture/smart_capture.py)
+    smart_mode: str = "off"                  # off | freeze(초점 맞는 순간 자동 정지) | snapshot(자동 저장)
+    smart_peaking: bool = False              # 포커스 피킹 표시
+    smart_peaking_sensitivity: int = 50      # 0~100
+    smart_peaking_color: str = "red"         # red | green | yellow | cyan
+    smart_roi: list = field(default_factory=list)   # 정규화 [x, y, w, h] (비면 화면 중앙 60%)
+    smart_best_shot: bool = True             # 사진 캡처 시 최근 0.6초 중 가장 선명한 프레임 저장
+    smart_ready_pct: float = 85.0            # 초점 판정 기준 (최근 최고 선명도 대비 %)
+    smart_cooldown_s: float = 2.5            # 자동 촬영 사이 최소 간격(초)
 
     @classmethod
     def config_path(cls) -> Path:
