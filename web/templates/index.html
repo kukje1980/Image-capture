@@ -241,6 +241,16 @@
       <span class="psep"></span>
       <button class="pbtn pghost" id="pro-comment" title="현재 영상 코멘트 편집"><svg class="ic"><use href="#i-comment"/></svg>코멘트</button>
       <button class="pbtn pghost" id="pro-patient" title="진단명·담당의 등 환자 정보"><svg class="ic"><use href="#i-user"/></svg>환자정보</button>
+      <span class="psep"></span>
+      <div class="ptabs" role="tablist" aria-label="편집·분석 패널">
+        <button class="ptab on" role="tab" data-tab="adj" aria-selected="true"><svg class="ic"><use href="#i-sliders"/></svg>보정</button>
+        <button class="ptab" role="tab" data-tab="flt" aria-selected="false"><svg class="ic"><use href="#i-wand"/></svg>필터</button>
+        <button class="ptab" role="tab" data-tab="edit" aria-selected="false"><svg class="ic"><use href="#i-edit"/></svg>편집</button>
+        <button class="ptab" role="tab" data-tab="meibo" aria-selected="false"><svg class="ic"><use href="#i-meibo"/></svg>마이봄</button>
+        <button class="ptab" role="tab" data-tab="smart" aria-selected="false"><svg class="ic"><use href="#i-aperture"/></svg>스마트</button>
+        <button class="ptab" role="tab" data-tab="anal" aria-selected="false"><svg class="ic"><use href="#i-ruler"/></svg>분석</button>
+        <button class="ptab" role="tab" data-tab="ref" aria-selected="false"><svg class="ic"><use href="#i-compare"/></svg>참조</button>
+      </div>
       <span class="pgrow"></span>
       <button class="pbtn pghost" id="pro-fullscreen" title="영상 영역 전체 화면 (F)"><svg class="ic"><use href="#i-expand"/></svg>전체 화면</button>
       <button class="pbtn pprint" id="pro-print" title="보고서 인쇄 / PDF 저장"><svg class="ic"><use href="#i-printer"/></svg>인쇄·PDF</button>
@@ -271,14 +281,6 @@
           <div class="pside-info" id="pro-imginfo">-</div>
         </div>
 
-        <div class="ptabs" role="tablist">
-          <button class="ptab on" role="tab" data-tab="adj" aria-selected="true"><svg class="ic"><use href="#i-sliders"/></svg>보정</button>
-          <button class="ptab" role="tab" data-tab="flt" aria-selected="false"><svg class="ic"><use href="#i-wand"/></svg>필터</button>
-          <button class="ptab" role="tab" data-tab="edit" aria-selected="false"><svg class="ic"><use href="#i-edit"/></svg>편집</button>
-          <button class="ptab" role="tab" data-tab="meibo" aria-selected="false"><svg class="ic"><use href="#i-meibo"/></svg>마이봄</button>
-          <button class="ptab" role="tab" data-tab="smart" aria-selected="false"><svg class="ic"><use href="#i-aperture"/></svg>스마트</button>
-          <button class="ptab" role="tab" data-tab="anal" aria-selected="false"><svg class="ic"><use href="#i-ruler"/></svg>분석</button>
-        </div>
 
         <div class="ppane on" data-pane="adj" role="tabpanel">
           <label class="prange">밝기 <input type="range" id="adj-bright" min="-100" max="100" value="0"><output id="o-bright">0</output></label>
@@ -448,6 +450,45 @@
           <p class="pside-tip">· 측정값은 기록 보조용이며 질환 판정(진단)을 하지 않습니다
 · 혼탁 지수는 LOCS 등급이 아닙니다
 · 조명·배율·각도가 다른 영상의 차이는 병변 변화로 해석하지 마세요</p>
+        </div>
+
+        <div class="ppane" data-pane="ref" role="tabpanel">
+          <h4 class="psub">참조 샘플 보기</h4>
+          <div class="pside-row">
+            <select class="select" id="ref-f-region" title="부위">
+              <option value="">전체 부위</option><option value="eyelid">안검</option><option value="conjunctiva">결막</option>
+              <option value="cornea">각막</option><option value="ac">전방</option><option value="iris">홍채</option>
+              <option value="lens">수정체</option><option value="meibo">마이봄샘</option><option value="other">기타</option>
+            </select>
+            <select class="select" id="ref-f-cond" title="정상 / 비정상"><option value="">정상·비정상</option><option value="normal">정상</option><option value="abnormal">비정상</option></select>
+          </div>
+          <div class="ref-list" id="ref-list"></div>
+          <div class="pside-grid">
+            <button class="pbtn pprimary" id="ref-cmp-cur" title="1화면의 현재 영상(왼쪽)과 선택한 참조 샘플(오른쪽)을 나란히"><svg class="ic"><use href="#i-compare"/></svg>현재 영상과 비교</button>
+            <button class="pbtn" id="ref-cmp-normal" title="같은 부위의 정상 샘플(왼쪽)과 현재 영상 또는 선택한 샘플(오른쪽)을 나란히">정상 샘플과 비교</button>
+            <button class="pbtn" id="ref-del" title="선택한 참조 샘플 삭제"><svg class="ic"><use href="#i-trash"/></svg>샘플 삭제</button>
+          </div>
+          <div class="sm-log" id="ref-msg"></div>
+          <h4 class="psub">참조 샘플로 등록</h4>
+          <div class="pside-row">
+            <select class="select" id="ref-region" title="부위">
+              <option value="cornea">각막</option><option value="conjunctiva">결막</option><option value="lens">수정체</option>
+              <option value="eyelid">안검</option><option value="ac">전방</option><option value="iris">홍채</option>
+              <option value="meibo">마이봄샘</option><option value="other">기타</option>
+            </select>
+            <select class="select" id="ref-cond" title="정상 / 비정상"><option value="normal">정상</option><option value="abnormal">비정상</option></select>
+          </div>
+          <input class="input" id="ref-disease" list="ref-disease-list" maxlength="80" placeholder="질환명 (비정상일 때 — 예: 각막염)">
+          <datalist id="ref-disease-list"></datalist>
+          <input class="input" id="ref-note" maxlength="300" placeholder="메모 (촬영 조건·출처 등, 선택)">
+          <div class="pside-grid">
+            <button class="pbtn" id="ref-add-cur" title="1화면에서 보고 있는 영상(회전·자르기 반영, 보정 전)을 참조 샘플로 저장"><svg class="ic"><use href="#i-save"/></svg>현재 영상 등록</button>
+            <button class="pbtn" id="ref-add-file" title="교과서·다른 장비 사진 등 PC 의 영상 파일을 참조 샘플로 저장"><svg class="ic"><use href="#i-folder"/></svg>파일에서 등록</button>
+          </div>
+          <input type="file" id="ref-file" accept="image/png,image/jpeg,image/webp" hidden>
+          <p class="pside-tip">· 참조 샘플은 환자 기록과 따로 보관하는 비교용 대표 영상입니다
+· 정상/비정상·질환명은 사용자가 붙이는 분류이며 프로그램이 판정하지 않습니다
+· 같은 조명·배율로 찍은 샘플끼리 비교해야 의미가 있습니다</p>
         </div>
 
         <div class="pside-note" id="pro-selinfo">MULTI에서 영상 2장을 클릭해 선택한 뒤 '비교'를 누르세요.</div>
@@ -636,5 +677,6 @@
 <script src="/static/js/pro.js"></script>
 <script src="/static/js/smartcv.js"></script>
 <script src="/static/js/smart.js"></script>
+<script src="/static/js/refs.js"></script>
 </body>
 </html>

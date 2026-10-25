@@ -25,7 +25,7 @@
   function db() {
     if (dbp) return dbp;
     dbp = new Promise((resolve, reject) => {
-      const rq = indexedDB.open(DB_NAME, 2);
+      const rq = indexedDB.open(DB_NAME, 3);
       rq.onupgradeneeded = (ev) => {
         const d = rq.result;
         if (ev.oldVersion < 1) {
@@ -37,6 +37,10 @@
         if (ev.oldVersion < 2) {                            // v2: 측정 기록 (혼탁 지수 · LOCS 입력 · 촬영 조건)
           const m = d.createObjectStore('measurements', { keyPath: 'id', autoIncrement: true });
           m.createIndex('patient_id', 'patient_id');
+        }
+        if (ev.oldVersion < 3) {                            // v3: 참조 샘플 (부위별 · 정상/비정상 대표 영상)
+          d.createObjectStore('refs', { keyPath: 'id', autoIncrement: true });
+          d.createObjectStore('reffiles');                  // key = ref id → Blob
         }
       };
       rq.onsuccess = () => resolve(rq.result);
@@ -70,6 +74,14 @@
       urls.set(cap.id, blob ? URL.createObjectURL(blob) : '');
     }
     return { ...cap, url: urls.get(cap.id) };
+  }
+  const refUrls = new Map();
+  async function withRefUrl(r) {
+    if (!refUrls.has(r.id)) {
+      const blob = await tx('reffiles', 'readonly', (f) => done(f.get(r.id)));
+      refUrls.set(r.id, blob ? URL.createObjectURL(blob) : '');
+    }
+    return { ...r, url: refUrls.get(r.id) };
   }
   function dropUrl(id) {
     const u = urls.get(id);
@@ -199,6 +211,34 @@
       }
       if (seg.length === 2 && method === 'DELETE') {
         await tx('measurements', 'readwrite', (s) => done(s.delete(Number(seg[1]))));
+        return null;
+      }
+    }
+    if (seg[0] === 'refs') {                               // 서버 routers/refs.py 와 같은 규칙
+      const REGIONS = ['eyelid', 'conjunctiva', 'cornea', 'ac', 'iris', 'lens', 'meibo', 'other'];
+      if (seg.length === 1 && method === 'GET') {
+        const region = u.searchParams.get('region'), cond = u.searchParams.get('condition');
+        const all = await tx('refs', 'readonly', (s) => done(s.getAll()));
+        const rows = all.filter((r) => (!region || r.region === region) && (!cond || r.condition === cond))
+          .sort((a, b) => (a.region !== b.region ? (a.region < b.region ? -1 : 1)
+            : a.condition !== b.condition ? (a.condition === 'normal' ? -1 : 1)
+              : (a.disease || '').localeCompare(b.disease || '', 'ko') || a.id - b.id));
+        return Promise.all(rows.map(withRefUrl));
+      }
+      if (seg.length === 1 && method === 'POST') {
+        const fd = options.body, region = fd.get('region'), cond = fd.get('condition'), file = fd.get('file');
+        if (!REGIONS.includes(region)) fail('알 수 없는 부위입니다: ' + region);
+        if (!['normal', 'abnormal'].includes(cond)) fail('구분은 normal 또는 abnormal 이어야 합니다.');
+        if (!file || !file.size) fail('빈 파일입니다.');
+        const rec = { region, condition: cond, disease: String(fd.get('disease') || '').trim().slice(0, 80) || null,
+          note: String(fd.get('note') || '').trim().slice(0, 300) || null, created_at: now() };
+        const id = await tx(['refs', 'reffiles'], 'readwrite', async (r, f) => { const nid = await done(r.add(rec)); f.put(file, nid); return nid; });
+        return withRefUrl({ ...rec, id });
+      }
+      if (seg.length === 2 && method === 'DELETE') {
+        const id = Number(seg[1]);
+        await tx(['refs', 'reffiles'], 'readwrite', (r, f) => { r.delete(id); f.delete(id); });
+        const uu = refUrls.get(id); if (uu) URL.revokeObjectURL(uu); refUrls.delete(id);
         return null;
       }
     }
