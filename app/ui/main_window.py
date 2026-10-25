@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from pathlib import Path
 from collections import deque
 
 from PySide6.QtCore import QSize, Qt, QThread, QTimer
@@ -1006,8 +1007,10 @@ class MainWindow(QMainWindow):
     def _import_samples(self) -> None:
         """받아 둔 샘플 사진 폴더(질환별 하위 폴더 + metadata.json)를 질환별 샘플 환자로 등록."""
         from app.services.sample_import import import_samples
+        start = Path.home() / "Downloads"           # 받아 둔 폴더는 보통 '다운로드'에 있다
         folder = QFileDialog.getExistingDirectory(
-            self, "샘플 사진 폴더 선택 (질환별 하위 폴더 + metadata.json)")
+            self, "샘플 사진 폴더 선택 (질환별 하위 폴더 + metadata.json)",
+            str(start if start.is_dir() else Path.home()))
         if not folder:
             return
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)

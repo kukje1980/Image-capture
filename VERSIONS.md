@@ -48,3 +48,10 @@ v1.8.0 이후 `main` 에 들어온 변경을 모두 합친 최종판입니다 (`
   서버 모드는 `ref_samples` 테이블 + `media/_reference`, '이 PC에만 저장' 모드는 브라우저 저장소(IndexedDB v3). API `/api/v1/refs`.
 - 데스크탑 앱은 v1.9.1 과 같음.
 
+
+## v1.11.0 — 2026-10-25
+- 데스크탑 앱(맥·윈도우): **질환별 샘플 사진 가져오기** — 상단 **샘플** 버튼으로 받아 둔 샘플 사진 폴더(질환별 하위 폴더 + `metadata.json`, zip 도 가능)를 고르면
+  질환마다 `샘플 · 질환명 (SAMPLE-NN)` 환자가 생기고 사진이 그 환자의 영상으로 바로 보임. 원본 그대로 복사, 원문 진단·출처·라이선스·저해상도·외상을 영상 코멘트에 기록,
+  다시 가져오면 중복 건너뜀, `metadata.json` SHA-256 과 다른 파일 제외. 화면 없이 `--import-samples <폴더|zip>` 로도 실행.
+- 샘플 사진 자체는 설치파일에 들어 있지 않음(대부분 CC BY-NC-ND). 수집 목록·라이선스: `docs/SAMPLE_PHOTOS.md`, `sample_images/external_outpatient_catalog.csv`.
+- 웹 버전은 v1.10.0 과 같음.
