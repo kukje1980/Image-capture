@@ -28,6 +28,8 @@ from app import shortcuts
 from app import sounds
 from app.capture.camera_worker import CameraWorker
 from app.capture.frame_utils import device_names, find_sony_index
+from app.capture.smart_capture import DEFAULT_ROI, SmartSettings, normalize_roi
+from app.capture.smart_worker import SmartCaptureWorker
 from app.capture.sources import DeviceSource, FileSource, SyntheticSource
 from app.capture.video_recorder import VideoRecorder
 from app.services.capture_service import CaptureService
@@ -39,6 +41,7 @@ from app.ui.pro.pro_workspace import ProWorkspace
 from app.ui.quad_view import QuadView
 from app.ui.settings_dialog import SettingsDialog
 from app.ui.shortcuts_dialog import ShortcutsDialog
+from app.ui.smart_bar import SmartBar, mode_text
 from app.ui.theme import ICON, ICON_ACCENT, build_qss, make_app_icon
 from app.ui.thumbnail_panel import ThumbnailPanel
 from app.ui.video_view import VideoView
@@ -91,6 +94,14 @@ class MainWindow(QMainWindow):
         self.recorder.error.connect(self._on_recorder_error)
 
         sounds.set_enabled(config.sounds_enabled)
+
+        # Smart Capture: 별도 스레드에서 프레임을 분석 (프리뷰가 끊기지 않게)
+        self.smart = SmartCaptureWorker(self._smart_settings())
+        self.smart.update(peaking=config.smart_peaking, peaking_color=config.smart_peaking_color)
+        self.smart.analyzed.connect(self._on_smart_analyzed)
+        self.smart.bestShot.connect(self._on_smart_best_shot)
+        self.smart.start()
+
         self._build_ui()
         sounds.preload()
         self._pick_camera()
@@ -127,7 +138,9 @@ class MainWindow(QMainWindow):
         self.view_stack.addWidget(self.video_view)   # index 0 = 단일
         self.view_stack.addWidget(self.quad_view)     # index 1 = 4분할
         self.control_bar = ControlBar()
+        self.smart_bar = SmartBar()
         left.addWidget(self.view_stack, 1)
+        left.addWidget(self.smart_bar)
         left.addWidget(self.control_bar)
 
         self.thumbnail_panel = ThumbnailPanel(self.db, newest_on_top=self.config.newest_on_top)
@@ -159,6 +172,18 @@ class MainWindow(QMainWindow):
         self.quad_view.cellClicked.connect(self._on_quad_cell_clicked)
         self.thumbnail_panel.thumbnailClicked.connect(self._on_thumbnail_clicked)
         self.control_bar.eyeChanged.connect(lambda e: self.video_view.set_hud(eye=e))
+        cfg = self.config
+        self.smart_bar.set_state(cfg.smart_mode, cfg.smart_peaking, cfg.smart_peaking_sensitivity,
+                                 cfg.smart_best_shot)
+        self.smart_bar.modeChanged.connect(self._on_smart_mode)
+        self.pro.set_smart_mode(cfg.smart_mode)
+        self.pro.smartModeChanged.connect(lambda m: self.smart_bar.set_mode(m))
+        self.smart_bar.peakingToggled.connect(self._on_smart_peaking)
+        self.smart_bar.sensitivityChanged.connect(self._on_smart_sensitivity)
+        self.smart_bar.roiSelectToggled.connect(self.video_view.set_roi_selecting)
+        self.smart_bar.bestShotToggled.connect(self._on_smart_best_toggle)
+        self.video_view.roiSelected.connect(self._on_smart_roi)
+        self._sync_smart_view()
         self._rec_timer = QTimer(self)
         self._rec_timer.setInterval(500)
         self._rec_timer.timeout.connect(self._update_rec_hud)
@@ -326,7 +351,8 @@ class MainWindow(QMainWindow):
     def _apply_key_hints(self) -> None:
         cb = self.control_bar
         hints = {"capture": cb.btn_capture, "record": cb.btn_record, "pause": cb.btn_pause,
-                 "freeze": cb.btn_freeze, "quad": cb.btn_quad, "mode": self.btn_mode_pro}
+                 "freeze": cb.btn_freeze, "quad": cb.btn_quad, "mode": self.btn_mode_pro,
+                 "peaking": self.smart_bar.btn_peaking}
         for aid, w in hints.items():
             base = w.property("tipBase")
             if base is None:
@@ -364,6 +390,10 @@ class MainWindow(QMainWindow):
             self._on_freeze()
         elif aid == "quad":
             cb.btn_quad.toggle()
+        elif aid == "smart":
+            self.smart_bar.cycle_mode()
+        elif aid == "peaking":
+            self.smart_bar.btn_peaking.toggle()
         elif aid == "fullscreen":
             self._set_fullscreen(not self._fullscreen)
         elif aid == "mode":
@@ -380,7 +410,7 @@ class MainWindow(QMainWindow):
         if on == self._fullscreen:
             return
         self._fullscreen = on
-        for w in (self.topbar, self.patient_panel, self.thumbnail_panel, self.statusBar()):
+        for w in (self.topbar, self.patient_panel, self.thumbnail_panel, self.smart_bar, self.statusBar()):
             w.setVisible(not on)
         if on:
             self._was_maximized = self.isMaximized()
@@ -490,6 +520,7 @@ class MainWindow(QMainWindow):
             self._stop_recording()
         self._stop_camera()
         self.video_view.clear()
+        self.smart.reset()                   # 다른 카메라·해상도의 선명도 기준과 섞이지 않게
         self._start_camera()
 
     _RECONNECT_DELAYS_MS = (2000, 3000, 5000, 8000, 12000)
@@ -535,6 +566,8 @@ class MainWindow(QMainWindow):
             self.quad_view.set_live_frame(frame)
         elif not self._paused and not self._single_frozen:
             self.video_view.set_frame(frame)
+        if self._smart_wanted():
+            self.smart.submit(frame)
 
     def _on_camera_error(self, msg: str) -> None:
         self._camera_ok = False
@@ -593,6 +626,7 @@ class MainWindow(QMainWindow):
     def _on_pause(self, checked: bool) -> None:
         self._paused = checked
         self._refresh_hud_state()
+        self._sync_smart_view()
 
     def _on_quad_toggled(self, on: bool) -> None:
         self._quad = on
@@ -602,6 +636,7 @@ class MainWindow(QMainWindow):
         self._freeze_frame = None
         self.control_bar.set_freeze_state(False)
         self._refresh_hud_state()
+        self._sync_smart_view()
         self.control_bar.set_status(
             "4분할 모드 · '정지영상'으로 각 칸을 채우세요" if on else "단일 모드")
 
@@ -635,6 +670,7 @@ class MainWindow(QMainWindow):
             self.control_bar.set_freeze_state(False)
             self.control_bar.set_status("라이브")
         self._refresh_hud_state()
+        self._sync_smart_view()
 
     def _on_save_quad(self) -> None:
         if self._current_patient is None:
@@ -674,16 +710,180 @@ class MainWindow(QMainWindow):
         if frame is None:
             QMessageBox.information(self, "확인", "표시할 영상이 없습니다.")
             return
+        note = ""
+        if (self.config.smart_best_shot and not self._single_frozen and not self._paused
+                and frame is self._last_frame):
+            # Best Shot: 버튼을 누르는 사이 슬릿램프가 움직였을 수 있으므로 최근 0.6초 중 가장 선명한 원본 프레임
+            best = self.smart.best_recent(0.6)
+            if best is not None:
+                frame, note = best.frame, f"Best Shot (초점 {best.quality.focus_pct:.0f})"
         eye = self.control_bar.current_eye()
         sounds.play("shutter")            # 저장(인코딩) 전에 바로 — 누른 순간 '찰칵'
         try:
-            cap = self.service.save_photo(frame, self._current_patient, eye=eye)
+            cap = self.service.save_photo(frame, self._current_patient, eye=eye, note=note)
         except Exception as e:  # noqa: BLE001
             log.exception("photo save failed")
             QMessageBox.warning(self, "오류", f"저장 실패: {e}")
             return
         self.thumbnail_panel.add_capture(cap)
-        self.control_bar.set_status("사진 저장됨")
+        self.control_bar.set_status("사진 저장됨" + (" · Best Shot" if note else ""))
+
+    # ---- Smart Capture ----
+    def _smart_settings(self) -> SmartSettings:
+        cfg = self.config
+        return SmartSettings(mode=cfg.smart_mode if cfg.smart_mode in ("off", "freeze", "snapshot") else "off",
+                             roi=normalize_roi(cfg.smart_roi),
+                             ready_pct=min(max(cfg.smart_ready_pct, 50.0), 99.0),
+                             cooldown_s=max(cfg.smart_cooldown_s, 0.5),
+                             peaking_sensitivity=cfg.smart_peaking_sensitivity)
+
+    def _apply_smart(self, save: bool = True) -> None:
+        self.smart.update(settings=self._smart_settings(), peaking=self.config.smart_peaking,
+                          peaking_color=self.config.smart_peaking_color)
+        self._sync_smart_view()
+        if save:
+            try:
+                self.config.save()
+            except Exception:  # noqa: BLE001
+                log.warning("smart capture settings save failed", exc_info=True)
+
+    def _smart_wanted(self) -> bool:
+        """분석이 필요한 때만 프레임을 넘긴다 (Pro 화면·일시정지 중에는 쉼)."""
+        cfg = self.config
+        if self.mode_stack.currentIndex() == 1:                 # Pro LIVE: 자동 정지·자동 저장
+            return cfg.smart_mode != "off" and self.pro.is_live_running()
+        if self._paused:
+            return False
+        return cfg.smart_mode != "off" or cfg.smart_peaking or cfg.smart_best_shot
+
+    def _smart_live(self) -> bool:
+        """단일 화면에 라이브 영상이 보이는 중 (피킹·초점 표시를 그릴 수 있는 상태)."""
+        return not self._quad and not self._paused and not self._single_frozen
+
+    def _sync_smart_view(self) -> None:
+        cfg = self.config
+        live = self._smart_live()
+        show = live and (cfg.smart_mode != "off" or cfg.smart_peaking)
+        roi = normalize_roi(cfg.smart_roi) or DEFAULT_ROI
+        self.video_view.set_roi(roi if show else None)
+        if not (live and cfg.smart_peaking):
+            self.video_view.set_overlay(None)
+        if not show:
+            self.video_view.set_focus_meter(None)
+        if not self._smart_wanted():
+            self.smart_bar.set_quality(None)
+
+    def _on_smart_mode(self, mode: str) -> None:
+        self.config.smart_mode = mode
+        self.pro.set_smart_mode(mode)
+        self._apply_smart()
+        self.statusBar().showMessage(f"Smart 자동 촬영: {mode_text(mode)}", 3000)
+        if mode == "snapshot" and self._current_patient is None:
+            self.control_bar.set_status("자동 저장: 환자를 선택하면 저장됩니다")
+
+    def _on_smart_peaking(self, on: bool) -> None:
+        self.config.smart_peaking = on
+        self._apply_smart()
+
+    def _on_smart_sensitivity(self, v: int) -> None:
+        self.config.smart_peaking_sensitivity = int(v)
+        self._apply_smart(save=False)        # 슬라이더를 끄는 동안 매번 파일을 쓰지 않는다
+
+    def _on_smart_best_toggle(self, on: bool) -> None:
+        self.config.smart_best_shot = on
+        self._apply_smart()
+
+    def _on_smart_roi(self, roi) -> None:
+        roi = normalize_roi(roi)
+        self.config.smart_roi = list(roi) if roi else []
+        self.smart_bar.set_roi_selecting(False)
+        self.video_view.set_roi_selecting(False)
+        self._apply_smart()
+        self.statusBar().showMessage("초점 영역(ROI)을 지정했습니다" if roi else "초점 영역을 화면 중앙으로 되돌렸습니다", 3000)
+
+    def _on_smart_analyzed(self, a) -> None:
+        if not self._smart_wanted() or self.mode_stack.currentIndex() != 0:
+            return
+        q = a.quality
+        self.smart_bar.set_quality(q)
+        if not self._smart_live():
+            return
+        cfg = self.config
+        if cfg.smart_peaking:
+            self.video_view.set_overlay(a.peaking)
+        if cfg.smart_mode != "off" or cfg.smart_peaking:
+            self.video_view.set_focus_meter(q.focus_pct if q.usable else 0.0, q.in_focus)
+
+    def _pro_best_shot(self, shot, mode: str) -> None:
+        """Pro LIVE 의 자동 정지(정지 후 SAVE 로 저장) / 자동 저장."""
+        pro = self.pro
+        if not pro.is_live_running():
+            return
+        pct = shot.quality.focus_pct
+        if mode == "freeze":
+            pro.freeze_with(shot.frame)
+            self.statusBar().showMessage(f"Pro LIVE 자동 정지 (초점 {pct:.0f}) · SAVE 로 저장", 5000)
+            return
+        if self._current_patient is None:
+            self.statusBar().showMessage("자동 저장: 환자를 먼저 선택하세요", 4000)
+            return
+        try:
+            self.service.save_photo(shot.frame, self._current_patient, eye=pro.current_eye(),
+                                    note=f"Smart 자동 저장 (초점 {pct:.0f})")
+        except Exception as e:  # noqa: BLE001
+            log.exception("pro smart snapshot failed")
+            self.statusBar().showMessage(f"자동 저장 실패: {e}", 8000)
+            return
+        pro.reload(select_last=False)
+        self._on_pro_saved()
+        self.statusBar().showMessage(f"Pro LIVE 자동 저장 (초점 {pct:.0f})", 4000)
+
+    def _on_smart_best_shot(self, shot) -> None:
+        """자동 촬영 순간 — 버퍼에서 고른 가장 선명한 원본 프레임."""
+        mode = self.config.smart_mode
+        if mode == "off":
+            return
+        pct = shot.quality.focus_pct
+        if self.mode_stack.currentIndex() == 1:
+            self._pro_best_shot(shot, mode)
+            return
+        if self._paused:
+            return
+        eye = self.control_bar.current_eye()
+        if mode == "snapshot":
+            if self._current_patient is None:
+                self.control_bar.set_status("자동 저장: 환자를 먼저 선택하세요")
+                return
+            sounds.play("shutter")
+            try:
+                cap = self.service.save_photo(shot.frame, self._current_patient, eye=eye,
+                                              note=f"Smart 자동 저장 (초점 {pct:.0f})")
+            except Exception as e:  # noqa: BLE001
+                log.exception("smart snapshot save failed")
+                self.statusBar().showMessage(f"자동 저장 실패: {e}", 8000)
+                return
+            self.thumbnail_panel.add_capture(cap)
+            if not self._quad:
+                self.video_view.flash("자동 저장")
+            self.control_bar.set_status(f"자동 저장됨 (초점 {pct:.0f})")
+            return
+        # freeze: 의사가 확인한 뒤 '사진 캡처'로 저장하거나 라이브로 돌아간다
+        if self._recording or self._single_frozen:
+            return
+        if self._quad:
+            self.quad_view.set_live_frame(shot.frame)
+            if self.quad_view.freeze_active(eye):
+                self.control_bar.set_status(f"자동 정지 → 4분할 칸 채움 (초점 {pct:.0f})")
+            return
+        self._single_frozen = True
+        self._freeze_frame = shot.frame
+        sounds.play("freeze")
+        self.video_view.set_frame(shot.frame)
+        self.video_view.flash("자동 정지 — 초점 최적")
+        self.control_bar.set_freeze_state(True)
+        self.control_bar.set_status(f"자동 정지 (초점 {pct:.0f}) · 사진 캡처로 저장 / ▶라이브로 복귀")
+        self._refresh_hud_state()
+        self._sync_smart_view()
 
     def _on_record_toggle(self, checked: bool) -> None:
         if checked:
@@ -818,6 +1018,7 @@ class MainWindow(QMainWindow):
         except Exception:  # noqa: BLE001
             log.warning("stop recording on close failed", exc_info=True)
         self._stop_camera()
+        self.smart.stop()
         try:
             self.db.close()
         except Exception:  # noqa: BLE001
