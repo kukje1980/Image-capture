@@ -1160,6 +1160,7 @@
       const fz = $('pro-freeze');
       fz.width = g.width; fz.height = g.height; fz.getContext('2d').drawImage(g, 0, 0);
       P.frozen = true;
+      App.sfx('freeze');
     } else P.frozen = false;
     view.classList.toggle('frozen', P.frozen);
     $('pro-capture').classList.toggle('on', P.frozen);
@@ -1171,6 +1172,7 @@
     if (!p) { App.toast('환자를 먼저 선택하세요.', 'error'); return; }
     const src = P.frozen ? $('pro-freeze') : grabVideo();
     if (!src) { App.toast('저장할 영상이 없습니다.', 'error'); return; }
+    App.sfx('shutter');
     const blob = await new Promise((r) => src.toBlob(r, 'image/png'));
     if (!blob) return;
     if (await App.persistCapture(p, 'photo', blob, 'png', $('pro-eye').value, null, null, { silent: true })) {

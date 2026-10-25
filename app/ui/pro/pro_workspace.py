@@ -61,6 +61,7 @@ from PySide6.QtWidgets import (
 )
 
 from app import brand as app_brand
+from app import sounds
 from app.capture import analysis, cataract
 from app.capture.frame_utils import bgr_to_qimage
 from app.capture.image_process import Adjust, apply_adjust, auto_levels, histogram
@@ -1104,6 +1105,7 @@ class ProWorkspace(QWidget):
                 self._frozen_frame = None if self._live is None else self._live.copy()
             self.live_canvas.set_overlay(None)
             if self._frozen_frame is not None:
+                sounds.play("freeze")
                 self.live_canvas.set_image(self._frozen_frame, keep_view=True)
             self.b_capture.setText(icons.gap("RESUME"))
             self.b_capture.setIcon(_icon("play", "#ffffff"))
@@ -1131,6 +1133,7 @@ class ProWorkspace(QWidget):
         if frame is None:
             QMessageBox.information(self, "확인", "저장할 영상이 없습니다.")
             return None
+        sounds.play("shutter")
         try:
             cap = self.service.save_photo(frame, self._patient, eye=self.current_eye())
         except Exception as e:  # noqa: BLE001
