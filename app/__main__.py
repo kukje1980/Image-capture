@@ -4,13 +4,12 @@
     python -m app --source synthetic   # 하드웨어 없이 합성 영상으로 실행
     python -m app --source file        # 설정의 test_file_path 재생
     python -m app --brand keeler       # Keeler 전용 화면 (로고·색)
+    python -m app --import-samples <폴더|zip>   # 질환별 샘플 사진을 등록하고 끝냄 (화면 없음)
 """
 from __future__ import annotations
 
 import logging
 import sys
-
-from PySide6.QtWidgets import QApplication
 
 from app import brand
 from app.config import AppConfig
@@ -24,6 +23,15 @@ def _apply_cli_overrides(argv, config: AppConfig) -> None:
             config.source_mode = argv[i + 1]
         elif a.startswith("--source="):
             config.source_mode = a.split("=", 1)[1]
+
+
+def _import_samples_arg(argv):
+    for i, a in enumerate(argv):
+        if a == "--import-samples" and i + 1 < len(argv):
+            return argv[i + 1]
+        if a.startswith("--import-samples="):
+            return a.split("=", 1)[1]
+    return None
 
 
 def main(argv=None) -> int:
@@ -41,6 +49,20 @@ def main(argv=None) -> int:
              config.source_mode, config.media_root, config.export_root)
 
     db = Database(config.db_path).init()
+
+    samples = _import_samples_arg(argv)
+    if samples:
+        from app.services.sample_import import import_samples
+        try:
+            print(import_samples(db, config, samples).summary())
+            return 0
+        except (OSError, ValueError) as e:
+            print(f"샘플 사진을 가져오지 못했습니다: {e}", file=sys.stderr)
+            return 1
+        finally:
+            db.close()
+
+    from PySide6.QtWidgets import QApplication
 
     app = QApplication(argv)
     app.setApplicationName(b["app_name"])
