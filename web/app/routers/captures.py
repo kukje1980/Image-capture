@@ -31,6 +31,31 @@ def _db(request: Request):
     return request.app.state.db
 
 
+THUMB_MAX = 320
+
+
+def make_thumbnail(abs_path: Path) -> Optional[Path]:
+    """사진 옆 .thumbs/<이름>.jpg 에 긴 변 320px 축소본을 만든다 (Pillow 가 없거나 실패하면 None).
+
+    목록은 원본(수 MB PNG) 대신 이 파일을 받으므로 환자를 바꿀 때 수십 배 빨리 뜬다.
+    """
+    try:
+        from PIL import Image
+    except ImportError:                                 # Pillow 미설치 → 원본으로 표시
+        return None
+    try:
+        with Image.open(abs_path) as im:
+            im = im.convert("RGB")
+            im.thumbnail((THUMB_MAX, THUMB_MAX))
+            out_dir = abs_path.parent / ".thumbs"          # 열 수 있는 이미지일 때만 폴더를 만든다
+            out_dir.mkdir(parents=True, exist_ok=True)
+            out = out_dir / (abs_path.stem + ".jpg")
+            im.save(out, "JPEG", quality=85, optimize=True)
+        return out
+    except Exception:                                   # noqa: BLE001 — 썸네일은 부가 기능, 실패해도 저장은 유지
+        return None
+
+
 def _sanitize(s: str) -> str:
     s = (s or "").strip()
     s = _UNSAFE.sub("_", s)
@@ -99,20 +124,29 @@ async def create_capture(
         raise
 
     url = "/media/" + str(rel_path).replace("\\", "/")
+    thumb_rel = None
+    if media_type == "photo":
+        thumb = make_thumbnail(abs_path)
+        if thumb is not None:
+            thumb_rel = str(thumb.relative_to(config.MEDIA_DIR)).replace("\\", "/")
     try:
         cid = db.create_capture({
-        "patient_id": patient_id,
-        "media_type": media_type,
-        "file_path": str(rel_path).replace("\\", "/"),
-        "url": url,
-        "captured_at": ts.strftime("%Y-%m-%d %H:%M:%S"),
-        "eye": eye if eye in ("OD", "OS", "OU", "NA") else "NA",
-        "duration_ms": duration_ms,
-        "note": note,
+            "patient_id": patient_id,
+            "media_type": media_type,
+            "file_path": str(rel_path).replace("\\", "/"),
+            "url": url,
+            "thumbnail_path": thumb_rel,
+            "captured_at": ts.strftime("%Y-%m-%d %H:%M:%S"),
+            "eye": eye if eye in ("OD", "OS", "OU", "NA") else "NA",
+            "duration_ms": duration_ms,
+            "note": note,
         })
     except Exception:                                   # 기록 실패(그 사이 환자 삭제 등) → 파일만 남지 않게
         abs_path.unlink(missing_ok=True)
-        raise HTTPException(status_code=409, detail="저장하지 못했습니다 (환자가 삭제되었을 수 있습니다).")
+        if thumb_rel:
+            (config.MEDIA_DIR / thumb_rel).unlink(missing_ok=True)
+        raise HTTPException(status_code=409,
+                            detail="저장하지 못했습니다 (환자가 삭제되었을 수 있습니다).") from None
     return db.get_capture(cid)
 
 
@@ -130,8 +164,9 @@ def update_capture(request: Request, cid: int, body: CaptureNoteIn):
 @router.delete("/{cid}", status_code=204)
 def delete_capture(request: Request, cid: int):
     row = _db(request).delete_capture(cid)
-    if row and row.get("file_path"):
-        try:
-            (config.MEDIA_DIR / row["file_path"]).unlink(missing_ok=True)
-        except Exception:
-            pass
+    for key in ("file_path", "thumbnail_path"):
+        if row and row.get(key):
+            try:
+                (config.MEDIA_DIR / row[key]).unlink(missing_ok=True)
+            except OSError:
+                pass

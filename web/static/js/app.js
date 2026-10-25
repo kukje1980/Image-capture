@@ -1097,7 +1097,7 @@
       el.innerHTML = `
         ${isVideo
           ? '<div class="tvid"><svg class="ic"><use href="#i-play"/></svg></div>'
-          : `<img src="${c.url}" alt="캡처 ${fmt(ts)}" loading="lazy">`}
+          : `<img src="${escHtml(c.thumb_url || c.url)}" alt="캡처 ${fmt(ts)}" loading="lazy" decoding="async">`}
         <span class="thumb-badges">
           ${eye ? `<span class="thumb-badge e-${eye}">${eye}</span>` : ''}
           ${dur ? `<span class="thumb-badge video">${dur}</span>` : ''}

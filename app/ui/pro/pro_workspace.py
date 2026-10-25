@@ -18,7 +18,16 @@ from datetime import datetime
 
 import numpy as np
 from PySide6.QtCore import QPointF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QIcon, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QShortcut
+from PySide6.QtGui import (
+    QColor,
+    QIcon,
+    QKeySequence,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+    QShortcut,
+)
 from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -33,18 +42,18 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
-    QSizePolicy,
-    QToolButton,
     QScrollArea,
+    QSizePolicy,
     QSlider,
     QStackedWidget,
     QTabWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
-from app.capture.image_process import Adjust, apply_adjust, auto_levels, histogram
 from app import brand as app_brand
+from app.capture.image_process import Adjust, apply_adjust, auto_levels, histogram
 from app.ui import icons
 from app.ui.patient_dialog import PatientDialog
 from app.ui.pro import print_util
@@ -315,6 +324,7 @@ class ProWorkspace(QWidget):
         self.lbl_img = QLabel("-")
         self.lbl_img.setWordWrap(True)
         self.lbl_img.setObjectName("Muted")
+        self.lbl_img.setMinimumHeight(self.lbl_img.fontMetrics().lineSpacing() * 4 + 6)   # 4줄(1화면 정보)이 잘리지 않게
         cl.addWidget(self.lbl_img)
         lay.addWidget(card)
 

@@ -1,6 +1,8 @@
 """썸네일 패널의 단일 항목 (클릭 가능): 4:3 영상 + 안구 배지 + 시각·코멘트 오버레이."""
 from __future__ import annotations
 
+from collections import OrderedDict
+
 from PySide6.QtCore import QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QSizePolicy, QWidget
@@ -10,7 +12,8 @@ from app.ui import icons
 from app.ui.theme import EYE_COLORS
 from app.ui.video_view import scaled_font
 
-_cache: dict[str, QPixmap] = {}
+_cache: "OrderedDict[str, QPixmap]" = OrderedDict()
+_CACHE_MAX = 300          # 환자를 많이 오갈 때 메모리가 계속 늘지 않게 (LRU)
 
 
 def _load_pixmap(capture: Capture) -> QPixmap | None:
@@ -27,6 +30,10 @@ def _load_pixmap(capture: Capture) -> QPixmap | None:
         if pm.width() > 480:
             pm = pm.scaledToWidth(480, Qt.TransformationMode.SmoothTransformation)
         _cache[path] = pm
+        while len(_cache) > _CACHE_MAX:
+            _cache.popitem(last=False)
+    else:
+        _cache.move_to_end(path)
     return pm
 
 

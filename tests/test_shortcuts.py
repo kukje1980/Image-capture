@@ -81,6 +81,7 @@ def test_custom_key(qapp, win):
 
 def test_dialog_rejects_duplicates(qapp, monkeypatch):
     from PySide6.QtGui import QKeySequence
+
     from app.ui import shortcuts_dialog
     from app.ui.shortcuts_dialog import ShortcutsDialog
     warned = []

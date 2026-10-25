@@ -28,7 +28,7 @@ class AppConfig:
     photo_format: str = "png"                # png | jpg
     video_fallback_fourcc: str = "mp4v"      # ffmpeg 실패 시 cv2 폴백 코덱
     subfolder_template: str = "{chart_no}_{patient_id}/{date}"
-    thumbnail_max_side: int = 120
+    thumbnail_max_side: int = 320            # 썸네일 긴 변(px). 우측 목록 카드(약 220px)에서 선명하게 보이는 크기
     newest_on_top: bool = True
     theme: str = "dark"                      # dark(기본, 영상 작업 공간) | light
     clinic_name: str = ""                    # 인쇄 보고서 머리말 기관명
@@ -79,6 +79,8 @@ class AppConfig:
             self.export_root = str(base / "export")
         if not self.db_path:
             self.db_path = str(base / "slitlamp.db")
+        if self.thumbnail_max_side < 240:        # 예전 기본값(120)은 목록 카드에서 흐릿하게 보였다
+            self.thumbnail_max_side = 320
         paths.ensure_dir(self.media_root)
         paths.ensure_dir(Path(self.db_path).parent)
 

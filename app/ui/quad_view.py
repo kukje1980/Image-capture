@@ -7,10 +7,10 @@ from __future__ import annotations
 
 import numpy as np
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import QWidget
 
-from app.capture.frame_utils import bgr_to_qimage
+from app.capture.frame_utils import frame_to_pixmap
 
 try:
     import cv2
@@ -120,10 +120,9 @@ class QuadView(QWidget):
         for i, (x, y) in enumerate(origins):
             frame = self._frames[i]
             if frame is not None:
-                if self._pix[i] is None:
-                    self._pix[i] = QPixmap.fromImage(bgr_to_qimage(frame))
-                pm = self._pix[i].scaled(cw - 4, ch - 4, Qt.AspectRatioMode.KeepAspectRatio,
-                                         Qt.TransformationMode.SmoothTransformation)
+                if self._pix[i] is None or self._pix[i].width() > cw - 4 or self._pix[i].height() > ch - 4:
+                    self._pix[i] = frame_to_pixmap(frame, cw - 4, ch - 4)     # 칸 크기로 줄여서 변환
+                pm = self._pix[i]
                 p.drawPixmap(x + (cw - pm.width()) // 2, y + (ch - pm.height()) // 2, pm)
             else:
                 p.setPen(QColor("#475569"))

@@ -70,10 +70,10 @@ class VideoRecorder(QObject):
         self._failed = False
         self._open_writer()
         self._queue = queue.Queue(maxsize=_QUEUE_MAX)
-        self._recording = True
-        self._start_ts = time.time()
         self._thread = threading.Thread(target=self._worker, daemon=True)
         self._thread.start()
+        self._start_ts = time.time()
+        self._recording = True                   # 마지막에 켠다 — 다른 스레드의 feed() 가 준비 안 된 상태를 보지 않게
         log.info("recording started: %s (%s, %sfps, %s)",
                  self._path, self._backend, self._fps, self._size)
 

@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS captures (
     media_type     TEXT NOT NULL CHECK (media_type IN ('photo','video')),
     file_path      TEXT NOT NULL,            -- 서버 저장 상대 경로
     url            TEXT NOT NULL,            -- 브라우저 접근 URL
+    thumbnail_path TEXT,                     -- 목록용 축소 이미지 상대 경로 (없으면 NULL)
     captured_at    TEXT NOT NULL,            -- 'YYYY-MM-DD HH:MM:SS'
     eye            TEXT CHECK (eye IN ('OD','OS','OU','NA') OR eye IS NULL),
     duration_ms    INTEGER,                  -- 동영상만

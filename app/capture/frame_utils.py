@@ -7,7 +7,7 @@ import sys
 from typing import List, Optional
 
 import numpy as np
-from PySide6.QtGui import QImage
+from PySide6.QtGui import QImage, QPixmap
 
 try:
     import cv2
@@ -28,6 +28,33 @@ def bgr_to_qimage(frame: np.ndarray) -> QImage:
     ch = rgb.shape[2] if rgb.ndim == 3 else 1
     qimg = QImage(rgb.data, w, h, ch * w, QImage.Format.Format_RGB888)
     return qimg.copy()
+
+
+def fit_size(w: int, h: int, max_w: int, max_h: int) -> tuple[int, int]:
+    """(w, h) 를 비율을 지키며 (max_w, max_h) 안에 맞춘 크기. 더 작으면 그대로."""
+    if w <= 0 or h <= 0 or max_w <= 0 or max_h <= 0:
+        return (max(1, w), max(1, h))
+    scale = min(max_w / w, max_h / h, 1.0)
+    return (max(1, int(w * scale)), max(1, int(h * scale)))
+
+
+def shrink_for_display(frame: np.ndarray, max_w: int, max_h: int) -> np.ndarray:
+    """표시 영역보다 큰 프레임을 먼저 축소한다 (QImage 변환·QPixmap 스무스 스케일보다 훨씬 싸다).
+
+    4K 프레임을 그대로 QImage 로 바꾸고 위젯 크기로 매 프레임 스케일하면 GUI 스레드가 밀린다.
+    표시 크기로 줄인 뒤 변환하면 복사·변환량이 1/10 이하가 된다.
+    """
+    h, w = frame.shape[:2]
+    tw, th = fit_size(w, h, max_w, max_h)
+    if (tw, th) == (w, h) or cv2 is None:
+        return frame
+    interp = cv2.INTER_AREA if w / tw >= 2.0 else cv2.INTER_LINEAR
+    return cv2.resize(frame, (tw, th), interpolation=interp)
+
+
+def frame_to_pixmap(frame: np.ndarray, max_w: int, max_h: int) -> QPixmap:
+    """BGR 프레임 → 표시 영역에 맞춘 QPixmap (비율 유지). GUI 스레드에서 호출."""
+    return QPixmap.fromImage(bgr_to_qimage(shrink_for_display(frame, max_w, max_h)))
 
 
 def make_thumbnail(frame: np.ndarray, max_side: int = 120) -> np.ndarray:

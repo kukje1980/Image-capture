@@ -12,8 +12,9 @@ class CapturesDAO:
         self._c = conn
         self._lock = lock
 
+    # 쓰기는 `with self._c:` 로 감싼다 — 성공하면 commit, 예외면 rollback (열린 트랜잭션이 남지 않게).
     def insert(self, cap: Capture) -> int:
-        with self._lock:
+        with self._lock, self._c:
             cur = self._c.execute(
                 """INSERT INTO captures
                    (patient_id, media_type, file_path, export_path, thumbnail_path,
@@ -22,7 +23,6 @@ class CapturesDAO:
                 (cap.patient_id, cap.media_type, cap.file_path, cap.export_path,
                  cap.thumbnail_path, cap.captured_at, cap.eye, cap.duration_ms, cap.note),
             )
-            self._c.commit()
             return cur.lastrowid
 
     def list_by_patient(self, pid: int, order: str = "desc") -> List[Capture]:
@@ -42,19 +42,17 @@ class CapturesDAO:
 
     def update_note(self, cid: int, note: Optional[str]) -> None:
         """영상별 코멘트 수정 (Pro 모드 Edit Data)."""
-        with self._lock:
+        with self._lock, self._c:
             self._c.execute("UPDATE captures SET note=? WHERE id=?", (note, cid))
-            self._c.commit()
 
     def delete(self, cid: int) -> Optional[dict]:
         """레코드를 지우고, 디스크 정리를 위해 관련 경로를 반환한다."""
-        with self._lock:
+        with self._lock, self._c:
             r = self._c.execute(
                 "SELECT file_path, export_path, thumbnail_path FROM captures WHERE id=?",
                 (cid,),
             ).fetchone()
             self._c.execute("DELETE FROM captures WHERE id=?", (cid,))
-            self._c.commit()
         return dict(r) if r is not None else None
 
     @staticmethod

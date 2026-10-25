@@ -123,6 +123,7 @@ def test_patch_capture_note(client):
 
 def test_old_web_db_migrated(tmp_path):
     import sqlite3
+
     from app.db.database import Database
     path = tmp_path / "old.db"
     con = sqlite3.connect(path)
@@ -182,6 +183,7 @@ def test_update_keeps_unsent_fields(client):
 
 def test_same_millisecond_uploads_do_not_overwrite(client, monkeypatch):
     from datetime import datetime
+
     from app import config
     p = _make_patient(client, chart="T1")
     monkeypatch.setattr(config, "now", lambda: datetime(2026, 1, 2, 3, 4, 5, 6000))
@@ -208,6 +210,45 @@ def test_upload_size_limit(client, monkeypatch):
 
 def test_now_uses_korea_time():
     from datetime import datetime, timedelta, timezone
+
     from app import config
     kst = datetime.now(timezone(timedelta(hours=9))).replace(tzinfo=None)
     assert abs((config.now() - kst).total_seconds()) < 5
+
+
+def test_thumbnail_generated_for_real_png(client, tmp_path):
+    """실제 PNG 를 올리면 목록용 썸네일(.thumbs/*.jpg) 이 만들어지고 thumb_url 로 받을 수 있다."""
+    import pytest
+    pytest.importorskip("PIL")
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (1600, 900), (30, 60, 120)).save(buf, "PNG")
+    p = _make_patient(client, chart="TH1")
+    r = client.post("/api/v1/captures", files={"file": ("big.png", io.BytesIO(buf.getvalue()), "image/png")},
+                    data={"patient_id": str(p["id"]), "media_type": "photo", "ext": "png"})
+    assert r.status_code == 201, r.text
+    cap = r.json()
+    assert cap["thumb_url"] != cap["url"] and "/.thumbs/" in cap["thumb_url"]
+    t = client.get(cap["thumb_url"])
+    assert t.status_code == 200
+    im = Image.open(io.BytesIO(t.content))
+    assert max(im.size) == 320
+    assert client.delete(f"/api/v1/captures/{cap['id']}").status_code == 204
+    assert client.get(cap["thumb_url"]).status_code == 404
+
+
+def test_fake_png_without_thumbnail_falls_back_to_url(client):
+    p = _make_patient(client, chart="TH2")
+    png = b"\x89PNG\r\n\x1a\n" + b"0" * 16
+    cap = client.post("/api/v1/captures", files={"file": ("a.png", io.BytesIO(png), "image/png")},
+                      data={"patient_id": str(p["id"]), "media_type": "photo", "ext": "png"}).json()
+    assert cap["thumb_url"] == cap["url"]
+
+
+def test_failed_insert_rolls_back(client):
+    """차트번호 중복 등 실패한 쓰기가 트랜잭션을 열어 둔 채 남기지 않는다."""
+    _make_patient(client, chart="RB1")
+    assert client.post("/api/v1/patients", json={"chart_no": "RB1", "name": "x"}).status_code == 400
+    db = client.app.state.db
+    assert not db._conn.in_transaction
+    assert db.backup(db.backup_dir() / "manual.db").exists()

@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 from collections import deque
 
-from PySide6.QtCore import QSize, Qt, QThread, QTimer
+from PySide6.QtCore import QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
+    QApplication,
     QButtonGroup,
     QFrame,
     QHBoxLayout,
@@ -22,11 +24,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app import brand as app_brand
+from app import shortcuts
 from app.capture.camera_worker import CameraWorker
 from app.capture.frame_utils import device_names, find_sony_index
 from app.capture.sources import DeviceSource, FileSource, SyntheticSource
 from app.capture.video_recorder import VideoRecorder
 from app.services.capture_service import CaptureService
+from app.ui import icons
 from app.ui.control_bar import ControlBar
 from app.ui.image_viewer import ImageViewerDialog
 from app.ui.patient_panel import PatientPanel
@@ -34,16 +39,34 @@ from app.ui.pro.pro_workspace import ProWorkspace
 from app.ui.quad_view import QuadView
 from app.ui.settings_dialog import SettingsDialog
 from app.ui.shortcuts_dialog import ShortcutsDialog
-from app import brand as app_brand
-from app import shortcuts
-from app.ui import icons
 from app.ui.theme import ICON, ICON_ACCENT, build_qss, make_app_icon
 from app.ui.thumbnail_panel import ThumbnailPanel
 from app.ui.video_view import VideoView
 
-from PySide6.QtWidgets import QApplication
-
 log = logging.getLogger(__name__)
+MIN_FREE_MB = 500          # 녹화 시작에 필요한 최소 여유 공간
+
+
+def _free_space_mb(path) -> float | None:
+    try:
+        import shutil
+        return shutil.disk_usage(str(path)).free / (1024 * 1024)
+    except OSError:
+        return None
+
+
+class _DeviceProbe(QThread):
+    """연결된 카메라 이름 목록을 별도 스레드에서 조회 (ffmpeg 실행 — 수 초 걸릴 수 있음)."""
+
+    found = Signal(list)
+
+    def run(self) -> None:
+        try:
+            names = device_names()
+        except Exception:  # noqa: BLE001
+            log.exception("device probe failed")
+            names = []
+        self.found.emit(list(names))
 
 
 class MainWindow(QMainWindow):
@@ -72,15 +95,22 @@ class MainWindow(QMainWindow):
         self._first_video_frame = None
         self._video_patient = None
         self._rec_started = 0.0
+        self._finishing = None               # 멈춘 녹화를 백그라운드에서 마무리(인코더 종료) 하는 동안의 정보
+        self._reconnect_attempts = 0
         self.cam_thread = None
         self.worker = None
+        self._probe = None
 
         self.recorder = VideoRecorder(fallback_fourcc=config.video_fallback_fourcc)
         self.recorder.error.connect(self._on_recorder_error)
+        self.recorder.finished.connect(self._on_recorder_finished)
 
         self._build_ui()
-        self._pick_camera()
-        self._start_camera()
+        self._reconnect_timer = QTimer(self)
+        self._reconnect_timer.setSingleShot(True)
+        self._reconnect_timer.timeout.connect(self._try_reconnect)
+        # 카메라는 창이 먼저 뜬 뒤에 연다 — 장치 검색(수 초)과 장치 열기가 첫 화면을 막지 않게
+        QTimer.singleShot(0, self._boot_camera)
 
     # ---- UI 구성 ----
     def _build_ui(self) -> None:
@@ -398,12 +428,32 @@ class MainWindow(QMainWindow):
 
         return factory
 
-    def _pick_camera(self) -> None:
+    def _boot_camera(self) -> None:
+        """시작 시 카메라 열기. 장치 이름 검색(ffmpeg 실행, 최대 수 초)은 별도 스레드에서 한다."""
+        if self.config.source_mode != "device":
+            self._start_camera()
+            return
+        self.control_bar.set_status("카메라 찾는 중…")
+        self.video_view.set_placeholder("연결된 캡처 장비를 찾고 있습니다…")
+        self._probe = _DeviceProbe(self)
+        self._probe.found.connect(self._on_devices_found)
+        self._probe.start()
+
+    def _on_devices_found(self, names: list) -> None:
+        self._probe = None
+        try:
+            self._pick_camera(names)
+        except Exception:  # noqa: BLE001
+            log.exception("camera pick failed")
+        self._start_camera()
+
+    def _pick_camera(self, names: list | None = None) -> None:
         """카메라 자동 선택: 저장된 이름으로 다시 찾고, 처음이면 소니(USB 스트리밍) 카메라를 우선."""
         cfg = self.config
         if cfg.source_mode != "device":
             return
-        names = device_names()
+        if names is None:
+            names = device_names()
         if not names:
             return
         idx = None
@@ -434,8 +484,12 @@ class MainWindow(QMainWindow):
                 log.warning("camera selection save failed", exc_info=True)
 
     def _start_camera(self) -> None:
+        if self.cam_thread is not None:      # 이미 열려 있으면(재연결 타이머와 사용자 조작이 겹침) 먼저 닫는다
+            self._stop_camera()
+        self.video_view.set_placeholder("카메라 연결 중…")
         self.cam_thread = QThread(self)
-        self.worker = CameraWorker(self._source_factory())
+        # 녹화기는 캡처 스레드에서 모든 프레임을 직접 받는다 (GUI 가 바빠 화면 프레임을 건너뛰어도 녹화는 온전히)
+        self.worker = CameraWorker(self._source_factory(), sink=self._record_sink)
         self.worker.moveToThread(self.cam_thread)
         self.cam_thread.started.connect(self.worker.run)
         self.worker.frame_ready.connect(self._on_frame_ready)
@@ -465,6 +519,11 @@ class MainWindow(QMainWindow):
         self.cam_thread = None
 
     def _restart_camera(self) -> None:
+        """사용자가 '카메라 재연결'·설정 변경을 했을 때. 자동 재연결 대기도 취소한다."""
+        self._reconnect_timer.stop()
+        self._reconnect_attempts = 0
+        if self._probe is not None:          # 아직 장치 검색 중이면 그 결과로 어차피 열리므로 그대로 둔다
+            return
         if self._recording:                  # 카메라·해상도가 바뀌기 전에 지금 녹화를 마무리해 저장
             self._stop_recording()
         self._stop_camera()
@@ -474,27 +533,60 @@ class MainWindow(QMainWindow):
     # ---- 카메라 신호 처리 ----
     def _on_camera_opened(self, w: int, h: int, fps: float) -> None:
         self._frame_size = (w, h)
+        if self._reconnect_attempts:
+            self.statusBar().showMessage("카메라가 다시 연결되었습니다", 5000)
+        self._reconnect_attempts = 0
+        self._reconnect_timer.stop()
         self.control_bar.set_status(f"카메라 {w}x{h} @ {fps:.0f}fps")
 
-    def _on_frame_ready(self, frame) -> None:
-        self._last_frame = frame
-        self._frame_times.append(time.time())
+    def _record_sink(self, frame) -> None:
+        """캡처 스레드에서 매 프레임 호출 — 위젯을 건드리지 않는다."""
         if self._recording:
             self.recorder.feed(frame)
             if self._first_video_frame is None:
                 self._first_video_frame = frame
-        if self.mode_stack.currentIndex() == 1:
-            self.pro.set_live_frame(frame)
-        if self._quad:
-            self.quad_view.set_live_frame(frame)
-        elif not self._paused and not self._single_frozen:
-            self.video_view.set_frame(frame)
+
+    def _on_frame_ready(self, frame) -> None:
+        worker = self.worker
+        try:
+            self._last_frame = frame
+            self._frame_times.append(time.time())
+            if self.mode_stack.currentIndex() == 1:
+                self.pro.set_live_frame(frame)
+            if self._quad:
+                self.quad_view.set_live_frame(frame)
+            elif not self._paused and not self._single_frozen:
+                self.video_view.set_frame(frame)
+        finally:
+            if worker is not None:
+                worker.frame_done()          # 다음 프레임 허용 (한 장만 대기 — 큐가 쌓이지 않게)
 
     def _on_camera_error(self, msg: str) -> None:
         self.control_bar.set_status(f"오류: {msg}")
         self.statusBar().showMessage(f"카메라 오류: {msg}", 8000)
         if self._recording:
             self._stop_recording()
+        self._schedule_reconnect()
+
+    # ---- 자동 재연결 (USB 캡처 장비가 잠시 끊겨도 프로그램을 다시 켤 필요 없게) ----
+    def _schedule_reconnect(self) -> None:
+        if self.config.source_mode != "device" or self._reconnect_timer.isActive():
+            return
+        self._reconnect_attempts += 1
+        delay = 3000 if self._reconnect_attempts <= 5 else 10000
+        self.video_view.clear()
+        self.video_view.set_placeholder(f"카메라 연결이 끊겼습니다 — {delay // 1000}초 뒤 자동 재연결 "
+                                        f"({self._reconnect_attempts}회)")
+        self._reconnect_timer.start(delay)
+
+    def _try_reconnect(self) -> None:
+        if self.cam_thread is not None and self.worker is not None and self.worker.frames and \
+                self._frame_times and time.time() - self._frame_times[-1] < 2.0:
+            return                           # 그 사이 정상 복구됨
+        log.info("camera auto-reconnect attempt %s", self._reconnect_attempts)
+        self.control_bar.set_status(f"카메라 재연결 시도 중 ({self._reconnect_attempts}회)…")
+        self._stop_camera()
+        self._start_camera()
 
     def _estimate_fps(self) -> float:
         if len(self._frame_times) < 2:
@@ -644,6 +736,21 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "확인", "환자를 먼저 선택하세요.")
             self.control_bar.reset_record_button()
             return
+        if self._finishing is not None:      # 직전 녹화의 인코더가 아직 파일을 닫는 중
+            self.statusBar().showMessage("이전 녹화를 저장하는 중입니다. 잠시 후 다시 누르세요.", 4000)
+            self.control_bar.reset_record_button()
+            return
+        if self._last_frame is None:
+            QMessageBox.information(self, "확인", "카메라 영상이 없어 녹화할 수 없습니다.")
+            self.control_bar.reset_record_button()
+            return
+        free_mb = _free_space_mb(self.config.media_root)
+        if free_mb is not None and free_mb < MIN_FREE_MB:
+            QMessageBox.warning(self, "디스크 공간 부족",
+                                f"저장 폴더의 여유 공간이 {free_mb:,.0f}MB 뿐이라 녹화를 시작하지 않습니다.\n"
+                                f"(최소 {MIN_FREE_MB}MB 필요) 오래된 파일을 정리한 뒤 다시 시도하세요.\n{self.config.media_root}")
+            self.control_bar.reset_record_button()
+            return
         eye = self.control_bar.current_eye()
         path, ts = self.service.begin_video(self._current_patient, eye=eye)
         size = self._frame_size
@@ -667,34 +774,54 @@ class MainWindow(QMainWindow):
         self._update_rec_hud()
         self.control_bar.set_status("녹화 중...")
 
-    def _stop_recording(self) -> None:
+    def _stop_recording(self, wait: bool = False) -> None:
+        """녹화 중지. 인코더가 남은 프레임을 쓰고 파일을 닫는 데 수 초가 걸릴 수 있어
+        기본은 백그라운드에서 마무리하고(화면이 멈추지 않음) 끝나면 _on_recorder_finished 가 DB 에 기록한다.
+        wait=True 는 프로그램 종료 때처럼 끝날 때까지 기다려야 할 때."""
         if not self._recording:
             return
         self._recording = False
         self._rec_timer.stop()
         self._refresh_hud_state()
-        _, count, duration = self.recorder.stop()
+        ctx = {"path": self._video_path, "patient": self._video_patient, "eye": self._video_eye,
+               "ts": self._video_ts, "thumb": self._first_video_frame}
+        self.control_bar.reset_record_button()
+        if wait:
+            self._finishing = None
+            _, count, duration = self.recorder.stop()        # finished 신호는 _finishing 이 None 이라 무시됨
+            self._finish_video(ctx, count, duration)
+            return
+        self._finishing = ctx
+        self.control_bar.set_saving(True)
+        self.control_bar.set_status("동영상 저장 중…")
+        threading.Thread(target=self.recorder.stop, name="recorder-stop", daemon=True).start()
+
+    def _on_recorder_finished(self, path: str, count: int, duration: int) -> None:
+        ctx, self._finishing = self._finishing, None
+        self.control_bar.set_saving(False)
+        if ctx is None:
+            return
+        self._finish_video(ctx, count, duration)
+
+    def _finish_video(self, ctx: dict, count: int, duration: int) -> None:
         if count == 0:
             # 프레임이 하나도 기록되지 않은 녹화(인코더 오류·카메라 끊김)는 DB 에 남기지 않는다
             try:
-                os.remove(self._video_path)
+                os.remove(ctx["path"])
             except OSError:
                 pass
             QMessageBox.warning(self, "녹화 실패", "녹화된 영상이 없습니다 (카메라 또는 인코더 오류).")
             self.control_bar.set_status("녹화 실패")
-            self.control_bar.reset_record_button()
             return
         try:
             cap = self.service.finish_video(
-                self._video_path, self._video_patient, self._video_eye,
-                self._video_ts, duration, thumb_frame=self._first_video_frame,
+                ctx["path"], ctx["patient"], ctx["eye"], ctx["ts"], duration, thumb_frame=ctx["thumb"],
             )
             self.thumbnail_panel.add_capture(cap)
             self.control_bar.set_status(f"동영상 저장됨 ({duration // 1000}초)")
         except Exception as e:  # noqa: BLE001
             log.exception("finish_video failed")
-            QMessageBox.warning(self, "오류", f"동영상 저장 실패: {e}")
-        self.control_bar.reset_record_button()
+            QMessageBox.warning(self, "오류", f"동영상 저장 실패: {e}\n파일은 남아 있습니다: {ctx['path']}")
 
     def _on_recorder_error(self, msg: str) -> None:
         log.error("recorder error: %s", msg)
@@ -726,11 +853,18 @@ class MainWindow(QMainWindow):
 
     # ---- 종료 ----
     def closeEvent(self, event) -> None:  # noqa: N802
+        self._reconnect_timer.stop()
         try:
             if self._recording:
-                self._stop_recording()
+                self._stop_recording(wait=True)
+            elif self._finishing is not None:            # 백그라운드 마무리 중이면 끝날 때까지 잠시 기다린다
+                t = self.recorder._thread
+                if t is not None:
+                    t.join(timeout=10)
         except Exception:  # noqa: BLE001
             log.warning("stop recording on close failed", exc_info=True)
+        if self._probe is not None:
+            self._probe.wait(2000)
         self._stop_camera()
         try:
             self.db.close()

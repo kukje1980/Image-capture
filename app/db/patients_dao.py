@@ -12,8 +12,10 @@ class PatientsDAO:
         self._c = conn
         self._lock = lock
 
+    # 쓰기는 `with self._c:` 로 감싼다 — 성공하면 commit, 예외(차트번호 중복 등)면 rollback.
+    # 롤백하지 않으면 실패한 트랜잭션이 열린 채 남아 다음 작업·백업이 잠긴다.
     def insert(self, p: Patient) -> int:
-        with self._lock:
+        with self._lock, self._c:
             cur = self._c.execute(
                 """INSERT INTO patients
                    (chart_no, patient_id, name, birth_date, sex, phone, memo, symptoms,
@@ -22,11 +24,10 @@ class PatientsDAO:
                 (p.chart_no, p.patient_id, p.name, p.birth_date, p.sex, p.phone, p.memo, p.symptoms,
                  p.diagnosis, p.doctor),
             )
-            self._c.commit()
             return cur.lastrowid
 
     def update(self, p: Patient) -> None:
-        with self._lock:
+        with self._lock, self._c:
             self._c.execute(
                 """UPDATE patients SET
                      chart_no=?, patient_id=?, name=?, birth_date=?, sex=?, phone=?,
@@ -36,12 +37,10 @@ class PatientsDAO:
                 (p.chart_no, p.patient_id, p.name, p.birth_date, p.sex, p.phone,
                  p.memo, p.symptoms, p.diagnosis, p.doctor, p.id),
             )
-            self._c.commit()
 
     def delete(self, pid: int) -> None:
-        with self._lock:
+        with self._lock, self._c:
             self._c.execute("DELETE FROM patients WHERE id=?", (pid,))
-            self._c.commit()
 
     def get(self, pid: int) -> Optional[Patient]:
         with self._lock:

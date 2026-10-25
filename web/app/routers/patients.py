@@ -27,7 +27,7 @@ def create_patient(request: Request, patient: PatientIn):
     try:
         pid = db.create_patient(data)
     except Exception as e:  # UNIQUE 위반 등
-        raise HTTPException(status_code=400, detail=f"저장 실패(차트번호 중복 여부 확인): {e}")
+        raise HTTPException(status_code=400, detail=f"저장 실패(차트번호 중복 여부 확인): {e}") from e
     return db.get_patient(pid)
 
 
@@ -49,7 +49,7 @@ def update_patient(request: Request, pid: int, patient: PatientIn):
         # 보내지 않은 항목(예: 화면에 없는 patient_id)은 기존 값을 유지
         db.update_patient(pid, {**cur, **patient.model_dump(exclude_unset=True)})
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"수정 실패: {e}")
+        raise HTTPException(status_code=400, detail=f"수정 실패: {e}") from e
     return db.get_patient(pid)
 
 
@@ -69,7 +69,7 @@ def delete_patient(request: Request, pid: int):
             pass
     # 비게 된 날짜 폴더 · 환자 폴더 정리
     for dpath in sorted(dirs, key=lambda x: len(x.parts), reverse=True):
-        for d in (dpath, dpath.parent):
+        for d in (dpath, dpath.parent, dpath.parent.parent):    # .thumbs → 날짜 → 환자 폴더
             try:
                 if d != media_root and d.is_dir() and not any(d.iterdir()):
                     d.rmdir()

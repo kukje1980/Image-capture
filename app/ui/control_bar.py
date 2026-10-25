@@ -156,7 +156,7 @@ class ControlBar(QFrame):
 
     def set_capture_enabled(self, on: bool) -> None:
         self.btn_capture.setEnabled(on)
-        self.btn_record.setEnabled(on)
+        self.btn_record.setEnabled(on and not getattr(self, "_saving", False))
         self.btn_freeze.setEnabled(on)
         self.btn_save_quad.setEnabled(on)
 
@@ -172,6 +172,12 @@ class ControlBar(QFrame):
         rec = text.startswith("녹화 중")
         self.status_dot.setStyleSheet(
             f"background:{'#f0524f' if (bad or rec) else '#3ccf7a'};border-radius:4px;")
+
+    def set_saving(self, on: bool) -> None:
+        """녹화 파일을 닫는 동안 녹화 버튼을 잠시 잠근다 (같은 파일에 두 번 쓰지 않게)."""
+        self._saving = on
+        self.btn_record.setEnabled(not on and self.btn_capture.isEnabled())
+        self.btn_record.setText(icons.gap("저장 중…" if on else "녹화 시작"))
 
     def reset_record_button(self) -> None:
         self.btn_record.blockSignals(True)

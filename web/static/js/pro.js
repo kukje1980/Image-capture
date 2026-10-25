@@ -769,7 +769,7 @@
       cell.dataset.i = String(i);
       const when = (c.captured_at || '').slice(2, 16).replace(/-/g, '.');
       const eye = c.eye && c.eye !== 'NA' ? c.eye : '';
-      cell.innerHTML = `<img src="${esc(c.url)}" alt="" loading="lazy" draggable="false">` +
+      cell.innerHTML = `<img src="${esc(c.thumb_url || c.url)}" alt="" loading="lazy" decoding="async" draggable="false">` +
         `<div class="mcap"><span class="mno">${i + 1}</span>${eye ? `<span class="meye e-${esc(eye)}">${esc(eye)}</span>` : ''}` +
         `<span>${esc(when)}</span>${c.note ? `<span class="mnote">${esc(c.note)}</span>` : ''}</div>` +
         '<span class="mbadge" hidden></span>';

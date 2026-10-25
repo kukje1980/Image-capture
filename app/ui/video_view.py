@@ -6,7 +6,7 @@ from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPixmap, QRadialGradient
 from PySide6.QtWidgets import QWidget
 
-from app.capture.frame_utils import bgr_to_qimage
+from app.capture.frame_utils import frame_to_pixmap
 from app.ui import icons
 from app.ui.theme import EYE_COLORS
 
@@ -61,12 +61,19 @@ class VideoView(QWidget):
         self._rec_text = ""
 
     def set_frame(self, frame: np.ndarray) -> None:
-        self._pixmap = QPixmap.fromImage(bgr_to_qimage(frame))
+        # 위젯 크기로 먼저 줄여서 변환 — 매 프레임 전체 해상도 변환·스케일을 피한다
+        self._pixmap = frame_to_pixmap(frame, self.width(), self.height())
         self.update()
 
     def clear(self) -> None:
         self._pixmap = None
         self.update()
+
+    def set_placeholder(self, text: str) -> None:
+        """영상이 없을 때 보여 줄 안내 문구 (연결 중 · 재연결 대기 등)."""
+        self._placeholder = text
+        if self._pixmap is None:
+            self.update()
 
     def set_hud(self, patient: str | None = None, eye: str | None = None,
                 state: str | None = None, rec_text: str | None = None) -> None:
@@ -87,11 +94,10 @@ class VideoView(QWidget):
         if self._pixmap is None or self._pixmap.isNull():
             self._paint_placeholder(p)
             return
-        scaled = self._pixmap.scaled(
-            self.size(),
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
+        scaled = self._pixmap
+        if scaled.width() > self.width() or scaled.height() > self.height():   # 창이 그 사이 작아진 경우만
+            scaled = scaled.scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatio,
+                                   Qt.TransformationMode.SmoothTransformation)
         x = (self.width() - scaled.width()) // 2
         y = (self.height() - scaled.height()) // 2
         p.drawPixmap(x, y, scaled)

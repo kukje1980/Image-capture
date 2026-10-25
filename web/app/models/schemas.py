@@ -34,6 +34,7 @@ class CaptureOut(BaseModel):
     patient_id: int
     media_type: str
     url: str
+    thumb_url: Optional[str] = None          # 목록용 축소 이미지 (없으면 url 과 같음)
     captured_at: str
     eye: Optional[str] = None
     duration_ms: Optional[int] = None
