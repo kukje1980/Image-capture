@@ -401,6 +401,28 @@ class ProWorkspace(QWidget):
         self.analysis.set_enabled_for(self._mode)
         self.advanced_analysis = AnalysisPanel(self)
         self.tabs.addTab(self._scroll(self.advanced_analysis), "정밀 분석")
+        # 탭 6개가 사이드 폭(276px)에 한 줄로 들어가지 않아 스마트·분석·정밀 분석이 화살표 뒤로 숨던 문제 →
+        # 기본 탭 줄은 숨기고 3×2 버튼 격자로 모든 탭을 항상 보이게 한다 (탭 위젯·순서는 그대로)
+        self.tabs.tabBar().hide()
+        grid = QFrame()
+        grid.setObjectName("ProTabGrid")
+        gl = QGridLayout(grid)
+        gl.setContentsMargins(3, 3, 3, 3)
+        gl.setSpacing(2)
+        self.tab_buttons = []
+        tab_group = QButtonGroup(self)
+        for i in range(self.tabs.count()):
+            tb = QPushButton(self.tabs.tabText(i))
+            tb.setObjectName("ProTabBtn")
+            tb.setCheckable(True)
+            tb.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            tb.clicked.connect(lambda _=False, i=i: self.tabs.setCurrentIndex(i))
+            tab_group.addButton(tb)
+            gl.addWidget(tb, i // 3, i % 3)
+            self.tab_buttons.append(tb)
+        self.tabs.currentChanged.connect(lambda i: self.tab_buttons[i].setChecked(True) if 0 <= i < len(self.tab_buttons) else None)
+        self.tab_buttons[self.tabs.currentIndex()].setChecked(True)
+        lay.addWidget(grid)
         lay.addWidget(self.tabs, 1)
 
         self.lbl_sel = QLabel("MULTI에서 영상 2장을 클릭해 선택한 뒤 '비교'를 누르세요.")

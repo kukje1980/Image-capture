@@ -227,6 +227,13 @@ def build_qss(mode: str = "dark") -> str:
     }}
     QTabWidget#ProTabs QTabBar::tab:selected {{ background: {c['raised']}; color: {c['ink']}; border: 1px solid {c['rule_strong']}; }}
     QTabWidget#ProTabs QTabBar::tab:hover {{ color: {c['ink']}; }}
+    QFrame#ProTabGrid {{ background: {c['bg']}; border: 1px solid {c['rule']}; border-radius: 9px; }}
+    QPushButton#ProTabBtn {{
+        background: transparent; color: {c['ink_soft']}; padding: 5px 0; min-height: 22px;
+        border: 1px solid transparent; border-radius: 6px; font-weight: 700;
+    }}
+    QPushButton#ProTabBtn:checked {{ background: {c['raised']}; color: {c['ink']}; border: 1px solid {c['rule_strong']}; }}
+    QPushButton#ProTabBtn:hover {{ color: {c['ink']}; }}
     QLabel#Histogram {{ background: #070a0f; border: 1px solid {c['rule']}; border-radius: 7px; }}
     QFrame#MultiCell {{ background: #0a0d12; border: 1px solid #1d242f; border-radius: 6px; }}
     QFrame#MultiCell:hover {{ border: 2px solid {c['accent']}; }}
