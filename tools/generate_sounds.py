@@ -1,17 +1,18 @@
-"""효과음(WAV) 생성기 — 외부 음원 없이 numpy 로 합성한다 (저작권 걱정 없음).
+"""효과음(WAV) 생성기.
 
     python tools/generate_sounds.py            # assets/sounds/*.wav + web/static/sounds/*.wav 갱신
 
-소리 구성
-    shutter.wav    사진 캡처 — 예전 필름 카메라의 "찰칵" (미러 올라가는 '찰' + 셔터막 '칵')
-    freeze.wav     정지영상(스틸) — 짧고 가벼운 '틱' 과 맑은 여운 (화면이 멎는 느낌)
-    rec_start.wav  녹화 시작 — 캠코더식 짧은 '삐' 한 번
-    rec_stop.wav   녹화 중지 — 조금 낮은 '삐삐' 두 번
+사진 캡처(shutter)·녹화 시작/중지(rec_start, rec_stop)는 실제 카메라 녹음을 쓴다
+(tools/sound_candidates/ 에서 REAL 로 고른 파일을 복사 — 출처는 assets/sounds/SOURCES.md).
+정지영상(freeze)만 numpy 로 합성한다: 짧고 가벼운 '틱' 과 맑은 여운 (화면이 멎는 느낌).
+shutter()/rec_start()/rec_stop() 합성 함수는 참고용으로 남겨 둔다 (SYNTH_ALL=1 이면 모두 합성).
 
 출력은 44.1kHz · 모노 · 16-bit PCM. 난수 시드가 고정이라 다시 만들어도 같은 파일이 나온다.
 """
 from __future__ import annotations
 
+import os
+import shutil
 import wave
 from pathlib import Path
 
@@ -20,6 +21,13 @@ import numpy as np
 SR = 44100
 ROOT = Path(__file__).resolve().parent.parent
 OUT_DIRS = (ROOT / "assets" / "sounds", ROOT / "web" / "static" / "sounds")
+CANDIDATES = ROOT / "tools" / "sound_candidates"
+# 실제 녹음 선택 (사용자가 고른 것): 이름 → 후보 파일
+REAL = {
+    "shutter": "firefoxos_shutter.wav",      # Firefox OS 카메라 셔터 (Apache 2.0)
+    "rec_start": "android_rec_start.wav",    # AOSP VideoRecord (Apache 2.0)
+    "rec_stop": "android_rec_stop.wav",      # AOSP VideoStop (Apache 2.0)
+}
 
 
 def _t(ms: float) -> np.ndarray:
@@ -144,11 +152,18 @@ SOUNDS = {"shutter": shutter, "freeze": freeze, "rec_start": rec_start, "rec_sto
 
 
 def main() -> None:
+    synth_all = os.environ.get("SYNTH_ALL") == "1"
     for name, fn in SOUNDS.items():
+        if name in REAL and not synth_all:
+            src = CANDIDATES / REAL[name]
+            for d in OUT_DIRS:
+                shutil.copyfile(src, d / f"{name}.wav")
+            print(f"{name:10s} 실제 녹음 ← {src.name}")
+            continue
         data = fn()
         for d in OUT_DIRS:
             _write(d / f"{name}.wav", data)
-        print(f"{name:10s} {data.size / SR * 1000:5.0f} ms")
+        print(f"{name:10s} {data.size / SR * 1000:5.0f} ms (합성)")
 
 
 if __name__ == "__main__":
