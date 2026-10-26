@@ -6,8 +6,11 @@ Fusion 스타일 위에 QSS를 올려 OS와 무관하게 일관된 외형을 보
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QRectF, Qt
-from PySide6.QtGui import QBrush, QColor, QIcon, QPainter, QPen, QPixmap
+import tempfile
+from pathlib import Path
+
+from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtGui import QBrush, QColor, QIcon, QImage, QPainter, QPen, QPixmap, QPolygonF
 
 from app import brand as _brand
 
@@ -46,8 +49,27 @@ def palette(mode: str) -> dict:
     return {**base, **over}
 
 
+def _arrow_file(color: str, up: bool) -> str:
+    """콤보·숫자칸의 ▼/▲ 화살표 그림 (QSS 는 image: url() 로만 그릴 수 있어 임시 폴더에 PNG 로 둔다)."""
+    path = Path(tempfile.gettempdir()) / "slitlamp-ui" / f"arrow-{'up' if up else 'down'}-{color.lstrip('#')}.png"
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        img = QImage(20, 20, QImage.Format.Format_ARGB32)
+        img.fill(Qt.GlobalColor.transparent)
+        p = QPainter(img)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(color))
+        pts = [(3, 14), (17, 14), (10, 5)] if up else [(3, 6), (17, 6), (10, 15)]
+        p.drawPolygon(QPolygonF([QPointF(x, y) for x, y in pts]))
+        p.end()
+        img.save(str(path))
+    return path.as_posix()
+
+
 def build_qss(mode: str = "dark") -> str:
     c = palette(mode)
+    arrow_down, arrow_up = _arrow_file(c["ink_soft"], False), _arrow_file(c["ink_soft"], True)
     return f"""
     QWidget {{
         background: {c['bg']};
@@ -102,6 +124,11 @@ def build_qss(mode: str = "dark") -> str:
         border: 1px solid {c['accent']};
     }}
     QComboBox::drop-down {{ border: none; width: 24px; }}
+    QComboBox::down-arrow {{ image: url("{arrow_down}"); width: 10px; height: 10px; }}
+    QSpinBox::up-button, QSpinBox::down-button, QDoubleSpinBox::up-button, QDoubleSpinBox::down-button,
+    QDateEdit::up-button, QDateEdit::down-button {{ border: none; background: transparent; width: 18px; }}
+    QSpinBox::up-arrow, QDoubleSpinBox::up-arrow, QDateEdit::up-arrow {{ image: url("{arrow_up}"); width: 9px; height: 9px; }}
+    QSpinBox::down-arrow, QDoubleSpinBox::down-arrow, QDateEdit::down-arrow {{ image: url("{arrow_down}"); width: 9px; height: 9px; }}
     QComboBox QAbstractItemView {{
         background: {c['panel']}; border: 1px solid {c['rule_strong']}; padding: 4px;
         selection-background-color: {c['accent_soft']}; selection-color: {c['ink']}; outline: none;
