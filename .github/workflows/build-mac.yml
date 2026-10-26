@@ -1,6 +1,6 @@
 # macOS 앱(.app) + 설치 디스크 이미지(.dmg) 자동 빌드
 #   Actions 탭 → "Build macOS app" → Run workflow 로 수동 실행하거나, 아래 경로가 바뀐 push 때 실행된다.
-#   결과물은 실행 화면 아래 Artifacts 에서 내려받는다 (기본 / Keeler 전용 × Apple Silicon / Intel).
+#   결과물은 실행 화면 아래 Artifacts 에서 내려받는다 (기본 / Keeler 전용 / Explorer 판 × Apple Silicon / Intel).
 name: Build macOS app
 
 on:
@@ -21,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        brand: [default, keeler]
+        brand: [default, keeler, explorer]
         runner: [macos-15, macos-15-intel]      # Apple Silicon (M1/M2/M3…) / Intel
         include:
           - runner: macos-15
@@ -32,6 +32,8 @@ jobs:
             app: SlitLampImaging
           - brand: keeler
             app: KeelerSlitLamp
+          - brand: explorer
+            app: SlitLampExplorer
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4

@@ -1,7 +1,7 @@
 """데스크탑 앱 브랜드(이름·로고·아이콘·색) 설정 — 웹의 web/app/brands.py 와 같은 구성.
 
 브랜드 선택 우선순위
-    1) 실행 옵션  --brand keeler
+    1) 실행 옵션  --brand keeler   (--brand explorer = Explorer 판: 메뉴·툴바·환자/검사 트리 화면)
     2) 환경변수  SLITLAMP_BRAND=keeler   (Keeler 전용 설치본은 빌드 때 이 값이 들어감)
     3) 설정 파일 config.json 의 "brand"
     4) 기본 (슬릿램프 영상 시스템)
@@ -24,6 +24,32 @@ BRANDS: dict[str, dict] = {
         "logo": None, "logo_dark": None, "icon": None,
         "logo_only": False,
         "palette": {},
+    },
+    # Explorer 판 — 같은 엔진에 메뉴바·툴바·환자 › 검사 트리 화면과 겹쳐보기·참조 영상·슬라이드쇼·
+    # Word 보고서·카메라 속성을 더한 판 (app/ui/explorer). 기본판·Keeler 판과 나란히 설치된다.
+    "explorer": {
+        "app_name": "슬릿램프 영상 시스템 Explorer",
+        "window_title": "슬릿램프 영상 시스템 Explorer",
+        "report_title": "슬릿램프 영상 보고서",
+        "logo": None, "logo_dark": None, "icon": "brand/explorer/app.png",
+        "logo_only": False,
+        "layout": "explorer",
+        "icon_bg": "#1f6feb",
+        "icon_accent": "#5aa2ff",
+        "icon_on_accent": "#04162e",
+        "report_rule": "#1f6feb",
+        "palette": {
+            "dark": {
+                "bg": "#0a0e15", "panel": "#111722", "panel2": "#171f2d", "raised": "#1c2536",
+                "rule": "#222c3c", "rule_strong": "#2e3a4e",
+                "accent": "#4f9dff", "accent_hover": "#8cc0ff", "accent_ink": "#04162e", "accent_soft": "#142742",
+                "field": "#0d121b",
+            },
+            "light": {
+                "bg": "#eef2f8", "panel": "#ffffff", "panel2": "#f3f6fb", "raised": "#ffffff",
+                "accent": "#1f6feb", "accent_hover": "#1858c4", "accent_ink": "#ffffff", "accent_soft": "#dbe8fd",
+            },
+        },
     },
     # Keeler 공식 홈페이지의 로고·브랜드 색 (assets/brand/keeler/SOURCE.md)
     "keeler": {
@@ -89,6 +115,11 @@ def current() -> dict:
     if key not in BRANDS:
         key = "default"
     return {"key": key, **BRANDS[key]}
+
+
+def layout() -> str:
+    """화면 구성: "explorer" (메뉴·툴바·트리) 또는 "standard" (촬영 / Pro 검토)."""
+    return current().get("layout", "standard")
 
 
 def asset(rel: str | None) -> str | None:

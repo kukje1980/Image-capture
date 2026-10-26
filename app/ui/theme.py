@@ -243,6 +243,41 @@ def build_qss(mode: str = "dark") -> str:
     QMenu {{ background: {c['panel']}; border: 1px solid {c['rule_strong']}; padding: 4px; }}
     QMenu::item {{ padding: 6px 18px; border-radius: 6px; }}
     QMenu::item:selected {{ background: {c['accent_soft']}; color: {c['ink']}; }}
+    QMenu::item:disabled {{ color: {c['disabled']}; }}
+    QMenu::separator {{ height: 1px; background: {c['rule']}; margin: 4px 8px; }}
+
+    /* ===== Explorer 판 (메뉴바 · 툴바 · 환자/검사 트리 · 썸네일 목록) ===== */
+    QMenuBar {{ border-bottom: 1px solid {c['rule']}; padding: 2px 6px; }}
+    QMenuBar::item {{ background: transparent; padding: 5px 11px; border-radius: 6px; }}
+    QToolBar#ExplorerTools {{ background: {c['panel']}; border: none; border-bottom: 1px solid {c['rule']}; padding: 3px 6px; spacing: 2px; }}
+    QToolBar#ExplorerTools::separator {{ background: {c['rule']}; width: 1px; margin: 6px 5px; }}
+    QToolBar#ExplorerTools QToolButton {{
+        background: transparent; border: 1px solid transparent; border-radius: 8px;
+        padding: 4px 7px; color: {c['ink_soft']}; font-size: 11px; font-weight: 600; min-width: 46px;
+    }}
+    QToolBar#ExplorerTools QToolButton:hover {{ background: {c['panel2']}; border-color: {c['rule']}; color: {c['ink']}; }}
+    QToolBar#ExplorerTools QToolButton:checked {{ background: {c['accent_soft']}; border-color: {c['accent']}; color: {c['ink']}; }}
+    QToolBar#ExplorerTools QToolButton:disabled {{ color: {c['disabled']}; }}
+    QDockWidget {{ color: {c['ink_muted']}; font-weight: 700; font-size: 11px; }}
+    QDockWidget::title {{ background: {c['panel']}; padding: 7px 10px; border-bottom: 1px solid {c['rule']}; }}
+    QFrame#ExplorerSide, QFrame#ExplorerThumbs {{ background: {c['panel']}; }}
+    QTreeWidget, QListWidget, QTableWidget {{
+        background: {c['field']}; border: 1px solid {c['rule']}; border-radius: 8px; outline: none;
+        alternate-background-color: {c['panel2']};
+    }}
+    QTreeWidget::item, QListWidget::item {{ padding: 4px 2px; border-radius: 5px; }}
+    QTreeWidget::item:hover, QListWidget::item:hover {{ background: {c['panel2']}; }}
+    QTreeWidget::item:selected, QListWidget::item:selected {{ background: {c['accent_soft']}; color: {c['ink']}; }}
+    QListWidget#ThumbList::item {{ padding: 3px; margin: 2px; border: 1px solid transparent; }}
+    QListWidget#ThumbList::item:selected {{ border: 2px solid {c['accent']}; }}
+    QHeaderView::section {{ background: {c['panel2']}; color: {c['ink_soft']}; border: none; padding: 5px 8px; font-weight: 700; }}
+    QLabel#ExplorerInfo {{
+        background: {c['panel2']}; border: 1px solid {c['rule']}; border-radius: 8px; padding: 8px 10px; color: {c['ink_soft']};
+    }}
+    QFrame#ExplorerBar {{ background: {c['panel']}; border: 1px solid {c['rule']}; border-radius: 10px; }}
+    QStackedWidget#ExplorerView {{ background: #000000; border-radius: 10px; }}
+    QGroupBox {{ border: 1px solid {c['rule']}; border-radius: 8px; margin-top: 14px; padding: 10px 8px 8px; font-weight: 700; }}
+    QGroupBox::title {{ subcontrol-origin: margin; left: 10px; padding: 0 4px; color: {c['ink_muted']}; }}
     """
 
 
@@ -257,16 +292,17 @@ def make_app_icon() -> QIcon:
     return icon
 
 
-def _render_icon(size: int) -> QPixmap:
+def _render_icon(size: int, bg: str | None = None) -> QPixmap:
     pm = QPixmap(size, size)
     pm.fill(Qt.GlobalColor.transparent)
     p = QPainter(pm)
     p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
     s = size
 
-    # 둥근 사각 배경 (티얼)
+    # 둥근 사각 배경 (기본 티얼, 브랜드가 icon_bg 로 바꿀 수 있음)
+    bg = bg or _brand.current().get("icon_bg", "#0d9488")
     p.setPen(Qt.PenStyle.NoPen)
-    p.setBrush(QBrush(QColor("#0d9488")))
+    p.setBrush(QBrush(QColor(bg)))
     r = s * 0.14
     p.drawRoundedRect(QRectF(0, 0, s, s), r, r)
 
@@ -293,8 +329,8 @@ def _render_icon(size: int) -> QPixmap:
     p.setBrush(QBrush(QColor("#ffffff")))
     ir = s * 0.145
     p.drawEllipse(QRectF(cx - ir, cy - ir, ir * 2, ir * 2))
-    # 동공 (티얼)
-    p.setBrush(QBrush(QColor("#0d9488")))
+    # 동공 (배경색)
+    p.setBrush(QBrush(QColor(bg)))
     pr = s * 0.07
     p.drawEllipse(QRectF(cx - pr, cy - pr, pr * 2, pr * 2))
 

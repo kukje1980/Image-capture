@@ -17,10 +17,11 @@ class CapturesDAO:
             cur = self._c.execute(
                 """INSERT INTO captures
                    (patient_id, media_type, file_path, export_path, thumbnail_path,
-                    captured_at, eye, duration_ms, note)
-                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                    captured_at, eye, duration_ms, note, exam_id)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
                 (cap.patient_id, cap.media_type, cap.file_path, cap.export_path,
-                 cap.thumbnail_path, cap.captured_at, cap.eye, cap.duration_ms, cap.note),
+                 cap.thumbnail_path, cap.captured_at, cap.eye, cap.duration_ms, cap.note,
+                 cap.exam_id),
             )
             self._c.commit()
             return cur.lastrowid
@@ -34,6 +35,22 @@ class CapturesDAO:
                 (pid,),
             ).fetchall()
         return [self._row(r) for r in rows]
+
+    def list_by_exam(self, exam_id: int, order: str = "asc") -> List[Capture]:
+        o = "DESC" if order.lower() == "desc" else "ASC"
+        with self._lock:
+            rows = self._c.execute(
+                f"""SELECT * FROM captures WHERE exam_id=?
+                    ORDER BY captured_at {o}, id {o}""",
+                (exam_id,),
+            ).fetchall()
+        return [self._row(r) for r in rows]
+
+    def set_exam(self, cid: int, exam_id: Optional[int]) -> None:
+        """영상을 다른 검사로 옮긴다 (Explorer 판 트리에서 끌어 놓기·메뉴)."""
+        with self._lock:
+            self._c.execute("UPDATE captures SET exam_id=? WHERE id=?", (exam_id, cid))
+            self._c.commit()
 
     def get(self, cid: int) -> Optional[Capture]:
         with self._lock:

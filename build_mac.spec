@@ -1,6 +1,7 @@
 # PyInstaller 스펙 (macOS, .app 번들).
 #   빌드:  ./build_mac.sh   (또는 pyinstaller build_mac.spec)
-#   결과:  dist/SlitLampImaging.app  (SLITLAMP_BUILD_BRAND=keeler 이면 dist/KeelerSlitLamp.app)
+#   결과:  dist/SlitLampImaging.app  (SLITLAMP_BUILD_BRAND=keeler 이면 dist/KeelerSlitLamp.app,
+#                                     explorer 이면 dist/SlitLampExplorer.app)
 #
 # Windows 용 build.spec 과 같은 구성에 macOS 번들 정보(카메라 권한 문구·아이콘)를 더한다.
 import os
@@ -9,11 +10,16 @@ from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
 
 APP_VERSION = "0.1.0"
 BRAND = os.environ.get("SLITLAMP_BUILD_BRAND", "default").lower()
-KEELER = BRAND == "keeler"
-APP_NAME = "KeelerSlitLamp" if KEELER else "SlitLampImaging"
-DISPLAY_NAME = "Keeler 슬릿램프 영상 시스템" if KEELER else "슬릿램프 영상 시스템"
-APP_ICON = "assets/brand/keeler/app.icns" if KEELER else "assets/icons/app.icns"
-BUNDLE_ID = "com.kukjemd.keelerslitlamp" if KEELER else "com.kukjemd.slitlampimaging"
+# 판별 (앱 이름, 표시 이름, 아이콘, 번들 ID, 런타임 훅)
+EDITIONS = {
+    "default": ("SlitLampImaging", "슬릿램프 영상 시스템", "assets/icons/app.icns",
+                "com.kukjemd.slitlampimaging", []),
+    "keeler": ("KeelerSlitLamp", "Keeler 슬릿램프 영상 시스템", "assets/brand/keeler/app.icns",
+               "com.kukjemd.keelerslitlamp", ["tools/rthooks/brand_keeler.py"]),
+    "explorer": ("SlitLampExplorer", "슬릿램프 영상 시스템 Explorer", "assets/brand/explorer/app.icns",
+                 "com.kukjemd.slitlampexplorer", ["tools/rthooks/brand_explorer.py"]),
+}
+APP_NAME, DISPLAY_NAME, APP_ICON, BUNDLE_ID, RTHOOKS = EDITIONS.get(BRAND, EDITIONS["default"])
 
 datas = []
 binaries = []
@@ -22,6 +28,8 @@ hiddenimports = ["imageio_ffmpeg"]
 # 번들 ffmpeg 바이너리 동봉 (mp4 H.264 보장)
 binaries += collect_dynamic_libs("imageio_ffmpeg")
 datas += collect_data_files("imageio_ffmpeg")
+# Word 보고서(python-docx) 기본 서식 파일
+datas += collect_data_files("docx")
 
 # DB 스키마 파일 동봉
 datas += [("app/db/schema.sql", "app/db")]
@@ -37,7 +45,7 @@ a = Analysis(
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
-    runtime_hooks=["tools/rthooks/brand_keeler.py"] if KEELER else [],
+    runtime_hooks=RTHOOKS,
     excludes=[],
 )
 

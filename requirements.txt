@@ -4,3 +4,4 @@ numpy==2.2.*
 imageio==2.37.*
 imageio-ffmpeg==0.6.*
 Pillow==11.*
+python-docx==1.*

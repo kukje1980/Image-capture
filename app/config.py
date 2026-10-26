@@ -35,6 +35,9 @@ class AppConfig:
     px_per_mm: float = 0.0                   # 측정 눈금 보정 (0 = 미보정, px 단위)
     brand: str = ""                          # 화면 브랜드 (비면 기본, "keeler" = Keeler 전용)
     shortcuts: dict = field(default_factory=dict)   # 사용자 지정 단축키 {동작 id: "키"} (app/shortcuts.py)
+    camera_props: dict = field(default_factory=dict)  # 카메라 속성 {노출·게인·WB…} (app/capture/camera_props.py)
+    report_per_page: int = 2                 # 보고서 한 쪽 영상 수 (1 / 2 / 4)
+    slideshow_seconds: int = 3               # 슬라이드쇼 넘김 간격(초)
 
     @classmethod
     def config_path(cls) -> Path:

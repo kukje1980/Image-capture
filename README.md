@@ -100,6 +100,39 @@ Finder 에서 `run_mac.command` 더블클릭(처음 한 번 자동 설치). 하�
 직접 만들기: 윈도우 `build_installer.bat keeler` · 맥 `./build_mac.sh keeler`
 기존 설치본을 Keeler 화면으로 쓰기: 실행 옵션 `--brand keeler` 또는 `config.json` 에 `"brand": "keeler"`
 
+## Explorer 판 (윈도우 · 맥) — 메뉴 · 툴바 · 환자/검사 트리 화면
+같은 엔진(카메라·저장·DB·Pro 보정)을 쓰면서 화면을 **메뉴바 + 툴바 + 환자 › 검사 트리 + 썸네일 목록** 구성으로 바꾸고,
+세극등 영상 시스템에서 많이 쓰는 기능(검사 단위 관리, 겹쳐보기, 참조 영상, 슬라이드쇼, Word 보고서, 카메라 속성)을 더한 판입니다.
+기본판·Keeler 판과 이름·설치 위치·AppId 가 달라 **한 PC에 나란히 설치**되고, 환자 DB·영상은 같은 데이터 폴더를 함께 씁니다.
+
+실행: `python run.py --brand explorer` (하드웨어 없이: `--source synthetic`) · 설치본: 아래 표의 `SlitLampExplorer`
+
+| 영역 | 기능 |
+|------|------|
+| **환자 › 검사 트리** (왼쪽) | 환자 아래에 검사(내원)가 날짜별로 묶임. 검색 항목 **전체 / 이름 / 차트번호 / 진단명 / 병력·소견** (검사 소견·메모까지 검색). 환자·검사 정보 요약 |
+| **검사(내원)** | 파일 › 새 검사 / 검사 정보 수정(검사일·검사명·진단·소견·병력 메모) / 검사 삭제. 캡처는 **트리에서 고른 검사**에 저장되고, 환자만 골랐으면 **오늘 검사가 자동으로** 만들어짐. 기존 영상(구버전·다른 판)은 촬영 날짜별 검사로 자동 정리 |
+| **촬영** (가운데) | 라이브 HUD, 안구 OD/OS/OU, **정지**(정지한 장면을 캡처), 셔터형 **캡처**, **녹화**(mp4). 썸네일 클릭 = 크게 보기, **라이브** 버튼(F2)으로 복귀 |
+| **카메라 속성** | 자동 노출 · 노출 · 게인 · 밝기 · 대비 · 채도 · 선명도 · 자동 WB · 색온도 — 장치(UVC 드라이버)에 바로 적용, 설정에 저장되어 다음 실행에도 적용. 지원하지 않는 항목은 '미지원' 표시 |
+| **썸네일 목록** (아래) | 안구 배지 · 동영상 표시 · 시각/코멘트. **Ctrl/Shift 로 여러 장 선택**, 필터 전체/OD/OS/동영상. 더블클릭 = 보정·측정(동영상은 재생) |
+| **보정·측정** | 기본판 Pro 화면 그대로 — 밝기·대비·감마·Red-free·히스토그램·필터·회전/자르기·주석·길이/각도(mm 눈금 보정)·편집본 저장 |
+| **겹쳐보기** | 2장을 골라 **겹치기(투명도) / 차이 강조 / 바둑판 / 좌우 분할**, 채널(컬러·Red-free·흑백), 위치 맞춤(방향키 1px · Shift 10px), 겹친 영상 저장 — 경과(진행) 비교용 |
+| **비교** | 2~4장 나란히(2×2). 확대·이동 동기화, 채널·밝기·대비 일괄 적용 |
+| **참조 영상 라이브러리** | 영상을 **분류(각막·수정체·백내장·녹내장 등)·제목·설명**과 함께 등록(라이브러리 폴더에 사본 보관). 분류별 목록·검색, **현재 환자 영상과 나란히 비교** |
+| **슬라이드쇼** | 선택(또는 전체) 영상을 전체 화면으로. Space 일시정지, ←/→, +/− 간격, Esc 닫기 |
+| **보고서** | 실을 영상 체크 · 소견 · 판독의 입력 → **Word(.docx, 편집 가능)** / PDF / 인쇄. Word 는 한 쪽 1·2·4장 배치, 환자·검사 정보 표, 소견란, 서명란 |
+| **파일** | 영상 **가져오기**(외부 사진 → 현재 검사) · 선택 영상 **내보내기**(폴더로 복사) · 선택 영상 삭제 · **DB 백업 / 복원**(앱을 끄지 않고 안전하게) |
+
+| 받는 곳 (GitHub → Actions) | 파일 |
+|------|------|
+| **Build Windows installer** → Artifacts | `SlitLampExplorer-windows` (설치파일 `SlitLampExplorer-Setup-0.1.0.exe`) |
+| **Build macOS app** → Artifacts | `SlitLampExplorer-mac-arm64`(M1/M2/M3) · `SlitLampExplorer-mac-x86_64`(Intel) |
+
+직접 만들기: 윈도우 `build_installer.bat explorer` · 맥 `./build_mac.sh explorer`
+기존 설치본을 Explorer 화면으로 쓰기: 실행 옵션 `--brand explorer` 또는 `config.json` 에 `"brand": "explorer"`
+
+> 기능 구성은 시판 세극등 영상 시스템(환자/검사 트리, Overlay·Compare·Reference Image·Slide Show·Make Report,
+> Camera Property)의 공개 사용 설명서에 나오는 워크플로를 참고했습니다. 화면·코드·문구는 이 저장소에서 새로 만들었습니다.
+
 ## 화면 디자인 (Clinical Graphite)
 안과 영상 프로그램(VK-2, EyeSuite, IMAGEnet 등)처럼 **어두운 그래파이트 작업 공간**을 기본으로 해 영상에 시선이 모이게 했습니다(상단 테마 버튼으로 밝은 테마 전환).
 
@@ -140,7 +173,8 @@ Finder 에서 `run_mac.command` 더블클릭(처음 한 번 자동 설치). 하�
 
 `config.json` 주요 항목: `camera_index`, `source_mode`(device|file|synthetic),
 `capture_width/height`, `photo_format`(png|jpg), `media_root`(기본 저장),
-`export_root`(동시 저장 폴더), `db_path`, `subfolder_template`.
+`export_root`(동시 저장 폴더), `db_path`, `subfolder_template`,
+`camera_props`(카메라 속성 — Explorer 판), `report_per_page`, `slideshow_seconds`.
 
 저장 경로 규칙(기본): `<root>/<차트번호>_<환자ID>/YYYY-MM-DD/<HHMMSS>_<OD|OS|NA>.<확장자>`
 (`export_root`에도 동일 구조로 복사)
@@ -148,9 +182,11 @@ Finder 에서 `run_mac.command` 더블클릭(처음 한 번 자동 설치). 하�
 앱 실행 후 상단 **설정** 버튼에서 카메라 인덱스, 해상도, 저장 폴더를 변경할 수 있습니다.
 
 ## 데이터베이스
-SQLite 2개 테이블:
-- `patients`: 차트번호, 환자ID, 이름, 생년월일, 성별, 연락처, 메모, 증상
-- `captures`: 환자FK, 종류(photo/video), 파일경로, export경로, 썸네일경로, 촬영시각, 안구, 길이(ms)
+SQLite 테이블:
+- `patients`: 차트번호, 환자ID, 이름, 생년월일, 성별, 연락처, 메모, 증상, 진단명, 담당의
+- `captures`: 환자FK, 종류(photo/video), 파일경로, export경로, 썸네일경로, 촬영시각, 안구, 길이(ms), 코멘트, 검사FK
+- `exams`: 환자FK, 검사일, 검사명, 진단·소견, 병력 메모 (캡처 시 그날 검사 자동 생성)
+- `ref_images`: 참조 영상 라이브러리 (파일·썸네일 경로, 분류, 제목, 설명, 원본 캡처 id)
 
 환자 삭제 시 `ON DELETE CASCADE`로 캡처 레코드도 함께 삭제됩니다(디스크 파일은 보존).
 

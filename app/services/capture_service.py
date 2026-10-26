@@ -18,6 +18,7 @@ from app import paths
 from app.capture.frame_utils import make_thumbnail
 from app.models.capture import Capture
 from app.models.patient import Patient
+from app.models.ref_image import RefImage
 
 try:
     import cv2
@@ -34,7 +35,7 @@ class CaptureService:
 
     # ---- 사진 ----
     def save_photo(self, frame: np.ndarray, patient: Patient,
-                   eye: str = "NA", note: str = "") -> Capture:
+                   eye: str = "NA", note: str = "", exam_id: Optional[int] = None) -> Capture:
         if frame is None:
             raise ValueError("저장할 프레임이 없습니다.")
         ts = datetime.now()
@@ -55,6 +56,7 @@ class CaptureService:
             thumbnail_path=(str(thumb_path) if thumb_path else None),
             captured_at=ts.strftime("%Y-%m-%d %H:%M:%S"),
             eye=eye, duration_ms=None, note=note,
+            exam_id=self._exam_for(patient, ts, exam_id),
         )
         cap.id = self.db.captures.insert(cap)
         log.info("photo saved id=%s path=%s export=%s", cap.id, primary_path, export_path)
@@ -71,7 +73,7 @@ class CaptureService:
 
     def finish_video(self, video_path, patient: Patient, eye: str, ts: datetime,
                      duration_ms: int, thumb_frame: Optional[np.ndarray] = None,
-                     note: str = "") -> Capture:
+                     note: str = "", exam_id: Optional[int] = None) -> Capture:
         video_path = Path(video_path)
         thumb_path = None
         if thumb_frame is not None:
@@ -85,12 +87,50 @@ class CaptureService:
             thumbnail_path=(str(thumb_path) if thumb_path else None),
             captured_at=ts.strftime("%Y-%m-%d %H:%M:%S"),
             eye=eye, duration_ms=duration_ms, note=note,
+            exam_id=self._exam_for(patient, ts, exam_id),
         )
         cap.id = self.db.captures.insert(cap)
         log.info("video saved id=%s path=%s export=%s", cap.id, video_path, export_path)
         return cap
 
+    # ---- 가져오기 / 참조 영상 (Explorer 판) ----
+    def import_image(self, src_path, patient: Patient, eye: str = "NA",
+                     exam_id: Optional[int] = None) -> Capture:
+        """외부 사진 파일(다른 장비·이전 프로그램)을 환자 영상으로 가져온다."""
+        frame = read_image(src_path)
+        if frame is None:
+            raise ValueError(f"이미지를 읽을 수 없습니다: {src_path}")
+        return self.save_photo(frame, patient, eye=eye, note="가져옴", exam_id=exam_id)
+
+    def add_reference(self, capture: Capture, category: str, title: str = "",
+                      description: str = "") -> RefImage:
+        """영상을 참조 라이브러리에 복사해 등록 (원본 캡처를 지워도 참조 영상은 남는다)."""
+        frame = read_image(capture.file_path)
+        if frame is None:
+            raise ValueError("참조로 등록할 이미지를 읽을 수 없습니다.")
+        lib = paths.ensure_dir(Path(self.config.media_root).parent / "reference_library"
+                               / paths.sanitize(category or "기타"))
+        ts = datetime.now()
+        stem = f"{ts:%Y%m%d_%H%M%S}_{ts.microsecond // 1000:03d}"
+        path = lib / f"{stem}.png"
+        self._imwrite(path, frame, "png")
+        thumb = self._write_thumbnail(lib, stem, frame)
+        ref = RefImage(file_path=str(path), thumbnail_path=(str(thumb) if thumb else None),
+                       category=category or "기타", title=title or None,
+                       description=description or None, source_capture_id=capture.id)
+        ref.id = self.db.references.insert(ref)
+        return ref
+
     # ---- 내부 헬퍼 ----
+    def _exam_for(self, patient: Patient, ts: datetime, exam_id: Optional[int]) -> Optional[int]:
+        """검사를 고르지 않았으면 그날 검사(없으면 새로 만듦)에 넣는다."""
+        if exam_id:
+            return exam_id
+        exams = getattr(self.db, "exams", None)
+        if exams is None or patient.id is None:
+            return None
+        return exams.ensure_for_date(patient.id, ts.strftime("%Y-%m-%d"))
+
     def _patient_dir(self, root, patient, ts) -> Path:
         return paths.patient_subdir(Path(root), patient, self.config.subfolder_template, ts)
 
@@ -134,3 +174,13 @@ class CaptureService:
         else:
             import imageio
             imageio.imwrite(str(path), np.ascontiguousarray(frame[..., ::-1]))
+
+
+def read_image(path) -> Optional[np.ndarray]:
+    """BGR 이미지 읽기 (한글 경로 대응)."""
+    if not path or cv2 is None or not Path(path).is_file():
+        return None
+    data = np.fromfile(str(path), dtype=np.uint8)
+    if data.size == 0:
+        return None
+    return cv2.imdecode(data, cv2.IMREAD_COLOR)

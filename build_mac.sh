@@ -2,6 +2,7 @@
 # 슬릿램프 영상 시스템 - macOS 앱(.app) + 설치 디스크 이미지(.dmg) 빌드
 #   사용:  ./build_mac.sh            (기본)      → dist/SlitLampImaging.app + .dmg
 #          ./build_mac.sh keeler     (Keeler 전용) → dist/KeelerSlitLamp.app + .dmg
+#          ./build_mac.sh explorer   (Explorer 판) → dist/SlitLampExplorer.app + .dmg
 # 필요:   macOS 11 이상, Python 3.11 이상 (python.org 설치본 또는 Homebrew)
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -24,7 +25,11 @@ if [ -z "$PY" ]; then
 fi
 BRAND="${1:-${SLITLAMP_BUILD_BRAND:-default}}"
 export SLITLAMP_BUILD_BRAND="$BRAND"
-if [ "$BRAND" = "keeler" ]; then APP="KeelerSlitLamp"; VOL="Keeler SlitLamp"; else APP="SlitLampImaging"; VOL="SlitLamp Imaging"; fi
+case "$BRAND" in
+  keeler)   APP="KeelerSlitLamp";   VOL="Keeler SlitLamp" ;;
+  explorer) APP="SlitLampExplorer"; VOL="SlitLamp Explorer" ;;
+  *)        APP="SlitLampImaging";  VOL="SlitLamp Imaging" ;;
+esac
 VERSION="$("$PY" -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
 ARCH="$(uname -m)"
 
