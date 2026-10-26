@@ -87,9 +87,26 @@
       emitPatient();
     });
     $('btn-new-patient').addEventListener('click', () => openPatientDialog(null));
-    $('btn-edit-patient').addEventListener('click', () => {
-      const p = currentPatient();
-      if (p) openPatientDialog(p);
+    for (const id of ['btn-edit-patient', 'btn-edit-top']) {
+      $(id).addEventListener('click', () => {
+        const p = currentPatient();
+        if (p) openPatientDialog(p);
+      });
+    }
+    // 생년월일: 입력이 끝나면 YYYY-MM-DD 로 정리, 달력 버튼은 브라우저 날짜 선택창을 연다
+    $('p-birth').addEventListener('blur', () => normalizeBirthField());
+    $('p-birth').addEventListener('input', () => { $('p-birth').classList.remove('invalid'); $('p-birth-hint').hidden = true; });
+    $('p-birth-cal').addEventListener('click', () => {
+      const pick = $('p-birth-pick');
+      pick.max = new Date().toISOString().slice(0, 10);
+      pick.value = normalizeDate($('p-birth').value) || '';
+      if (typeof pick.showPicker === 'function') { try { pick.showPicker(); return; } catch (_) { /* 아래로 */ } }
+      pick.style.cssText = 'position:static;width:auto;height:auto;opacity:1;pointer-events:auto';
+      pick.focus(); pick.click();
+    });
+    $('p-birth-pick').addEventListener('change', (e) => {
+      if (e.target.value) { $('p-birth').value = e.target.value; $('p-birth').classList.remove('invalid'); $('p-birth-hint').hidden = true; }
+      e.target.style.cssText = '';
     });
     $('patient-form').addEventListener('submit', savePatient);
     $('patient-cancel').addEventListener('click', () => $('patient-dialog').close());
@@ -411,6 +428,41 @@
 
   // ---- 환자 배너 · 영상 HUD ----
   const escHtml = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  // 사람이 친 생년월일 → 'YYYY-MM-DD'. 빈 값은 '', 해석 불가는 null.
+  //   19800315 · 800315(주민번호 앞자리, 올해 두 자리보다 크면 19xx) · 1980.3.15 · 1980/03/15
+  function normalizeDate(text, today) {
+    const t = (text || '').trim();
+    if (!t) return '';
+    today = today || new Date();
+    const century = (yy) => (yy > today.getFullYear() % 100 ? 1900 : 2000) + yy;
+    const digits = t.replace(/\D/g, '');
+    const parts = t.split(/[^\d]+/).filter(Boolean);
+    let y, m, d;
+    if (parts.length === 3 && (parts[0].length === 2 || parts[0].length === 4)) {
+      [y, m, d] = parts.map(Number);
+      if (parts[0].length === 2) y = century(y);
+    } else if (digits.length === 8) {
+      y = +digits.slice(0, 4); m = +digits.slice(4, 6); d = +digits.slice(6, 8);
+    } else if (digits.length === 6) {
+      y = century(+digits.slice(0, 2)); m = +digits.slice(2, 4); d = +digits.slice(4, 6);
+    } else return null;
+    const v = new Date(y, m - 1, d);
+    if (v.getFullYear() !== y || v.getMonth() !== m - 1 || v.getDate() !== d) return null;
+    if (y < 1880 || v > today) return null;
+    return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  }
+  window.normalizeDate = normalizeDate;
+
+  function normalizeBirthField() {
+    const el = $('p-birth');
+    const v = normalizeDate(el.value);
+    const ok = v !== null;
+    if (ok && v !== el.value) el.value = v;
+    el.classList.toggle('invalid', !ok);
+    $('p-birth-hint').hidden = ok;
+    return ok;
+  }
+
   function ageOf(birth) {
     const m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(birth || '');
     if (!m) return null;
@@ -422,6 +474,7 @@
   function renderBanner() {
     const p = currentPatient();
     $('btn-edit-patient').disabled = !p;
+    $('btn-edit-top').disabled = !p;
     if (!p) {
       $('pb-avatar').innerHTML = '<svg class="ic"><use href="#i-user"/></svg>';
       $('pb-name').textContent = '환자를 선택하세요';
@@ -476,10 +529,11 @@
 
   async function savePatient(e) {
     e.preventDefault();
+    if (!normalizeBirthField()) { $('p-birth').focus(); return; }
     const body = {
       chart_no: $('p-chart').value.trim(),
       name: $('p-name').value.trim(),
-      birth_date: $('p-birth').value.trim() || null,
+      birth_date: normalizeDate($('p-birth').value) || null,
       sex: $('p-sex').value || null,
       phone: $('p-phone').value.trim() || null,
       memo: $('p-memo').value.trim() || null,
@@ -1215,7 +1269,7 @@
   // Pro 모드(pro.js)에서 쓰는 공개 API
   window.SlitApp = {
     state, api, currentPatient, persistCapture, renderThumbs, toast, setStatus,
-    startCamera, openPatientDialog, parseTs, fmtDT, sfx,
+    startCamera, openPatientDialog, parseTs, fmtDT, openViewer, sfx,
   };
 
   init();

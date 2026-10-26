@@ -8,6 +8,7 @@ from pathlib import Path
 
 from app.db.agent_events_dao import AgentEventsDAO
 from app.db.captures_dao import CapturesDAO
+from app.db.exam_notes_dao import ExamNotesDAO
 from app.db.measurements_dao import MeasurementsDAO
 from app.db.patients_dao import PatientsDAO
 
@@ -46,6 +47,7 @@ class Database:
         self.captures: CapturesDAO | None = None
         self.measurements: MeasurementsDAO | None = None
         self.last_backup: Path | None = None
+        self.exam_notes: ExamNotesDAO | None = None
 
     # ---- 열기 / 닫기 ----
     def init(self, backup: bool = True) -> "Database":
@@ -83,6 +85,7 @@ class Database:
         self.captures = CapturesDAO(self._conn, self._lock)
         self.measurements = MeasurementsDAO(self._conn, self._lock)
         self.agent_events = AgentEventsDAO(self._conn, self._lock)
+        self.exam_notes = ExamNotesDAO(self._conn, self._lock)
         return self
 
     def _check_integrity(self, conn: sqlite3.Connection) -> None:

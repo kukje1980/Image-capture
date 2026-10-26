@@ -60,3 +60,14 @@ CREATE INDEX IF NOT EXISTS idx_captures_patient ON captures(patient_id);
 CREATE INDEX IF NOT EXISTS idx_captures_capdate ON captures(patient_id, captured_at);
 CREATE INDEX IF NOT EXISTS idx_patients_name    ON patients(name);
 CREATE INDEX IF NOT EXISTS idx_patients_chart   ON patients(chart_no);
+
+-- 검사 기록 소견: 환자별·촬영일별 한 건 (검사 기록 화면)
+CREATE TABLE IF NOT EXISTS exam_notes (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    patient_id  INTEGER NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+    exam_date   TEXT NOT NULL,               -- 'YYYY-MM-DD' (촬영일)
+    exam_type   TEXT,                        -- 검사 종류 (서식)
+    notes       TEXT,                        -- 소견
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    UNIQUE (patient_id, exam_date)
+);

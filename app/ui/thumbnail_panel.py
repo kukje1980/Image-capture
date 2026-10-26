@@ -82,6 +82,9 @@ class ThumbnailPanel(QFrame):
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # 세로 스크롤바는 항상 표시: 필요할 때만 보이게 하면 목록 높이가 경계값일 때
+        # 스크롤바 생김→너비 감소→카드 높이 감소→스크롤바 사라짐→… 무한 재배치로 앱이 죽을 수 있다
+        self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         self._container = QWidget()
         self._container.setObjectName("ThumbList")
         self._lay = QVBoxLayout(self._container)
@@ -129,6 +132,8 @@ class ThumbnailPanel(QFrame):
         while self._lay.count():
             w = self._lay.takeAt(0).widget()
             if w is not None and w is not self._empty:
+                w.hide()                     # 지워지기 전까지 옛 자리에 그려지지 않게
+                w.setParent(None)
                 w.deleteLater()
         self._badge.setText(str(len(self._items)))
         shown = self.visible_captures()
