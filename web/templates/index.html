@@ -75,6 +75,9 @@
   <symbol id="i-user-plus" viewBox="0 0 24 24"><circle cx="10" cy="8" r="4"/><path d="M2.5 21v-1a6 6 0 016-6h3a6 6 0 013.5 1.1"/><path d="M19 14v6M16 17h6"/></symbol>
   <symbol id="i-user-edit" viewBox="0 0 24 24"><circle cx="10" cy="8" r="4"/><path d="M2.5 21v-1a6 6 0 016-6h3"/><path d="M20.2 12.3a1.6 1.6 0 012.3 2.3L16.5 20.6 13.5 21.3l.7-3z"/></symbol>
   <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2.5"/><path d="M3 10h18M8 3v4M16 3v4"/><path d="M8 14h.01M12 14h.01M16 14h.01M8 17.5h.01M12 17.5h.01"/></symbol>
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 11.5L12 4l9 7.5"/><path d="M5.5 10v10h13V10"/><path d="M10 20v-6h4v6"/></symbol>
+  <symbol id="i-clipboard" viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 10h6M9 14h6M9 17.5h3.5"/></symbol>
+  <symbol id="i-check-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.7 2.7L16.5 9.5"/></symbol>
   <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M4 21h16"/></symbol>
 </svg>
 
@@ -99,8 +102,10 @@
       {% endif %}
     </div>
     <nav class="modeswitch" aria-label="화면 전환">
+      <button class="ms-btn" id="btn-home" title="시작 화면 (아이콘 메뉴)"><svg class="ic"><use href="#i-home"/></svg><span>홈</span></button>
       <button class="ms-btn" id="btn-mode-capture" title="촬영 화면"><svg class="ic"><use href="#i-camera"/></svg><span>촬영</span></button>
       <button class="ms-btn" id="btn-pro" aria-pressed="false" title="전문가용 영상 검토 화면 (MULTI·비교·보정·편집·인쇄)"><svg class="ic"><use href="#i-review"/></svg><span>Pro 검토</span></button>
+      <button class="ms-btn" id="btn-exam" title="촬영일별 영상 모음과 검사 소견"><svg class="ic"><use href="#i-clipboard"/></svg><span>검사 기록</span></button>
     </nav>
     <nav class="modeswitch" aria-label="환자">
       <button class="ms-btn ms-accent" id="btn-new-patient" title="신규 환자 등록 (N)"><svg class="ic"><use href="#i-user-plus"/></svg><span>신규 환자</span></button>
@@ -388,6 +393,63 @@
 
     <div class="pro-info" id="pro-info">환자를 선택하세요</div>
   </section>
+
+<!-- 홈(시작) 화면: 아이콘 메뉴 -->
+<section class="home" id="home" aria-label="시작 화면">
+  <div class="home-left">
+    <h1 class="home-title">환영합니다</h1>
+    <div class="home-sub">{{ brand.app_name }}</div>
+    <p class="home-guide">환자를 등록하거나 선택한 뒤 촬영을 시작하세요.<br>촬영한 사진·동영상은 환자별로 저장되고, 검사 기록에서 소견과 함께 볼 수 있습니다.</p>
+    <div class="home-foot">
+      <button class="btn btn-sm btn-quiet" id="home-keys" title="단축키 설정"><svg class="ic"><use href="#i-keyboard"/></svg>단축키 안내</button>
+      <label class="home-skip"><input type="checkbox" id="home-skip"> 다음부터 촬영 화면으로 바로 시작</label>
+    </div>
+  </div>
+  <div class="home-tiles" role="list">
+    <button class="home-tile" data-go="newPatient" title="환자 정보를 등록하고 촬영을 시작합니다"><svg class="ic"><use href="#i-user-plus"/></svg><span>신규 환자</span></button>
+    <button class="home-tile" data-go="patients" title="등록된 환자를 검색·선택합니다"><svg class="ic"><use href="#i-list"/></svg><span>환자 목록</span></button>
+    <button class="home-tile" data-go="capture" title="슬릿램프 실시간 영상 · 사진 캡처 · 녹화"><svg class="ic"><use href="#i-camera"/></svg><span>촬영</span></button>
+    <button class="home-tile" data-go="pro" title="MULTI · 비교 · 보정 · 편집 · 인쇄"><svg class="ic"><use href="#i-review"/></svg><span>Pro 검토</span></button>
+    <button class="home-tile" data-go="exam" title="촬영일별 영상과 소견을 한눈에"><svg class="ic"><use href="#i-clipboard"/></svg><span>검사 기록</span></button>
+    <button class="home-tile" data-go="settings" title="카메라 · 저장 · 단축키 · 테마"><svg class="ic"><use href="#i-gear"/></svg><span>설정</span></button>
+  </div>
+</section>
+
+<!-- 검사 기록: 촬영일별 영상 모음 + 소견 -->
+<section class="exam" id="exam" aria-label="검사 기록">
+  <aside class="exam-days panel">
+    <div class="exam-head"><span class="th-title">검사 기록</span><span class="thumbs-count" id="exam-day-count">0</span><span class="spacer"></span>
+      <button class="btn btn-icon btn-quiet btn-sm" id="exam-refresh" title="다시 읽기"><svg class="ic"><use href="#i-history"/></svg></button></div>
+    <div class="exam-day-list" id="exam-day-list"></div>
+    <div class="thumbs-empty" id="exam-days-empty">촬영 기록이 없습니다</div>
+  </aside>
+  <div class="exam-center">
+    <div class="exam-gallery panel">
+      <div class="exam-head">
+        <span class="th-title" id="exam-day-title">촬영일을 선택하세요</span><span class="exam-meta" id="exam-day-meta"></span><span class="spacer"></span>
+        <button class="ms-btn" id="exam-open-pro" title="이 환자의 영상을 Pro 검토 화면에서 열기"><svg class="ic"><use href="#i-review"/></svg><span>Pro 검토</span></button>
+        <button class="ms-btn" id="exam-print" title="이 날의 사진 + 소견을 보고서로 인쇄"><svg class="ic"><use href="#i-printer"/></svg><span>인쇄</span></button>
+      </div>
+      <div class="exam-grid" id="exam-grid"></div>
+      <div class="thumbs-empty" id="exam-grid-empty" hidden>이 날의 촬영 영상이 없습니다</div>
+    </div>
+    <div class="exam-notes panel">
+      <div class="exam-head">
+        <span class="th-title">검사 소견</span>
+        <label class="exam-type">검사 종류 <select class="select" id="exam-type"></select></label>
+        <span class="spacer"></span>
+        <span class="exam-saved" id="exam-saved"></span>
+        <button class="btn btn-sm btn-primary" id="exam-save"><svg class="ic"><use href="#i-save"/></svg>저장</button>
+      </div>
+      <textarea id="exam-text" placeholder="검사 소견·진단·계획을 적으세요. 칸을 벗어나면 자동 저장됩니다."></textarea>
+    </div>
+  </div>
+  <aside class="exam-patient panel">
+    <div class="exam-head"><span class="th-title">환자 정보</span><span class="spacer"></span>
+      <button class="btn btn-icon btn-quiet btn-sm" id="exam-edit" title="정보 수정"><svg class="ic"><use href="#i-user-edit"/></svg></button></div>
+    <div class="exam-pinfo" id="exam-pinfo"></div>
+  </aside>
+</section>
 </div>
 
 <div id="print-area" aria-hidden="true"></div>
@@ -568,5 +630,6 @@
 <script src="/static/js/localstore.js"></script>
 <script src="/static/js/app.js"></script>
 <script src="/static/js/pro.js"></script>
+<script src="/static/js/exam.js"></script>
 </body>
 </html>

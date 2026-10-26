@@ -211,3 +211,32 @@ def test_now_uses_korea_time():
     from app import config
     kst = datetime.now(timezone(timedelta(hours=9))).replace(tzinfo=None)
     assert abs((config.now() - kst).total_seconds()) < 5
+
+
+def test_exam_notes_api(client):
+    """검사 기록: 촬영일별 요약 + 소견 저장/수정, 환자 삭제 시 함께 삭제."""
+    p = _make_patient(client, chart="X100")
+    pid = p["id"]
+    assert client.get(f"/api/v1/patients/{pid}/exams").json() == []
+    png = b"\x89PNG\r\n\x1a\n" + b"0" * 32
+    for eye in ("OD", "OS", "OD"):
+        r = client.post("/api/v1/captures", files={"file": ("x.png", io.BytesIO(png), "image/png")},
+                        data={"patient_id": str(pid), "media_type": "photo", "eye": eye, "ext": "png"})
+        assert r.status_code == 201, r.text
+    exams = client.get(f"/api/v1/patients/{pid}/exams").json()
+    assert len(exams) == 1 and exams[0]["count"] == 3 and exams[0]["od"] == 2 and exams[0]["os"] == 1
+    assert exams[0]["notes"] is None
+    day = exams[0]["exam_date"]
+    r = client.put(f"/api/v1/patients/{pid}/exams/{day}", json={"exam_type": "건성안", "notes": " TBUT 5초 "})
+    assert r.status_code == 200, r.text
+    assert r.json()["exam_type"] == "건성안" and r.json()["notes"] == "TBUT 5초" and r.json()["count"] == 3
+    r = client.put(f"/api/v1/patients/{pid}/exams/{day}", json={"exam_type": "", "notes": "수정"})
+    assert r.json()["exam_type"] is None and r.json()["notes"] == "수정"
+    # 영상이 없는 날짜에도 소견만 남길 수 있다
+    r = client.put(f"/api/v1/patients/{pid}/exams/2025-01-05", json={"notes": "외래 소견"})
+    assert r.status_code == 200 and r.json()["count"] == 0
+    assert [x["exam_date"] for x in client.get(f"/api/v1/patients/{pid}/exams").json()] == [day, "2025-01-05"]
+    assert client.put(f"/api/v1/patients/{pid}/exams/20250105", json={"notes": "x"}).status_code == 400
+    assert client.get("/api/v1/patients/999999/exams").status_code == 404
+    assert client.delete(f"/api/v1/patients/{pid}").status_code == 204
+    assert client.get(f"/api/v1/patients/{pid}/exams").status_code == 404

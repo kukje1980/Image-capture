@@ -271,6 +271,34 @@ def build_qss(mode: str = "dark") -> str:
     QSlider#SliderG::handle:horizontal, QSlider#SliderG::sub-page:horizontal {{ background: #4ade80; }}
     QSlider#SliderB::handle:horizontal, QSlider#SliderB::sub-page:horizontal {{ background: #60a5fa; }}
 
+    /* ===== 홈(시작) 화면 ===== */
+    QWidget#Home {{ background: {c['bg']}; }}
+    QLabel#HomeTitle {{ font-size: 36px; font-weight: 800; letter-spacing: -1px; }}
+    QLabel#HomeSub {{ font-size: 15px; font-weight: 600; color: {c['ink_soft']}; }}
+    QLabel#HomeGuide {{ font-size: 13px; color: {c['ink_muted']}; }}
+    QFrame#HomeTiles {{ background: transparent; }}
+    QToolButton#HomeTile {{
+        background: {c['panel']}; border: 1px solid {c['rule']}; border-radius: 18px;
+        color: {c['ink']}; font-size: 14px; font-weight: 700; padding: 12px 8px 10px;
+    }}
+    QToolButton#HomeTile:hover {{ background: {c['panel2']}; border: 1px solid {c['accent']}; }}
+    QToolButton#HomeTile:pressed {{ background: {c['accent_soft']}; }}
+    QToolButton#HomeLink {{ background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 4px 6px; color: {c['ink_soft']}; font-weight: 600; }}
+    QToolButton#HomeLink:hover {{ background: {c['panel2']}; color: {c['ink']}; border-color: {c['rule']}; }}
+    QToolButton#HomeLink:disabled {{ color: {c['disabled']}; }}
+
+    /* ===== 검사 기록 화면 ===== */
+    QListWidget#ExamList {{ background: transparent; border: none; outline: none; }}
+    QListWidget#ExamList::item {{
+        background: {c['panel2']}; border: 1px solid {c['rule']}; border-radius: 8px;
+        padding: 4px 8px; color: {c['ink']};
+    }}
+    QListWidget#ExamList::item:hover {{ border-color: {c['rule_strong']}; }}
+    QListWidget#ExamList::item:selected {{ background: {c['accent_soft']}; border: 1px solid {c['accent']}; color: {c['ink']}; }}
+    QLabel#ExamPatient {{ font-size: 13px; }}
+    QWidget#ExamGrid {{ background: transparent; }}
+    QFrame#Panel QScrollArea, QFrame#Panel QWidget#qt_scrollarea_viewport {{ background: transparent; }}
+
     QMenuBar {{ background: {c['panel']}; }}
     QMenuBar::item:selected {{ background: {c['panel2']}; }}
     QMenu {{ background: {c['panel']}; border: 1px solid {c['rule_strong']}; padding: 4px; }}

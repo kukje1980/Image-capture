@@ -147,6 +147,58 @@ class Database:
             self._conn.commit()
         return dict(r) if r else None
 
+    # ---- 검사 기록 소견 (환자·촬영일별 한 건) ----
+    def list_exams(self, patient_id: int) -> List[dict]:
+        """촬영일별 요약(장수·OD/OS/동영상 수)과 소견을 합쳐 최근 날짜부터 돌려준다."""
+        with self._lock:
+            days = self._conn.execute(
+                """SELECT substr(captured_at, 1, 10) AS exam_date,
+                          COUNT(*) AS count,
+                          SUM(CASE WHEN eye='OD' THEN 1 ELSE 0 END) AS od,
+                          SUM(CASE WHEN eye='OS' THEN 1 ELSE 0 END) AS os,
+                          SUM(CASE WHEN eye='OU' THEN 1 ELSE 0 END) AS ou,
+                          SUM(CASE WHEN media_type='video' THEN 1 ELSE 0 END) AS video,
+                          MIN(substr(captured_at, 12, 5)) AS first_time,
+                          MAX(substr(captured_at, 12, 5)) AS last_time
+                   FROM captures WHERE patient_id=?
+                   GROUP BY exam_date ORDER BY exam_date DESC""",
+                (patient_id,),
+            ).fetchall()
+            notes = {r["exam_date"]: dict(r) for r in self._conn.execute(
+                "SELECT * FROM exam_notes WHERE patient_id=?", (patient_id,)).fetchall()}
+        out = []
+        for d in days:
+            row = dict(d)
+            n = notes.pop(row["exam_date"], None) or {}
+            row.update(exam_type=n.get("exam_type"), notes=n.get("notes"), updated_at=n.get("updated_at"))
+            out.append(row)
+        for n in notes.values():                      # 영상은 지웠지만 소견만 남은 날
+            out.append({"exam_date": n["exam_date"], "count": 0, "od": 0, "os": 0, "ou": 0, "video": 0,
+                        "first_time": None, "last_time": None,
+                        "exam_type": n.get("exam_type"), "notes": n.get("notes"), "updated_at": n.get("updated_at")})
+        out.sort(key=lambda r: r["exam_date"], reverse=True)
+        return out
+
+    def get_exam_note(self, patient_id: int, exam_date: str) -> Optional[dict]:
+        with self._lock:
+            r = self._conn.execute(
+                "SELECT * FROM exam_notes WHERE patient_id=? AND exam_date=?", (patient_id, exam_date)).fetchone()
+        return dict(r) if r else None
+
+    def upsert_exam_note(self, patient_id: int, exam_date: str, exam_type: Optional[str], notes: Optional[str]) -> dict:
+        exam_type = (exam_type or "").strip() or None
+        notes = (notes or "").strip() or None
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO exam_notes (patient_id, exam_date, exam_type, notes) VALUES (?,?,?,?)
+                   ON CONFLICT(patient_id, exam_date) DO UPDATE SET
+                     exam_type=excluded.exam_type, notes=excluded.notes,
+                     updated_at=datetime('now','localtime')""",
+                (patient_id, exam_date, exam_type, notes),
+            )
+            self._conn.commit()
+        return self.get_exam_note(patient_id, exam_date)
+
 
 def _patient_params(p: dict) -> dict:
     return {

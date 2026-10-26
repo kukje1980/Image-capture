@@ -31,6 +31,7 @@ class AppConfig:
     thumbnail_max_side: int = 120
     newest_on_top: bool = True
     theme: str = "dark"                      # dark(기본, 영상 작업 공간) | light
+    start_screen: str = "home"               # 시작 화면: home(홈 메뉴) | capture(바로 촬영)
     clinic_name: str = ""                    # 인쇄 보고서 머리말 기관명
     px_per_mm: float = 0.0                   # 측정 눈금 보정 (0 = 미보정, px 단위)
     brand: str = ""                          # 화면 브랜드 (비면 기본, "keeler" = Keeler 전용)

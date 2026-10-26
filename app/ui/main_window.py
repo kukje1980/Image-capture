@@ -28,6 +28,8 @@ from app.capture.sources import DeviceSource, FileSource, SyntheticSource
 from app.capture.video_recorder import VideoRecorder
 from app.services.capture_service import CaptureService
 from app.ui.control_bar import ControlBar, tool_button
+from app.ui.exam_screen import ExamScreen
+from app.ui.home_screen import HomeScreen
 from app.ui.image_viewer import ImageViewerDialog
 from app.ui.patient_panel import PatientPanel
 from app.ui.pro.pro_workspace import ProWorkspace
@@ -46,9 +48,13 @@ from PySide6.QtWidgets import QApplication
 log = logging.getLogger(__name__)
 
 
+MODES = ["capture", "pro", "exam", "home"]       # mode_stack 순서
+
+
 class MainWindow(QMainWindow):
     def __init__(self, config, db):
         super().__init__()
+        self._mode = "capture"
         self.config = config
         self.db = db
         self.service = CaptureService(db, config)
@@ -119,9 +125,13 @@ class MainWindow(QMainWindow):
 
         # Pro(전문가 검토) 화면
         self.pro = ProWorkspace(self.db, self.service, self.config, get_eye=None)
+        self.exam_screen = ExamScreen(self.db, self.config)
+        self.home = HomeScreen(self.config)
         self.mode_stack = QStackedWidget()
-        self.mode_stack.addWidget(simple)            # 0 = 기본
+        self.mode_stack.addWidget(simple)            # 0 = 기본(촬영)
         self.mode_stack.addWidget(self.pro)          # 1 = Pro
+        self.mode_stack.addWidget(self.exam_screen)  # 2 = 검사 기록
+        self.mode_stack.addWidget(self.home)         # 3 = 홈
         body_lay.addWidget(self.mode_stack, 1)
         outer.addWidget(body, 1)
         self.setCentralWidget(central)
@@ -129,6 +139,10 @@ class MainWindow(QMainWindow):
 
         self.pro.savedCapture.connect(self._on_pro_saved)
         self.pro.patientUpdated.connect(self._on_pro_patient_updated)
+        self.exam_screen.openCapture.connect(self._on_thumbnail_clicked)
+        self.exam_screen.openInPro.connect(lambda: self.set_mode("pro"))
+        self.exam_screen.editPatient.connect(lambda: self.patient_panel.edit_patient())
+        self.home.action.connect(self._on_home_action)
 
         self.patient_panel.patientChanged.connect(self._on_patient_changed)
         self.control_bar.pauseToggled.connect(self._on_pause)
@@ -148,6 +162,7 @@ class MainWindow(QMainWindow):
         self._on_patient_changed(self.patient_panel.current_patient())
         self._fullscreen = False
         self._install_shortcuts()
+        self.set_mode("capture" if getattr(self.config, "start_screen", "home") == "capture" else "home")
 
     def _build_topbar(self) -> QFrame:
         """브랜드 + 아이콘 메뉴: [촬영 | Pro 검토] [신규 환자 | 정보 수정] … [카메라 | 단축키 | 설정 | 테마]."""
@@ -201,18 +216,22 @@ class MainWindow(QMainWindow):
         self.act_pro.toggled.connect(self._on_pro_toggled)
         self.addAction(self.act_pro)
         sw, sl = seg()
+        self.btn_mode_home = nav("홈", "home", "시작 화면 (아이콘 메뉴)", checkable=True)
         self.btn_mode_capture = nav("촬영", "camera", "실시간 촬영 화면", checkable=True)
         self.btn_mode_pro = nav("Pro 검토", "review", self.act_pro.toolTip(), checkable=True)
+        self.btn_mode_exam = nav("검사 기록", "clipboard", "촬영일별 영상 모음과 검사 소견", checkable=True)
+        self.mode_buttons = {"home": self.btn_mode_home, "capture": self.btn_mode_capture,
+                             "pro": self.btn_mode_pro, "exam": self.btn_mode_exam}
         grp = QButtonGroup(self)
-        for btn, name in ((self.btn_mode_capture, "camera"), (self.btn_mode_pro, "review")):
+        for mode, name in (("home", "home"), ("capture", "camera"), ("pro", "review"), ("exam", "clipboard")):
+            btn = self.mode_buttons[mode]
             ic = icons.icon(name, ICON, 20)
             ic.addPixmap(icons.pixmap(name, ICON_ACCENT, 20), ic.Mode.Normal, ic.State.On)
             btn.setIcon(ic)
             grp.addButton(btn)
             sl.addWidget(btn)
+            btn.clicked.connect(lambda _=False, m=mode: self.set_mode(m))
         self.btn_mode_capture.setChecked(True)
-        self.btn_mode_capture.clicked.connect(lambda: self.act_pro.setChecked(False))
-        self.btn_mode_pro.clicked.connect(lambda: self.act_pro.setChecked(True))
         lay.addWidget(sw)
 
         # 환자: 신규 등록 · 정보 수정 (Pro 검토 바로 옆)
@@ -311,7 +330,7 @@ class MainWindow(QMainWindow):
 
     def _sync_shortcut_scope(self) -> None:
         """촬영 화면 전용 단축키는 Pro 화면에서 끈다 (Pro 의 Space 등과 겹치지 않게)."""
-        capture = self.mode_stack.currentIndex() == 0
+        capture = self._mode == "capture"
         for aid, sc in self._shortcut_objs.items():
             sc.setEnabled(capture or shortcuts.scope(aid) == "all")
         self._esc_fullscreen.setEnabled(self._fullscreen)
@@ -374,8 +393,9 @@ class MainWindow(QMainWindow):
         if on == self._fullscreen:
             return
         self._fullscreen = on
-        for w in (self.topbar, self.patient_panel, self.thumbnail_panel, self.statusBar()):
+        for w in (self.topbar, self.thumbnail_panel, self.statusBar()):
             w.setVisible(not on)
+        self.patient_panel.setVisible(not on and self._mode != "home")
         if on:
             self._was_maximized = self.isMaximized()
             self.showFullScreen()
@@ -528,22 +548,57 @@ class MainWindow(QMainWindow):
                                          else (patient.name if patient else "환자 미선택")))
         self.thumbnail_panel.set_patient(patient.id if patient else None)
         self.pro.set_patient(patient)
+        if self._mode == "exam":
+            self.exam_screen.set_patient(patient)
 
     # ---- Pro 모드 ----
     def _on_pro_toggled(self, on: bool) -> None:
-        self.mode_stack.setCurrentIndex(1 if on else 0)
-        (self.btn_mode_pro if on else self.btn_mode_capture).setChecked(True)
+        self.set_mode("pro" if on else "capture")
+
+    def set_mode(self, name: str) -> None:
+        """화면 전환: home(아이콘 메뉴) · capture(촬영) · pro(Pro 검토) · exam(검사 기록)."""
+        if name not in MODES:
+            return
+        if self._mode == "exam" and name != "exam":
+            self.exam_screen.flush()             # 적던 소견 저장
+        self._mode = name
+        self.mode_stack.setCurrentIndex(MODES.index(name))
+        self.patient_panel.setVisible(name != "home" and not self._fullscreen)
+        self.mode_buttons[name].setChecked(True)
+        self.act_pro.blockSignals(True)
+        self.act_pro.setChecked(name == "pro")
+        self.act_pro.blockSignals(False)
         if hasattr(self, "_shortcut_objs"):
             self._sync_shortcut_scope()
-        if on:
+        p = self._current_patient
+        if name == "pro":
             self.pro.reload(select_last=False)
             if self._last_frame is not None:
                 self.pro.set_live_frame(self._last_frame)
             self.pro.setFocus()
-        else:
-            p = self._current_patient
+        elif name == "capture":
             self.thumbnail_panel.set_patient(p.id if p else None)
-        self.statusBar().showMessage("Pro 모드" if on else "기본 모드", 3000)
+        elif name == "exam":
+            self.exam_screen.set_patient(p)
+        self.statusBar().showMessage({"home": "홈", "capture": "촬영", "pro": "Pro 모드", "exam": "검사 기록"}[name], 3000)
+
+    def mode(self) -> str:
+        return self._mode
+
+    def _on_home_action(self, aid: str) -> None:
+        """홈 화면 아이콘 타일."""
+        if aid == "newPatient":
+            if self.patient_panel.new_patient():
+                self.set_mode("capture")
+        elif aid == "patients":
+            self.set_mode("capture")
+            self._run_action("patients")
+        elif aid in ("capture", "pro", "exam"):
+            self.set_mode(aid)
+        elif aid == "settings":
+            self._open_settings()
+        elif aid == "shortcuts":
+            self._open_shortcuts()
 
     def _on_pro_saved(self) -> None:
         p = self._current_patient

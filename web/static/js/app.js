@@ -1245,7 +1245,7 @@
   // Pro 모드(pro.js)에서 쓰는 공개 API
   window.SlitApp = {
     state, api, currentPatient, persistCapture, renderThumbs, toast, setStatus,
-    startCamera, openPatientDialog, parseTs, fmtDT,
+    startCamera, openPatientDialog, parseTs, fmtDT, openViewer,
   };
 
   init();

@@ -20,7 +20,7 @@ from fastapi.templating import Jinja2Templates
 
 from app import brands, config
 from app.db.database import Database
-from app.routers import captures, patients
+from app.routers import captures, exams, patients
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
@@ -140,6 +140,7 @@ def logout():
 
 app.include_router(patients.router)
 app.include_router(captures.router)
+app.include_router(exams.router)
 
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 # 저장된 미디어 제공 (서버에 남긴 원본/영상)

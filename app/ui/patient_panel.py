@@ -151,17 +151,17 @@ class PatientPanel(QFrame):
         self._render_banner(p)
         self.patientChanged.emit(p)
 
-    def new_patient(self):
-        """신규 환자 등록 (상단바 버튼·단축키 N)."""
+    def new_patient(self) -> bool:
+        """신규 환자 등록 (상단바 버튼·단축키 N). 저장되어 선택되면 True."""
         dlg = PatientDialog(self.window())
         if not dlg.exec():
-            return
+            return False
         p = dlg.get_patient()
         try:
             p.id = self.db.patients.insert(p)
         except Exception as e:  # noqa: BLE001
             QMessageBox.warning(self, "오류", f"저장 실패: {e}\n(차트번호 중복 여부를 확인하세요)")
-            return
+            return False
         self.search.blockSignals(True)
         self.search.setText("")
         self.search.blockSignals(False)
@@ -170,6 +170,7 @@ class PatientPanel(QFrame):
             if pp.id == p.id:
                 self.combo.setCurrentIndex(i)
                 break
+        return True
 
     def edit_patient(self):
         """현재 환자 정보 수정 (상단바 버튼)."""

@@ -48,7 +48,7 @@ h1, h2, h3, h4 { margin: 0; }
 ::-webkit-scrollbar-track { background: transparent; }
 
 .app { display: flex; flex-direction: column; height: 100vh; }
-.app > .workspace, .app > .pro { flex: 1 1 auto; min-height: 0; }
+.app > .workspace, .app > .pro, .app > .home, .app > .exam { flex: 1 1 auto; min-height: 0; }
 
 /* ---------- 상단바 ---------- */
 .topbar { display: flex; align-items: center; gap: 12px; height: 58px; padding: 0 14px; background: var(--panel); border-bottom: 1px solid var(--rule); }
@@ -77,8 +77,9 @@ h1, h2, h3, h4 { margin: 0; }
 .ms-btn:disabled { color: var(--disabled, var(--ink-muted)); opacity: .55; cursor: not-allowed; }
 .ms-btn.ms-accent .ic { color: var(--accent); }
 .ms-btn:focus-visible { outline: none; box-shadow: var(--ring); }
-body:not(.pro-on) #btn-mode-capture, body.pro-on #btn-pro { background: var(--raised); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.25), inset 0 0 0 1px var(--rule-strong); }
-body:not(.pro-on) #btn-mode-capture .ic, body.pro-on #btn-pro .ic { color: var(--accent); }
+body:not(.pro-on):not(.home-on):not(.exam-on) #btn-mode-capture, body.pro-on #btn-pro, body.home-on #btn-home, body.exam-on #btn-exam {
+  background: var(--raised); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.25), inset 0 0 0 1px var(--rule-strong); }
+body:not(.pro-on):not(.home-on):not(.exam-on) #btn-mode-capture .ic, body.pro-on #btn-pro .ic, body.home-on #btn-home .ic, body.exam-on #btn-exam .ic { color: var(--accent); }
 
 .top-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
 .cam-pick { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 4px 0 10px; border: 1px solid var(--rule); border-radius: var(--radius-sm); background: var(--panel-2); color: var(--ink-soft); }
@@ -618,3 +619,56 @@ dialog.settings-pop { margin: 64px 14px auto auto; width: min(420px, 94vw); }
 .date-field .date-btn { height: 36px; width: 36px; }
 .form-row input.invalid { border-color: var(--record); box-shadow: 0 0 0 3px rgba(240, 82, 79, .18); }
 .date-hint { color: var(--record); font-size: 11.5px; font-weight: 600; }
+
+/* ===== 홈(시작) 화면 ===== */
+.home { display: none; align-items: center; gap: 40px; padding: 36px 56px; }
+body.home-on .home { display: flex; }
+body.home-on .workspace, body.home-on .pchip, body.home-on .hint { display: none !important; }
+.home-left { flex: 4; display: flex; flex-direction: column; gap: 6px; }
+.home-title { margin: 0; font-size: 38px; font-weight: 800; letter-spacing: -1px; }
+.home-sub { font-size: 15px; font-weight: 600; color: var(--ink-soft); }
+.home-guide { margin: 12px 0 0; color: var(--ink-muted); font-size: 13px; line-height: 1.7; }
+.home-foot { margin-top: 48px; display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
+.home-skip { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-soft); cursor: pointer; }
+.home-skip input { accent-color: var(--accent); width: 16px; height: 16px; }
+.home-tiles { flex: 6; display: grid; grid-template-columns: repeat(3, 176px); gap: 14px; justify-content: center; }
+.home-tile { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; height: 132px; border-radius: 18px;
+  background: var(--panel); border: 1px solid var(--rule); color: var(--ink); font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; transition: border-color .15s, background .15s, transform .12s; }
+.home-tile .ic { width: 40px; height: 40px; color: var(--accent); stroke-width: 1.7; }
+.home-tile:hover { background: var(--panel-2); border-color: var(--accent); transform: translateY(-1px); }
+.home-tile:focus-visible { outline: none; box-shadow: var(--ring); }
+@media (max-width: 1100px) { .home { flex-direction: column; padding: 24px; } .home-tiles { grid-template-columns: repeat(3, 1fr); width: 100%; } }
+
+/* ===== 검사 기록 ===== */
+.exam { display: none; grid-template-columns: 250px minmax(0, 1fr) 250px; gap: 10px; padding: 8px 10px 10px; min-height: 0; }
+body.exam-on .exam { display: grid; }
+body.exam-on .workspace { display: none; }
+.exam .panel { background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius); box-shadow: var(--shadow); display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.exam-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px 8px; flex: none; }
+.exam-head .spacer { flex: 1; }
+.exam-head .ms-btn { height: 42px; min-width: 52px; }
+.exam-meta { color: var(--ink-muted); font-size: 12px; }
+.exam-day-list { flex: 1; overflow-y: auto; padding: 0 10px 10px; display: flex; flex-direction: column; gap: 6px; }
+.exam-day { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border-radius: 9px; background: var(--panel-2); border: 1px solid var(--rule); color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+.exam-day:hover { border-color: var(--rule-strong); }
+.exam-day.on { background: var(--accent-soft); border-color: var(--accent); }
+.exam-day .ic { width: 18px; height: 18px; color: var(--ink-muted); flex: none; }
+.exam-day.noted .ic { color: var(--accent); }
+.exam-day b { display: block; font-size: 13px; font-weight: 700; }
+.exam-day small { display: block; color: var(--ink-soft); font-size: 11.5px; margin-top: 2px; }
+.exam-center { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.exam-gallery { flex: 3; }
+.exam-grid { flex: 1; overflow-y: auto; padding: 0 12px 12px; display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; align-content: start; }
+.exam-grid .thumb { aspect-ratio: 4/3; }
+.exam-notes { flex: 2; }
+.exam-type { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--ink-soft); margin-left: 8px; }
+.exam-type .select { height: 32px; min-width: 170px; }
+.exam-saved { color: var(--ink-muted); font-size: 12px; }
+#exam-text { flex: 1; margin: 0 12px 12px; resize: none; background: var(--panel-2); border: 1px solid var(--rule); border-radius: var(--radius-sm); padding: 10px 12px; color: var(--ink); font: inherit; line-height: 1.6; min-height: 90px; }
+#exam-text:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
+#exam-text:disabled, #exam-type:disabled { opacity: .5; }
+.exam-pinfo { padding: 0 12px 12px; overflow-y: auto; font-size: 13px; }
+.exam-pinfo .pi { margin-bottom: 9px; }
+.exam-pinfo .pi small { display: block; color: var(--ink-muted); font-size: 11px; }
+.rp-box.filled { white-space: pre-wrap; padding: 6px 8px; font-size: 10pt; line-height: 1.6; }
+@media (max-width: 1100px) { .exam { grid-template-columns: 200px minmax(0, 1fr); } .exam-patient { display: none; } }
