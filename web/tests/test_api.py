@@ -240,3 +240,8 @@ def test_exam_notes_api(client):
     assert client.get("/api/v1/patients/999999/exams").status_code == 404
     assert client.delete(f"/api/v1/patients/{pid}").status_code == 204
     assert client.get(f"/api/v1/patients/{pid}/exams").status_code == 404
+
+
+def test_index_shows_version(client):
+    from app import __version__
+    assert f"Version {__version__}" in client.get("/").text

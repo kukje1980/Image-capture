@@ -621,7 +621,8 @@ dialog.settings-pop { margin: 64px 14px auto auto; width: min(420px, 94vw); }
 .date-hint { color: var(--record); font-size: 11.5px; font-weight: 600; }
 
 /* ===== 홈(시작) 화면 ===== */
-.home { display: none; align-items: center; gap: 40px; padding: 36px 56px; }
+.home { display: none; align-items: center; gap: 40px; padding: 36px 56px; position: relative; }
+.home-version { position: absolute; right: 18px; bottom: 12px; color: var(--ink-muted); font-size: 12px; }
 body.home-on .home { display: flex; }
 body.home-on .workspace, body.home-on .pchip, body.home-on .hint { display: none !important; }
 .home-left { flex: 4; display: flex; flex-direction: column; gap: 6px; }

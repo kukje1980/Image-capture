@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from app import brands, config
+from app import __version__, brands, config
 from app.db.database import Database
 from app.routers import captures, exams, patients
 
@@ -28,6 +28,7 @@ BRAND = brands.get_brand()            # SLITLAMP_BRAND 환경변수 (기본 / ke
 templates.env.globals["brand"] = BRAND
 templates.env.globals["brand_public"] = brands.public(BRAND)
 templates.env.globals["storage_policy"] = config.STORAGE_POLICY
+templates.env.globals["app_version"] = __version__
 
 
 def _ensure_db(app: FastAPI) -> None:

@@ -98,6 +98,8 @@ def test_home_screen_tiles_and_start_option(qapp, app_env):
     assert got == ["exam", "shortcuts"]
     home.chk_skip.setChecked(True)
     assert config.start_screen == "capture"
+    from app import __version__
+    assert home.lbl_version.text() == f"Version {__version__}"
 
 
 def test_main_window_modes(qapp, app_env):

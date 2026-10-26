@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app import __version__
 from app import brand as app_brand
 from app.ui import icons
 from app.ui.theme import ICON_ACCENT
@@ -100,6 +101,9 @@ class HomeScreen(QWidget):
         wrap.addStretch(1)
         wrap.addWidget(grid_box, 0, Qt.AlignmentFlag.AlignCenter)
         wrap.addStretch(1)
+        self.lbl_version = QLabel(f"Version {__version__}")
+        self.lbl_version.setObjectName("HomeGuide")
+        wrap.addWidget(self.lbl_version, 0, Qt.AlignmentFlag.AlignRight)
         root.addLayout(wrap, 6)
 
     @staticmethod
