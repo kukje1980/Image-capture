@@ -87,3 +87,51 @@ def test_writer_error_stops_cleanly(tmp_path):
     _, count, duration = rec.stop()
     assert errors and count == 0 and duration == 0
     assert time.time() - t < 3
+
+
+def test_stop_with_full_queue_still_closes_file(tmp_path):
+    """인코더가 멈춰 큐가 가득 차 종료 신호가 못 들어가도, 풀리면 남은 프레임을 쓰고 파일을 닫는다."""
+    import threading
+
+    rec = VideoRecorder()
+    try:
+        rec.start(tmp_path / "full.mp4", fps=30.0, size=(160, 120))
+    except Exception as e:  # pragma: no cover
+        pytest.skip(f"사용 가능한 인코더 없음: {e}")
+    gate = threading.Event()
+    real_write = rec._write
+
+    def slow_write(frame):
+        gate.wait(5)
+        real_write(frame)
+    rec._write = slow_write
+    rec._start_ts -= 100                      # 경과 시간 기준으로 많은 프레임이 필요하도록 → 큐가 바로 가득 찬다
+    for _ in range(40):
+        rec.feed(_frame(120, 160))
+    assert rec._queue.full()
+    t0 = time.time()
+    path, count, _ = rec.stop()               # 종료 신호 put 은 2초 뒤 포기하지만 _stop_evt 는 설정됨
+    assert rec.is_finalizing
+    gate.set()
+    assert rec.wait_finalized(15)
+    assert not rec.is_finalizing and rec._writer is None
+    assert Path(path).stat().st_size > 0 and rec.frame_count > 0
+    assert time.time() - t0 < 14
+
+
+def test_start_waits_for_previous_finalize(tmp_path):
+    rec = VideoRecorder()
+    try:
+        rec.start(tmp_path / "a.mp4", fps=15.0, size=(160, 120))
+    except Exception as e:  # pragma: no cover
+        pytest.skip(f"사용 가능한 인코더 없음: {e}")
+    for _ in range(5):
+        rec.feed(_frame(120, 160))
+        time.sleep(0.01)
+    rec.stop()
+    assert rec.wait_finalized(10) and not rec.is_finalizing
+    rec.start(tmp_path / "b.mp4", fps=15.0, size=(160, 120))     # 바로 다음 녹화 가능
+    rec.feed(_frame(120, 160))
+    path, count, _ = rec.stop()
+    rec.wait_finalized(10)
+    assert Path(path).name == "b.mp4" and count >= 1

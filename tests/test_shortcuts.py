@@ -29,6 +29,7 @@ def _wait(qapp, cond, timeout=5.0):
 def win(qapp, app_env):
     config, db = app_env
     config.source_mode = "synthetic"
+    config.start_screen = "capture"
     config.save = lambda: None
     db.patients.insert(Patient(chart_no="K1", name="단축키"))
     from app.ui.main_window import MainWindow

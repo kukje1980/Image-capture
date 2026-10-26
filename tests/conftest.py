@@ -17,6 +17,7 @@ def app_env(tmp_path, monkeypatch):
     monkeypatch.setenv("APPDATA", str(tmp_path))
     config = AppConfig.load()
     config.export_root = str(tmp_path / "export")
+    config.start_screen = "capture"              # 테스트는 촬영 화면에서 시작 (홈 화면 테스트는 따로 지정)
     db = Database(config.db_path).init()
     yield config, db
     db.close()

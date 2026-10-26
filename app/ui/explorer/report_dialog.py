@@ -133,7 +133,7 @@ class ReportDialog(QDialog):
         if not items:
             return 0
         return print_util.render_report(print_util.make_pdf_printer(path), self.patient, items,
-                                        findings=self.findings.toPlainText().strip(), **self._common())
+                                        notes=self.findings.toPlainText().strip(), **self._common())
 
     def default_path(self, ext: str) -> str:
         base = getattr(self.config, "export_root", "") or os.path.expanduser("~")
@@ -164,4 +164,4 @@ class ReportDialog(QDialog):
         printer = QPrinter(QPrinter.PrinterMode.HighResolution)
         if QPrintDialog(printer, self).exec():
             print_util.render_report(printer, self.patient, items,
-                                     findings=self.findings.toPlainText().strip(), **self._common())
+                                     notes=self.findings.toPlainText().strip(), **self._common())

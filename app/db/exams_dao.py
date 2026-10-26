@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import sqlite3
-import threading
 from typing import List, Optional
 
 from app.models.exam import Exam
@@ -15,26 +14,24 @@ DEFAULT_TITLE = "세극등 검사"
 
 
 class ExamsDAO:
-    def __init__(self, conn: sqlite3.Connection, lock: threading.Lock):
+    def __init__(self, conn: sqlite3.Connection, lock):
         self._c = conn
         self._lock = lock
 
     def insert(self, e: Exam) -> int:
-        with self._lock:
+        with self._lock, self._c:
             cur = self._c.execute(
                 "INSERT INTO exams (patient_id, exam_date, title, diagnosis, memo) VALUES (?,?,?,?,?)",
                 (e.patient_id, e.exam_date, e.title or DEFAULT_TITLE, e.diagnosis, e.memo),
             )
-            self._c.commit()
             return cur.lastrowid
 
     def update(self, e: Exam) -> None:
-        with self._lock:
+        with self._lock, self._c:
             self._c.execute(
                 "UPDATE exams SET exam_date=?, title=?, diagnosis=?, memo=? WHERE id=?",
                 (e.exam_date, e.title, e.diagnosis, e.memo, e.id),
             )
-            self._c.commit()
 
     def get(self, eid: int) -> Optional[Exam]:
         with self._lock:
@@ -55,7 +52,7 @@ class ExamsDAO:
 
     def ensure_for_date(self, pid: int, exam_date: str) -> int:
         """그날 검사가 있으면 가장 최근 것을, 없으면 새로 만들어 id 를 돌려준다."""
-        with self._lock:
+        with self._lock, self._c:
             r = self._c.execute(
                 "SELECT id FROM exams WHERE patient_id=? AND exam_date=? ORDER BY id DESC LIMIT 1",
                 (pid, exam_date),
@@ -66,18 +63,16 @@ class ExamsDAO:
                 "INSERT INTO exams (patient_id, exam_date, title) VALUES (?,?,?)",
                 (pid, exam_date, DEFAULT_TITLE),
             )
-            self._c.commit()
             return cur.lastrowid
 
     def delete(self, eid: int) -> List[dict]:
         """검사와 그 캡처 레코드를 지우고, 디스크 정리용 경로 목록을 반환한다."""
-        with self._lock:
+        with self._lock, self._c:
             rows = self._c.execute(
                 "SELECT file_path, export_path, thumbnail_path FROM captures WHERE exam_id=?", (eid,)
             ).fetchall()
             self._c.execute("DELETE FROM captures WHERE exam_id=?", (eid,))
             self._c.execute("DELETE FROM exams WHERE id=?", (eid,))
-            self._c.commit()
         return [dict(r) for r in rows]
 
     @staticmethod

@@ -3,6 +3,7 @@
 #   사용:  ./build_mac.sh            (기본)      → dist/SlitLampImaging.app + .dmg
 #          ./build_mac.sh keeler     (Keeler 전용) → dist/KeelerSlitLamp.app + .dmg
 #          ./build_mac.sh explorer   (Explorer 판) → dist/SlitLampExplorer.app + .dmg
+#          ./build_mac.sh agent      (AI 에이전트 에디션) → dist/SlitLampAgent.app + .dmg
 # 필요:   macOS 11 이상, Python 3.11 이상 (python.org 설치본 또는 Homebrew)
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -23,13 +24,19 @@ if [ -z "$PY" ]; then
   echo "[오류] Python 3.11 이상이 필요합니다. https://www.python.org/downloads/macos/ 에서 설치하세요." >&2
   exit 1
 fi
-BRAND="${1:-${SLITLAMP_BUILD_BRAND:-default}}"
-export SLITLAMP_BUILD_BRAND="$BRAND"
-case "$BRAND" in
-  keeler)   APP="KeelerSlitLamp";   VOL="Keeler SlitLamp" ;;
-  explorer) APP="SlitLampExplorer"; VOL="SlitLamp Explorer" ;;
-  *)        APP="SlitLampImaging";  VOL="SlitLamp Imaging" ;;
-esac
+VARIANT="${1:-${SLITLAMP_BUILD_BRAND:-default}}"
+if [ "$VARIANT" = "agent" ]; then
+  export SLITLAMP_BUILD_BRAND="default" SLITLAMP_BUILD_EDITION="agent"
+  APP="SlitLampAgent"; VOL="SlitLamp AI Agent"
+else
+  export SLITLAMP_BUILD_BRAND="$VARIANT" SLITLAMP_BUILD_EDITION="standard"
+  case "$VARIANT" in
+    keeler)   APP="KeelerSlitLamp";   VOL="Keeler SlitLamp" ;;
+    explorer) APP="SlitLampExplorer"; VOL="SlitLamp Explorer" ;;
+    *)        APP="SlitLampImaging";  VOL="SlitLamp Imaging" ;;
+  esac
+fi
+BRAND="$VARIANT"
 VERSION="$("$PY" -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
 ARCH="$(uname -m)"
 

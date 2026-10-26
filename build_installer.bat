@@ -50,6 +50,6 @@ if errorlevel 1 ( echo. & echo [오류] 설치파일 생성 실패 & pause & exi
 echo.
 echo ====================================================
 echo  완료! 설치파일 위치:
-echo    dist\installer\!OUTNAME!-Setup-0.1.0.exe
+echo    dist\installer\!OUTNAME!-Setup-1.14.0.exe
 echo ====================================================
 pause

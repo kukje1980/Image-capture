@@ -2,35 +2,32 @@
 from __future__ import annotations
 
 import sqlite3
-import threading
 from typing import List, Optional
 
 from app.models.ref_image import RefImage
 
 
 class RefImagesDAO:
-    def __init__(self, conn: sqlite3.Connection, lock: threading.Lock):
+    def __init__(self, conn: sqlite3.Connection, lock):
         self._c = conn
         self._lock = lock
 
     def insert(self, r: RefImage) -> int:
-        with self._lock:
+        with self._lock, self._c:
             cur = self._c.execute(
                 """INSERT INTO ref_images
                    (file_path, thumbnail_path, category, title, description, source_capture_id)
                    VALUES (?,?,?,?,?,?)""",
                 (r.file_path, r.thumbnail_path, r.category, r.title, r.description, r.source_capture_id),
             )
-            self._c.commit()
             return cur.lastrowid
 
     def update(self, r: RefImage) -> None:
-        with self._lock:
+        with self._lock, self._c:
             self._c.execute(
                 "UPDATE ref_images SET category=?, title=?, description=? WHERE id=?",
                 (r.category, r.title, r.description, r.id),
             )
-            self._c.commit()
 
     def get(self, rid: int) -> Optional[RefImage]:
         with self._lock:
@@ -60,10 +57,9 @@ class RefImagesDAO:
         return [r[0] for r in rows]
 
     def delete(self, rid: int) -> Optional[dict]:
-        with self._lock:
+        with self._lock, self._c:
             r = self._c.execute("SELECT file_path, thumbnail_path FROM ref_images WHERE id=?", (rid,)).fetchone()
             self._c.execute("DELETE FROM ref_images WHERE id=?", (rid,))
-            self._c.commit()
         return dict(r) if r is not None else None
 
     @staticmethod

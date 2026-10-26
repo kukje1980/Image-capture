@@ -6,8 +6,11 @@ Fusion 스타일 위에 QSS를 올려 OS와 무관하게 일관된 외형을 보
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QRectF, Qt
-from PySide6.QtGui import QBrush, QColor, QIcon, QPainter, QPen, QPixmap
+import tempfile
+from pathlib import Path
+
+from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtGui import QBrush, QColor, QIcon, QImage, QPainter, QPen, QPixmap, QPolygonF
 
 from app import brand as _brand
 
@@ -46,8 +49,27 @@ def palette(mode: str) -> dict:
     return {**base, **over}
 
 
+def _arrow_file(color: str, up: bool) -> str:
+    """콤보·숫자칸의 ▼/▲ 화살표 그림 (QSS 는 image: url() 로만 그릴 수 있어 임시 폴더에 PNG 로 둔다)."""
+    path = Path(tempfile.gettempdir()) / "slitlamp-ui" / f"arrow-{'up' if up else 'down'}-{color.lstrip('#')}.png"
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        img = QImage(20, 20, QImage.Format.Format_ARGB32)
+        img.fill(Qt.GlobalColor.transparent)
+        p = QPainter(img)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(color))
+        pts = [(3, 14), (17, 14), (10, 5)] if up else [(3, 6), (17, 6), (10, 15)]
+        p.drawPolygon(QPolygonF([QPointF(x, y) for x, y in pts]))
+        p.end()
+        img.save(str(path))
+    return path.as_posix()
+
+
 def build_qss(mode: str = "dark") -> str:
     c = palette(mode)
+    arrow_down, arrow_up = _arrow_file(c["ink_soft"], False), _arrow_file(c["ink_soft"], True)
     return f"""
     QWidget {{
         background: {c['bg']};
@@ -71,6 +93,14 @@ def build_qss(mode: str = "dark") -> str:
     QPushButton#ModeBtn:checked {{ background: {c['raised']}; color: {c['ink']}; border: 1px solid {c['rule_strong']}; }}
     QPushButton#IconBtn {{ background: transparent; border: 1px solid transparent; border-radius: 8px; padding: 6px 10px; color: {c['ink_soft']}; font-weight: 600; }}
     QPushButton#IconBtn:hover {{ background: {c['panel2']}; border-color: {c['rule']}; color: {c['ink']}; }}
+    QFrame#NavSeg {{ background: {c['bg']}; border: 1px solid {c['rule']}; border-radius: 11px; }}
+    QToolButton#NavBtn {{
+        background: transparent; border: 1px solid transparent; border-radius: 8px; padding: 4px 6px 3px;
+        color: {c['ink_soft']}; font-size: 11px; font-weight: 600;
+    }}
+    QToolButton#NavBtn:hover {{ background: {c['panel2']}; border-color: {c['rule']}; color: {c['ink']}; }}
+    QToolButton#NavBtn:checked {{ background: {c['raised']}; color: {c['ink']}; border: 1px solid {c['rule_strong']}; }}
+    QToolButton#NavBtn:disabled {{ color: {c['disabled']}; }}
 
     /* ---------- 패널 ---------- */
     QFrame#Panel, #ThumbnailPanel {{ background: {c['panel']}; border: 1px solid {c['rule']}; border-radius: 12px; }}
@@ -102,6 +132,11 @@ def build_qss(mode: str = "dark") -> str:
         border: 1px solid {c['accent']};
     }}
     QComboBox::drop-down {{ border: none; width: 24px; }}
+    QComboBox::down-arrow {{ image: url("{arrow_down}"); width: 10px; height: 10px; }}
+    QSpinBox::up-button, QSpinBox::down-button, QDoubleSpinBox::up-button, QDoubleSpinBox::down-button,
+    QDateEdit::up-button, QDateEdit::down-button {{ border: none; background: transparent; width: 18px; }}
+    QSpinBox::up-arrow, QDoubleSpinBox::up-arrow, QDateEdit::up-arrow {{ image: url("{arrow_up}"); width: 9px; height: 9px; }}
+    QSpinBox::down-arrow, QDoubleSpinBox::down-arrow, QDateEdit::down-arrow {{ image: url("{arrow_down}"); width: 9px; height: 9px; }}
     QComboBox QAbstractItemView {{
         background: {c['panel']}; border: 1px solid {c['rule_strong']}; padding: 4px;
         selection-background-color: {c['accent_soft']}; selection-color: {c['ink']}; outline: none;
@@ -137,23 +172,57 @@ def build_qss(mode: str = "dark") -> str:
     QPushButton#EyeBtn[eye="OD"]:checked {{ color: {c['od']}; border: 1px solid {c['od']}; }}
     QPushButton#EyeBtn[eye="OS"]:checked {{ color: {c['os']}; border: 1px solid {c['os']}; }}
     QPushButton#EyeBtn[eye="OU"]:checked {{ color: {c['ou']}; border: 1px solid {c['ou']}; }}
-    QPushButton#ToolBtn, QPushButton#Pause, QPushButton#Freeze {{
-        background: transparent; border: 1px solid transparent; color: {c['ink_soft']}; padding: 8px 12px;
+    QPushButton#SmartBtn {{
+        background: transparent; border: 1px solid transparent; border-radius: 7px; padding: 2px 10px; min-height: 28px;
+        color: {c['ink_soft']}; font-weight: 600;
     }}
-    QPushButton#ToolBtn:hover, QPushButton#Pause:hover, QPushButton#Freeze:hover {{ background: {c['panel2']}; border-color: {c['rule']}; color: {c['ink']}; }}
-    QPushButton#Pause:checked {{ background: {c['accent_soft']}; border-color: {c['accent']}; color: {c['accent_hover'] if mode == 'dark' else c['accent']}; }}
-    QPushButton#Freeze {{ color: {c['accent_hover'] if mode == 'dark' else c['accent']}; }}
-    QPushButton#ToolBtn:disabled, QPushButton#Pause:disabled, QPushButton#Freeze:disabled {{ color: {c['disabled']}; background: transparent; border-color: transparent; }}
-    QPushButton#Shutter {{
-        background: {c['accent']}; color: {c['accent_ink']}; border: none; border-radius: 23px;
-        padding: 6px 20px 6px 12px; min-height: 34px; font-size: 14px; font-weight: 700;
+    QPushButton#SmartBtn:hover {{ color: {c['ink']}; }}
+    QPushButton#SmartBtn:checked {{ background: {c['accent_soft']}; border: 1px solid {c['accent']}; color: {c['accent_hover'] if mode == 'dark' else c['accent']}; }}
+    QLabel#SmartTitle {{ color: {c['ink']}; font-weight: 700; padding-right: 4px; }}
+    QLabel#SmartMeter {{ color: {c['ink_soft']}; font-family: Menlo, Consolas, "JetBrains Mono", monospace; font-size: 12px; padding: 0 3px; }}
+    QLabel#SmartHint {{ color: {c['ink_soft']}; font-size: 12px; padding-left: 6px; }}
+    QToolButton#ToolBtn, QToolButton#Pause, QToolButton#Freeze, QToolButton#Record, QToolButton#Primary {{
+        background: transparent; border: 1px solid transparent; border-radius: 10px; padding: 4px 6px 3px;
+        color: {c['ink_soft']}; font-size: 11px; font-weight: 600;
     }}
-    QPushButton#Shutter:hover {{ background: {c['accent_hover']}; }}
-    QPushButton#Shutter:disabled {{ background: {c['rule']}; color: {c['disabled']}; }}
-    QPushButton#Record {{ background: transparent; color: {c['record']}; border: 1px solid transparent; padding: 8px 12px; font-weight: 700; }}
-    QPushButton#Record:hover {{ background: {c['record_soft']}; }}
-    QPushButton#Record:checked {{ background: {c['record']}; color: #ffffff; }}
-    QPushButton#Record:disabled {{ color: {c['disabled']}; background: transparent; }}
+    QToolButton#ToolBtn:hover, QToolButton#Pause:hover, QToolButton#Freeze:hover {{ background: {c['panel2']}; border-color: {c['rule']}; color: {c['ink']}; }}
+    QToolButton#Pause:checked {{ background: {c['accent_soft']}; border-color: {c['accent']}; color: {c['accent_hover'] if mode == 'dark' else c['accent']}; }}
+    QToolButton#Freeze {{ color: {c['accent_hover'] if mode == 'dark' else c['accent']}; }}
+    QToolButton#ToolBtn:disabled, QToolButton#Pause:disabled, QToolButton#Freeze:disabled, QToolButton#Record:disabled, QToolButton#Primary:disabled {{
+        color: {c['disabled']}; background: transparent; border-color: transparent; }}
+    QToolButton#Shutter {{
+        background: {c['accent']}; border: 3px solid {c['accent_soft']}; border-radius: 28px;
+        min-width: 50px; max-width: 50px; min-height: 50px; max-height: 50px; padding: 0;
+    }}
+    QToolButton#Shutter:hover {{ background: {c['accent_hover']}; border-color: {c['accent']}; }}
+    QToolButton#Shutter:pressed {{ background: {c['accent_hover']}; border-color: {c['accent_hover']}; }}
+    QToolButton#Shutter:disabled {{ background: {c['rule']}; border-color: {c['rule']}; }}
+    QToolButton#Record {{ color: {c['record']}; font-weight: 700; }}
+    QToolButton#Record:hover {{ background: {c['record_soft']}; }}
+    QToolButton#Record:checked {{ background: {c['record']}; color: #ffffff; }}
+    QToolButton#Primary {{ background: {c['accent']}; color: {c['accent_ink']}; font-weight: 700; }}
+    QToolButton#Primary:hover {{ background: {c['accent_hover']}; }}
+    QToolButton#DateBtn {{ background: {c['raised']}; border: 1px solid {c['rule_strong']}; border-radius: 8px; padding: 5px; }}
+    QToolButton#DateBtn:hover {{ background: {c['panel2']}; border-color: {c['ink_muted']}; }}
+    QLineEdit[invalid="true"] {{ border: 1px solid {c['record']}; }}
+
+    /* 달력 팝업 */
+    QFrame#DatePopup {{ background: {c['panel']}; border: 1px solid {c['rule_strong']}; border-radius: 10px; }}
+    QCalendarWidget {{ background: {c['panel']}; }}
+    QCalendarWidget QWidget#qt_calendar_navigationbar {{ background: {c['panel2']}; border-radius: 8px; }}
+    QCalendarWidget QToolButton {{
+        background: transparent; color: {c['ink']}; border: none; border-radius: 6px;
+        padding: 5px 10px; font-weight: 700; font-size: 13px; icon-size: 16px;
+    }}
+    QCalendarWidget QToolButton:hover {{ background: {c['raised']}; }}
+    QCalendarWidget QToolButton::menu-indicator {{ image: none; }}
+    QCalendarWidget QSpinBox {{ padding: 2px 6px; min-height: 16px; }}
+    QCalendarWidget QAbstractItemView {{
+        background: {c['panel']}; color: {c['ink']}; outline: none; border: none;
+        selection-background-color: {c['accent']}; selection-color: {c['accent_ink']};
+        alternate-background-color: {c['panel']};
+    }}
+    QCalendarWidget QAbstractItemView:disabled {{ color: {c['ink_muted']}; }}
 
     /* 상태바 */
     QStatusBar {{ background: {c['panel']}; border-top: 1px solid {c['rule']}; color: {c['ink_soft']}; }}
@@ -218,6 +287,13 @@ def build_qss(mode: str = "dark") -> str:
     }}
     QTabWidget#ProTabs QTabBar::tab:selected {{ background: {c['raised']}; color: {c['ink']}; border: 1px solid {c['rule_strong']}; }}
     QTabWidget#ProTabs QTabBar::tab:hover {{ color: {c['ink']}; }}
+    QFrame#ProTabGrid {{ background: {c['bg']}; border: 1px solid {c['rule']}; border-radius: 9px; }}
+    QPushButton#ProTabBtn {{
+        background: transparent; color: {c['ink_soft']}; padding: 5px 0; min-height: 22px;
+        border: 1px solid transparent; border-radius: 6px; font-weight: 700;
+    }}
+    QPushButton#ProTabBtn:checked {{ background: {c['raised']}; color: {c['ink']}; border: 1px solid {c['rule_strong']}; }}
+    QPushButton#ProTabBtn:hover {{ color: {c['ink']}; }}
     QLabel#Histogram {{ background: #070a0f; border: 1px solid {c['rule']}; border-radius: 7px; }}
     QFrame#MultiCell {{ background: #0a0d12; border: 1px solid #1d242f; border-radius: 6px; }}
     QFrame#MultiCell:hover {{ border: 2px solid {c['accent']}; }}
@@ -237,6 +313,34 @@ def build_qss(mode: str = "dark") -> str:
     QSlider#SliderR::handle:horizontal, QSlider#SliderR::sub-page:horizontal {{ background: #f87171; }}
     QSlider#SliderG::handle:horizontal, QSlider#SliderG::sub-page:horizontal {{ background: #4ade80; }}
     QSlider#SliderB::handle:horizontal, QSlider#SliderB::sub-page:horizontal {{ background: #60a5fa; }}
+
+    /* ===== 홈(시작) 화면 ===== */
+    QWidget#Home {{ background: {c['bg']}; }}
+    QLabel#HomeTitle {{ font-size: 36px; font-weight: 800; letter-spacing: -1px; }}
+    QLabel#HomeSub {{ font-size: 15px; font-weight: 600; color: {c['ink_soft']}; }}
+    QLabel#HomeGuide {{ font-size: 13px; color: {c['ink_muted']}; }}
+    QFrame#HomeTiles {{ background: transparent; }}
+    QToolButton#HomeTile {{
+        background: {c['panel']}; border: 1px solid {c['rule']}; border-radius: 18px;
+        color: {c['ink']}; font-size: 14px; font-weight: 700; padding: 12px 8px 10px;
+    }}
+    QToolButton#HomeTile:hover {{ background: {c['panel2']}; border: 1px solid {c['accent']}; }}
+    QToolButton#HomeTile:pressed {{ background: {c['accent_soft']}; }}
+    QToolButton#HomeLink {{ background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 4px 6px; color: {c['ink_soft']}; font-weight: 600; }}
+    QToolButton#HomeLink:hover {{ background: {c['panel2']}; color: {c['ink']}; border-color: {c['rule']}; }}
+    QToolButton#HomeLink:disabled {{ color: {c['disabled']}; }}
+
+    /* ===== 검사 기록 화면 ===== */
+    QListWidget#ExamList {{ background: transparent; border: none; outline: none; }}
+    QListWidget#ExamList::item {{
+        background: {c['panel2']}; border: 1px solid {c['rule']}; border-radius: 8px;
+        padding: 4px 8px; color: {c['ink']};
+    }}
+    QListWidget#ExamList::item:hover {{ border-color: {c['rule_strong']}; }}
+    QListWidget#ExamList::item:selected {{ background: {c['accent_soft']}; border: 1px solid {c['accent']}; color: {c['ink']}; }}
+    QLabel#ExamPatient {{ font-size: 13px; }}
+    QWidget#ExamGrid {{ background: transparent; }}
+    QFrame#Panel QScrollArea, QFrame#Panel QWidget#qt_scrollarea_viewport {{ background: transparent; }}
 
     QMenuBar {{ background: {c['panel']}; }}
     QMenuBar::item:selected {{ background: {c['panel2']}; }}

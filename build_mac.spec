@@ -1,17 +1,19 @@
 # PyInstaller 스펙 (macOS, .app 번들).
 #   빌드:  ./build_mac.sh   (또는 pyinstaller build_mac.spec)
 #   결과:  dist/SlitLampImaging.app  (SLITLAMP_BUILD_BRAND=keeler 이면 dist/KeelerSlitLamp.app,
-#                                     explorer 이면 dist/SlitLampExplorer.app)
+#                                     explorer 이면 dist/SlitLampExplorer.app,
+#          SLITLAMP_BUILD_EDITION=agent 이면 dist/SlitLampAgent.app — AI 에이전트 에디션)
 #
 # Windows 용 build.spec 과 같은 구성에 macOS 번들 정보(카메라 권한 문구·아이콘)를 더한다.
 import os
 
-from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
 
-APP_VERSION = "0.1.0"
+APP_VERSION = "1.14.0"
 BRAND = os.environ.get("SLITLAMP_BUILD_BRAND", "default").lower()
+AGENT = os.environ.get("SLITLAMP_BUILD_EDITION", "standard").lower() == "agent"
 # 판별 (앱 이름, 표시 이름, 아이콘, 번들 ID, 런타임 훅)
-EDITIONS = {
+BRANDS = {
     "default": ("SlitLampImaging", "슬릿램프 영상 시스템", "assets/icons/app.icns",
                 "com.kukjemd.slitlampimaging", []),
     "keeler": ("KeelerSlitLamp", "Keeler 슬릿램프 영상 시스템", "assets/brand/keeler/app.icns",
@@ -19,7 +21,11 @@ EDITIONS = {
     "explorer": ("SlitLampExplorer", "슬릿램프 영상 시스템 Explorer", "assets/brand/explorer/app.icns",
                  "com.kukjemd.slitlampexplorer", ["tools/rthooks/brand_explorer.py"]),
 }
-APP_NAME, DISPLAY_NAME, APP_ICON, BUNDLE_ID, RTHOOKS = EDITIONS.get(BRAND, EDITIONS["default"])
+APP_NAME, DISPLAY_NAME, APP_ICON, BUNDLE_ID, RTHOOKS = BRANDS.get(BRAND, BRANDS["default"])
+RTHOOKS = list(RTHOOKS)
+if AGENT:
+    APP_NAME, DISPLAY_NAME, BUNDLE_ID = "SlitLampAgent", "슬릿램프 영상 시스템 AI 에이전트", "com.kukjemd.slitlampagent"
+    RTHOOKS.append("tools/rthooks/edition_agent.py")
 
 datas = []
 binaries = []
@@ -31,12 +37,19 @@ datas += collect_data_files("imageio_ffmpeg")
 # Word 보고서(python-docx) 기본 서식 파일
 datas += collect_data_files("docx")
 
+# DICOM 내보내기 (pydicom 은 일부 모듈을 실행 중에 불러오므로 하위 모듈을 모두 포함, 테스트·예제 제외)
+hiddenimports += collect_submodules("pydicom", filter=lambda n: ".tests" not in n and ".examples" not in n)
+
 # DB 스키마 파일 동봉
 datas += [("app/db/schema.sql", "app/db")]
 
 # 앱 아이콘 동봉
 datas += [("assets/icons/app.png", "assets/icons")]
 datas += [("assets/brand", "assets/brand")]
+# 효과음 (캡처 찰칵 · 정지영상 · 녹화 삐)
+datas += [("assets/sounds", "assets/sounds")]
+if os.path.isdir("assets/models") and os.listdir("assets/models"):
+    datas += [("assets/models", "assets/models")]
 
 a = Analysis(
     ["run.py"],

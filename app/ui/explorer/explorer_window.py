@@ -36,12 +36,13 @@ from PySide6.QtWidgets import (
     QStackedWidget,
     QStatusBar,
     QToolBar,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from app import brand as app_brand
-from app import paths, shortcuts
+from app import paths, shortcuts, sounds
 from app.capture.camera_controller import CameraController
 from app.services.capture_service import CaptureService
 from app.ui import icons
@@ -55,6 +56,7 @@ from app.ui.explorer.reference_library import ReferenceLibraryDialog
 from app.ui.explorer.report_dialog import ReportDialog
 from app.ui.explorer.slideshow import SlideShow
 from app.ui.explorer.thumb_list import ThumbList
+from app.ui.control_bar import tool_button
 from app.ui.image_viewer import open_in_default_player
 from app.ui.patient_dialog import PatientDialog
 from app.ui.pro.image_canvas import ImageCanvas
@@ -114,7 +116,12 @@ class ExplorerWindow(QMainWindow):
         self.tree.selectionChanged.connect(self._on_tree_selection)
         self._on_tree_selection(self.tree.current_patient(), self.tree.current_exam())
         self.set_view("live")
+        sounds.set_enabled(getattr(config, "sounds_enabled", True))
+        sounds.preload()
         self.camera.start()
+        warn = self.service.low_space_warning()
+        if warn:
+            self._status(warn, 15000)
 
     # ================= 동작(QAction) =================
     def _act(self, text, icon=None, slot=None, tip="", checkable=False, key=None) -> QAction:
@@ -252,13 +259,9 @@ class ExplorerWindow(QMainWindow):
         bl.addWidget(self.lbl_status)
 
         def btn(text, name, icon, color, action):
-            b = QPushButton(icons.gap(text))
-            b.setObjectName(name)
-            b.setIcon(icons.icon(icon, color, 18))
-            b.setIconSize(QSize(18, 18))
-            b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            b = tool_button(text, icon, name, checkable=action.isCheckable(), color=color,
+                            tip=action.toolTip())
             if action.isCheckable():
-                b.setCheckable(True)
                 b.toggled.connect(action.setChecked)
                 action.toggled.connect(b.setChecked)
             else:
@@ -267,8 +270,18 @@ class ExplorerWindow(QMainWindow):
             return b
 
         self.btn_pause = btn("정지", "Pause", "pause", ICON, self.act_pause)
-        self.btn_capture = btn("캡처", "Shutter", "camera", ICON_ON_ACCENT, self.act_capture)
         self.btn_record = btn("녹화", "Record", "rec", ICON_RECORD, self.act_record)
+        # 사진 캡처 = 원형 셔터 (기본판 촬영 도크와 같은 모양)
+        self.btn_capture = QToolButton()
+        self.btn_capture.setObjectName("Shutter")
+        self.btn_capture.setIcon(icons.icon("camera", ICON_ON_ACCENT, 26))
+        self.btn_capture.setIconSize(QSize(26, 26))
+        self.btn_capture.setFixedSize(56, 56)
+        self.btn_capture.setToolTip(self.act_capture.toolTip())
+        self.btn_capture.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.btn_capture.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_capture.clicked.connect(self.act_capture.trigger)
+        bl.insertWidget(bl.indexOf(self.btn_record), self.btn_capture)
         lay.addWidget(bar)
         self.setCentralWidget(central)
 
@@ -355,6 +368,8 @@ class ExplorerWindow(QMainWindow):
             a.setEnabled(has_e)
         self.act_capture.setEnabled(has_p)
         self.act_record.setEnabled(has_p or self.camera.recording)
+        self.btn_capture.setEnabled(has_p)
+        self.btn_record.setEnabled(self.act_record.isEnabled())
         self.act_export.setEnabled(bool(self.thumbs.selected()))
         self.act_delete_images.setEnabled(bool(self.thumbs.selected()))
         self.act_pro.setEnabled(is_photo)
@@ -537,6 +552,8 @@ class ExplorerWindow(QMainWindow):
         self._paused = on
         self._freeze = self.camera.last_frame if on else None    # 정지한 순간의 영상 (캡처 대상)
         if on:
+            sounds.play("freeze")
+        if on:
             self.set_view("live")
         self._refresh_hud()
 
@@ -553,6 +570,7 @@ class ExplorerWindow(QMainWindow):
         if frame is None:
             QMessageBox.information(self, "확인", "표시할 영상이 없습니다.")
             return None
+        sounds.play("shutter")                   # 저장(인코딩) 전에 바로 — 누른 순간 '찰칵'
         try:
             cap = self.service.save_photo(frame, self.patient, eye=self.eye,
                                           exam_id=self.exam.id if self.exam else None)
@@ -584,6 +602,7 @@ class ExplorerWindow(QMainWindow):
             return
         self._rec_patient, self._rec_exam_id, self._rec_eye = self.patient, (self.exam.id if self.exam else None), self.eye
         self._rec_path, self._rec_ts = path, ts
+        sounds.play("rec_start")
         self._rec_timer.start()
         self._update_rec_hud()
         self._status("녹화 중…")
@@ -594,6 +613,7 @@ class ExplorerWindow(QMainWindow):
         self._rec_timer.stop()
         first = self.camera.first_rec_frame
         count, duration = self.camera.stop_recording()
+        sounds.play("rec_stop")
         self._reset_record_button()
         self._refresh_hud()
         if count == 0:
