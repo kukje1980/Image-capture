@@ -8,7 +8,7 @@
 
 #define MyAppName "슬릿램프 영상 시스템"
 #define MyAppNameEn "SlitLampImaging"
-#define MyAppVersion "0.2.0"
+#define MyAppVersion "1.13.0"
 #define MyAppPublisher "Kukje"
 #define MyAppExeName "SlitLampImaging.exe"
 

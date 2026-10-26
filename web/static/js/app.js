@@ -114,6 +114,8 @@
     $('patient-delete').addEventListener('click', deletePatient);
 
     $('btn-theme').addEventListener('click', toggleTheme);
+    $('btn-sounds').addEventListener('click', () => setSounds(!soundsOn()));
+    syncSoundsButton();
     $('btn-storage').addEventListener('click', openStorageDialog);
     $('storage-x').addEventListener('click', () => $('storage-dialog').close());
     $('storage-cancel').addEventListener('click', () => $('storage-dialog').close());
@@ -742,6 +744,7 @@
       video.pause();
       frame.classList.add('paused');
       state.isPaused = true;
+      sfx('freeze');
       $('btn-pause').innerHTML = '<svg class="ic"><use href="#i-play"/></svg>재개';
     } else {
       video.play();
@@ -749,6 +752,22 @@
       state.isPaused = false;
       $('btn-pause').innerHTML = '<svg class="ic"><use href="#i-pause"/></svg>일시정지';
     }
+  }
+
+  // ---- 효과음 (sounds.js) ----
+  // 사진 캡처 = 필름 카메라 '찰칵', 정지영상(스틸) = '틱', 녹화 시작/중지 = '삐' / '삐삐'
+  function sfx(name) { try { if (window.SlitSounds) window.SlitSounds.play(name); } catch (_) { /* 소리는 촬영을 막지 않는다 */ } }
+  function soundsOn() { return !window.SlitSounds || window.SlitSounds.enabled(); }
+  function setSounds(on) {
+    if (window.SlitSounds) window.SlitSounds.setEnabled(on);
+    syncSoundsButton();
+    if (on) sfx('freeze');                                    // 켜면 바로 들려 준다
+    toast(on ? '효과음 켬' : '효과음 끔', 'success');
+  }
+  function syncSoundsButton() {
+    const on = soundsOn();
+    $('btn-sounds').setAttribute('aria-pressed', String(on));
+    $('sounds-label').textContent = on ? '효과음 켜짐' : '효과음 꺼짐';
   }
 
   // ---- capture ----
@@ -796,6 +815,7 @@
     const canvas = document.createElement('canvas');
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
+    sfx('shutter');
     const src = state.isPaused ? $('freeze') : video;
     const cx = canvas.getContext('2d');
     if (meibo.on) cx.filter = 'grayscale(1)';      // 마이봄: 흑백 원본 (대비 강화·반전은 화면 보기 전용)
@@ -831,6 +851,7 @@
       await persistCapture(patient, 'video', blob, ext, eye, durationMs);
     };
     recorder.start();
+    sfx('rec_start');
     state.recorder = recorder;
     state.isRecording = true;
     state.recordStart = start;
@@ -851,6 +872,7 @@
     state.recorder.stoppedAt = Date.now();
     state.recorder.stop();
     state.isRecording = false;
+    sfx('rec_stop');
     clearInterval(state.recordTimer);
     $('rec-badge').classList.remove('on');
     $('rec-time').textContent = '00:00';
@@ -1023,6 +1045,7 @@
     if (i == null || !state.quadHasImg[i]) { toast('라이브 영상이 준비되지 않았습니다.', 'error'); return; }
     state.quadFrozen[i] = true;
     state.quadEyes[i] = $('eye-select').value;
+    sfx('freeze');
     // 다음 빈 칸 찾기
     let nxt = null;
     for (let j = 1; j <= 4; j++) { const k = (i + j) % 4; if (!state.quadFrozen[k]) { nxt = k; break; } }
@@ -1063,6 +1086,7 @@
     const indices = [0, 1, 2, 3].filter(i => state.quadFrozen[i] || i === state.quadActive);
     const withImg = indices.filter(i => state.quadHasImg[i]);
     if (withImg.length === 0) { toast('저장할 정지영상이 없습니다.', 'error'); return; }
+    sfx('shutter');
     let saved = 0;
     // 개별 저장
     for (const i of withImg) {
@@ -1245,7 +1269,7 @@
   // Pro 모드(pro.js)에서 쓰는 공개 API
   window.SlitApp = {
     state, api, currentPatient, persistCapture, renderThumbs, toast, setStatus,
-    startCamera, openPatientDialog, parseTs, fmtDT, openViewer,
+    startCamera, openPatientDialog, parseTs, fmtDT, openViewer, sfx,
   };
 
   init();

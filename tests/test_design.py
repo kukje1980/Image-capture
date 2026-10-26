@@ -140,3 +140,5 @@ def test_topbar_has_patient_icon_buttons(qapp, app_env):
         assert w.control_bar.btn_record.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextUnderIcon
     finally:
         w.close()
+        w.deleteLater()
+        qapp.processEvents()

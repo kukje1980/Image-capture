@@ -29,6 +29,32 @@ class CaptureNoteIn(BaseModel):
     note: Optional[str] = None
 
 
+class MeasurementIn(BaseModel):
+    patient_id: int
+    capture_id: Optional[int] = None
+    eye: Optional[str] = None
+    kind: str = Field(min_length=1, max_length=32)
+    value: float
+    detail: dict = Field(default_factory=dict)
+    locs: dict = Field(default_factory=dict)
+    conditions: str = Field(default="", max_length=300)
+
+
+class MeasurementOut(MeasurementIn):
+    id: int
+    measured_at: str
+
+
+class RefOut(BaseModel):
+    id: int
+    region: str
+    condition: str
+    disease: Optional[str] = None
+    note: Optional[str] = None
+    url: str
+    created_at: str
+
+
 class CaptureOut(BaseModel):
     id: int
     patient_id: int

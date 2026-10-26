@@ -5,23 +5,14 @@ name: Build macOS app
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - "app/**"
-      - "assets/**"
-      - "build_mac.spec"
-      - "build_mac.sh"
-      - "tools/rthooks/**"
-      - "requirements.txt"
-      - "tests/**"
-      - ".github/workflows/build-mac.yml"
+  workflow_call:
 
 jobs:
   build:
     strategy:
       fail-fast: false
       matrix:
-        brand: [default, keeler]
+        brand: [default, keeler, agent]        # agent = AI 에이전트 에디션 (기본 브랜드)
         runner: [macos-15, macos-15-intel]      # Apple Silicon (M1/M2/M3…) / Intel
         include:
           - runner: macos-15
@@ -32,6 +23,8 @@ jobs:
             app: SlitLampImaging
           - brand: keeler
             app: KeelerSlitLamp
+          - brand: agent
+            app: SlitLampAgent
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -63,7 +56,18 @@ jobs:
           kill $PID || true
 
       - uses: actions/upload-artifact@v4
+        id: upload
+        continue-on-error: true            # GitHub 아티팩트 서버 타임아웃이 가끔 나므로 아래에서 한 번 더
         with:
           name: ${{ matrix.app }}-mac-${{ matrix.arch }}
           path: dist/*.dmg
           if-no-files-found: error
+
+      - name: 아티팩트 업로드 재시도
+        if: steps.upload.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.app }}-mac-${{ matrix.arch }}
+          path: dist/*.dmg
+          if-no-files-found: error
+          overwrite: true

@@ -245,3 +245,76 @@ def test_exam_notes_api(client):
 def test_index_shows_version(client):
     from app import __version__
     assert f"Version {__version__}" in client.get("/").text
+
+
+def test_measurements_record_list_and_cascade(client):
+    """측정 기록 (혼탁 지수 · 촬영 조건 · LOCS 의사 입력) — 경과 그래프용."""
+    pid = client.post("/api/v1/patients", json={"chart_no": "M1", "name": "측정"}).json()["id"]
+    other = client.post("/api/v1/patients", json={"chart_no": "M2", "name": "다른"}).json()["id"]
+    cap = client.post("/api/v1/captures", data={"patient_id": str(pid), "media_type": "photo", "eye": "OD"},
+                      files={"file": ("a.png", b"\x89PNG\r\n\x1a\n", "image/png")}).json()
+    body = {"patient_id": pid, "capture_id": cap["id"], "eye": "OD", "kind": "nuclear", "value": 42.4,
+            "detail": {"ratio": 0.48, "has_cornea": True}, "locs": {"NO": 3, "NC": "2.5", "X": 1, "C": 9},
+            "conditions": "슬릿 0.2mm · 45°"}
+    r = client.post("/api/v1/measurements", json=body)
+    assert r.status_code == 201, r.text
+    m = r.json()
+    assert m["locs"] == {"NO": 3.0, "NC": 2.5} and m["detail"]["ratio"] == 0.48 and m["measured_at"]
+    client.post("/api/v1/measurements", json={**body, "eye": "OS", "value": 10, "capture_id": None})
+    client.post("/api/v1/measurements", json={**body, "kind": "cortical", "value": 150, "capture_id": None})
+    od = client.get(f"/api/v1/measurements?patient_id={pid}&kind=nuclear&eye=OD").json()
+    assert [x["value"] for x in od] == [42.4]
+    assert len(client.get(f"/api/v1/measurements?patient_id={pid}").json()) == 3
+    cort = client.get(f"/api/v1/measurements?patient_id={pid}&kind=cortical").json()
+    assert cort[0]["value"] == 100.0                                  # 0~100 으로 제한
+    # 잘못된 요청: 없는 환자 · 모르는 종류 · 다른 환자의 영상
+    assert client.post("/api/v1/measurements", json={**body, "patient_id": 9999}).status_code == 404
+    assert client.post("/api/v1/measurements", json={**body, "kind": "diagnosis"}).status_code == 400
+    assert client.post("/api/v1/measurements", json={**body, "patient_id": other}).status_code == 400
+    # 영상을 지워도 측정 기록은 남고(capture_id=NULL), 환자를 지우면 함께 삭제
+    client.delete(f"/api/v1/captures/{cap['id']}")
+    assert client.get(f"/api/v1/measurements?patient_id={pid}&kind=nuclear&eye=OD").json()[0]["capture_id"] is None
+    assert client.delete(f"/api/v1/measurements/{m['id']}").status_code == 204
+    client.delete(f"/api/v1/patients/{pid}")
+    assert client.get(f"/api/v1/measurements?patient_id={pid}").json() == []
+
+
+def test_db_failed_write_rolls_back(client):
+    """차트번호 중복 등 실패한 쓰기가 트랜잭션을 열어 둔 채 남기지 않는다."""
+    import sqlite3
+
+    import pytest
+    db = client.app.state.db
+    r = client.post("/api/v1/patients", json={"chart_no": "RB1", "name": "a"})
+    assert r.status_code == 201
+    with pytest.raises(sqlite3.IntegrityError):
+        db.create_patient({"chart_no": "RB1", "name": "b"})
+    assert not db._conn.in_transaction
+    assert db._conn.execute("PRAGMA busy_timeout").fetchone()[0] >= 10000
+    r = client.post("/api/v1/patients", json={"chart_no": "RB2", "name": "c"})
+    assert r.status_code == 201
+
+
+def test_reference_samples_library(client):
+    """참조 샘플: 부위·정상/비정상·질환명으로 등록, 필터 조회, 파일 제공, 삭제 (환자와 무관)."""
+    png = b"\x89PNG\r\n\x1a\n" + b"0" * 64
+    def up(region, cond, disease=None, ext="png"):
+        data = {"region": region, "condition": cond, "ext": ext}
+        if disease:
+            data["disease"] = disease
+        return client.post("/api/v1/refs", data=data, files={"file": ("a.png", png, "image/png")})
+    r1 = up("cornea", "normal")
+    assert r1.status_code == 201, r1.text
+    r2 = up("cornea", "abnormal", "각막염")
+    up("lens", "abnormal", "핵백내장")
+    assert up("retina", "normal").status_code == 400                 # 모르는 부위
+    assert up("cornea", "suspect").status_code == 400                # 구분은 normal/abnormal
+    assert up("cornea", "normal", ext="html").status_code == 400     # 영상 형식만
+    cornea = client.get("/api/v1/refs?region=cornea").json()
+    assert [x["condition"] for x in cornea] == ["normal", "abnormal"] and cornea[1]["disease"] == "각막염"
+    assert len(client.get("/api/v1/refs?condition=abnormal").json()) == 2
+    url = r2.json()["url"]
+    assert url.startswith("/media/_reference/cornea/") and client.get(url).content == png
+    assert client.delete(f"/api/v1/refs/{r2.json()['id']}").status_code == 204
+    assert client.get(url).status_code == 404
+    assert len(client.get("/api/v1/refs").json()) == 2

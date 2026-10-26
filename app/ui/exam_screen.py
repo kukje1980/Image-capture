@@ -310,12 +310,14 @@ class ExamScreen(QWidget):
         while self.grid.count():
             w = self.grid.takeAt(0).widget()
             if w is not None:
+                w.hide()
+                w.setParent(None)
                 w.deleteLater()
         cols = 4
         for i, c in enumerate(caps):
             w = ThumbnailWidget(c)
             w.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-            w.setFixedWidth(196)
+            w.setFixedSize(196, 147)                 # 4:3 고정 (resizeEvent 의 높이 재계산이 되돌이표가 되지 않게)
             w.clicked.connect(self.openCapture.emit)
             self.grid.addWidget(w, i // cols, i % cols)
         self.lbl_empty.setVisible(day is not None and not caps)

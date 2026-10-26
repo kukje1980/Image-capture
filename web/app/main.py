@@ -20,7 +20,7 @@ from fastapi.templating import Jinja2Templates
 
 from app import __version__, brands, config
 from app.db.database import Database
-from app.routers import captures, exams, patients
+from app.routers import captures, exams, measurements, patients, refs
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
@@ -141,6 +141,8 @@ def logout():
 
 app.include_router(patients.router)
 app.include_router(captures.router)
+app.include_router(measurements.router)
+app.include_router(refs.router)
 app.include_router(exams.router)
 
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")

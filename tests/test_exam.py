@@ -74,6 +74,8 @@ def test_exam_screen_groups_days_and_saves_notes(qapp, app_env):
     # 환자 없음
     scr.set_patient(None)
     assert scr.day_list.count() == 0 and not scr.txt_notes.isEnabled()
+    scr.deleteLater()
+    qapp.processEvents()
 
 
 def test_exam_pdf_with_notes(qapp, app_env, tmp_path):
@@ -84,6 +86,8 @@ def test_exam_pdf_with_notes(qapp, app_env, tmp_path):
     scr.txt_notes.setPlainText("소견 테스트")
     out = tmp_path / "exam.pdf"
     assert scr.export_pdf(str(out)) == 1 and out.stat().st_size > 1000
+    scr.deleteLater()
+    qapp.processEvents()
 
 
 def test_home_screen_tiles_and_start_option(qapp, app_env):
@@ -105,6 +109,7 @@ def test_home_screen_tiles_and_start_option(qapp, app_env):
 def test_main_window_modes(qapp, app_env):
     config, db = app_env
     config.source_mode = "synthetic"
+    config.start_screen = "home"
     config.save = lambda: None
     p, _ = _patient_with_days(config, db)
     from app.ui.main_window import MainWindow
@@ -126,6 +131,8 @@ def test_main_window_modes(qapp, app_env):
         assert w.mode_stack.currentIndex() == 3
     finally:
         w.close()
+        w.deleteLater()
+        qapp.processEvents()
 
 
 def test_start_screen_capture_skips_home(qapp, app_env):
@@ -139,3 +146,5 @@ def test_start_screen_capture_skips_home(qapp, app_env):
         assert w.mode() == "capture" and w.btn_mode_capture.isChecked()
     finally:
         w.close()
+        w.deleteLater()
+        qapp.processEvents()

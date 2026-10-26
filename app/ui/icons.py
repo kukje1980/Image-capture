@@ -56,6 +56,8 @@ _PATHS = {
     "fit": '<path d="M8 3H5a2 2 0 00-2 2v3M21 8V5a2 2 0 00-2-2h-3M3 16v3a2 2 0 002 2h3M16 21h3a2 2 0 002-2v-3"/>',
     "zin": '<circle cx="11" cy="11" r="7"/><path d="M20.5 20.5l-4.2-4.2M11 8v6M8 11h6"/>',
     "zout": '<circle cx="11" cy="11" r="7"/><path d="M20.5 20.5l-4.2-4.2M8 11h6"/>',
+    "bot": '<rect x="4" y="8" width="16" height="11" rx="3"/><circle cx="9" cy="13.5" r="1.3" fill="currentColor"/><circle cx="15" cy="13.5" r="1.3" fill="currentColor"/><path d="M12 8V5M12 5a1.5 1.5 0 10-.01 0M2 13h2M20 13h2"/>',
+    "check": '<path d="M4 12.5l5 5L20 6.5"/>',
     "wand": '<path d="M15 4V2M15 16v-2M8 9h2M20 9h2M17.8 11.8L19 13M17.8 6.2L19 5M12.2 6.2L11 5"/><path d="M3 21l11-11"/>',
     "sliders": '<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1.5 14h5M9.5 8h5M17.5 16h5"/>',
     "x": '<path d="M18 6L6 18M6 6l12 12"/>',

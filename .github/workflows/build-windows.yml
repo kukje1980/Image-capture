@@ -5,16 +5,7 @@ name: Build Windows installer
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - "app/**"
-      - "assets/**"
-      - "build.spec"
-      - "installer/**"
-      - "tools/rthooks/**"
-      - "requirements.txt"
-      - "tests/**"
-      - ".github/workflows/build-windows.yml"
+  workflow_call:
 
 jobs:
   build:
@@ -28,9 +19,14 @@ jobs:
           - brand: keeler
             app: KeelerSlitLamp
             iss: installer\keeler.iss
+          - brand: default
+            edition: agent
+            app: SlitLampAgent
+            iss: installer\agent.iss
     runs-on: windows-latest
     env:
       SLITLAMP_BUILD_BRAND: ${{ matrix.brand }}
+      SLITLAMP_BUILD_EDITION: ${{ matrix.edition || 'standard' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -44,7 +40,7 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: 테스트 (오프스크린)
-        if: matrix.brand == 'default'
+        if: matrix.brand == 'default' && matrix.edition != 'agent'
         env:
           QT_QPA_PLATFORM: offscreen
         run: python -m pytest -q tests
@@ -72,33 +68,18 @@ jobs:
         run: '& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "${{ matrix.iss }}"'
 
       - uses: actions/upload-artifact@v4
+        id: upload
+        continue-on-error: true            # GitHub 아티팩트 서버 타임아웃이 가끔 나므로 아래에서 한 번 더
         with:
           name: ${{ matrix.app }}-windows
           path: dist/installer/*.exe
           if-no-files-found: error
 
-  # main 빌드가 끝나면 설치파일을 '릴리스'에 올린다 — 로그인 없이 받을 수 있는 고정 주소
-  #   https://github.com/<저장소>/releases/tag/windows-latest
-  release:
-    needs: build
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
+      - name: 아티팩트 업로드 재시도
+        if: steps.upload.outcome == 'failure'
+        uses: actions/upload-artifact@v4
         with:
-          path: out
-          merge-multiple: true
-
-      - name: 최신 설치파일 릴리스 갱신
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          ls -la out
-          gh release delete windows-latest --yes --cleanup-tag || true
-          gh release create windows-latest out/*.exe \
-            --target "${{ github.sha }}" --latest \
-            --title "윈도우 설치파일 (최신)" \
-            --notes "main 최신 코드로 자동 빌드된 윈도우 설치파일입니다. 기본판: SlitLampImaging-Setup, Keeler 전용: KeelerSlitLamp-Setup. 받은 .exe 를 실행해 설치하세요. (커밋 ${{ github.sha }})"
+          name: ${{ matrix.app }}-windows
+          path: dist/installer/*.exe
+          if-no-files-found: error
+          overwrite: true

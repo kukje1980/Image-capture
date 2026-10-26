@@ -4,12 +4,16 @@ from __future__ import annotations
 import logging
 import os
 import time
+from pathlib import Path
 from collections import deque
 
-from PySide6.QtCore import QSize, Qt, QThread, QTimer
+from PySide6.QtCore import QSize, Qt, QThread, QTimer, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
+    QApplication,
     QButtonGroup,
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -22,11 +26,25 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app import brand as app_brand
+from app import edition as app_edition
+from app import paths
+from app import shortcuts
+from app import sounds
+from app.agent import dataset as agent_dataset
+from app.agent.core import AgentSettings
+from app.agent.events import EventLog
+from app.agent.scene import default_model_path
+from app.agent.worker import AgentWorker
 from app.capture.camera_worker import CameraWorker
 from app.capture.frame_utils import device_names, find_sony_index
+from app.capture.smart_capture import DEFAULT_ROI, SmartSettings, normalize_roi
+from app.capture.smart_worker import SmartCaptureWorker
 from app.capture.sources import DeviceSource, FileSource, SyntheticSource
 from app.capture.video_recorder import VideoRecorder
 from app.services.capture_service import CaptureService
+from app.ui import icons
+from app.ui.agent_bar import AgentBar
 from app.ui.control_bar import ControlBar, tool_button
 from app.ui.exam_screen import ExamScreen
 from app.ui.home_screen import HomeScreen
@@ -36,14 +54,13 @@ from app.ui.pro.pro_workspace import ProWorkspace
 from app.ui.quad_view import QuadView
 from app.ui.settings_dialog import SettingsDialog
 from app.ui.shortcuts_dialog import ShortcutsDialog
-from app import brand as app_brand
-from app import shortcuts
+from app.ui.smart_bar import SmartBar, mode_text
 from app.ui import icons
 from app.ui.theme import ICON, ICON_ACCENT, build_qss, make_app_icon
 from app.ui.thumbnail_panel import ThumbnailPanel
 from app.ui.video_view import VideoView
 
-from PySide6.QtWidgets import QApplication
+from app import __version__
 
 log = logging.getLogger(__name__)
 
@@ -59,7 +76,7 @@ class MainWindow(QMainWindow):
         self.db = db
         self.service = CaptureService(db, config)
         self.brand = app_brand.current()
-        self.setWindowTitle(self.brand["window_title"])
+        self.setWindowTitle(self.brand["window_title"] + app_edition.current()["title_suffix"])
         self.setWindowIcon(make_app_icon())
         self.resize(1280, 800)
 
@@ -78,15 +95,55 @@ class MainWindow(QMainWindow):
         self._first_video_frame = None
         self._video_patient = None
         self._rec_started = 0.0
+        # 인코더가 파일을 닫는 동안 보류한 (path, patient, eye, ts, duration, thumb)
+        self._pending_video = None
+        self._finalize_timer = QTimer(self)
+        self._finalize_timer.setInterval(200)
+        self._finalize_timer.timeout.connect(self._poll_video_finalize)
+        self._finalize_waited = 0.0
         self.cam_thread = None
         self.worker = None
+        self._closing = False
+        # 카메라 자동 재연결 (장비가 빠졌다 다시 꽂히면 버튼을 누르지 않아도 복구)
+        self._reconnect_timer = QTimer(self)
+        self._reconnect_timer.setSingleShot(True)
+        self._reconnect_timer.timeout.connect(self._auto_reconnect)
+        self._reconnect_attempts = 0
 
         self.recorder = VideoRecorder(fallback_fourcc=config.video_fallback_fourcc)
         self.recorder.error.connect(self._on_recorder_error)
 
+        sounds.set_enabled(config.sounds_enabled)
+        # Smart Capture: 별도 스레드에서 프레임을 분석 (프리뷰가 끊기지 않게)
+        self.smart = SmartCaptureWorker(self._smart_settings())
+        self.smart.update(peaking=config.smart_peaking, peaking_color=config.smart_peaking_color)
+        self.smart.analyzed.connect(self._on_smart_analyzed)
+        self.smart.bestShot.connect(self._on_smart_best_shot)
+        self.smart.start()
+        # AI 에이전트: 장면 인식·자동 촬영·전후 클립·추천 프레임 + 사용 이벤트 로그 (익명)
+        self.events = EventLog(paths.get_appdata_dir() / "agent", db=db,
+                               enabled=config.agent_logging)
+        self.agent = AgentWorker(self._agent_settings(), model_path=self._agent_model_path(),
+                                 buffer_s=(config.agent_clip_before_s
+                                           + config.agent_clip_after_s + 2.0))
+        self.agent.sceneUpdated.connect(self._on_agent_scene)
+        self.agent.decided.connect(self._on_agent_decisions)
+        self.agent.candidatesReady.connect(self._on_agent_candidates)
+        self.agent.clipReady.connect(self._on_agent_clip)
+        self._agent_candidates = None          # (ClipResult, patient, eye)
+        if config.agent_enabled:
+            self.agent.start()
+        self.events.log("session_start", edition=app_edition.current_key(),
+                        agent=config.agent_enabled, version=__version__)
+
         self._build_ui()
+        sounds.preload()
         self._pick_camera()
         self._start_camera()
+        warn = self.service.low_space_warning()
+        if warn:
+            log.warning(warn)
+            self.statusBar().showMessage(warn, 20000)
 
     # ---- UI 구성 ----
     def _build_ui(self) -> None:
@@ -115,7 +172,11 @@ class MainWindow(QMainWindow):
         self.view_stack.addWidget(self.video_view)   # index 0 = 단일
         self.view_stack.addWidget(self.quad_view)     # index 1 = 4분할
         self.control_bar = ControlBar()
+        self.smart_bar = SmartBar()
+        self.agent_bar = AgentBar()
         left.addWidget(self.view_stack, 1)
+        left.addWidget(self.smart_bar)
+        left.addWidget(self.agent_bar)
         left.addWidget(self.control_bar)
 
         self.thumbnail_panel = ThumbnailPanel(self.db, newest_on_top=self.config.newest_on_top)
@@ -155,6 +216,31 @@ class MainWindow(QMainWindow):
         self.quad_view.cellClicked.connect(self._on_quad_cell_clicked)
         self.thumbnail_panel.thumbnailClicked.connect(self._on_thumbnail_clicked)
         self.control_bar.eyeChanged.connect(lambda e: self.video_view.set_hud(eye=e))
+        cfg = self.config
+        self.smart_bar.set_state(cfg.smart_mode, cfg.smart_peaking, cfg.smart_peaking_sensitivity,
+                                 cfg.smart_best_shot)
+        self.smart_bar.modeChanged.connect(self._on_smart_mode)
+        self.pro.set_smart_mode(cfg.smart_mode)
+        self.pro.smartModeChanged.connect(lambda m: self.smart_bar.set_mode(m))
+        self.smart_bar.peakingToggled.connect(self._on_smart_peaking)
+        self.smart_bar.sensitivityChanged.connect(self._on_smart_sensitivity)
+        self.smart_bar.roiSelectToggled.connect(self.video_view.set_roi_selecting)
+        self.smart_bar.bestShotToggled.connect(self._on_smart_best_toggle)
+        self.video_view.roiSelected.connect(self._on_smart_roi)
+        self.agent_bar.set_state(cfg.agent_enabled, cfg.agent_auto_capture, cfg.agent_protocol,
+                                 cfg.agent_logging)
+        self.agent_bar.set_checklist(self.agent.core.checklist)
+        self.agent_bar.setVisible(cfg.agent_enabled or app_edition.is_agent())
+        self.agent_bar.enabledToggled.connect(self._on_agent_toggled)
+        self.agent_bar.autoCaptureToggled.connect(self._on_agent_auto_toggled)
+        self.agent_bar.protocolChanged.connect(self._on_agent_protocol)
+        self.agent_bar.loggingToggled.connect(self._on_agent_logging)
+        self.agent_bar.candidateChosen.connect(self._on_agent_candidate)
+        self.agent_bar.candidatesDismissed.connect(self._on_agent_candidates_dismissed)
+        self.agent_bar.resetChecklist.connect(self._on_agent_reset_checklist)
+        self.agent_bar.exportDataset.connect(self._on_agent_export)
+        self.agent_bar.openLogs.connect(self._on_agent_open_logs)
+        self._sync_smart_view()
         self._rec_timer = QTimer(self)
         self._rec_timer.setInterval(500)
         self._rec_timer.timeout.connect(self._update_rec_hud)
@@ -248,15 +334,17 @@ class MainWindow(QMainWindow):
         tw, tl = seg()
         self.btn_camera = nav("카메라", "videocam", "캡처 장비 다시 연결")
         self.btn_keys = nav("단축키", "keyboard", "단축키 설정 (캡처·녹화·안구 등)")
+        self.btn_samples = nav("샘플", "image", "질환별 샘플 사진 가져오기 (받아 둔 폴더 선택)")
         self.btn_settings = nav("설정", "sliders", "카메라·저장 위치·형식 설정")
         self.btn_theme = nav("테마", "sun", "밝은/어두운 테마 전환")
         self.btn_camera.clicked.connect(self._restart_camera)
         self.btn_keys.clicked.connect(self._open_shortcuts)
+        self.btn_samples.clicked.connect(self._import_samples)
         self.btn_settings.clicked.connect(self._open_settings)
         self.act_theme = QAction(self)
         self.act_theme.triggered.connect(self._toggle_theme)
         self.btn_theme.clicked.connect(self._toggle_theme)
-        for btn in (self.btn_camera, self.btn_keys, self.btn_settings, self.btn_theme):
+        for btn in (self.btn_camera, self.btn_keys, self.btn_samples, self.btn_settings, self.btn_theme):
             tl.addWidget(btn)
         lay.addWidget(tw)
         self._sync_theme_button()
@@ -339,7 +427,7 @@ class MainWindow(QMainWindow):
         cb = self.control_bar
         hints = {"capture": cb.btn_capture, "record": cb.btn_record, "pause": cb.btn_pause,
                  "freeze": cb.btn_freeze, "quad": cb.btn_quad, "mode": self.btn_mode_pro,
-                 "newPatient": self.btn_new_patient}
+                 "newPatient": self.btn_new_patient, "peaking": self.smart_bar.btn_peaking}
         for aid, w in hints.items():
             base = w.property("tipBase")
             if base is None:
@@ -377,6 +465,10 @@ class MainWindow(QMainWindow):
             self._on_freeze()
         elif aid == "quad":
             cb.btn_quad.toggle()
+        elif aid == "smart":
+            self.smart_bar.cycle_mode()
+        elif aid == "peaking":
+            self.smart_bar.btn_peaking.toggle()
         elif aid == "fullscreen":
             self._set_fullscreen(not self._fullscreen)
         elif aid == "mode":
@@ -393,7 +485,7 @@ class MainWindow(QMainWindow):
         if on == self._fullscreen:
             return
         self._fullscreen = on
-        for w in (self.topbar, self.thumbnail_panel, self.statusBar()):
+        for w in (self.topbar, self.thumbnail_panel, self.smart_bar, self.statusBar()):
             w.setVisible(not on)
         self.patient_panel.setVisible(not on and self._mode != "home")
         if on:
@@ -466,6 +558,7 @@ class MainWindow(QMainWindow):
                 log.warning("camera selection save failed", exc_info=True)
 
     def _start_camera(self) -> None:
+        self._camera_ok = False
         self.cam_thread = QThread(self)
         self.worker = CameraWorker(self._source_factory())
         self.worker.moveToThread(self.cam_thread)
@@ -497,15 +590,43 @@ class MainWindow(QMainWindow):
         self.cam_thread = None
 
     def _restart_camera(self) -> None:
+        self._reconnect_timer.stop()
+        self._reconnect_attempts = 0
         if self._recording:                  # 카메라·해상도가 바뀌기 전에 지금 녹화를 마무리해 저장
             self._stop_recording()
         self._stop_camera()
         self.video_view.clear()
+        self.smart.reset()                   # 다른 카메라·해상도의 선명도 기준과 섞이지 않게
+        self._start_camera()
+
+    _RECONNECT_DELAYS_MS = (2000, 3000, 5000, 8000, 12000)
+
+    def _schedule_reconnect(self) -> None:
+        """실제 장비 모드에서 카메라가 끊기면 점점 긴 간격으로 다시 연결을 시도한다
+        (무한, 최대 12초 간격)."""
+        if self._closing or self.config.source_mode != "device" or self._reconnect_timer.isActive():
+            return
+        delays = self._RECONNECT_DELAYS_MS
+        delay = delays[min(self._reconnect_attempts, len(delays) - 1)]
+        self._reconnect_attempts += 1
+        self.control_bar.set_status(
+            f"카메라 재연결 대기 중… ({delay // 1000}초 후, {self._reconnect_attempts}회)")
+        self._reconnect_timer.start(delay)
+
+    def _auto_reconnect(self) -> None:
+        if self._closing or (self.worker is not None and self._camera_ok):
+            return
+        log.info("camera auto-reconnect attempt %s", self._reconnect_attempts)
+        self._stop_camera()
         self._start_camera()
 
     # ---- 카메라 신호 처리 ----
     def _on_camera_opened(self, w: int, h: int, fps: float) -> None:
         self._frame_size = (w, h)
+        self._camera_ok = True
+        if self._reconnect_attempts:
+            self.statusBar().showMessage("카메라가 다시 연결되었습니다", 5000)
+        self._reconnect_attempts = 0
         self.control_bar.set_status(f"카메라 {w}x{h} @ {fps:.0f}fps")
 
     def _on_frame_ready(self, frame) -> None:
@@ -521,12 +642,16 @@ class MainWindow(QMainWindow):
             self.quad_view.set_live_frame(frame)
         elif not self._paused and not self._single_frozen:
             self.video_view.set_frame(frame)
+        if self._smart_wanted():
+            self.smart.submit(frame)
 
     def _on_camera_error(self, msg: str) -> None:
+        self._camera_ok = False
         self.control_bar.set_status(f"오류: {msg}")
         self.statusBar().showMessage(f"카메라 오류: {msg}", 8000)
-        if self._recording:
+        if self._recording:                  # 끊긴 시점까지 녹화된 부분은 저장한다
             self._stop_recording()
+        self._schedule_reconnect()
 
     def _estimate_fps(self) -> float:
         if len(self._frame_times) < 2:
@@ -550,6 +675,11 @@ class MainWindow(QMainWindow):
         self.pro.set_patient(patient)
         if self._mode == "exam":
             self.exam_screen.set_patient(patient)
+        self.agent.new_session()
+        self.agent_bar.set_checklist(self.agent.core.checklist)
+        self.agent_bar.clear_candidates()
+        self._agent_candidates = None
+        self.events.log("patient_changed", has_patient=patient is not None)
 
     # ---- Pro 모드 ----
     def _on_pro_toggled(self, on: bool) -> None:
@@ -612,7 +742,9 @@ class MainWindow(QMainWindow):
     # ---- 컨트롤 ----
     def _on_pause(self, checked: bool) -> None:
         self._paused = checked
+        self.events.log("pause", on=checked)
         self._refresh_hud_state()
+        self._sync_smart_view()
 
     def _on_quad_toggled(self, on: bool) -> None:
         self._quad = on
@@ -622,6 +754,7 @@ class MainWindow(QMainWindow):
         self._freeze_frame = None
         self.control_bar.set_freeze_state(False)
         self._refresh_hud_state()
+        self._sync_smart_view()
         self.control_bar.set_status(
             "4분할 모드 · '정지영상'으로 각 칸을 채우세요" if on else "단일 모드")
 
@@ -634,6 +767,7 @@ class MainWindow(QMainWindow):
             return
         if self._quad:
             if self.quad_view.freeze_active(self.control_bar.current_eye()):
+                sounds.play("freeze")
                 if self.quad_view.is_full():
                     self.control_bar.set_status("4칸 모두 채움 · '4분할 저장' 또는 칸 클릭으로 교체")
                 else:
@@ -644,6 +778,9 @@ class MainWindow(QMainWindow):
         # 단일 모드: 현재 프레임을 정지영상으로 고정 / 재개 토글
         self._single_frozen = not self._single_frozen
         if self._single_frozen:
+            sounds.play("freeze")
+            self.events.log("freeze", scene_label=self.agent.scene().label,
+                            quality=self.smart.last_quality())
             self._freeze_frame = self._last_frame
             self.video_view.set_frame(self._freeze_frame)
             self.control_bar.set_freeze_state(True)
@@ -653,6 +790,7 @@ class MainWindow(QMainWindow):
             self.control_bar.set_freeze_state(False)
             self.control_bar.set_status("라이브")
         self._refresh_hud_state()
+        self._sync_smart_view()
 
     def _on_save_quad(self) -> None:
         if self._current_patient is None:
@@ -662,6 +800,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "확인", "저장할 정지영상이 없습니다.")
             return
         eye = self.control_bar.current_eye()
+        sounds.play("shutter")
         saved = 0
         try:
             for frame, cell_eye in self.quad_view.images_for_save(eye):
@@ -691,15 +830,397 @@ class MainWindow(QMainWindow):
         if frame is None:
             QMessageBox.information(self, "확인", "표시할 영상이 없습니다.")
             return
+        note = ""
+        if (self.config.smart_best_shot and not self._single_frozen and not self._paused
+                and frame is self._last_frame):
+            # Best Shot: 버튼을 누르는 사이 슬릿램프가 움직였을 수 있으므로 최근 0.6초 중 가장 선명한 원본 프레임
+            best = self.smart.best_recent(0.6)
+            if best is not None:
+                frame, note = best.frame, f"Best Shot (초점 {best.quality.focus_pct:.0f})"
         eye = self.control_bar.current_eye()
+        sounds.play("shutter")            # 저장(인코딩) 전에 바로 — 누른 순간 '찰칵'
         try:
-            cap = self.service.save_photo(frame, self._current_patient, eye=eye)
+            cap = self.service.save_photo(frame, self._current_patient, eye=eye, note=note)
         except Exception as e:  # noqa: BLE001
             log.exception("photo save failed")
             QMessageBox.warning(self, "오류", f"저장 실패: {e}")
             return
         self.thumbnail_panel.add_capture(cap)
-        self.control_bar.set_status("사진 저장됨")
+        self.control_bar.set_status("사진 저장됨" + (" · Best Shot" if note else ""))
+        scene = self.agent.scene()
+        self.events.log("capture", capture_id=cap.id, eye=eye, best_shot=bool(note),
+                        scene_label=scene.label, scene=scene, quality=self.smart.last_quality())
+        self._after_capture(cap, scene.label, eye, auto=False)
+
+    # ---- AI 에이전트 ----
+    def _agent_settings(self) -> AgentSettings:
+        cfg = self.config
+        return AgentSettings(auto_capture=cfg.agent_auto_capture,
+                             protocol=cfg.agent_protocol if cfg.agent_protocol else "basic",
+                             min_focus_pct=min(max(cfg.smart_ready_pct, 50.0), 99.0),
+                             cooldown_s=max(cfg.smart_cooldown_s, 1.0))
+
+    def _agent_model_path(self):
+        p = self.config.agent_model_path.strip()
+        if p:
+            return p
+        d = default_model_path()
+        return str(d) if d else None
+
+    def _apply_agent(self, save: bool = True) -> None:
+        self.agent.update_settings(self._agent_settings())
+        self.agent_bar.set_checklist(self.agent.core.checklist)
+        self.events.set_enabled(self.config.agent_logging)
+        if save:
+            try:
+                self.config.save()
+            except Exception:  # noqa: BLE001
+                log.warning("agent settings save failed", exc_info=True)
+
+    def _on_agent_toggled(self, on: bool) -> None:
+        self.config.agent_enabled = on
+        if on:
+            self.agent.start()
+        else:
+            self.agent.stop()
+            self.agent_bar.set_scene(None)
+        self.events.log("settings", agent_enabled=on)
+        self._apply_agent()
+        self.statusBar().showMessage("AI 에이전트 " + ("켜짐" if on else "꺼짐"), 3000)
+
+    def _on_agent_auto_toggled(self, on: bool) -> None:
+        self.config.agent_auto_capture = on
+        self.events.log("settings", agent_auto_capture=on)
+        self._apply_agent()
+
+    def _on_agent_protocol(self, key: str) -> None:
+        self.config.agent_protocol = key or "basic"
+        self.events.log("settings", agent_protocol=self.config.agent_protocol)
+        self._apply_agent()
+
+    def _on_agent_logging(self, on: bool) -> None:
+        self.config.agent_logging = on
+        self._apply_agent()
+
+    def _on_agent_reset_checklist(self) -> None:
+        self.agent.reset_checklist()
+        self.agent_bar.set_checklist(self.agent.core.checklist)
+        self.events.log("checklist_reset")
+
+    def _on_agent_scene(self, r) -> None:
+        if self.config.agent_enabled:
+            self.agent_bar.set_scene(r)
+
+    def _on_agent_decisions(self, decisions) -> None:
+        if not self.config.agent_enabled:
+            return
+        for d in decisions:
+            if d.kind == "scene_changed":
+                self.events.log("scene_changed", scene_label=d.scene.label if d.scene else "",
+                                confidence=d.scene.confidence if d.scene else 0.0)
+            elif d.kind == "hint":
+                self.agent_bar.set_hint(d.reason)
+            elif d.kind == "checklist_item":
+                self.agent_bar.set_checklist(self.agent.core.checklist)
+                self.events.log("checklist_item", item=d.payload.get("item", ""))
+            elif d.kind == "checklist_done":
+                self.agent_bar.set_checklist(self.agent.core.checklist)
+                if not self._quad:
+                    self.video_view.flash("프로토콜 완료 — 필요한 샷을 모두 찍었습니다")
+                self.events.log("checklist_done")
+            elif d.kind == "auto_capture":
+                self._agent_auto_capture(d)
+
+    def _agent_auto_capture(self, d) -> None:
+        if (self.mode_stack.currentIndex() != 0 or self._quad or self._paused
+                or self._single_frozen or self._recording):
+            return
+        if self._current_patient is None:
+            self.control_bar.set_status("에이전트 자동 촬영: 환자를 먼저 선택하세요")
+            return
+        frame = self._last_frame
+        best = self.smart.best_recent(0.6) if self.config.smart_best_shot else None
+        if best is not None:
+            frame = best.frame
+        if frame is None:
+            return
+        scene = d.scene
+        try:
+            note = f"에이전트 자동 촬영 · {scene.label_ko} (초점 {d.score:.0f})"
+            cap = self.service.save_photo(frame, self._current_patient, eye=d.eye, note=note)
+        except Exception as e:  # noqa: BLE001
+            log.exception("agent auto capture failed")
+            self.statusBar().showMessage(f"자동 촬영 실패: {e}", 8000)
+            return
+        sounds.play("shutter")
+        self.thumbnail_panel.add_capture(cap)
+        self.video_view.flash(f"자동 촬영 · {scene.label_ko}")
+        self.control_bar.set_status(f"에이전트 자동 촬영: {scene.label_ko} · {d.reason}")
+        self.events.log("auto_capture", capture_id=cap.id, eye=d.eye, scene_label=scene.label,
+                        scene=scene, quality=self.smart.last_quality(), reason=d.reason)
+        self._after_capture(cap, scene.label, d.eye, auto=True)
+
+    def _after_capture(self, cap, scene_label: str, eye: str, auto: bool) -> None:
+        """촬영(수동·자동) 뒤: 체크리스트 갱신 + 전후 클립·추천 프레임 요청."""
+        if not self.config.agent_enabled:
+            return
+        self._on_agent_decisions(self.agent.note_capture(scene_label, eye, auto=auto))
+        cfg = self.config
+        if not cfg.agent_save_clips and cfg.agent_candidates <= 0:
+            return
+        path, ts = None, None
+        if cfg.agent_save_clips and self._current_patient is not None:
+            try:
+                path, ts = self.service.begin_video(self._current_patient, eye=eye)
+            except Exception:  # noqa: BLE001
+                log.warning("clip path failed", exc_info=True)
+                path = None
+        self.agent.request_clip(time.monotonic(), cfg.agent_clip_before_s, cfg.agent_clip_after_s,
+                                path, k=max(0, min(6, cfg.agent_candidates)), tag="capture",
+                                capture_id=cap.id, patient=self._current_patient, eye=eye, ts=ts,
+                                scene_label=scene_label)
+
+    def _on_agent_clip(self, res) -> None:
+        """촬영 전후 클립 파일이 저장됨 → 환자 영상으로 등록."""
+        req = res.request
+        patient, eye = req.payload.get("patient"), req.payload.get("eye", "NA")
+        if res.path is None or patient is None:
+            return
+        try:
+            vcap = self.service.finish_video(res.path, patient, eye, req.payload.get("ts"),
+                                             res.duration_ms, thumb_frame=res.thumb,
+                                             note="촬영 전후 클립 (에이전트)")
+        except Exception:  # noqa: BLE001
+            log.warning("clip save failed", exc_info=True)
+            return
+        if self._current_patient is not None and patient.id == self._current_patient.id:
+            self.thumbnail_panel.add_capture(vcap)
+        self.events.log("clip_saved", capture_id=vcap.id, for_capture=req.payload.get("capture_id"),
+                        frames=res.frames_written, duration_ms=res.duration_ms)
+
+    def _on_agent_candidates(self, res) -> None:
+        """촬영 전후 구간에서 고른 추천 프레임 → 도구줄에 표시 (의사가 클릭하면 저장)."""
+        req = res.request
+        patient, eye = req.payload.get("patient"), req.payload.get("eye", "NA")
+        if not res.candidates or patient is None or self._current_patient is None \
+                or patient.id != self._current_patient.id:
+            return
+        self._agent_candidates = (res, patient, eye)
+        self.agent_bar.show_candidates(res.candidates)
+        self.events.log("candidate_shown", for_capture=req.payload.get("capture_id"),
+                        scores=[round(c.score, 1) for c in res.candidates])
+
+    def _on_agent_candidate(self, idx: int) -> None:
+        if self._agent_candidates is None:
+            return
+        res, patient, eye = self._agent_candidates
+        if idx >= len(res.candidates):
+            return
+        c = res.candidates[idx]
+        try:
+            cap = self.service.save_photo(c.frame, patient, eye=eye,
+                                          note=f"에이전트 추천 프레임 (초점 {c.score:.0f})")
+        except Exception as e:  # noqa: BLE001
+            log.exception("candidate save failed")
+            QMessageBox.warning(self, "오류", f"저장 실패: {e}")
+            return
+        sounds.play("shutter")
+        self.thumbnail_panel.add_capture(cap)
+        self.agent_bar.mark_candidate_saved(idx)
+        self.control_bar.set_status(f"추천 프레임 저장됨 (초점 {c.score:.0f})")
+        payload = res.request.payload
+        self.events.log("candidate_accepted", capture_id=cap.id,
+                        for_capture=payload.get("capture_id"), rank=idx, score=c.score,
+                        scene_label=c.scene or payload.get("scene_label", ""), eye=eye)
+
+    def _on_agent_candidates_dismissed(self) -> None:
+        if self._agent_candidates is not None:
+            res = self._agent_candidates[0]
+            self.events.log("candidate_rejected", for_capture=res.request.payload.get("capture_id"))
+        self._agent_candidates = None
+        self.agent_bar.clear_candidates()
+
+    def _on_agent_export(self) -> None:
+        d = QFileDialog.getExistingDirectory(self, "학습 데이터를 내보낼 폴더",
+                                             str(paths.get_appdata_dir()))
+        if not d:
+            return
+        try:
+            counts = agent_dataset.export_training_data(self.db, d)
+        except Exception as e:  # noqa: BLE001
+            log.exception("dataset export failed")
+            QMessageBox.warning(self, "오류", f"내보내기 실패: {e}")
+            return
+        total = sum(counts.values())
+        lines = "\n".join(f"  {k}: {v}장" for k, v in sorted(counts.items()))
+        QMessageBox.information(self, "학습 데이터 내보내기",
+                                f"{total}장을 내보냈습니다 (환자 정보 없음).\n{lines}\n\n"
+                                f"학습: python tools/agent_train/train_scene.py --data \"{d}\"")
+        self.events.log("dataset_export", total=total)
+
+    def _on_agent_open_logs(self) -> None:
+        d = self.events.events_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(d)))
+
+    # ---- Smart Capture ----
+    def _smart_settings(self) -> SmartSettings:
+        cfg = self.config
+        return SmartSettings(mode=cfg.smart_mode if cfg.smart_mode in ("off", "freeze", "snapshot") else "off",
+                             roi=normalize_roi(cfg.smart_roi),
+                             ready_pct=min(max(cfg.smart_ready_pct, 50.0), 99.0),
+                             cooldown_s=max(cfg.smart_cooldown_s, 0.5),
+                             peaking_sensitivity=cfg.smart_peaking_sensitivity)
+
+    def _apply_smart(self, save: bool = True) -> None:
+        self.smart.update(settings=self._smart_settings(), peaking=self.config.smart_peaking,
+                          peaking_color=self.config.smart_peaking_color)
+        self._sync_smart_view()
+        if save:
+            try:
+                self.config.save()
+            except Exception:  # noqa: BLE001
+                log.warning("smart capture settings save failed", exc_info=True)
+
+    def _smart_wanted(self) -> bool:
+        """분석이 필요한 때만 프레임을 넘긴다 (Pro 화면·일시정지 중에는 쉼)."""
+        cfg = self.config
+        if self.mode_stack.currentIndex() == 1:                 # Pro LIVE: 자동 정지·자동 저장
+            return cfg.smart_mode != "off" and self.pro.is_live_running()
+        if self._paused:
+            return False
+        return (cfg.smart_mode != "off" or cfg.smart_peaking or cfg.smart_best_shot
+                or cfg.agent_enabled)
+
+    def _smart_live(self) -> bool:
+        """단일 화면에 라이브 영상이 보이는 중 (피킹·초점 표시를 그릴 수 있는 상태)."""
+        return not self._quad and not self._paused and not self._single_frozen
+
+    def _sync_smart_view(self) -> None:
+        cfg = self.config
+        live = self._smart_live()
+        show = live and (cfg.smart_mode != "off" or cfg.smart_peaking)
+        roi = normalize_roi(cfg.smart_roi) or DEFAULT_ROI
+        self.video_view.set_roi(roi if show else None)
+        if not (live and cfg.smart_peaking):
+            self.video_view.set_overlay(None)
+        if not show:
+            self.video_view.set_focus_meter(None)
+        if not self._smart_wanted():
+            self.smart_bar.set_quality(None)
+
+    def _on_smart_mode(self, mode: str) -> None:
+        self.config.smart_mode = mode
+        self.pro.set_smart_mode(mode)
+        self._apply_smart()
+        self.statusBar().showMessage(f"Smart 자동 촬영: {mode_text(mode)}", 3000)
+        if mode == "snapshot" and self._current_patient is None:
+            self.control_bar.set_status("자동 저장: 환자를 선택하면 저장됩니다")
+
+    def _on_smart_peaking(self, on: bool) -> None:
+        self.config.smart_peaking = on
+        self._apply_smart()
+
+    def _on_smart_sensitivity(self, v: int) -> None:
+        self.config.smart_peaking_sensitivity = int(v)
+        self._apply_smart(save=False)        # 슬라이더를 끄는 동안 매번 파일을 쓰지 않는다
+
+    def _on_smart_best_toggle(self, on: bool) -> None:
+        self.config.smart_best_shot = on
+        self._apply_smart()
+
+    def _on_smart_roi(self, roi) -> None:
+        roi = normalize_roi(roi)
+        self.config.smart_roi = list(roi) if roi else []
+        self.smart_bar.set_roi_selecting(False)
+        self.video_view.set_roi_selecting(False)
+        self._apply_smart()
+        self.statusBar().showMessage("초점 영역(ROI)을 지정했습니다" if roi else "초점 영역을 화면 중앙으로 되돌렸습니다", 3000)
+
+    def _on_smart_analyzed(self, a) -> None:
+        if not self._smart_wanted() or self.mode_stack.currentIndex() != 0:
+            return
+        q = a.quality
+        self.smart_bar.set_quality(q)
+        if self.config.agent_enabled and self._last_frame is not None:
+            self.agent.live = self._smart_live() and not self._recording
+            self.agent.submit(self._last_frame, time.monotonic(), q, self.control_bar.current_eye())
+        if not self._smart_live():
+            return
+        cfg = self.config
+        if cfg.smart_peaking:
+            self.video_view.set_overlay(a.peaking)
+        if cfg.smart_mode != "off" or cfg.smart_peaking:
+            self.video_view.set_focus_meter(q.focus_pct if q.usable else 0.0, q.in_focus)
+
+    def _pro_best_shot(self, shot, mode: str) -> None:
+        """Pro LIVE 의 자동 정지(정지 후 SAVE 로 저장) / 자동 저장."""
+        pro = self.pro
+        if not pro.is_live_running():
+            return
+        pct = shot.quality.focus_pct
+        if mode == "freeze":
+            pro.freeze_with(shot.frame)
+            self.statusBar().showMessage(f"Pro LIVE 자동 정지 (초점 {pct:.0f}) · SAVE 로 저장", 5000)
+            return
+        if self._current_patient is None:
+            self.statusBar().showMessage("자동 저장: 환자를 먼저 선택하세요", 4000)
+            return
+        try:
+            self.service.save_photo(shot.frame, self._current_patient, eye=pro.current_eye(),
+                                    note=f"Smart 자동 저장 (초점 {pct:.0f})")
+        except Exception as e:  # noqa: BLE001
+            log.exception("pro smart snapshot failed")
+            self.statusBar().showMessage(f"자동 저장 실패: {e}", 8000)
+            return
+        pro.reload(select_last=False)
+        self._on_pro_saved()
+        self.statusBar().showMessage(f"Pro LIVE 자동 저장 (초점 {pct:.0f})", 4000)
+
+    def _on_smart_best_shot(self, shot) -> None:
+        """자동 촬영 순간 — 버퍼에서 고른 가장 선명한 원본 프레임."""
+        mode = self.config.smart_mode
+        if mode == "off":
+            return
+        pct = shot.quality.focus_pct
+        if self.mode_stack.currentIndex() == 1:
+            self._pro_best_shot(shot, mode)
+            return
+        if self._paused:
+            return
+        eye = self.control_bar.current_eye()
+        if mode == "snapshot":
+            if self._current_patient is None:
+                self.control_bar.set_status("자동 저장: 환자를 먼저 선택하세요")
+                return
+            try:
+                cap = self.service.save_photo(shot.frame, self._current_patient, eye=eye,
+                                              note=f"Smart 자동 저장 (초점 {pct:.0f})")
+            except Exception as e:  # noqa: BLE001
+                log.exception("smart snapshot save failed")
+                self.statusBar().showMessage(f"자동 저장 실패: {e}", 8000)
+                return
+            self.thumbnail_panel.add_capture(cap)
+            if not self._quad:
+                self.video_view.flash("자동 저장")
+            self.control_bar.set_status(f"자동 저장됨 (초점 {pct:.0f})")
+            return
+        # freeze: 의사가 확인한 뒤 '사진 캡처'로 저장하거나 라이브로 돌아간다
+        if self._recording or self._single_frozen:
+            return
+        if self._quad:
+            self.quad_view.set_live_frame(shot.frame)
+            if self.quad_view.freeze_active(eye):
+                self.control_bar.set_status(f"자동 정지 → 4분할 칸 채움 (초점 {pct:.0f})")
+            return
+        self._single_frozen = True
+        self._freeze_frame = shot.frame
+        self.video_view.set_frame(shot.frame)
+        self.video_view.flash("자동 정지 — 초점 최적")
+        self.control_bar.set_freeze_state(True)
+        self.control_bar.set_status(f"자동 정지 (초점 {pct:.0f}) · 사진 캡처로 저장 / ▶라이브로 복귀")
+        self._refresh_hud_state()
+        self._sync_smart_view()
 
     def _on_record_toggle(self, checked: bool) -> None:
         if checked:
@@ -725,6 +1246,8 @@ class MainWindow(QMainWindow):
             self.control_bar.reset_record_button()
             return
         self._recording = True
+        sounds.play("rec_start")
+        self.events.log("record_start", eye=eye, scene_label=self.agent.scene().label)
         self._video_path = path
         self._video_ts = ts
         self._video_eye = eye
@@ -739,6 +1262,8 @@ class MainWindow(QMainWindow):
         if not self._recording:
             return
         self._recording = False
+        sounds.play("rec_stop")
+        self.events.log("record_stop", seconds=round(time.time() - self._rec_started, 1))
         self._rec_timer.stop()
         self._refresh_hud_state()
         _, count, duration = self.recorder.stop()
@@ -752,16 +1277,40 @@ class MainWindow(QMainWindow):
             self.control_bar.set_status("녹화 실패")
             self.control_bar.reset_record_button()
             return
+        self._pending_video = (self._video_path, self._video_patient, self._video_eye,
+                               self._video_ts, duration, self._first_video_frame)
+        if self.recorder.is_finalizing:
+            # 인코더가 아직 파일을 닫는 중: 지금 복사하면 잘린 mp4 가 export 에 남는다 → 닫힌 뒤 기록
+            self._finalize_waited = 0.0
+            self.control_bar.btn_record.setEnabled(False)
+            self.control_bar.set_status("동영상 파일을 마무리하는 중…")
+            self._finalize_timer.start()
+            return
+        self._finalize_video()
+
+    def _poll_video_finalize(self) -> None:
+        self._finalize_waited += self._finalize_timer.interval() / 1000
+        if self.recorder.is_finalizing and self._finalize_waited < 120:
+            return
+        self._finalize_timer.stop()
+        if self.recorder.is_finalizing:
+            log.error("video encoder did not finish within 120s: %s",
+                      self._pending_video and self._pending_video[0])
+        self._finalize_video()
+
+    def _finalize_video(self) -> None:
+        pending, self._pending_video = self._pending_video, None
+        self.control_bar.btn_record.setEnabled(self._current_patient is not None)
+        if pending is None:
+            return
+        path, patient, eye, ts, duration, thumb = pending
         try:
-            cap = self.service.finish_video(
-                self._video_path, self._video_patient, self._video_eye,
-                self._video_ts, duration, thumb_frame=self._first_video_frame,
-            )
+            cap = self.service.finish_video(path, patient, eye, ts, duration, thumb_frame=thumb)
             self.thumbnail_panel.add_capture(cap)
             self.control_bar.set_status(f"동영상 저장됨 ({duration // 1000}초)")
         except Exception as e:  # noqa: BLE001
             log.exception("finish_video failed")
-            QMessageBox.warning(self, "오류", f"동영상 저장 실패: {e}")
+            QMessageBox.warning(self, "오류", f"동영상 저장 실패: {e}\n파일: {path}")
         self.control_bar.reset_record_button()
 
     def _on_recorder_error(self, msg: str) -> None:
@@ -789,19 +1338,62 @@ class MainWindow(QMainWindow):
         dlg = SettingsDialog(self.config, self)
         if dlg.exec():
             dlg.apply_to_config()
+            sounds.set_enabled(self.config.sounds_enabled)
             self.thumbnail_panel.newest_on_top = self.config.newest_on_top
+            cfg = self.config
+            self.agent_bar.set_state(cfg.agent_enabled, cfg.agent_auto_capture, cfg.agent_protocol,
+                                     cfg.agent_logging)
+            self.agent_bar.setVisible(cfg.agent_enabled or app_edition.is_agent())
+            if cfg.agent_enabled:
+                self.agent.start()
+            else:
+                self.agent.stop()
+            self._apply_agent(save=False)
+            self.events.log("settings", source="dialog")
             self._restart_camera()
+
+    def _import_samples(self) -> None:
+        """받아 둔 샘플 사진 폴더(질환별 하위 폴더 + metadata.json)를 질환별 샘플 환자로 등록."""
+        from app.services.sample_import import import_samples
+        start = Path.home() / "Downloads"           # 받아 둔 폴더는 보통 '다운로드'에 있다
+        folder = QFileDialog.getExistingDirectory(
+            self, "샘플 사진 폴더 선택 (질환별 하위 폴더 + metadata.json)",
+            str(start if start.is_dir() else Path.home()))
+        if not folder:
+            return
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            result = import_samples(self.db, self.config, folder)
+        except (OSError, ValueError) as e:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.warning(self, "샘플 사진", f"샘플 사진을 가져오지 못했습니다.\n{e}")
+            return
+        QApplication.restoreOverrideCursor()
+        self.patient_panel._reload()
+        QMessageBox.information(
+            self, "샘플 사진",
+            result.summary() + "\n\n환자 목록에서 '샘플 · 질환명' 환자를 고르면 사진을 볼 수 있습니다.")
 
     # ---- 종료 ----
     def closeEvent(self, event) -> None:  # noqa: N802
+        self._closing = True
+        self._reconnect_timer.stop()
         try:
             if self._recording:
                 self._stop_recording()
+            if self._pending_video is not None:          # 닫는 중인 녹화 파일은 끝까지 기다려 기록
+                self._finalize_timer.stop()
+                if not self.recorder.wait_finalized(60):
+                    log.error("video encoder still running at close: %s", self._pending_video[0])
+                self._finalize_video()
         except Exception:  # noqa: BLE001
             log.warning("stop recording on close failed", exc_info=True)
         self._stop_camera()
+        self.smart.stop()
+        self.agent.stop()
+        self.events.log("session_end")
         try:
             self.db.close()
         except Exception:  # noqa: BLE001
-            pass
+            log.warning("db close failed", exc_info=True)
         event.accept()
