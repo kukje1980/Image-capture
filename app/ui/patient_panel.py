@@ -1,6 +1,8 @@
-"""상단 환자 배너: 환자 요약(이니셜·이름·차트번호·나이/성별·진단명·담당의) + 검색·선택.
+"""환자 검색 · 선택 칸 (상단바의 '정보 수정' 바로 옆에 들어간다).
 
-신규 등록·정보 수정 버튼은 상단바(Pro 검토 옆)에 있고 new_patient()/edit_patient() 를 부른다."""
+환자 요약(이름·차트번호·나이 등)은 실시간 화면 위에 이미 보이므로 화면에 따로 띄우지 않는다
+(요약 라벨은 다른 화면·테스트에서 쓰도록 만들어만 두고 숨김).
+신규 등록·정보 수정 버튼은 상단바에 있고 new_patient()/edit_patient() 를 부른다."""
 from __future__ import annotations
 
 from datetime import date
@@ -47,17 +49,22 @@ class PatientPanel(QFrame):
         super().__init__(parent)
         self.db = db
         self._patients = []
-        self.setObjectName("Banner")
+        self.setObjectName("PatientPick")
 
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(16, 8, 16, 8)
-        lay.setSpacing(10)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(6)
+
+        self.summary = QFrame()                       # 숨김: 환자 요약 (실시간 화면 HUD 에 표시됨)
+        sum_lay = QHBoxLayout(self.summary)
+        sum_lay.setContentsMargins(0, 0, 0, 0)
+        self.summary.setVisible(False)
 
         self.avatar = QLabel()
         self.avatar.setObjectName("Avatar")
         self.avatar.setFixedSize(38, 38)
         self.avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lay.addWidget(self.avatar)
+        sum_lay.addWidget(self.avatar)
         box = QVBoxLayout()
         box.setSpacing(0)
         row = QHBoxLayout()
@@ -74,15 +81,17 @@ class PatientPanel(QFrame):
         self.lbl_meta.setTextFormat(Qt.TextFormat.RichText)
         box.addLayout(row)
         box.addWidget(self.lbl_meta)
-        lay.addLayout(box, 1)
+        sum_lay.addLayout(box, 1)
+        lay.addWidget(self.summary)
 
         self.search = QLineEdit()
-        self.search.setPlaceholderText("이름 · 차트번호 검색")
-        self.search.setFixedWidth(190)
+        self.search.setPlaceholderText("환자 검색")
+        self.search.setToolTip("이름 · 차트번호 · 연락처로 검색")
+        self.search.setFixedWidth(170)
         self.search.addAction(icons.icon("search", ICON, 16), QLineEdit.ActionPosition.LeadingPosition)
         self.search.setClearButtonEnabled(True)
         self.combo = QComboBox()
-        self.combo.setMinimumWidth(210)
+        self.combo.setMinimumWidth(200)
         self.combo.setToolTip("환자 선택")
         lay.addWidget(self.search)
         lay.addWidget(self.combo)
@@ -114,6 +123,19 @@ class PatientPanel(QFrame):
         bits.append(f"<span style='{mute}'>진단명</span> <b>{_esc(getattr(p, 'diagnosis', None) or '-')}</b>")
         bits.append(f"<span style='{mute}'>담당의</span> {_esc(getattr(p, 'doctor', None) or '-')}")
         self.lbl_meta.setText("&nbsp;&nbsp;&nbsp;".join(bits))
+
+    def select_patient(self, pid: int) -> bool:
+        """환자 목록 화면 등에서 고른 환자로 바꾼다 (검색어는 비움)."""
+        self.search.blockSignals(True)
+        self.search.setText("")
+        self.search.blockSignals(False)
+        self._reload()
+        for i, p in enumerate(self._patients):
+            if p.id == pid:
+                if self.combo.currentIndex() != i:
+                    self.combo.setCurrentIndex(i)
+                return True
+        return False
 
     def current_patient(self):
         idx = self.combo.currentIndex()

@@ -94,16 +94,22 @@ def build_qss(mode: str = "dark") -> str:
     QPushButton#IconBtn {{ background: transparent; border: 1px solid transparent; border-radius: 8px; padding: 6px 10px; color: {c['ink_soft']}; font-weight: 600; }}
     QPushButton#IconBtn:hover {{ background: {c['panel2']}; border-color: {c['rule']}; color: {c['ink']}; }}
     QFrame#NavSeg {{ background: {c['bg']}; border: 1px solid {c['rule']}; border-radius: 11px; }}
-    QToolButton#NavBtn {{
-        background: transparent; border: 1px solid transparent; border-radius: 8px; padding: 4px 6px 3px;
-        color: {c['ink_soft']}; font-size: 11px; font-weight: 600;
+    QPushButton#NavBtn {{
+        background: transparent; border: 1px solid transparent; border-radius: 8px; padding: 0px; min-height: 0px;
     }}
-    QToolButton#NavBtn:hover {{ background: {c['panel2']}; border-color: {c['rule']}; color: {c['ink']}; }}
-    QToolButton#NavBtn:checked {{ background: {c['raised']}; color: {c['ink']}; border: 1px solid {c['rule_strong']}; }}
-    QToolButton#NavBtn:disabled {{ color: {c['disabled']}; }}
+    QPushButton#NavBtn:hover {{ background: {c['panel2']}; border-color: {c['rule']}; }}
+    QPushButton#NavBtn:pressed {{ background: {c['raised']}; }}
+    QPushButton#NavBtn:checked {{ background: {c['raised']}; border: 1px solid {c['rule_strong']}; }}
+
+    /* 아이콘 위 · 이름 아래 버튼(IconTextButton) 안쪽 라벨 */
+    QPushButton[iconText="true"] QLabel {{ background: transparent; }}
+    QLabel#BtnText {{ color: {c['ink_soft']}; font-size: 11px; font-weight: 600; }}
+    QLabel#BtnText[on="true"] {{ color: {c['ink']}; }}
+    QLabel#BtnText:disabled {{ color: {c['disabled']}; }}
 
     /* ---------- 패널 ---------- */
     QFrame#Panel, #ThumbnailPanel {{ background: {c['panel']}; border: 1px solid {c['rule']}; border-radius: 12px; }}
+    QFrame#PatientPick {{ background: transparent; border: none; }}
     QFrame#Banner {{ background: {c['panel']}; border: none; border-bottom: 1px solid {c['rule']}; }}
     QFrame#BannerSep {{ background: {c['rule']}; }}
     QLabel#Avatar {{ background: {c['accent_soft']}; color: {c['accent_hover'] if mode == 'dark' else c['accent']};
@@ -181,29 +187,34 @@ def build_qss(mode: str = "dark") -> str:
     QLabel#SmartTitle {{ color: {c['ink']}; font-weight: 700; padding-right: 4px; }}
     QLabel#SmartMeter {{ color: {c['ink_soft']}; font-family: Menlo, Consolas, "JetBrains Mono", monospace; font-size: 12px; padding: 0 3px; }}
     QLabel#SmartHint {{ color: {c['ink_soft']}; font-size: 12px; padding-left: 6px; }}
-    QToolButton#ToolBtn, QToolButton#Pause, QToolButton#Freeze, QToolButton#Record, QToolButton#Primary {{
-        background: transparent; border: 1px solid transparent; border-radius: 10px; padding: 4px 6px 3px;
-        color: {c['ink_soft']}; font-size: 11px; font-weight: 600;
+    QPushButton#ToolBtn, QPushButton#Pause, QPushButton#Freeze, QPushButton#Record {{
+        background: transparent; border: 1px solid transparent; border-radius: 9px; color: {c['ink_soft']}; padding: 8px 12px;
     }}
-    QToolButton#ToolBtn:hover, QToolButton#Pause:hover, QToolButton#Freeze:hover {{ background: {c['panel2']}; border-color: {c['rule']}; color: {c['ink']}; }}
-    QToolButton#Pause:checked {{ background: {c['accent_soft']}; border-color: {c['accent']}; color: {c['accent_hover'] if mode == 'dark' else c['accent']}; }}
-    QToolButton#Freeze {{ color: {c['accent_hover'] if mode == 'dark' else c['accent']}; }}
-    QToolButton#ToolBtn:disabled, QToolButton#Pause:disabled, QToolButton#Freeze:disabled, QToolButton#Record:disabled, QToolButton#Primary:disabled {{
+    QPushButton#ToolBtn[iconText="true"], QPushButton#Pause[iconText="true"], QPushButton#Freeze[iconText="true"],
+    QPushButton#Record[iconText="true"], QPushButton#Primary[iconText="true"] {{ padding: 0px; min-height: 0px; border-radius: 10px; }}
+    QPushButton#ToolBtn:hover, QPushButton#Pause:hover, QPushButton#Freeze:hover {{ background: {c['panel2']}; border-color: {c['rule']}; color: {c['ink']}; }}
+    QPushButton#Pause:checked {{ background: {c['accent_soft']}; border-color: {c['accent']}; color: {c['accent_hover'] if mode == 'dark' else c['accent']}; }}
+    QPushButton#Pause QLabel#BtnText[on="true"] {{ color: {c['accent_hover'] if mode == 'dark' else c['accent']}; }}
+    QPushButton#Freeze {{ color: {c['accent_hover'] if mode == 'dark' else c['accent']}; }}
+    QPushButton#Freeze QLabel#BtnText {{ color: {c['accent_hover'] if mode == 'dark' else c['accent']}; }}
+    QPushButton#ToolBtn:disabled, QPushButton#Pause:disabled, QPushButton#Freeze:disabled, QPushButton#Record:disabled {{
         color: {c['disabled']}; background: transparent; border-color: transparent; }}
-    QToolButton#Shutter {{
+    QPushButton#Shutter {{
         background: {c['accent']}; border: 3px solid {c['accent_soft']}; border-radius: 28px;
-        min-width: 50px; max-width: 50px; min-height: 50px; max-height: 50px; padding: 0;
+        min-width: 50px; max-width: 50px; min-height: 50px; max-height: 50px; padding: 0px;
     }}
-    QToolButton#Shutter:hover {{ background: {c['accent_hover']}; border-color: {c['accent']}; }}
-    QToolButton#Shutter:pressed {{ background: {c['accent_hover']}; border-color: {c['accent_hover']}; }}
-    QToolButton#Shutter:disabled {{ background: {c['rule']}; border-color: {c['rule']}; }}
-    QToolButton#Record {{ color: {c['record']}; font-weight: 700; }}
-    QToolButton#Record:hover {{ background: {c['record_soft']}; }}
-    QToolButton#Record:checked {{ background: {c['record']}; color: #ffffff; }}
-    QToolButton#Primary {{ background: {c['accent']}; color: {c['accent_ink']}; font-weight: 700; }}
-    QToolButton#Primary:hover {{ background: {c['accent_hover']}; }}
-    QToolButton#DateBtn {{ background: {c['raised']}; border: 1px solid {c['rule_strong']}; border-radius: 8px; padding: 5px; }}
-    QToolButton#DateBtn:hover {{ background: {c['panel2']}; border-color: {c['ink_muted']}; }}
+    QPushButton#Shutter:hover {{ background: {c['accent_hover']}; border-color: {c['accent']}; }}
+    QPushButton#Shutter:pressed {{ background: {c['accent_hover']}; border-color: {c['accent_hover']}; }}
+    QPushButton#Shutter:disabled {{ background: {c['rule']}; border-color: {c['rule']}; }}
+    QPushButton#Record {{ color: {c['record']}; font-weight: 700; }}
+    QPushButton#Record QLabel#BtnText {{ color: {c['record']}; font-weight: 700; }}
+    QPushButton#Record:hover {{ background: {c['record_soft']}; }}
+    QPushButton#Record:checked {{ background: {c['record']}; color: #ffffff; }}
+    QPushButton#Record QLabel#BtnText[on="true"] {{ color: #ffffff; }}
+    QPushButton#Record QLabel#BtnText:disabled, QPushButton#Freeze QLabel#BtnText:disabled {{ color: {c['disabled']}; }}
+    QPushButton#Primary QLabel#BtnText {{ color: {c['accent_ink']}; font-weight: 700; }}
+    QPushButton#DateBtn {{ background: {c['raised']}; border: 1px solid {c['rule_strong']}; border-radius: 8px; padding: 5px; }}
+    QPushButton#DateBtn:hover {{ background: {c['panel2']}; border-color: {c['ink_muted']}; }}
     QLineEdit[invalid="true"] {{ border: 1px solid {c['record']}; }}
 
     /* 달력 팝업 */
@@ -320,15 +331,15 @@ def build_qss(mode: str = "dark") -> str:
     QLabel#HomeSub {{ font-size: 15px; font-weight: 600; color: {c['ink_soft']}; }}
     QLabel#HomeGuide {{ font-size: 13px; color: {c['ink_muted']}; }}
     QFrame#HomeTiles {{ background: transparent; }}
-    QToolButton#HomeTile {{
-        background: {c['panel']}; border: 1px solid {c['rule']}; border-radius: 18px;
-        color: {c['ink']}; font-size: 14px; font-weight: 700; padding: 12px 8px 10px;
+    QPushButton#HomeTile {{
+        background: {c['panel']}; border: 1px solid {c['rule']}; border-radius: 18px; padding: 0px;
     }}
-    QToolButton#HomeTile:hover {{ background: {c['panel2']}; border: 1px solid {c['accent']}; }}
-    QToolButton#HomeTile:pressed {{ background: {c['accent_soft']}; }}
-    QToolButton#HomeLink {{ background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 4px 6px; color: {c['ink_soft']}; font-weight: 600; }}
-    QToolButton#HomeLink:hover {{ background: {c['panel2']}; color: {c['ink']}; border-color: {c['rule']}; }}
-    QToolButton#HomeLink:disabled {{ color: {c['disabled']}; }}
+    QPushButton#HomeTile QLabel#BtnText {{ color: {c['ink']}; font-size: 14px; font-weight: 700; }}
+    QPushButton#HomeTile:hover {{ background: {c['panel2']}; border: 1px solid {c['accent']}; }}
+    QPushButton#HomeTile:pressed {{ background: {c['accent_soft']}; }}
+    QPushButton#HomeLink {{ background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 4px 6px; min-height: 0px; color: {c['ink_soft']}; font-weight: 600; }}
+    QPushButton#HomeLink:hover {{ background: {c['panel2']}; color: {c['ink']}; border-color: {c['rule']}; }}
+    QPushButton#HomeLink:disabled {{ color: {c['disabled']}; background: transparent; }}
 
     /* ===== 검사 기록 화면 ===== */
     QListWidget#ExamList {{ background: transparent; border: none; outline: none; }}
@@ -339,6 +350,16 @@ def build_qss(mode: str = "dark") -> str:
     QListWidget#ExamList::item:hover {{ border-color: {c['rule_strong']}; }}
     QListWidget#ExamList::item:selected {{ background: {c['accent_soft']}; border: 1px solid {c['accent']}; color: {c['ink']}; }}
     QLabel#ExamPatient {{ font-size: 13px; }}
+    QTableWidget#PatientTable {{
+        background: {c['panel']}; alternate-background-color: {c['panel2']}; border: 1px solid {c['rule']};
+        border-radius: 10px; gridline-color: {c['rule']}; outline: none;
+        selection-background-color: {c['accent_soft']}; selection-color: {c['ink']};
+    }}
+    QTableWidget#PatientTable::item {{ padding: 0 10px; border: none; }}
+    QHeaderView::section {{
+        background: {c['panel2']}; color: {c['ink_soft']}; border: none; border-bottom: 1px solid {c['rule']};
+        padding: 8px 10px; font-weight: 700; font-size: 12px;
+    }}
     QWidget#ExamGrid {{ background: transparent; }}
     QFrame#Panel QScrollArea, QFrame#Panel QWidget#qt_scrollarea_viewport {{ background: transparent; }}
 

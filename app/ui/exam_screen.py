@@ -24,7 +24,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -96,11 +95,11 @@ class ExamScreen(QWidget):
         head.addWidget(t)
         head.addWidget(self.badge_days)
         head.addStretch(1)
-        self.btn_refresh = QToolButton()
+        self.btn_refresh = QPushButton()
         self.btn_refresh.setObjectName("HomeLink")
         self.btn_refresh.setIcon(icons.icon("history", ICON, 16))
         self.btn_refresh.setToolTip("다시 읽기")
-        self.btn_refresh.clicked.connect(self.reload)
+        self.btn_refresh.clicked.connect(lambda: self.reload())
         head.addWidget(self.btn_refresh)
         ll.addLayout(head)
         self.day_list = QListWidget()
@@ -135,9 +134,9 @@ class ExamScreen(QWidget):
         self.btn_pro = tool_button("Pro 검토", "review", "ToolBtn", tip="이 환자의 영상을 Pro 검토 화면에서 열기", icon_size=20, min_width=56)
         self.btn_print = tool_button("인쇄", "printer", "ToolBtn", tip="이 날의 영상 + 소견을 보고서로 인쇄", icon_size=20, min_width=56)
         self.btn_pdf = tool_button("PDF", "file-pdf", "ToolBtn", tip="이 날의 영상 + 소견을 PDF 보고서로 저장", icon_size=20, min_width=56)
-        self.btn_pro.clicked.connect(self.openInPro.emit)
-        self.btn_print.clicked.connect(self.print_day)
-        self.btn_pdf.clicked.connect(self.export_pdf_dialog)
+        self.btn_pro.clicked.connect(lambda: self.openInPro.emit())
+        self.btn_print.clicked.connect(lambda: self.print_day())
+        self.btn_pdf.clicked.connect(lambda: self.export_pdf_dialog())
         for b in (self.btn_pro, self.btn_print, self.btn_pdf):
             gh.addWidget(b)
         gl.addLayout(gh)
@@ -183,7 +182,7 @@ class ExamScreen(QWidget):
         self.btn_save.setObjectName("Primary")
         self.btn_save.setIcon(icons.icon("save", ICON_ON_ACCENT, 16))
         self.btn_save.setIconSize(QSize(15, 15))
-        self.btn_save.clicked.connect(self.save_notes)
+        self.btn_save.clicked.connect(lambda: self.save_notes())
         dh.addWidget(self.btn_save)
         dl.addLayout(dh)
         self.txt_notes = QPlainTextEdit()
@@ -207,11 +206,11 @@ class ExamScreen(QWidget):
         rt.setObjectName("ThumbTitle")
         rh.addWidget(rt)
         rh.addStretch(1)
-        self.btn_edit = QToolButton()
+        self.btn_edit = QPushButton()
         self.btn_edit.setObjectName("HomeLink")
         self.btn_edit.setIcon(icons.icon("user-edit", ICON, 16))
         self.btn_edit.setToolTip("정보 수정")
-        self.btn_edit.clicked.connect(self.editPatient.emit)
+        self.btn_edit.clicked.connect(lambda: self.editPatient.emit())
         rh.addWidget(self.btn_edit)
         rl.addLayout(rh)
         self.lbl_patient = QLabel()

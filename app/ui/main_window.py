@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from datetime import datetime
 from pathlib import Path
 from collections import deque
 
@@ -36,6 +37,7 @@ from app.agent.core import AgentSettings
 from app.agent.events import EventLog
 from app.agent.scene import default_model_path
 from app.agent.worker import AgentWorker
+from app.capture import presets as capture_presets
 from app.capture.camera_worker import CameraWorker
 from app.capture.frame_utils import device_names, find_sony_index
 from app.capture.smart_capture import DEFAULT_ROI, SmartSettings, normalize_roi
@@ -48,8 +50,11 @@ from app.ui.agent_bar import AgentBar
 from app.ui.control_bar import ControlBar, tool_button
 from app.ui.exam_screen import ExamScreen
 from app.ui.home_screen import HomeScreen
+from app.ui.multi_view import MultiView
+from app.ui.patient_list_screen import PatientListScreen
 from app.ui.image_viewer import ImageViewerDialog
 from app.ui.patient_panel import PatientPanel
+from app.ui.pro import print_util
 from app.ui.pro.pro_workspace import ProWorkspace
 from app.ui.quad_view import QuadView
 from app.ui.settings_dialog import SettingsDialog
@@ -65,7 +70,7 @@ from app import __version__
 log = logging.getLogger(__name__)
 
 
-MODES = ["capture", "pro", "exam", "home"]       # mode_stack 순서
+MODES = ["capture", "pro", "exam", "home", "patients"]       # mode_stack 순서
 
 
 class MainWindow(QMainWindow):
@@ -83,6 +88,7 @@ class MainWindow(QMainWindow):
         self._last_frame = None
         self._paused = False
         self._quad = False
+        self._multi = False                  # 멀티: 선택한 사진 한 번에 보기
         self._single_frozen = False
         self._freeze_frame = None
         self._current_patient = None
@@ -151,10 +157,9 @@ class MainWindow(QMainWindow):
         outer = QVBoxLayout(central)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
+        self.patient_panel = PatientPanel(self.db)      # 환자 검색·선택 — 상단바 '정보 수정' 옆에 들어감
         self.topbar = self._build_topbar()
         outer.addWidget(self.topbar)
-        self.patient_panel = PatientPanel(self.db)
-        outer.addWidget(self.patient_panel)          # 단일/Pro 공통 환자 배너
 
         body = QWidget()
         body_lay = QVBoxLayout(body)
@@ -170,7 +175,9 @@ class MainWindow(QMainWindow):
         self.quad_view = QuadView()
         self.view_stack = QStackedWidget()
         self.view_stack.addWidget(self.video_view)   # index 0 = 단일
-        self.view_stack.addWidget(self.quad_view)     # index 1 = 4분할
+        self.view_stack.addWidget(self.quad_view)     # index 1 = 분할 (2 · 4 · 6 · 8 · 16칸)
+        self.multi_view = MultiView()
+        self.view_stack.addWidget(self.multi_view)    # index 2 = 멀티 (선택한 사진 모아 보기)
         self.control_bar = ControlBar()
         self.smart_bar = SmartBar()
         self.agent_bar = AgentBar()
@@ -179,7 +186,8 @@ class MainWindow(QMainWindow):
         left.addWidget(self.agent_bar)
         left.addWidget(self.control_bar)
 
-        self.thumbnail_panel = ThumbnailPanel(self.db, newest_on_top=self.config.newest_on_top)
+        self.thumbnail_panel = ThumbnailPanel(self.db, newest_on_top=self.config.newest_on_top,
+                                              split_eyes=bool(getattr(self.config, "thumbs_split_eyes", False)))
 
         root.addLayout(left, 1)
         root.addWidget(self.thumbnail_panel)
@@ -193,6 +201,8 @@ class MainWindow(QMainWindow):
         self.mode_stack.addWidget(self.pro)          # 1 = Pro
         self.mode_stack.addWidget(self.exam_screen)  # 2 = 검사 기록
         self.mode_stack.addWidget(self.home)         # 3 = 홈
+        self.patient_list = PatientListScreen(self.db)
+        self.mode_stack.addWidget(self.patient_list)  # 4 = 환자 목록
         body_lay.addWidget(self.mode_stack, 1)
         outer.addWidget(body, 1)
         self.setCentralWidget(central)
@@ -204,17 +214,30 @@ class MainWindow(QMainWindow):
         self.exam_screen.openInPro.connect(lambda: self.set_mode("pro"))
         self.exam_screen.editPatient.connect(lambda: self.patient_panel.edit_patient())
         self.home.action.connect(self._on_home_action)
+        self.patient_list.openCapture.connect(lambda pid: self._open_patient(pid, "capture"))
+        self.patient_list.openExam.connect(lambda pid: self._open_patient(pid, "exam"))
+        self.patient_list.newPatient.connect(lambda: self._new_patient_from_list())
+        self.patient_list.editPatient.connect(lambda pid: self._edit_patient_from_list(pid))
 
         self.patient_panel.patientChanged.connect(self._on_patient_changed)
         self.control_bar.pauseToggled.connect(self._on_pause)
         self.control_bar.captureClicked.connect(self._on_capture)
         self.control_bar.recordToggled.connect(self._on_record_toggle)
+        self.control_bar.split_count = int(getattr(self.config, "split_count", 4) or 4)
+        self.control_bar.count_chooser = self._choose_split_count
         self.control_bar.quadToggled.connect(self._on_quad_toggled)
         self.control_bar.freezeClicked.connect(self._on_freeze)
         self.control_bar.saveQuadClicked.connect(self._on_save_quad)
         self.control_bar.clearQuadClicked.connect(self._on_clear_quad)
         self.quad_view.cellClicked.connect(self._on_quad_cell_clicked)
-        self.thumbnail_panel.thumbnailClicked.connect(self._on_thumbnail_clicked)
+        self.thumbnail_panel.thumbnailClicked.connect(self._on_thumbnail_clicked)   # 두 번 클릭: 큰 화면
+        self.thumbnail_panel.selectionChanged.connect(self._on_selection_changed)   # 한 번 클릭: 선택
+        self.control_bar.multiToggled.connect(self._on_multi_toggled)
+        self.control_bar.saveMultiClicked.connect(self._safe("멀티 저장", lambda: self._on_save_multi()))
+        self.control_bar.sendClicked.connect(self._safe("전송", lambda: self._on_send()))
+        self.control_bar.presetClicked.connect(self._safe("촬영 모드", lambda: self._on_preset_menu()))
+        self.control_bar.set_preset_name(self.config.active_preset or capture_presets.DEFAULT_NAME)
+        self.multi_view.cellActivated.connect(self._on_thumbnail_clicked)
         self.control_bar.eyeChanged.connect(lambda e: self.video_view.set_hud(eye=e))
         cfg = self.config
         self.smart_bar.set_state(cfg.smart_mode, cfg.smart_peaking, cfg.smart_peaking_sensitivity,
@@ -226,6 +249,8 @@ class MainWindow(QMainWindow):
         self.smart_bar.sensitivityChanged.connect(self._on_smart_sensitivity)
         self.smart_bar.roiSelectToggled.connect(self.video_view.set_roi_selecting)
         self.smart_bar.bestShotToggled.connect(self._on_smart_best_toggle)
+        self.smart_bar.hideRequested.connect(lambda: self._set_smart_bar_visible(False))
+        self.control_bar.smartToggled.connect(lambda on: self._set_smart_bar_visible(on))
         self.video_view.roiSelected.connect(self._on_smart_roi)
         self.agent_bar.set_state(cfg.agent_enabled, cfg.agent_auto_capture, cfg.agent_protocol,
                                  cfg.agent_logging)
@@ -247,6 +272,7 @@ class MainWindow(QMainWindow):
 
         self._on_patient_changed(self.patient_panel.current_patient())
         self._fullscreen = False
+        self._set_smart_bar_visible(bool(getattr(cfg, "smart_bar_visible", True)), save=False)
         self._install_shortcuts()
         self.set_mode("capture" if getattr(self.config, "start_screen", "home") == "capture" else "home")
 
@@ -285,6 +311,7 @@ class MainWindow(QMainWindow):
         def nav(text, icon_name, tip, color=ICON, checkable=False):
             btn = tool_button(text, icon_name, "NavBtn", checkable=checkable, color=color, tip=tip,
                               icon_size=20, min_width=58)
+            btn.setFixedHeight(50)
             return btn
 
         def seg():
@@ -316,7 +343,7 @@ class MainWindow(QMainWindow):
             btn.setIcon(ic)
             grp.addButton(btn)
             sl.addWidget(btn)
-            btn.clicked.connect(lambda _=False, m=mode: self.set_mode(m))
+            btn.clicked.connect(self._safe(f"화면:{mode}", lambda m=mode: self.set_mode(m)))
         self.btn_mode_capture.setChecked(True)
         lay.addWidget(sw)
 
@@ -324,28 +351,21 @@ class MainWindow(QMainWindow):
         pw, pl = seg()
         self.btn_new_patient = nav("신규 환자", "user-plus", "신규 환자 등록", color=ICON_ACCENT)
         self.btn_edit_patient = nav("정보 수정", "user-edit", "선택한 환자 정보 수정")
-        self.btn_new_patient.clicked.connect(lambda: self.patient_panel.new_patient())
-        self.btn_edit_patient.clicked.connect(lambda: self.patient_panel.edit_patient())
+        self.btn_new_patient.clicked.connect(self._safe("신규 환자", lambda: self.patient_panel.new_patient()))
+        self.btn_edit_patient.clicked.connect(self._safe("정보 수정", lambda: self.patient_panel.edit_patient()))
         pl.addWidget(self.btn_new_patient)
         pl.addWidget(self.btn_edit_patient)
         lay.addWidget(pw)
+        lay.addWidget(self.patient_panel)               # 이름 · 차트번호 검색 + 환자 선택
         lay.addStretch(1)
 
+        # 카메라 재연결 · 단축키 · 샘플 · 테마는 모두 설정 창 안으로 (오른쪽에는 설정 하나)
         tw, tl = seg()
-        self.btn_camera = nav("카메라", "videocam", "캡처 장비 다시 연결")
-        self.btn_keys = nav("단축키", "keyboard", "단축키 설정 (캡처·녹화·안구 등)")
-        self.btn_samples = nav("샘플", "image", "질환별 샘플 사진 가져오기 (받아 둔 폴더 선택)")
-        self.btn_settings = nav("설정", "sliders", "카메라·저장 위치·형식 설정")
-        self.btn_theme = nav("테마", "sun", "밝은/어두운 테마 전환")
-        self.btn_camera.clicked.connect(self._restart_camera)
-        self.btn_keys.clicked.connect(self._open_shortcuts)
-        self.btn_samples.clicked.connect(self._import_samples)
-        self.btn_settings.clicked.connect(self._open_settings)
+        self.btn_settings = nav("설정", "gear", "설정 — 카메라 다시 연결 · 단축키 · 샘플 사진 · 화면 테마 · Smart 도구줄 · 저장 위치")
+        self.btn_settings.clicked.connect(self._safe("설정", lambda: self._open_settings()))
         self.act_theme = QAction(self)
-        self.act_theme.triggered.connect(self._toggle_theme)
-        self.btn_theme.clicked.connect(self._toggle_theme)
-        for btn in (self.btn_camera, self.btn_keys, self.btn_samples, self.btn_settings, self.btn_theme):
-            tl.addWidget(btn)
+        self.act_theme.triggered.connect(self._safe("테마", lambda: self._toggle_theme()))
+        tl.addWidget(self.btn_settings)
         lay.addWidget(tw)
         self._sync_theme_button()
         return bar
@@ -375,8 +395,19 @@ class MainWindow(QMainWindow):
 
     def _sync_theme_button(self) -> None:
         dark = self.config.theme == "dark"
-        self.btn_theme.setIcon(icons.icon("sun" if dark else "moon", ICON, 20))
         self.act_theme.setText("☀ 라이트 모드" if dark else "🌙 다크 모드")
+
+    def _safe(self, name: str, fn):
+        """버튼 동작 감싸기: 누른 기록을 app.log 에 남기고, 오류가 나면 조용히 사라지지 않게 안내창을 띄운다."""
+        def run(*_args):
+            log.info("버튼: %s", name)
+            try:
+                fn()
+            except Exception as e:  # noqa: BLE001
+                log.exception("버튼 '%s' 실행 실패", name)
+                QMessageBox.warning(self, "오류", f"'{name}' 실행 중 오류가 났습니다.\n{e}\n\n"
+                                    f"자세한 내용: {paths.get_appdata_dir() / 'logs' / 'app.log'}")
+        return run
 
     def _update_rec_hud(self) -> None:
         if self._recording and self._rec_started:
@@ -425,7 +456,7 @@ class MainWindow(QMainWindow):
 
     def _apply_key_hints(self) -> None:
         cb = self.control_bar
-        hints = {"capture": cb.btn_capture, "record": cb.btn_record, "pause": cb.btn_pause,
+        hints = {"capture": cb.btn_capture, "record": cb.btn_record,
                  "freeze": cb.btn_freeze, "quad": cb.btn_quad, "mode": self.btn_mode_pro,
                  "newPatient": self.btn_new_patient, "peaking": self.smart_bar.btn_peaking}
         for aid, w in hints.items():
@@ -451,7 +482,7 @@ class MainWindow(QMainWindow):
         if aid.startswith("eye"):
             code = aid[3:]
             if self.mode_stack.currentIndex() == 1:
-                self.pro.c_eye.setCurrentIndex(["NA", "OD", "OS", "OU"].index(code))
+                self.pro.c_eye.setCurrentIndex(["NA", "OD", "OS"].index(code))
             else:
                 cb.set_eye(code)
             self.statusBar().showMessage(f"안구: {'미지정' if code == 'NA' else code}", 2000)
@@ -464,7 +495,10 @@ class MainWindow(QMainWindow):
         elif aid == "freeze" and cb.btn_freeze.isEnabled():
             self._on_freeze()
         elif aid == "quad":
-            cb.btn_quad.toggle()
+            if cb.btn_quad.isChecked():
+                cb.btn_quad.setChecked(False)
+            else:
+                cb.start_split(int(getattr(self.config, "split_count", 4) or 4))
         elif aid == "smart":
             self.smart_bar.cycle_mode()
         elif aid == "peaking":
@@ -474,20 +508,18 @@ class MainWindow(QMainWindow):
         elif aid == "mode":
             self.act_pro.toggle()
         elif aid == "patients":
-            self.patient_panel.search.setFocus()
-            self.patient_panel.search.selectAll()
-            self.patient_panel.combo.showPopup()
+            self.set_mode("patients")
         elif aid == "newPatient":
             self.patient_panel.new_patient()
 
     def _set_fullscreen(self, on: bool) -> None:
-        """영상 전체 화면: 창을 화면 가득 채우고 상단바·환자 배너·썸네일·상태바를 숨김 (Esc 로 해제)."""
+        """영상 전체 화면: 창을 화면 가득 채우고 상단바(환자 검색 포함)·썸네일·상태바를 숨김 (Esc 로 해제)."""
         if on == self._fullscreen:
             return
         self._fullscreen = on
-        for w in (self.topbar, self.thumbnail_panel, self.smart_bar, self.statusBar()):
+        for w in (self.topbar, self.thumbnail_panel, self.statusBar()):
             w.setVisible(not on)
-        self.patient_panel.setVisible(not on and self._mode != "home")
+        self.smart_bar.setVisible(not on and bool(self.config.smart_bar_visible))
         if on:
             self._was_maximized = self.isMaximized()
             self.showFullScreen()
@@ -496,8 +528,9 @@ class MainWindow(QMainWindow):
             self.showMaximized() if getattr(self, "_was_maximized", False) else self.showNormal()
         self._esc_fullscreen.setEnabled(on)
 
-    def _open_shortcuts(self) -> None:
-        dlg = ShortcutsDialog(self._keys, self)
+    def _open_shortcuts(self, parent=None) -> None:
+        parent = parent if parent is not None and parent is not False else self
+        dlg = ShortcutsDialog(self._keys, parent)
         if dlg.exec():
             self.config.shortcuts = dlg.values()
             try:
@@ -560,7 +593,10 @@ class MainWindow(QMainWindow):
     def _start_camera(self) -> None:
         self._camera_ok = False
         self.cam_thread = QThread(self)
-        self.worker = CameraWorker(self._source_factory())
+        # 저장된 카메라 속성(노출 · 게인 · WB …)은 카메라를 열 때 다시 적용
+        self.worker = CameraWorker(self._source_factory(),
+                                   capture_presets.device_requests(self.config.camera_props or {})
+                                   if self.config.camera_props else None)
         self.worker.moveToThread(self.cam_thread)
         self.cam_thread.started.connect(self.worker.run)
         self.worker.frame_ready.connect(self._on_frame_ready)
@@ -682,6 +718,17 @@ class MainWindow(QMainWindow):
         self.events.log("patient_changed", has_patient=patient is not None)
 
     # ---- Pro 모드 ----
+    def _set_smart_bar_visible(self, on: bool, save: bool = True) -> None:
+        """Smart 도구줄 보이기/숨기기 — 숨겨도 자동 촬영·피킹 설정은 그대로 동작한다."""
+        self.config.smart_bar_visible = bool(on)
+        self.smart_bar.setVisible(bool(on) and not self._fullscreen)
+        self.control_bar.set_smart_visible(bool(on))
+        if save:
+            try:
+                self.config.save()
+            except Exception:  # noqa: BLE001
+                log.warning("smart bar visibility save failed", exc_info=True)
+
     def _on_pro_toggled(self, on: bool) -> None:
         self.set_mode("pro" if on else "capture")
 
@@ -693,8 +740,6 @@ class MainWindow(QMainWindow):
             self.exam_screen.flush()             # 적던 소견 저장
         self._mode = name
         self.mode_stack.setCurrentIndex(MODES.index(name))
-        self.patient_panel.setVisible(name != "home" and not self._fullscreen)
-        self.mode_buttons[name].setChecked(True)
         self.act_pro.blockSignals(True)
         self.act_pro.setChecked(name == "pro")
         self.act_pro.blockSignals(False)
@@ -710,10 +755,34 @@ class MainWindow(QMainWindow):
             self.thumbnail_panel.set_patient(p.id if p else None)
         elif name == "exam":
             self.exam_screen.set_patient(p)
-        self.statusBar().showMessage({"home": "홈", "capture": "촬영", "pro": "Pro 모드", "exam": "검사 기록"}[name], 3000)
+        elif name == "patients":
+            self.patient_list.reload()
+            self.patient_list.set_current(p.id if p else None)
+            self.patient_list.search.setFocus()
+        # 홈 · 환자 목록에서는 상단 메뉴 중 켜진 칸이 없다 (홈 버튼만 켜짐)
+        self.mode_buttons.get(name, self.btn_mode_home).setChecked(True)
+        self.statusBar().showMessage({"home": "홈", "capture": "촬영", "pro": "Pro 모드", "exam": "검사 기록",
+                                      "patients": "환자 목록"}[name], 3000)
 
     def mode(self) -> str:
         return self._mode
+
+    # ---- 환자 목록 화면 ----
+    def _open_patient(self, pid: int, mode: str) -> None:
+        if self.patient_panel.select_patient(pid):
+            self.set_mode(mode)
+
+    def _new_patient_from_list(self) -> None:
+        if self.patient_panel.new_patient():
+            self.patient_list.reload()
+            p = self._current_patient
+            self.patient_list.set_current(p.id if p else None)
+
+    def _edit_patient_from_list(self, pid: int) -> None:
+        if self.patient_panel.select_patient(pid):
+            self.patient_panel.edit_patient()
+            self.patient_list.reload()
+            self.patient_list.set_current(pid)
 
     def _on_home_action(self, aid: str) -> None:
         """홈 화면 아이콘 타일."""
@@ -721,8 +790,7 @@ class MainWindow(QMainWindow):
             if self.patient_panel.new_patient():
                 self.set_mode("capture")
         elif aid == "patients":
-            self.set_mode("capture")
-            self._run_action("patients")
+            self.set_mode("patients")
         elif aid in ("capture", "pro", "exam"):
             self.set_mode(aid)
         elif aid == "settings":
@@ -747,7 +815,11 @@ class MainWindow(QMainWindow):
         self._sync_smart_view()
 
     def _on_quad_toggled(self, on: bool) -> None:
+        if on and self._multi:
+            self._exit_multi(clear=False)
         self._quad = on
+        self.quad_view.set_count(self.control_bar.split_count)   # 켜고 끌 때마다 모두 비우고 1번 칸부터
+        self.control_bar.set_quad_full(False)
         self.view_stack.setCurrentIndex(1 if on else 0)
         # 모드 전환 시 단일-정지 상태/버튼 초기화
         self._single_frozen = False
@@ -756,24 +828,30 @@ class MainWindow(QMainWindow):
         self._refresh_hud_state()
         self._sync_smart_view()
         self.control_bar.set_status(
-            "4분할 모드 · '정지영상'으로 각 칸을 채우세요" if on else "단일 모드")
+            f"{self.quad_view.count()}분할 · '정지영상'으로 각 칸을 채우세요" if on else "단일 모드")
 
     def _on_quad_cell_clicked(self, idx: int) -> None:
         if self._quad:
-            self.quad_view.set_active(idx)
+            self.quad_view.set_active(idx)               # 누른 칸을 다시 라이브로 (그 칸만 다시 촬영)
+            self.control_bar.set_quad_full(False)
+            self.control_bar.set_status(f"{idx + 1}번 칸을 다시 촬영합니다 · '정지영상'으로 채우세요")
 
     def _on_freeze(self) -> None:
-        if self._last_frame is None:
+        if self._last_frame is None or self._multi:
             return
         if self._quad:
+            if self.quad_view.is_full():                  # 칸이 다 찼을 때 누르면 '처음부터'
+                self._on_clear_quad()
+                return
             if self.quad_view.freeze_active(self.control_bar.current_eye()):
                 sounds.play("freeze")
                 if self.quad_view.is_full():
-                    self.control_bar.set_status("4칸 모두 채움 · '4분할 저장' 또는 칸 클릭으로 교체")
+                    self.control_bar.set_quad_full(True)
+                    self.control_bar.set_status(f"{self.quad_view.count()}칸 모두 채움 · '저장' 하거나, 칸을 눌러 그 칸만 다시 · '처음부터'로 전체 다시")
                 else:
                     self.control_bar.set_status("정지영상 추가됨 (다음 칸으로 이동)")
             else:
-                self.control_bar.set_status("4칸이 가득 찼습니다 · 칸을 클릭해 교체하거나 '비우기'")
+                self.control_bar.set_status("라이브 영상을 기다리는 중입니다")
             return
         # 단일 모드: 현재 프레임을 정지영상으로 고정 / 재개 토글
         self._single_frozen = not self._single_frozen
@@ -800,26 +878,228 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "확인", "저장할 정지영상이 없습니다.")
             return
         eye = self.control_bar.current_eye()
+        n = self.quad_view.count()
         sounds.play("shutter")
         saved = 0
         try:
             for frame, cell_eye in self.quad_view.images_for_save(eye):
-                cap = self.service.save_photo(frame, self._current_patient, eye=cell_eye, note="4분할")
+                cap = self.service.save_photo(frame, self._current_patient, eye=cell_eye, note=f"{n}분할")
                 self.thumbnail_panel.add_capture(cap)
                 saved += 1
             comp = self.quad_view.composite()
             if comp is not None:
-                cap = self.service.save_photo(comp, self._current_patient, eye="NA", note="4분할 합성")
+                cap = self.service.save_photo(comp, self._current_patient, eye="NA", note=f"{n}분할 합성")
                 self.thumbnail_panel.add_capture(cap)
                 saved += 1
         except Exception as e:  # noqa: BLE001
             log.exception("quad save failed")
-            QMessageBox.warning(self, "오류", f"4분할 저장 실패: {e}")
+            QMessageBox.warning(self, "오류", f"분할 저장 실패: {e}")
             return
-        self.control_bar.set_status(f"4분할 저장됨 (개별+합성 {saved}장)")
+        self.control_bar.set_status(f"{n}분할 저장됨 (칸별+합성 {saved}장)")
+        self.statusBar().showMessage(f"{n}분할 저장됨 (칸별 + 합성 {saved}장)", 4000)
+
+    @staticmethod
+    def _exec_menu(menu, pos):
+        return menu.exec(pos)
+
+    def _choose_split_count(self, anchor) -> int | None:
+        """분할 버튼을 누르면 2 · 4 · 6 · 8 · 16칸 중에서 고른다. 고른 칸 수는 다음에도 쓰도록 저장."""
+        from PySide6.QtWidgets import QMenu
+        from app.ui.quad_view import SPLIT_COUNTS
+        menu = QMenu(self)
+        current = int(getattr(self.config, "split_count", 4) or 4)
+        acts = {}
+        for n in SPLIT_COUNTS:
+            a = menu.addAction(f"{n}분할")
+            a.setCheckable(True)
+            a.setChecked(n == current)
+            acts[a] = n
+        pos = anchor.mapToGlobal(anchor.rect().topLeft())
+        pos.setY(pos.y() - menu.sizeHint().height() - 4)
+        chosen = self._exec_menu(menu, pos)
+        if chosen is None or chosen not in acts:
+            return None
+        n = acts[chosen]
+        if n != current:
+            self.config.split_count = n
+            try:
+                self.config.save()
+            except Exception:  # noqa: BLE001
+                log.warning("split count save failed", exc_info=True)
+        return n
+
+    # ---- 멀티 (선택한 사진 한 번에 보기) ----
+    def _on_selection_changed(self, caps: list) -> None:
+        if self._multi:
+            if caps:
+                self.multi_view.set_captures(caps)
+            else:
+                self._exit_multi(clear=False)
+        if caps:
+            self.statusBar().showMessage(f"{len(caps)}장 선택 · '멀티'를 누르면 한 화면에 모아 봅니다", 4000)
+
+    def _on_multi_toggled(self, on: bool) -> None:
+        if not on:
+            self._exit_multi(clear=True)              # 다시 누르면 선택까지 초기화
+            self.statusBar().showMessage("멀티 초기화", 2500)
+            return
+        caps = self.thumbnail_panel.selected_captures()
+        if not caps:
+            self.control_bar.set_multi_mode(False)
+            self.statusBar().showMessage("오른쪽 사진 목록에서 사진을 한 번씩 눌러 고른 뒤 '멀티'를 누르세요", 5000)
+            return
+        if self._quad:
+            self.control_bar.btn_quad.setChecked(False)
+        self._multi = True
+        self.multi_view.set_captures(caps)
+        self.view_stack.setCurrentIndex(2)
+        self.control_bar.set_multi_mode(True)
+
+    def _exit_multi(self, clear: bool) -> None:
+        self._multi = False
+        self.view_stack.setCurrentIndex(1 if self._quad else 0)
+        self.control_bar.set_multi_mode(False)
+        self.multi_view.clear()
+        if clear:
+            self.thumbnail_panel.clear_selection()
+
+    def _on_save_multi(self) -> None:
+        if self._current_patient is None:
+            QMessageBox.information(self, "확인", "환자를 먼저 선택하세요.")
+            return
+        comp = self.multi_view.composite()
+        if comp is None:
+            QMessageBox.information(self, "확인", "저장할 사진이 없습니다.")
+            return
+        n = self.multi_view.count()
+        cap = self.service.save_photo(comp, self._current_patient, eye="NA", note=f"멀티 {n}장")
+        sounds.play("shutter")
+        self.thumbnail_panel.add_capture(cap)
+        self.statusBar().showMessage(f"멀티 화면({n}장)을 한 장의 사진으로 저장했습니다", 4000)
+
+    # ---- 촬영 모드 (자주 쓰는 카메라 · 촬영 설정) ----
+    def _on_preset_menu(self) -> None:
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self)
+        current = self.config.active_preset or capture_presets.DEFAULT_NAME
+        acts = {}
+        for p in capture_presets.all_presets(self.config):
+            a = menu.addAction(p["name"])
+            a.setCheckable(True)
+            a.setChecked(p["name"] == current)
+            acts[a] = p["name"]
+        menu.addSeparator()
+        a_save = menu.addAction("지금 설정을 새 모드로 저장…")
+        a_edit = menu.addAction("모드 편집… (설정 → 촬영 모드)")
+        anchor = self.control_bar.btn_preset
+        pos = anchor.mapToGlobal(anchor.rect().topLeft())
+        pos.setY(pos.y() - menu.sizeHint().height() - 4)
+        chosen = self._exec_menu(menu, pos)
+        if chosen in acts:
+            self.apply_preset(acts[chosen])
+        elif chosen is a_save:
+            self._save_current_preset()
+        elif chosen is a_edit:
+            self._open_settings(tab="촬영 모드")
+
+    def _save_current_preset(self, name: str | None = None) -> bool:
+        if name is None:
+            from PySide6.QtWidgets import QInputDialog
+            name, ok = QInputDialog.getText(self, "촬영 모드 저장", "모드 이름 (예: 세극 조명 · 형광 · 마이봄)",
+                                            text=self.config.active_preset or "")
+            if not ok or not name.strip():
+                return False
+        preset = capture_presets.from_config(self.config, name)
+        capture_presets.save(self.config, preset)
+        self.config.active_preset = preset["name"]
+        self.control_bar.set_preset_name(preset["name"])
+        self._save_config_quietly()
+        self.statusBar().showMessage(f"촬영 모드 '{preset['name']}' 를 저장했습니다", 4000)
+        return True
+
+    def apply_preset(self, name: str) -> bool:
+        """촬영 모드 적용: 카메라 조정값 · 해상도 · Smart · 피킹 · 분할 칸 수."""
+        preset = capture_presets.find(self.config, name)
+        if preset is None:
+            return False
+        restart = capture_presets.apply_to_config(self.config, preset)
+        cfg = self.config
+        self.smart_bar.set_state(cfg.smart_mode, cfg.smart_peaking, cfg.smart_peaking_sensitivity, cfg.smart_best_shot)
+        self.pro.set_smart_mode(cfg.smart_mode)
+        self._apply_smart(save=False)
+        if not self._quad:
+            self.control_bar.split_count = int(cfg.split_count)
+        self.control_bar.set_preset_name(preset["name"])
+        self._save_config_quietly()
+        if restart:
+            self._restart_camera()                    # 해상도가 바뀌면 카메라를 다시 연다 (조정값은 열 때 적용)
+        else:
+            self._send_camera_props(cfg.camera_props)  # 촬영을 멈추지 않고 카메라 값만 바꾼다
+        self.statusBar().showMessage(f"촬영 모드: {preset['name']}", 3000)
+        return True
+
+    def _send_camera_props(self, props: dict) -> None:
+        if self.worker is None:
+            return
+        for key, value in capture_presets.device_requests(props or {}).items():
+            self.worker.request_property(key, value)
+
+    def _save_config_quietly(self) -> None:
+        try:
+            self.config.save()
+        except Exception:  # noqa: BLE001
+            log.warning("config save failed", exc_info=True)
+
+    # ---- 전송 (폴더 · 클라우드 · PACS) ----
+    def _on_send(self) -> None:
+        from app.services import send_service as ss
+        from app.ui.send_dialog import SendDialog
+        p = self._current_patient
+        if p is None:
+            QMessageBox.information(self, "전송", "환자를 먼저 선택하세요.")
+            return
+        caps = self.thumbnail_panel.selected_captures()
+        if not caps:
+            QMessageBox.information(self, "전송", "오른쪽 사진 목록에서 보낼 사진을 한 번씩 눌러 고른 뒤 '전송'을 누르세요.")
+            return
+        dlg = SendDialog(self.config, len(caps), self)
+        if not dlg.exec():
+            return
+        formats = dlg.selected_formats()
+        note = self.db.exam_notes.get(p.id, datetime.now().strftime("%Y-%m-%d"))
+        notes = "\n".join(x for x in ((note or {}).get("exam_type") and f"[{note['exam_type']}]",
+                                         (note or {}).get("notes")) if x)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            res = ss.send(caps, p, self.config, formats=formats, notes=notes, pdf_writer=self._write_send_pdf)
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.events.log("send", method=self.config.send_method, count=len(caps), sent=len(res.sent))
+        box = QMessageBox(QMessageBox.Icon.Information if res.ok else QMessageBox.Icon.Warning, "전송",
+                          res.summary(), QMessageBox.StandardButton.Ok, self)
+        folder = None
+        if self.config.send_method in ("folder", "cloud") and res.sent:
+            folder = os.path.dirname(res.sent[0])
+            box.setInformativeText(folder)
+            b_open = box.addButton("폴더 열기", QMessageBox.ButtonRole.ActionRole)
+        else:
+            b_open = None
+        box.exec()
+        if b_open is not None and box.clickedButton() is b_open and folder:
+            from app.ui.image_viewer import open_in_default_player
+            open_in_default_player(folder)
+
+    def _write_send_pdf(self, path: str, patient, items: list, notes: str) -> None:
+        from app.ui.pro.pro_workspace import caption_of
+        printer = print_util.make_pdf_printer(path)
+        b = app_brand.current()
+        print_util.render_report(printer, patient, [(img, caption_of(cap)) for img, cap in items],
+                                 clinic=getattr(self.config, "clinic_name", "") or "", title=b["report_title"],
+                                 rule_color=b.get("report_rule", "#0d9488"), notes=notes)
 
     def _on_clear_quad(self) -> None:
         self.quad_view.reset()
+        self.control_bar.set_quad_full(False)
         self.control_bar.set_status("4분할 초기화")
 
     def _on_capture(self) -> None:
@@ -1211,6 +1491,7 @@ class MainWindow(QMainWindow):
         if self._quad:
             self.quad_view.set_live_frame(shot.frame)
             if self.quad_view.freeze_active(eye):
+                self.control_bar.set_quad_full(self.quad_view.is_full())
                 self.control_bar.set_status(f"자동 정지 → 4분할 칸 채움 (초점 {pct:.0f})")
             return
         self._single_frozen = True
@@ -1324,6 +1605,9 @@ class MainWindow(QMainWindow):
 
     def _toggle_theme(self) -> None:
         self.config.theme = "dark" if self.config.theme != "dark" else "light"
+        self._apply_theme()
+
+    def _apply_theme(self) -> None:
         app = QApplication.instance()
         if app is not None:
             app.setStyleSheet(build_qss(self.config.theme))
@@ -1334,10 +1618,42 @@ class MainWindow(QMainWindow):
         except Exception:  # noqa: BLE001
             log.warning("theme save failed", exc_info=True)
 
-    def _open_settings(self) -> None:
-        dlg = SettingsDialog(self.config, self)
-        if dlg.exec():
+    def _open_settings(self, tab: str | None = None) -> None:
+        old_theme = self.config.theme
+        old_props = dict(self.config.camera_props or {})
+        old_active = capture_presets.find(self.config, self.config.active_preset or "")
+        dlg = SettingsDialog(self.config, self, actions={
+            "camera": lambda: self._restart_camera(),
+            "shortcuts": lambda parent: self._open_shortcuts(parent),
+            "samples": lambda parent: self._import_samples(parent),
+            "camera_props": lambda props: self._send_camera_props(props),
+        })
+        if tab:
+            dlg.show_tab(tab)
+        accepted = dlg.exec()
+        if not accepted:
+            if getattr(dlg, "previewed", False):
+                self._send_camera_props(old_props)    # 미리보기로 바꾼 카메라 값 되돌리기
+            return
+        if accepted:
             dlg.apply_to_config()
+            new_active = capture_presets.find(self.config, self.config.active_preset or "")
+            if new_active is not None and new_active != old_active:
+                capture_presets.apply_to_config(self.config, new_active)    # 지금 모드를 고쳤으면 바로 반영
+                cfg = self.config
+                self.smart_bar.set_state(cfg.smart_mode, cfg.smart_peaking, cfg.smart_peaking_sensitivity,
+                                         cfg.smart_best_shot)
+                self._apply_smart(save=False)
+            self.control_bar.set_preset_name(self.config.active_preset or capture_presets.DEFAULT_NAME)
+            if self.config.theme != old_theme:
+                self._apply_theme()
+            self._set_smart_bar_visible(self.config.smart_bar_visible, save=False)
+            self.thumbnail_panel.set_split_eyes(bool(self.config.thumbs_split_eyes))
+            if not self._quad:
+                self.control_bar.split_count = int(self.config.split_count or 4)
+            self.home.chk_skip.blockSignals(True)
+            self.home.chk_skip.setChecked(self.config.start_screen == "capture")
+            self.home.chk_skip.blockSignals(False)
             sounds.set_enabled(self.config.sounds_enabled)
             self.thumbnail_panel.newest_on_top = self.config.newest_on_top
             cfg = self.config
@@ -1352,12 +1668,13 @@ class MainWindow(QMainWindow):
             self.events.log("settings", source="dialog")
             self._restart_camera()
 
-    def _import_samples(self) -> None:
+    def _import_samples(self, parent=None) -> None:
         """받아 둔 샘플 사진 폴더(질환별 하위 폴더 + metadata.json)를 질환별 샘플 환자로 등록."""
         from app.services.sample_import import import_samples
+        parent = parent if parent is not None and parent is not False else self
         start = Path.home() / "Downloads"           # 받아 둔 폴더는 보통 '다운로드'에 있다
         folder = QFileDialog.getExistingDirectory(
-            self, "샘플 사진 폴더 선택 (질환별 하위 폴더 + metadata.json)",
+            parent, "샘플 사진 폴더 선택 (질환별 하위 폴더 + metadata.json)",
             str(start if start.is_dir() else Path.home()))
         if not folder:
             return
@@ -1366,12 +1683,12 @@ class MainWindow(QMainWindow):
             result = import_samples(self.db, self.config, folder)
         except (OSError, ValueError) as e:
             QApplication.restoreOverrideCursor()
-            QMessageBox.warning(self, "샘플 사진", f"샘플 사진을 가져오지 못했습니다.\n{e}")
+            QMessageBox.warning(parent, "샘플 사진", f"샘플 사진을 가져오지 못했습니다.\n{e}")
             return
         QApplication.restoreOverrideCursor()
         self.patient_panel._reload()
         QMessageBox.information(
-            self, "샘플 사진",
+            parent, "샘플 사진",
             result.summary() + "\n\n환자 목록에서 '샘플 · 질환명' 환자를 고르면 사진을 볼 수 있습니다.")
 
     # ---- 종료 ----

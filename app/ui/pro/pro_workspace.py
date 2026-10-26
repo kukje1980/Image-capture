@@ -244,7 +244,7 @@ class ProWorkspace(QWidget):
         self.b_capture = self._btn("CAPTURE", "라이브 정지/재개 (Space)", True, "ProCapture", "freeze", ICON_ACCENT)
         self.b_save = self._btn("SAVE", "정지 영상을 환자 DB에 저장", icon="save")
         self.c_eye = QComboBox()
-        self.c_eye.addItems(["안구 미지정", "OD 우안", "OS 좌안", "OU 양안"])
+        self.c_eye.addItems(["안구 미지정", "OD 우안", "OS 좌안"])
         self.c_eye.setToolTip("저장할 영상의 안구 방향")
         self.c_smart = QComboBox()
         self.c_smart.addItems(["Smart 끄기", "Smart 자동 정지", "Smart 자동 저장"])
@@ -1180,7 +1180,7 @@ class ProWorkspace(QWidget):
     def current_eye(self) -> str:
         if self.get_eye is not None:
             return self.get_eye()
-        return ["NA", "OD", "OS", "OU"][self.c_eye.currentIndex()]
+        return ["NA", "OD", "OS"][self.c_eye.currentIndex()]
 
     def _require_patient(self) -> bool:
         if self._patient is None:
