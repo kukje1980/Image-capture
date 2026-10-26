@@ -306,7 +306,7 @@ def test_window_import_export_delete_backup(qapp, win, tmp_path):
     w = win
     import cv2
     src = tmp_path / "외부.png"
-    cv2.imwrite(str(src), _img(150, 50, 70))
+    cv2.imencode(".png", _img(150, 50, 70))[1].tofile(str(src))     # 한글 경로 (Windows 에서 imwrite 불가)
     assert w.import_images([str(src), str(tmp_path / "없음.png")]) == 1
     assert w.thumbs.count() == 1 and w.thumbs.captures()[0].note == "가져옴"
     w.thumbs.list.selectAll()
