@@ -163,6 +163,7 @@ class ProWorkspace(QWidget):
         self._frozen = False
         self._frozen_frame = None
         self._pair = (None, None)
+        self._keep_pair = False          # '샘플과 비교' 로 정한 짝을 MULTI 선택으로 덮어쓰지 않게
         self._adj = Adjust()
         self._tool = "pan"
         # 스마트 캡처 · 분석 상태
@@ -239,6 +240,10 @@ class ProWorkspace(QWidget):
             b.clicked.connect(lambda _=False, m=m: self.set_mode(m))
             sgl.addWidget(b)
         tl.addWidget(seg)
+        self.b_sample = self._btn("샘플과 비교", "현재 영상과 질환별 샘플 사진을 나란히 비교 (상단 '샘플' 로 가져온 사진)",
+                                  icon="image")
+        self.b_sample.clicked.connect(lambda: self.compare_with_sample())
+        tl.addWidget(self.b_sample)
         tl.addWidget(self._sep())
 
         self.b_capture = self._btn("CAPTURE", "라이브 정지/재개 (Space)", True, "ProCapture", "freeze", ICON_ACCENT)
@@ -693,7 +698,8 @@ class ProWorkspace(QWidget):
 
     # ================= 모드 =================
     def set_mode(self, mode: str) -> None:
-        if mode == "compare" and not self._prepare_compare():
+        keep, self._keep_pair = self._keep_pair, False
+        if mode == "compare" and not keep and not self._prepare_compare():
             mode = self._mode if self._mode != "compare" else "multi"
         self._mode = mode
         self.stack.setCurrentIndex(MODES.index(mode))
@@ -764,7 +770,9 @@ class ProWorkspace(QWidget):
                 f"페이지 {self.multi.page() + 1} / {self.multi.page_count()}  ·  "
                 f"{self.multi.per_page()}장 보기\n전체 {len(self._caps)}장  ·  선택 {len(self.multi.selection())}장")
         elif self._mode == "compare":
-            rows = [f"{'좌' if i == 0 else '우'}: {c.captured_at} {_EYE_KO.get(c.eye or '', '')}"
+            rows = [f"{'좌' if i == 0 else '우'}: "
+                    + (f"{getattr(self.db.patients.get(c.patient_id), 'name', '샘플')} (참고용 · 저장 안 됨)"
+                       if self._foreign(c) else f"{c.captured_at} {_EYE_KO.get(c.eye or '', '')}")
                     for i, c in enumerate(self._pair) if c]
             self.lbl_img.setText("2장 비교 (확대·이동 동기화)\n" + "\n".join(rows))
         elif self._mode == "live":
@@ -822,6 +830,53 @@ class ProWorkspace(QWidget):
             cv.set_caption(caption_of(cap, num, len(self._caps)))
         self.analysis.lbl_cmp.setText("")
         self.set_ghost(self.analysis.s_ghost.value())
+        return True
+
+    def _foreign(self, cap) -> bool:
+        """현재 환자의 영상이 아닌 것 (샘플과 비교의 샘플 사진) — 이 환자 이름으로 저장·내보내지 않는다."""
+        return cap is not None and self._patient is not None and cap.patient_id != self._patient.id
+
+    def compare_with_sample(self, sample=None) -> bool:
+        """왼쪽 = 현재 환자 영상, 오른쪽 = 질환별 샘플 사진. sample 을 주지 않으면 고르는 창을 띄운다."""
+        from app.ui.pro.sample_picker import SamplePicker, is_sample_capture, sample_patients
+
+        if not self._require_patient():
+            return False
+        if self._mode == "compare" and self._pair[0] is not None and not self._foreign(self._pair[0]):
+            left = self._pair[0]                       # 비교 중이면 왼쪽은 그대로, 오른쪽만 샘플로
+        else:
+            sel = self.multi.selection() if self._mode == "multi" else []
+            i = sel[0] if len(sel) == 1 else self._idx
+            left = self._caps[i] if 0 <= i < len(self._caps) else None
+        if left is None:
+            QMessageBox.information(self, "샘플과 비교", "먼저 이 환자의 영상을 촬영하거나 MULTI 에서 영상 1장을 고르세요.")
+            return False
+        if sample is None:
+            pats = sample_patients(self.db)
+            if not pats:
+                QMessageBox.information(self, "샘플과 비교",
+                                        "가져온 샘플 사진이 없습니다.\n"
+                                        "상단 '샘플' 버튼으로 질환별 샘플 사진 폴더를 먼저 가져오세요.")
+                return False
+            prefer = "" if is_sample_capture(self.db, left) else (self._patient.diagnosis or "")
+            dlg = SamplePicker(self.db, pats, prefer=prefer, parent=self)
+            if not dlg.exec() or dlg.chosen() is None:
+                return False
+            sample = dlg.chosen()
+        sp = self.db.patients.get(sample.patient_id)
+        self._pair = (left, sample)
+        num = self._caps.index(left) + 1 if left in self._caps else None
+        self.cmp_left.set_image(load_bgr(left.file_path))
+        self.cmp_left.set_caption(caption_of(left, num, len(self._caps)))
+        self.cmp_right.set_image(load_bgr(sample.file_path))
+        first = (sample.note or "").splitlines()[0] if sample.note else ""
+        self.cmp_right.set_caption(f"{sp.name if sp else '샘플'}  ·  {first}")
+        for cv in (self.cmp_left, self.cmp_right):
+            cv.set_adjust(self._adj)
+        self.analysis.lbl_cmp.setText("")
+        self.set_ghost(self.analysis.s_ghost.value())
+        self._keep_pair = True
+        self.set_mode("compare")
         return True
 
     # ================= 보정 · 편집 대상 =================
@@ -1453,7 +1508,7 @@ class ProWorkspace(QWidget):
             targets = []
         saved = []
         for cv, src in targets:
-            if cv.image() is None or src is None:
+            if cv.image() is None or src is None or self._foreign(src):
                 continue
             if not cv.is_modified():
                 continue

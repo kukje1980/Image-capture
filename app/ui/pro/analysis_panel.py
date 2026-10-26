@@ -287,6 +287,9 @@ class AnalysisPanel(QWidget):
             eye = ws._caps[ws._idx].eye or "NA"
         elif ws.mode() == "compare":
             src = ws._pair[0] if cv is ws.cmp_left else ws._pair[1]
+            if ws._foreign(src):
+                QMessageBox.information(self, "저장 안 함", "샘플 사진의 분석 결과는 환자 영상으로 저장하지 않습니다.")
+                return None
             eye = (src.eye if src else None) or "NA"
         else:
             eye = ws.current_eye()
@@ -416,7 +419,7 @@ class AnalysisPanel(QWidget):
             img = cv.render_to_bgr() if derived else cv.original()
             return [(img, ws._caps[ws._idx], derived)]
         if ws.mode() == "compare":
-            return [(load_bgr(c.file_path), c, False) for c in ws._pair if c is not None]
+            return [(load_bgr(c.file_path), c, False) for c in ws._pair if c is not None and not ws._foreign(c)]
         sel = ws.multi.selection() or ws.multi.page_indices()
         return [(load_bgr(ws._caps[i].file_path), ws._caps[i], False) for i in sel]
 
