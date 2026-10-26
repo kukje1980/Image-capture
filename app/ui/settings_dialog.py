@@ -1,7 +1,9 @@
 """설정 다이얼로그: 소스 모드, 카메라, 해상도, 사진 형식, export 폴더, 효과음."""
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -19,6 +21,12 @@ from PySide6.QtWidgets import (
 
 from app.capture.frame_utils import device_names, enumerate_devices, is_sony
 
+SOURCE_MODES = (
+    ("device", "실제 카메라 (device)"),
+    ("file", "동영상 파일 재생 (file)"),
+    ("synthetic", "합성 테스트 영상 (synthetic)"),
+)
+
 
 class SettingsDialog(QDialog):
     def __init__(self, config, parent=None):
@@ -29,24 +37,29 @@ class SettingsDialog(QDialog):
 
         form = QFormLayout()
         self.source_mode = QComboBox()
-        self.source_mode.addItems(["device", "file", "synthetic"])
-        self.source_mode.setCurrentText(config.source_mode)
+        for key, label in SOURCE_MODES:
+            self.source_mode.addItem(label, key)
+        i = self.source_mode.findData(config.source_mode)
+        self.source_mode.setCurrentIndex(i if i >= 0 else 0)
 
+        # 카메라 목록: 소스 모드와 관계없이 항상 보여 준다 (합성/파일 모드에서도 고를 수 있게)
         self.camera_index = QComboBox()
-        self.camera_index.setEditable(True)
-        names = device_names() if config.source_mode == "device" else []
-        devs = list(range(len(names))) if names else (
-            enumerate_devices(backend=config.camera_backend) if config.source_mode == "device" else [])
-        self._names = names
-        if devs:
-            for d in devs:
-                label = f"{d}: {'★ ' if is_sony(names[d]) else ''}{names[d]}" if d < len(names) else str(d)
-                self.camera_index.addItem(label, d)
-            i = self.camera_index.findData(config.camera_index)
-            if i >= 0:
-                self.camera_index.setCurrentIndex(i)
-        else:
-            self.camera_index.addItem(str(config.camera_index), config.camera_index)
+        self.camera_index.activated.connect(self._on_camera_picked)
+        self.btn_rescan = QPushButton("새로고침")
+        self.btn_rescan.setToolTip("카메라를 연결·분리한 뒤 목록을 다시 읽습니다")
+        self.btn_rescan.clicked.connect(self._rescan)
+        cam_row = QHBoxLayout()
+        cam_row.setContentsMargins(0, 0, 0, 0)
+        cam_row.addWidget(self.camera_index, 1)
+        cam_row.addWidget(self.btn_rescan)
+        cam_w = QWidget()
+        cam_w.setLayout(cam_row)
+        self.camera_note = QLabel()
+        self.camera_note.setObjectName("Muted")
+        self.camera_note.setWordWrap(True)
+        self.camera_note.hide()
+        self._names: list[str] = []
+        self._fill_cameras(device_names())
 
         self.width = QSpinBox()
         self.width.setRange(320, 7680)
@@ -80,7 +93,8 @@ class SettingsDialog(QDialog):
         self.agent_logging.setChecked(bool(config.agent_logging))
 
         form.addRow("소스 모드", self.source_mode)
-        form.addRow("카메라", self.camera_index)
+        form.addRow("카메라", cam_w)
+        form.addRow("", self.camera_note)
         form.addRow("가로 해상도", self.width)
         form.addRow("세로 해상도", self.height)
         form.addRow("사진 형식", self.photo_format)
@@ -104,6 +118,62 @@ class SettingsDialog(QDialog):
                              "   USB-C 로 연결하면 ★ 표시로 나타납니다 (4K 는 해상도 3840×2160)."))
         lay.addWidget(btns)
 
+    # ---- 카메라 목록 ----
+    def _fill_cameras(self, names: list[str]) -> None:
+        cfg = self.config
+        prev = self.camera_index.currentData()
+        self._names = list(names)
+        self.camera_index.clear()
+        devs = list(range(len(names)))
+        if not devs and self.source_mode.currentData() == "device":
+            # 이름을 못 읽는 환경: 번호로 열어 보며 찾는다 (느릴 수 있음)
+            devs = enumerate_devices(backend=cfg.camera_backend)
+        for d in devs:
+            if d < len(names):
+                self.camera_index.addItem(f"{d}: {'★ ' if is_sony(names[d]) else ''}{names[d]}", d)
+            else:
+                self.camera_index.addItem(f"{d}: 카메라 {d}", d)
+        # 이름을 아예 못 읽으면 번호를 직접 입력할 수 있게
+        self.camera_index.setEditable(not names)
+        if self.camera_index.count() == 0:
+            self.camera_index.addItem(str(cfg.camera_index), cfg.camera_index)
+        # 선택: 저장된 이름 → 이전 선택 → 저장된 번호
+        want = None
+        if cfg.camera_name and cfg.camera_name in names:
+            want = names.index(cfg.camera_name)
+        elif prev is not None:
+            want = prev
+        else:
+            want = cfg.camera_index
+        i = self.camera_index.findData(want)
+        if i >= 0:
+            self.camera_index.setCurrentIndex(i)
+        # 저장된 카메라가 지금 목록에 없으면 분명히 알린다 (다른 장치로 몰래 바뀌지 않게)
+        if cfg.camera_name and names and cfg.camera_name not in names:
+            self.camera_note.setText(
+                f"⚠ 저장된 카메라 '{cfg.camera_name}' 가 지금 연결되어 있지 않습니다. "
+                "카메라를 켜고 연결한 뒤 '새로고침'을 누르거나, "
+                "위 목록에서 다른 카메라를 고르세요.")
+            self.camera_note.show()
+        elif not names and not devs:
+            self.camera_note.setText(
+                "⚠ 카메라를 찾지 못했습니다. 연결을 확인하고 '새로고침'을 누르세요.")
+            self.camera_note.show()
+        else:
+            self.camera_note.hide()
+
+    def _rescan(self) -> None:
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            self._fill_cameras(device_names())
+        finally:
+            QApplication.restoreOverrideCursor()
+
+    def _on_camera_picked(self, _index: int) -> None:
+        # 카메라를 고르면 실제 장치 모드로 (합성/파일 모드에 머물러 고른 카메라가 안 나오는 일 방지)
+        if self.source_mode.currentData() != "device":
+            self.source_mode.setCurrentIndex(self.source_mode.findData("device"))
+
     def _browse(self) -> None:
         d = QFileDialog.getExistingDirectory(self, "저장 폴더 선택", self.export.text() or "")
         if d:
@@ -111,7 +181,7 @@ class SettingsDialog(QDialog):
 
     def apply_to_config(self):
         c = self.config
-        c.source_mode = self.source_mode.currentText()
+        c.source_mode = self.source_mode.currentData() or "device"
         data = self.camera_index.currentData()
         if data is None:
             try:

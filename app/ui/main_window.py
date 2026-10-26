@@ -505,12 +505,16 @@ class MainWindow(QMainWindow):
             # 저장한 카메라가 안 보이면 같은 번호의 다른 장치(노트북 웹캠 등)로 몰래 바뀌지 않게 알린다
             cur = names[cfg.camera_index] if 0 <= cfg.camera_index < len(names) else "없음"
             msg = (f"설정한 카메라 '{cfg.camera_name}' 를 찾지 못했습니다.\n"
-                   f"연결을 확인하세요. 지금은 '{cur}' 로 연결합니다 (설정에서 바꿀 수 있습니다).")
+                   f"카메라 전원과 USB 연결을 확인하세요. 지금은 '{cur}' 로 연결합니다.\n\n"
+                   f"연결된 카메라: {', '.join(names)}")
             log.warning(msg)
-            self.statusBar().showMessage(msg.replace("\n", " "), 15000)
+            self.statusBar().showMessage(msg.split("\n\n")[0].replace("\n", " "), 15000)
             box = QMessageBox(QMessageBox.Icon.Warning, "카메라", msg, QMessageBox.StandardButton.Ok, self)
+            btn_pick = box.addButton("카메라 선택…", QMessageBox.ButtonRole.ActionRole)
+            btn_pick.clicked.connect(lambda: QTimer.singleShot(0, self._open_settings))
             box.setModal(False)                 # 시작을 막지 않게 (창은 떠 있고 확인만 누르면 됨)
             box.show()
+            self._camera_warning = box
             return
         elif not cfg.camera_name:
             idx = find_sony_index(names)

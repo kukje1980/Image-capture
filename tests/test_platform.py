@@ -60,6 +60,16 @@ DSHOW_OLD = '''[dshow @ 0x1] DirectShow video devices (some may be both video an
 [dshow @ 0x1] DirectShow audio devices
 [dshow @ 0x1]  "Mic"
 '''
+# ffmpeg 7: 캡처보드는 (video, audio), 연결 전 가상 카메라는 (none) — 빠지면 뒤 장치 번호가 어긋난다
+DSHOW_MIXED = '''[in#0 @ 000002] "AVerMedia HD Capture GC573" (video, audio)
+[in#0 @ 000002]   Alternative name "@device_pnp_a"
+[in#0 @ 000002] "Camera Sensor Front" (video)
+[in#0 @ 000002]   Alternative name "@device_pnp_b"
+[in#0 @ 000002] "Sony Camera (Imaging Edge)" (none)
+[in#0 @ 000002]   Alternative name "@device_sw_{860BB310-5D01-11D0-BD3B-00A0C911CE86}"
+[in#0 @ 000002] "Microphone Array (Realtek(R) Audio)" (audio)
+[in#0 @ 000002] "Line In" (none)
+'''
 AVF = '''[AVFoundation indev @ 0x7f] AVFoundation video devices:
 [AVFoundation indev @ 0x7f] [0] FaceTime HD Camera
 [AVFoundation indev @ 0x7f] [1] ZV-E10M2
@@ -73,6 +83,9 @@ def test_device_name_parsing_and_sony_pick():
     from app.capture import frame_utils as fu
     assert fu.parse_dshow_devices(DSHOW_NEW) == ["Integrated Camera", "ZV-E10M2"]
     assert fu.parse_dshow_devices(DSHOW_OLD) == ["USB Video", "ILME-FX3"]
+    assert fu.parse_dshow_devices(DSHOW_MIXED) == [
+        "AVerMedia HD Capture GC573", "Camera Sensor Front", "Sony Camera (Imaging Edge)"]
+    assert fu.find_sony_index(fu.parse_dshow_devices(DSHOW_MIXED)) == 2
     assert fu.parse_avfoundation_devices(AVF) == ["FaceTime HD Camera", "ZV-E10M2"]
     assert fu.find_sony_index(["FaceTime HD Camera", "ZV-E10M2"]) == 1
     assert fu.find_sony_index(["USB Video", "ILME-FX3"]) == 1
