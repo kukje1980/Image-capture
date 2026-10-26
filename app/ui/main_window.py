@@ -27,7 +27,7 @@ from app.capture.frame_utils import device_names, find_sony_index
 from app.capture.sources import DeviceSource, FileSource, SyntheticSource
 from app.capture.video_recorder import VideoRecorder
 from app.services.capture_service import CaptureService
-from app.ui.control_bar import ControlBar
+from app.ui.control_bar import ControlBar, tool_button
 from app.ui.image_viewer import ImageViewerDialog
 from app.ui.patient_panel import PatientPanel
 from app.ui.pro.pro_workspace import ProWorkspace
@@ -150,12 +150,12 @@ class MainWindow(QMainWindow):
         self._install_shortcuts()
 
     def _build_topbar(self) -> QFrame:
-        """브랜드 + 촬영/Pro 검토 전환 스위치 + 설정·재연결·테마."""
+        """브랜드 + 아이콘 메뉴: [촬영 | Pro 검토] [신규 환자 | 정보 수정] … [카메라 | 단축키 | 설정 | 테마]."""
         bar = QFrame()
         bar.setObjectName("TopBar")
         lay = QHBoxLayout(bar)
-        lay.setContentsMargins(16, 9, 12, 9)
-        lay.setSpacing(12)
+        lay.setContentsMargins(16, 6, 12, 6)
+        lay.setSpacing(10)
         b = self.brand
         self.brand_logo = None
         if app_brand.asset(b.get("logo")):
@@ -179,7 +179,20 @@ class MainWindow(QMainWindow):
             brand.addWidget(t1)
             brand.addWidget(t2)
             lay.addLayout(brand)
-        lay.addSpacing(12)
+        lay.addSpacing(10)
+
+        def nav(text, icon_name, tip, color=ICON, checkable=False):
+            btn = tool_button(text, icon_name, "NavBtn", checkable=checkable, color=color, tip=tip,
+                              icon_size=20, min_width=58)
+            return btn
+
+        def seg():
+            f = QFrame()
+            f.setObjectName("NavSeg")
+            sl = QHBoxLayout(f)
+            sl.setContentsMargins(3, 3, 3, 3)
+            sl.setSpacing(2)
+            return f, sl
 
         # 촬영 / Pro 검토 전환 (act_pro 는 체크형 액션으로 유지)
         self.act_pro = QAction("Pro 검토", self)
@@ -187,48 +200,46 @@ class MainWindow(QMainWindow):
         self.act_pro.setToolTip("전문가용 영상 검토 화면 (MULTI·비교·보정·편집·인쇄)")
         self.act_pro.toggled.connect(self._on_pro_toggled)
         self.addAction(self.act_pro)
-        sw = QFrame()
-        sw.setObjectName("ModeSwitch")
-        sl = QHBoxLayout(sw)
-        sl.setContentsMargins(3, 3, 3, 3)
-        sl.setSpacing(2)
-        self.btn_mode_capture = QPushButton(icons.gap("촬영"))
-        self.btn_mode_pro = QPushButton(icons.gap("Pro 검토"))
+        sw, sl = seg()
+        self.btn_mode_capture = nav("촬영", "camera", "실시간 촬영 화면", checkable=True)
+        self.btn_mode_pro = nav("Pro 검토", "review", self.act_pro.toolTip(), checkable=True)
         grp = QButtonGroup(self)
-        for b, name in ((self.btn_mode_capture, "camera"), (self.btn_mode_pro, "review")):
-            b.setObjectName("ModeBtn")
-            b.setCheckable(True)
-            b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            ic = icons.icon(name, ICON, 16)
-            ic.addPixmap(icons.pixmap(name, ICON_ACCENT, 16), ic.Mode.Normal, ic.State.On)
-            b.setIcon(ic)
-            b.setIconSize(QSize(15, 15))
-            grp.addButton(b)
-            sl.addWidget(b)
+        for btn, name in ((self.btn_mode_capture, "camera"), (self.btn_mode_pro, "review")):
+            ic = icons.icon(name, ICON, 20)
+            ic.addPixmap(icons.pixmap(name, ICON_ACCENT, 20), ic.Mode.Normal, ic.State.On)
+            btn.setIcon(ic)
+            grp.addButton(btn)
+            sl.addWidget(btn)
         self.btn_mode_capture.setChecked(True)
-        self.btn_mode_pro.setToolTip(self.act_pro.toolTip())
         self.btn_mode_capture.clicked.connect(lambda: self.act_pro.setChecked(False))
         self.btn_mode_pro.clicked.connect(lambda: self.act_pro.setChecked(True))
         lay.addWidget(sw)
+
+        # 환자: 신규 등록 · 정보 수정 (Pro 검토 바로 옆)
+        pw, pl = seg()
+        self.btn_new_patient = nav("신규 환자", "user-plus", "신규 환자 등록", color=ICON_ACCENT)
+        self.btn_edit_patient = nav("정보 수정", "user-edit", "선택한 환자 정보 수정")
+        self.btn_new_patient.clicked.connect(lambda: self.patient_panel.new_patient())
+        self.btn_edit_patient.clicked.connect(lambda: self.patient_panel.edit_patient())
+        pl.addWidget(self.btn_new_patient)
+        pl.addWidget(self.btn_edit_patient)
+        lay.addWidget(pw)
         lay.addStretch(1)
 
-        def tool(text, icon_name, tip, slot):
-            b = QPushButton(icons.gap(text))
-            b.setObjectName("IconBtn")
-            b.setIcon(icons.icon(icon_name, ICON, 16))
-            b.setIconSize(QSize(16, 16))
-            b.setToolTip(tip)
-            b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            b.clicked.connect(slot)
-            lay.addWidget(b)
-            return b
-
-        tool("카메라 재연결", "videocam", "캡처 장비 다시 연결", self._restart_camera)
-        tool("", "keyboard", "단축키 설정 (캡처·녹화·안구 등)", self._open_shortcuts)
-        tool("설정", "sliders", "카메라·저장 위치·형식 설정", self._open_settings)
+        tw, tl = seg()
+        self.btn_camera = nav("카메라", "videocam", "캡처 장비 다시 연결")
+        self.btn_keys = nav("단축키", "keyboard", "단축키 설정 (캡처·녹화·안구 등)")
+        self.btn_settings = nav("설정", "sliders", "카메라·저장 위치·형식 설정")
+        self.btn_theme = nav("테마", "sun", "밝은/어두운 테마 전환")
+        self.btn_camera.clicked.connect(self._restart_camera)
+        self.btn_keys.clicked.connect(self._open_shortcuts)
+        self.btn_settings.clicked.connect(self._open_settings)
         self.act_theme = QAction(self)
         self.act_theme.triggered.connect(self._toggle_theme)
-        self.btn_theme = tool("", "sun", "밝은/어두운 테마 전환", self._toggle_theme)
+        self.btn_theme.clicked.connect(self._toggle_theme)
+        for btn in (self.btn_camera, self.btn_keys, self.btn_settings, self.btn_theme):
+            tl.addWidget(btn)
+        lay.addWidget(tw)
         self._sync_theme_button()
         return bar
 
@@ -257,7 +268,7 @@ class MainWindow(QMainWindow):
 
     def _sync_theme_button(self) -> None:
         dark = self.config.theme == "dark"
-        self.btn_theme.setIcon(icons.icon("sun" if dark else "moon", ICON, 16))
+        self.btn_theme.setIcon(icons.icon("sun" if dark else "moon", ICON, 20))
         self.act_theme.setText("☀ 라이트 모드" if dark else "🌙 다크 모드")
 
     def _update_rec_hud(self) -> None:
@@ -308,7 +319,8 @@ class MainWindow(QMainWindow):
     def _apply_key_hints(self) -> None:
         cb = self.control_bar
         hints = {"capture": cb.btn_capture, "record": cb.btn_record, "pause": cb.btn_pause,
-                 "freeze": cb.btn_freeze, "quad": cb.btn_quad, "mode": self.btn_mode_pro}
+                 "freeze": cb.btn_freeze, "quad": cb.btn_quad, "mode": self.btn_mode_pro,
+                 "newPatient": self.btn_new_patient}
         for aid, w in hints.items():
             base = w.property("tipBase")
             if base is None:
@@ -355,7 +367,7 @@ class MainWindow(QMainWindow):
             self.patient_panel.search.selectAll()
             self.patient_panel.combo.showPopup()
         elif aid == "newPatient":
-            self.patient_panel._new_patient()
+            self.patient_panel.new_patient()
 
     def _set_fullscreen(self, on: bool) -> None:
         """영상 전체 화면: 창을 화면 가득 채우고 상단바·환자 배너·썸네일·상태바를 숨김 (Esc 로 해제)."""
@@ -509,6 +521,7 @@ class MainWindow(QMainWindow):
     def _on_patient_changed(self, patient) -> None:
         self._current_patient = patient
         self.control_bar.set_capture_enabled(patient is not None)
+        self.btn_edit_patient.setEnabled(patient is not None)
         if self._recording:                  # 녹화 중에는 언제든 멈출 수 있어야 한다
             self.control_bar.btn_record.setEnabled(True)
         self.video_view.set_hud(patient=(f"{patient.name}  ·  {patient.chart_no}" if patient and patient.chart_no

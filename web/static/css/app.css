@@ -69,9 +69,13 @@ h1, h2, h3, h4 { margin: 0; }
 .brand-badge { font-size: 9.5px; padding: 1px 6px; border-radius: 4px; background: var(--accent-soft); color: var(--accent-strong); letter-spacing: .08em; }
 
 .modeswitch { display: inline-flex; padding: 3px; gap: 2px; background: var(--bg); border: 1px solid var(--rule); border-radius: 10px; }
-.ms-btn { display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 14px; border: 0; border-radius: 7px; background: transparent;
-  color: var(--ink-soft); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; transition: background .15s, color .15s; }
-.ms-btn:hover { color: var(--ink); }
+/* 상단 아이콘 메뉴: 아이콘 위 · 짧은 이름 아래 */
+.ms-btn { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; height: 46px; min-width: 60px; padding: 0 8px; border: 0; border-radius: 8px; background: transparent;
+  color: var(--ink-soft); font: inherit; font-size: 11px; font-weight: 600; cursor: pointer; transition: background .15s, color .15s; }
+.ms-btn .ic { width: 20px; height: 20px; }
+.ms-btn:hover:not(:disabled) { color: var(--ink); background: var(--panel-2); }
+.ms-btn:disabled { color: var(--disabled, var(--ink-muted)); opacity: .55; cursor: not-allowed; }
+.ms-btn.ms-accent .ic { color: var(--accent); }
 .ms-btn:focus-visible { outline: none; box-shadow: var(--ring); }
 body:not(.pro-on) #btn-mode-capture, body.pro-on #btn-pro { background: var(--raised); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.25), inset 0 0 0 1px var(--rule-strong); }
 body:not(.pro-on) #btn-mode-capture .ic, body.pro-on #btn-pro .ic { color: var(--accent); }
@@ -508,7 +512,7 @@ body.pro-on .pro-info { display: none; }   /* 환자 정보는 상단 배너에 
 .pchip .pb-meta { flex-wrap: nowrap; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; font-size: 11.5px; margin-top: 1px; }
 .pchip .pb-meta > span { margin-right: 10px; }
 @media (max-width: 1500px) { .topbar .folder-status { display: none; } }
-@media (max-width: 1280px) { #btn-patients { padding: 0 8px; } .pchip { max-width: 300px; } .modeswitch .ms-btn { padding: 0 10px; } }
+@media (max-width: 1280px) { .pchip { max-width: 300px; } .modeswitch .ms-btn { min-width: 52px; padding: 0 6px; } }
 
 dialog.pdrawer { margin: 0 0 0 auto; width: min(860px, 96vw); max-width: none; height: 100vh; max-height: 100vh; border-radius: 0;
   border: 0; border-left: 1px solid var(--rule-strong); display: none; flex-direction: column; }
@@ -546,7 +550,7 @@ dialog.pdrawer[open] { display: flex; animation: pd-in .18s ease-out; }
 .fs-eye { font-family: var(--font-mono); font-size: 13px; font-weight: 700; color: #c7cdd8; padding: 0 8px; }
 .video-frame:fullscreen .hud { top: 18px; } .video-frame:fullscreen .hud-tl { left: 18px; } .video-frame:fullscreen .hud-tr { right: 18px; }
 /* 상단바 줄바꿈 방지 — 칩만 줄어들고 나머지는 고정 */
-.topbar > .brand, .topbar > .modeswitch, #btn-patients, #btn-new-patient, .top-actions, .top-actions > * { flex-shrink: 0; }
+.topbar > .brand, .topbar > .modeswitch, .top-actions, .top-actions > * { flex-shrink: 0; }
 .ms-btn, .brand-title, .brand-sub, .tf, .th-title { white-space: nowrap; }
 .topbar .pchip { flex: 1 1 auto; min-width: 160px; }
 .top-actions { margin-left: 0; }
@@ -607,3 +611,10 @@ dialog.settings-pop { margin: 64px 14px auto auto; width: min(420px, 94vw); }
   body.meibo-on #btn-pause, body.meibo-on #btn-fullscreen, body.meibo-on #btn-freeze { font-size: 0; gap: 0; padding: 0 10px; }
   body.meibo-on .eye-seg small { display: none; }
 }
+
+/* 생년월일: 숫자 입력 + 달력 버튼 */
+.date-field { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center; }
+.date-field input[type="date"] { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.date-field .date-btn { height: 36px; width: 36px; }
+.form-row input.invalid { border-color: var(--record); box-shadow: 0 0 0 3px rgba(240, 82, 79, .18); }
+.date-hint { color: var(--record); font-size: 11.5px; font-weight: 600; }

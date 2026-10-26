@@ -66,6 +66,11 @@ _PATHS = {
     "shrink": '<path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/>',
     "trash": '<path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/>',
     "keyboard": '<rect x="2" y="5" width="20" height="14" rx="2.5"/><path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 12.5h.01M10 12.5h.01M14 12.5h.01M18 12.5h.01M8 16h8"/>',
+    "user-plus": '<circle cx="10" cy="8" r="4"/><path d="M2.5 21v-1a6 6 0 016-6h3a6 6 0 013.5 1.1"/><path d="M19 14v6M16 17h6"/>',
+    "user-edit": '<circle cx="10" cy="8" r="4"/><path d="M2.5 21v-1a6 6 0 016-6h3"/><path d="M20.2 12.3a1.6 1.6 0 012.3 2.3L16.5 20.6 13.5 21.3l.7-3z"/>',
+    "calendar": '<rect x="3" y="5" width="18" height="16" rx="2.5"/><path d="M3 10h18M8 3v4M16 3v4"/><path d="M8 14h.01M12 14h.01M16 14h.01M8 17.5h.01M12 17.5h.01"/>',
+    "home": '<path d="M3 11.5L12 4l9 7.5"/><path d="M5.5 10v10h13V10"/><path d="M10 20v-6h4v6"/>',
+    "stop": '<rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" stroke="none"/>',
     "download": '<path d="M12 3v12M7 10l5 5 5-5M4 21h16"/>',
 }
 

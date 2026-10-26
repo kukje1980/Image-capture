@@ -71,6 +71,14 @@ def build_qss(mode: str = "dark") -> str:
     QPushButton#ModeBtn:checked {{ background: {c['raised']}; color: {c['ink']}; border: 1px solid {c['rule_strong']}; }}
     QPushButton#IconBtn {{ background: transparent; border: 1px solid transparent; border-radius: 8px; padding: 6px 10px; color: {c['ink_soft']}; font-weight: 600; }}
     QPushButton#IconBtn:hover {{ background: {c['panel2']}; border-color: {c['rule']}; color: {c['ink']}; }}
+    QFrame#NavSeg {{ background: {c['bg']}; border: 1px solid {c['rule']}; border-radius: 11px; }}
+    QToolButton#NavBtn {{
+        background: transparent; border: 1px solid transparent; border-radius: 8px; padding: 4px 6px 3px;
+        color: {c['ink_soft']}; font-size: 11px; font-weight: 600;
+    }}
+    QToolButton#NavBtn:hover {{ background: {c['panel2']}; border-color: {c['rule']}; color: {c['ink']}; }}
+    QToolButton#NavBtn:checked {{ background: {c['raised']}; color: {c['ink']}; border: 1px solid {c['rule_strong']}; }}
+    QToolButton#NavBtn:disabled {{ color: {c['disabled']}; }}
 
     /* ---------- 패널 ---------- */
     QFrame#Panel, #ThumbnailPanel {{ background: {c['panel']}; border: 1px solid {c['rule']}; border-radius: 12px; }}
@@ -137,23 +145,48 @@ def build_qss(mode: str = "dark") -> str:
     QPushButton#EyeBtn[eye="OD"]:checked {{ color: {c['od']}; border: 1px solid {c['od']}; }}
     QPushButton#EyeBtn[eye="OS"]:checked {{ color: {c['os']}; border: 1px solid {c['os']}; }}
     QPushButton#EyeBtn[eye="OU"]:checked {{ color: {c['ou']}; border: 1px solid {c['ou']}; }}
-    QPushButton#ToolBtn, QPushButton#Pause, QPushButton#Freeze {{
-        background: transparent; border: 1px solid transparent; color: {c['ink_soft']}; padding: 8px 12px;
+    QToolButton#ToolBtn, QToolButton#Pause, QToolButton#Freeze, QToolButton#Record, QToolButton#Primary {{
+        background: transparent; border: 1px solid transparent; border-radius: 10px; padding: 4px 6px 3px;
+        color: {c['ink_soft']}; font-size: 11px; font-weight: 600;
     }}
-    QPushButton#ToolBtn:hover, QPushButton#Pause:hover, QPushButton#Freeze:hover {{ background: {c['panel2']}; border-color: {c['rule']}; color: {c['ink']}; }}
-    QPushButton#Pause:checked {{ background: {c['accent_soft']}; border-color: {c['accent']}; color: {c['accent_hover'] if mode == 'dark' else c['accent']}; }}
-    QPushButton#Freeze {{ color: {c['accent_hover'] if mode == 'dark' else c['accent']}; }}
-    QPushButton#ToolBtn:disabled, QPushButton#Pause:disabled, QPushButton#Freeze:disabled {{ color: {c['disabled']}; background: transparent; border-color: transparent; }}
-    QPushButton#Shutter {{
-        background: {c['accent']}; color: {c['accent_ink']}; border: none; border-radius: 23px;
-        padding: 6px 20px 6px 12px; min-height: 34px; font-size: 14px; font-weight: 700;
+    QToolButton#ToolBtn:hover, QToolButton#Pause:hover, QToolButton#Freeze:hover {{ background: {c['panel2']}; border-color: {c['rule']}; color: {c['ink']}; }}
+    QToolButton#Pause:checked {{ background: {c['accent_soft']}; border-color: {c['accent']}; color: {c['accent_hover'] if mode == 'dark' else c['accent']}; }}
+    QToolButton#Freeze {{ color: {c['accent_hover'] if mode == 'dark' else c['accent']}; }}
+    QToolButton#ToolBtn:disabled, QToolButton#Pause:disabled, QToolButton#Freeze:disabled, QToolButton#Record:disabled, QToolButton#Primary:disabled {{
+        color: {c['disabled']}; background: transparent; border-color: transparent; }}
+    QToolButton#Shutter {{
+        background: {c['accent']}; border: 3px solid {c['accent_soft']}; border-radius: 28px;
+        min-width: 50px; max-width: 50px; min-height: 50px; max-height: 50px; padding: 0;
     }}
-    QPushButton#Shutter:hover {{ background: {c['accent_hover']}; }}
-    QPushButton#Shutter:disabled {{ background: {c['rule']}; color: {c['disabled']}; }}
-    QPushButton#Record {{ background: transparent; color: {c['record']}; border: 1px solid transparent; padding: 8px 12px; font-weight: 700; }}
-    QPushButton#Record:hover {{ background: {c['record_soft']}; }}
-    QPushButton#Record:checked {{ background: {c['record']}; color: #ffffff; }}
-    QPushButton#Record:disabled {{ color: {c['disabled']}; background: transparent; }}
+    QToolButton#Shutter:hover {{ background: {c['accent_hover']}; border-color: {c['accent']}; }}
+    QToolButton#Shutter:pressed {{ background: {c['accent_hover']}; border-color: {c['accent_hover']}; }}
+    QToolButton#Shutter:disabled {{ background: {c['rule']}; border-color: {c['rule']}; }}
+    QToolButton#Record {{ color: {c['record']}; font-weight: 700; }}
+    QToolButton#Record:hover {{ background: {c['record_soft']}; }}
+    QToolButton#Record:checked {{ background: {c['record']}; color: #ffffff; }}
+    QToolButton#Primary {{ background: {c['accent']}; color: {c['accent_ink']}; font-weight: 700; }}
+    QToolButton#Primary:hover {{ background: {c['accent_hover']}; }}
+    QToolButton#DateBtn {{ background: {c['raised']}; border: 1px solid {c['rule_strong']}; border-radius: 8px; padding: 5px; }}
+    QToolButton#DateBtn:hover {{ background: {c['panel2']}; border-color: {c['ink_muted']}; }}
+    QLineEdit[invalid="true"] {{ border: 1px solid {c['record']}; }}
+
+    /* 달력 팝업 */
+    QFrame#DatePopup {{ background: {c['panel']}; border: 1px solid {c['rule_strong']}; border-radius: 10px; }}
+    QCalendarWidget {{ background: {c['panel']}; }}
+    QCalendarWidget QWidget#qt_calendar_navigationbar {{ background: {c['panel2']}; border-radius: 8px; }}
+    QCalendarWidget QToolButton {{
+        background: transparent; color: {c['ink']}; border: none; border-radius: 6px;
+        padding: 5px 10px; font-weight: 700; font-size: 13px; icon-size: 16px;
+    }}
+    QCalendarWidget QToolButton:hover {{ background: {c['raised']}; }}
+    QCalendarWidget QToolButton::menu-indicator {{ image: none; }}
+    QCalendarWidget QSpinBox {{ padding: 2px 6px; min-height: 16px; }}
+    QCalendarWidget QAbstractItemView {{
+        background: {c['panel']}; color: {c['ink']}; outline: none; border: none;
+        selection-background-color: {c['accent']}; selection-color: {c['accent_ink']};
+        alternate-background-color: {c['panel']};
+    }}
+    QCalendarWidget QAbstractItemView:disabled {{ color: {c['ink_muted']}; }}
 
     /* 상태바 */
     QStatusBar {{ background: {c['panel']}; border-top: 1px solid {c['rule']}; color: {c['ink_soft']}; }}
