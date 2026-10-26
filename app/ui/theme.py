@@ -9,8 +9,8 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from PySide6.QtCore import QRectF, Qt
-from PySide6.QtGui import QBrush, QColor, QIcon, QPainter, QPen, QPixmap
+from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtGui import QBrush, QColor, QIcon, QImage, QPainter, QPen, QPixmap, QPolygonF
 
 from app import brand as _brand
 
@@ -49,60 +49,28 @@ def palette(mode: str) -> dict:
     return {**base, **over}
 
 
-_CHEVRONS = {"down": "M6 9l6 6 6-6", "up": "M6 15l6-6 6 6"}
-
-
-def _chevron_file(direction: str, color: str) -> str:
-    """콤보박스·숫자칸 화살표 SVG 파일 경로 (QSS url() 용, '/' 구분).
-
-    QSS 로 드롭다운 테두리를 바꾸면 Fusion 이 그리던 기본 화살표가 사라져
-    목록 상자가 일반 입력칸처럼 보인다 → 화살표 이미지를 직접 지정한다."""
-    d = Path(tempfile.gettempdir()) / "slitlamp-ui"
-    f = d / f"chev-{direction}-{color.lstrip('#')}.svg"
-    if not f.exists():
-        d.mkdir(parents=True, exist_ok=True)
-        f.write_text('<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" '
-                     'viewBox="0 0 24 24" '
-                     f'fill="none" stroke="{color}" stroke-width="2.4" stroke-linecap="round" '
-                     f'stroke-linejoin="round"><path d="{_CHEVRONS[direction]}"/></svg>',
-                     encoding="utf-8")
-    return f.as_posix()
-
-
-def _arrow_qss(c: dict) -> str:
-    try:
-        down, up = _chevron_file("down", c["ink_soft"]), _chevron_file("up", c["ink_soft"])
-        down_off = _chevron_file("down", c["disabled"])
-    except OSError:                                   # 임시 폴더에 못 쓰면 화살표 없이 (기존 모양)
-        return ""
-    return f"""
-    QComboBox {{ padding-right: 30px; }}
-    QComboBox::drop-down {{
-        subcontrol-origin: padding; subcontrol-position: center right;
-        width: 26px; border: none; border-left: 1px solid {c['rule']};
-    }}
-    QComboBox::down-arrow {{ image: url("{down}"); width: 12px; height: 12px; }}
-    QComboBox::down-arrow:disabled {{ image: url("{down_off}"); }}
-    QComboBox::down-arrow:on {{ top: 1px; }}
-    QSpinBox, QDoubleSpinBox, QDateEdit {{ padding-right: 24px; }}
-    QSpinBox::up-button, QDoubleSpinBox::up-button, QDateEdit::up-button {{
-        subcontrol-origin: border; subcontrol-position: top right; width: 22px;
-        border: none; border-left: 1px solid {c['rule']};
-    }}
-    QSpinBox::down-button, QDoubleSpinBox::down-button, QDateEdit::down-button {{
-        subcontrol-origin: border; subcontrol-position: bottom right; width: 22px;
-        border: none; border-left: 1px solid {c['rule']};
-    }}
-    QSpinBox::up-arrow, QDoubleSpinBox::up-arrow, QDateEdit::up-arrow {{
-        image: url("{up}"); width: 10px; height: 10px; }}
-    QSpinBox::down-arrow, QDoubleSpinBox::down-arrow, QDateEdit::down-arrow {{
-        image: url("{down}"); width: 10px; height: 10px; }}
-    """
+def _arrow_file(color: str, up: bool) -> str:
+    """콤보·숫자칸의 ▼/▲ 화살표 그림 (QSS 는 image: url() 로만 그릴 수 있어 임시 폴더에 PNG 로 둔다)."""
+    path = Path(tempfile.gettempdir()) / "slitlamp-ui" / f"arrow-{'up' if up else 'down'}-{color.lstrip('#')}.png"
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        img = QImage(20, 20, QImage.Format.Format_ARGB32)
+        img.fill(Qt.GlobalColor.transparent)
+        p = QPainter(img)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(color))
+        pts = [(3, 14), (17, 14), (10, 5)] if up else [(3, 6), (17, 6), (10, 15)]
+        p.drawPolygon(QPolygonF([QPointF(x, y) for x, y in pts]))
+        p.end()
+        img.save(str(path))
+    return path.as_posix()
 
 
 def build_qss(mode: str = "dark") -> str:
     c = palette(mode)
-    qss = f"""
+    arrow_down, arrow_up = _arrow_file(c["ink_soft"], False), _arrow_file(c["ink_soft"], True)
+    return f"""
     QWidget {{
         background: {c['bg']};
         color: {c['ink']};
@@ -155,6 +123,12 @@ def build_qss(mode: str = "dark") -> str:
     QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QPlainTextEdit:focus, QTextEdit:focus, QDateEdit:focus {{
         border: 1px solid {c['accent']};
     }}
+    QComboBox::drop-down {{ border: none; width: 24px; }}
+    QComboBox::down-arrow {{ image: url("{arrow_down}"); width: 10px; height: 10px; }}
+    QSpinBox::up-button, QSpinBox::down-button, QDoubleSpinBox::up-button, QDoubleSpinBox::down-button,
+    QDateEdit::up-button, QDateEdit::down-button {{ border: none; background: transparent; width: 18px; }}
+    QSpinBox::up-arrow, QDoubleSpinBox::up-arrow, QDateEdit::up-arrow {{ image: url("{arrow_up}"); width: 9px; height: 9px; }}
+    QSpinBox::down-arrow, QDoubleSpinBox::down-arrow, QDateEdit::down-arrow {{ image: url("{arrow_down}"); width: 9px; height: 9px; }}
     QComboBox QAbstractItemView {{
         background: {c['panel']}; border: 1px solid {c['rule_strong']}; padding: 4px;
         selection-background-color: {c['accent_soft']}; selection-color: {c['ink']}; outline: none;
@@ -313,7 +287,6 @@ def build_qss(mode: str = "dark") -> str:
     QMenu::item {{ padding: 6px 18px; border-radius: 6px; }}
     QMenu::item:selected {{ background: {c['accent_soft']}; color: {c['ink']}; }}
     """
-    return qss + _arrow_qss(c)
 
 
 def make_app_icon() -> QIcon:
