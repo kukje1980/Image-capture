@@ -9,7 +9,7 @@ import os
 
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
 
-APP_VERSION = "1.14.0"
+APP_VERSION = "1.15.0"
 BRAND = os.environ.get("SLITLAMP_BUILD_BRAND", "default").lower()
 AGENT = os.environ.get("SLITLAMP_BUILD_EDITION", "standard").lower() == "agent"
 # 판별 (앱 이름, 표시 이름, 아이콘, 번들 ID, 런타임 훅)
@@ -39,6 +39,8 @@ datas += collect_data_files("docx")
 
 # DICOM 내보내기 (pydicom 은 일부 모듈을 실행 중에 불러오므로 하위 모듈을 모두 포함, 테스트·예제 제외)
 hiddenimports += collect_submodules("pydicom", filter=lambda n: ".tests" not in n and ".examples" not in n)
+# PACS 전송 (pynetdicom — 전송 기능에서만 불러오므로 명시적으로 포함)
+hiddenimports += collect_submodules("pynetdicom", filter=lambda n: ".tests" not in n and ".apps" not in n)
 
 # DB 스키마 파일 동봉
 datas += [("app/db/schema.sql", "app/db")]

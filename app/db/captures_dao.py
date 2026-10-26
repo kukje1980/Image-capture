@@ -52,6 +52,14 @@ class CapturesDAO:
         with self._lock, self._c:
             self._c.execute("UPDATE captures SET exam_id=? WHERE id=?", (exam_id, cid))
 
+    def summary_by_patient(self) -> dict:
+        """{환자 id: (영상 수, 최근 촬영 시각)} — 환자 목록 화면용."""
+        with self._lock:
+            rows = self._c.execute(
+                "SELECT patient_id, COUNT(*) AS n, MAX(captured_at) AS last FROM captures GROUP BY patient_id"
+            ).fetchall()
+        return {r["patient_id"]: (r["n"], r["last"]) for r in rows}
+
     def get(self, cid: int) -> Optional[Capture]:
         with self._lock:
             r = self._c.execute("SELECT * FROM captures WHERE id=?", (cid,)).fetchone()

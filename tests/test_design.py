@@ -32,7 +32,7 @@ def test_icons_render_all(qapp):
 def test_qss_both_themes(qapp):
     for mode in ("dark", "light"):
         qss = build_qss(mode)
-        assert "QToolButton#Shutter" in qss and "QPushButton#EyeBtn" in qss and "QToolButton#NavBtn" in qss
+        assert "QPushButton#Shutter" in qss and "QPushButton#EyeBtn" in qss and "QPushButton#NavBtn" in qss
         qapp.setStyleSheet(qss)                               # 파싱 오류 없이 적용
 
 
@@ -80,8 +80,12 @@ def test_thumbnail_filter_and_day_groups(qapp, app_env):
     assert panel.count() == 3 and len(panel.visible_captures()) == 3
     panel.set_filter("OD")
     assert [c.eye for c in panel.visible_captures()] == ["OD", "OD"]
-    panel.set_filter("video")
-    assert panel.visible_captures() == []
+    assert set(panel.filter_buttons) == {"all", "OD", "OS"}            # 동영상 분류는 없앰
+    panel.set_split_eyes(True)                                        # OD · OS 나눠 보기
+    heads = [panel._lay.itemAt(i).widget().text() for i in range(panel._lay.count())
+             if type(panel._lay.itemAt(i).widget()).__name__ == "QLabel"]
+    assert heads == ["OD · 우안   ·   2장"]
+    panel.set_split_eyes(False)
     panel.set_filter("all")
     cap = svc.save_photo(img, p, eye="OS")
     panel.add_capture(cap)
@@ -135,9 +139,9 @@ def test_topbar_has_patient_icon_buttons(qapp, app_env):
         pid = db.patients.insert(Patient(chart_no="T1", name="테스트"))
         w.patient_panel._reload()
         assert w.btn_edit_patient.isEnabled() and w._current_patient.id == pid
-        # 촬영 도크는 아이콘 위·글자 아래 버튼
-        from PySide6.QtCore import Qt
-        assert w.control_bar.btn_record.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextUnderIcon
+        # 촬영 도크·상단 메뉴는 아이콘 위·글자 아래 버튼 (QPushButton 기반)
+        from app.ui.icon_button import IconTextButton
+        assert isinstance(w.control_bar.btn_record, IconTextButton) and isinstance(w.btn_mode_pro, IconTextButton)
     finally:
         w.close()
         w.deleteLater()

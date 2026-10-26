@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
-    QToolButton,
+    QPushButton,
     QVBoxLayout,
     QWidget,
 )
@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 from app import __version__
 from app import brand as app_brand
 from app.ui import icons
+from app.ui.icon_button import IconTextButton
 from app.ui.theme import ICON_ACCENT
 
 # (동작 id, 이름, 아이콘, 설명)
@@ -82,15 +83,12 @@ class HomeScreen(QWidget):
         grid = QGridLayout(grid_box)
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setSpacing(14)
-        self.tiles: dict[str, QToolButton] = {}
+        self.tiles: dict[str, IconTextButton] = {}
         for i, (aid, text, icon, tip) in enumerate(TILES):
-            b = QToolButton()
+            b = IconTextButton(text, icons.icon(icon, ICON_ACCENT, 40, disabled="#4a5262"), 40)
             b.setObjectName("HomeTile")
-            b.setText(text)
+            b.layout().setSpacing(12)
             b.setToolTip(tip)
-            b.setIcon(icons.icon(icon, ICON_ACCENT, 40, disabled="#4a5262"))
-            b.setIconSize(QSize(40, 40))
-            b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             b.setFixedSize(176, 132)
@@ -107,13 +105,11 @@ class HomeScreen(QWidget):
         root.addLayout(wrap, 6)
 
     @staticmethod
-    def _link(text: str, icon: str) -> QToolButton:
-        b = QToolButton()
+    def _link(text: str, icon: str) -> QPushButton:
+        b = QPushButton(icons.gap(text))
         b.setObjectName("HomeLink")
-        b.setText(text)
         b.setIcon(icons.icon(icon, "#98a2b3", 18))
         b.setIconSize(QSize(18, 18))
-        b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         b.setCursor(Qt.CursorShape.PointingHandCursor)
         b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         return b

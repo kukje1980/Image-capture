@@ -34,6 +34,7 @@ class SmartBar(QFrame):
     sensitivityChanged = Signal(int)
     roiSelectToggled = Signal(bool)
     bestShotToggled = Signal(bool)
+    hideRequested = Signal()             # Smart 줄 숨기기 (하단 도크의 'Smart' 버튼으로 다시 보임)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -101,6 +102,15 @@ class SmartBar(QFrame):
         self.hint.setObjectName("SmartHint")
         self.hint.setMinimumWidth(150)
         lay.addWidget(self.hint)
+        self.btn_hide = QPushButton()
+        self.btn_hide.setObjectName("ToolBtn")
+        self.btn_hide.setIcon(icons.icon("chev-d", ICON, 16))
+        self.btn_hide.setIconSize(QSize(16, 16))
+        self.btn_hide.setToolTip("Smart 줄 숨기기 — 아래 촬영 도크의 'Smart' 버튼으로 다시 보입니다")
+        self.btn_hide.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.btn_hide.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_hide.clicked.connect(lambda: self.hideRequested.emit())
+        lay.addWidget(self.btn_hide)
 
         self.btn_peaking.toggled.connect(self._on_peaking)
         self.sens.valueChanged.connect(self.sensitivityChanged.emit)

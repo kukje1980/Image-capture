@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLineEdit,
-    QToolButton,
+    QPushButton,
     QVBoxLayout,
     QWidget,
 )
@@ -69,7 +69,7 @@ class DateField(QWidget):
         self.edit.setPlaceholderText("예) 19800315 · 800315 · 1980-03-15")
         self.edit.setClearButtonEnabled(True)
         self.edit.setMaxLength(12)
-        self.btn = QToolButton()
+        self.btn = QPushButton()
         self.btn.setObjectName("DateBtn")
         self.btn.setIcon(icons.icon("calendar", ICON, 18))
         self.btn.setIconSize(QSize(18, 18))
@@ -82,7 +82,7 @@ class DateField(QWidget):
         self._valid = True
         self.edit.editingFinished.connect(self.normalize)
         self.edit.textChanged.connect(self._on_text_changed)
-        self.btn.clicked.connect(self.open_calendar)
+        self.btn.clicked.connect(lambda: self.open_calendar())
         self.set_value(value)
 
     # ---- 값 ----

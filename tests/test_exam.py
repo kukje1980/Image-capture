@@ -115,7 +115,9 @@ def test_main_window_modes(qapp, app_env):
     from app.ui.main_window import MainWindow
     w = MainWindow(config, db)
     try:
-        assert w.mode() == "home" and w.btn_mode_home.isChecked() and not w.patient_panel.isVisibleTo(w)
+        assert w.mode() == "home" and w.btn_mode_home.isChecked()
+        assert w.patient_panel.parentWidget().objectName() == "TopBar"         # 검색·선택은 상단바에
+        assert not w.patient_panel.summary.isVisibleTo(w)                        # 환자 요약 줄 없음
         assert not w._shortcut_objs["capture"].isEnabled()                   # 홈에서는 촬영 키 꺼짐
         w.home.tiles["capture"].click()
         assert w.mode() == "capture" and w.patient_panel.isVisibleTo(w) and w._shortcut_objs["capture"].isEnabled()

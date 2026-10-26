@@ -1,7 +1,7 @@
-"""4분할 정지영상 비교 뷰 (2×2).
+"""분할 정지영상 비교 뷰 (2 · 4 · 6 · 8 · 16칸, 기본 4칸 = 2×2).
 
 활성(active) 칸은 라이브로 갱신되고, '정지영상'을 누르면 그 칸이 정지(freeze)되며
-다음 칸으로 자동 이동(1→2→3→4, 이후 순환)한다. 각 칸은 클릭으로 활성 지정 가능.
+다음 빈 칸으로 자동 이동한다. 각 칸은 클릭으로 활성 지정(그 칸만 다시 촬영) 가능.
 """
 from __future__ import annotations
 
@@ -21,26 +21,39 @@ _ACTIVE = "#14b8a6"
 _FROZEN = "#334155"
 _EMPTY = "#1e293b"
 
+SPLIT_COUNTS = (2, 4, 6, 8, 16)
+_GRIDS = {2: (2, 1), 4: (2, 2), 6: (3, 2), 8: (4, 2), 16: (4, 4)}     # 칸 수 → (열, 행)
+
+
+def split_grid(n: int) -> tuple[int, int]:
+    return _GRIDS.get(n, (2, 2))
+
 
 class QuadView(QWidget):
     cellClicked = Signal(int)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, count: int = 4):
         super().__init__(parent)
         self.setMinimumSize(480, 360)
-        self._frames: list = [None, None, None, None]   # numpy BGR
-        self._eyes: list = ["NA"] * 4
-        self._frozen: list = [False] * 4
-        self._active = 0
-        self._pix: list = [None] * 4
+        self._n = count if count in _GRIDS else 4
+        self.reset()
 
     # ---- 상태 ----
+    def count(self) -> int:
+        return self._n
+
+    def set_count(self, n: int) -> None:
+        """칸 수를 바꾸고 모두 비운다 (2 · 4 · 6 · 8 · 16)."""
+        self._n = n if n in _GRIDS else 4
+        self.reset()
+
     def reset(self) -> None:
-        self._frames = [None] * 4
-        self._eyes = ["NA"] * 4
-        self._frozen = [False] * 4
+        n = self._n
+        self._frames: list = [None] * n      # numpy BGR
+        self._eyes: list = ["NA"] * n
+        self._frozen: list = [False] * n
         self._active = 0
-        self._pix = [None] * 4
+        self._pix: list = [None] * n
         self.update()
 
     def set_live_frame(self, frame: np.ndarray) -> None:
@@ -53,12 +66,13 @@ class QuadView(QWidget):
     def freeze_active(self, eye: str = "NA") -> bool:
         if self._active is None or self._frames[self._active] is None:
             return False
+        n = self._n
         self._frozen[self._active] = True
         self._eyes[self._active] = eye
         # 다음 '빈' 칸을 찾아 라이브로. 없으면 라이브 칸 없음(None).
         nxt = None
-        for j in range(1, 5):
-            k = (self._active + j) % 4
+        for j in range(1, n + 1):
+            k = (self._active + j) % n
             if not self._frozen[k]:
                 nxt = k
                 break
@@ -76,7 +90,7 @@ class QuadView(QWidget):
         return all(self._frozen)
 
     def set_active(self, idx: int) -> None:
-        if 0 <= idx < 4:
+        if 0 <= idx < self._n:
             self._active = idx
             self._frozen[idx] = False
             self._frames[idx] = None
@@ -86,7 +100,7 @@ class QuadView(QWidget):
     def images_for_save(self, live_eye: str) -> list:
         """저장 대상: 이미지가 있는 모든 칸 (정지 칸 + 현재 라이브 활성 칸)."""
         out = []
-        for i in range(4):
+        for i in range(self._n):
             f = self._frames[i]
             if f is None:
                 continue
@@ -98,31 +112,36 @@ class QuadView(QWidget):
         return any(f is not None for f in self._frames)
 
     def composite(self):
-        """화면에 보이는 그대로 2×2 합성 BGR 이미지 생성 (빈 칸은 검정)."""
+        """화면에 보이는 그대로 격자 합성 BGR 이미지 생성 (빈 칸은 검정)."""
         ref = next((f for f in self._frames if f is not None), None)
         if ref is None or cv2 is None:
             return None
         h, w = ref.shape[:2]
-        canvas = np.zeros((h * 2, w * 2, 3), dtype=np.uint8)
-        for i in range(4):
-            r, c = divmod(i, 2)
+        cols, rows = split_grid(self._n)
+        canvas = np.zeros((h * rows, w * cols, 3), dtype=np.uint8)
+        for i in range(self._n):
+            r, c = divmod(i, cols)
             f = self._frames[i]
             if f is not None:
                 canvas[r * h:(r + 1) * h, c * w:(c + 1) * w] = cv2.resize(f, (w, h))
         return canvas
 
     # ---- 렌더 ----
+    def _origins(self):
+        cols, rows = split_grid(self._n)
+        cw, ch = self.width() // cols, self.height() // rows
+        return cw, ch, [((i % cols) * cw, (i // cols) * ch) for i in range(self._n)]
+
     def paintEvent(self, event) -> None:  # noqa: N802
         p = QPainter(self)
         p.fillRect(self.rect(), QColor("#000000"))
-        cw, ch = self.width() // 2, self.height() // 2
-        origins = [(0, 0), (cw, 0), (0, ch), (cw, ch)]
+        cw, ch, origins = self._origins()
         for i, (x, y) in enumerate(origins):
             frame = self._frames[i]
             if frame is not None:
                 if self._pix[i] is None:
                     self._pix[i] = QPixmap.fromImage(bgr_to_qimage(frame))
-                pm = self._pix[i].scaled(cw - 4, ch - 4, Qt.AspectRatioMode.KeepAspectRatio,
+                pm = self._pix[i].scaled(max(1, cw - 4), max(1, ch - 4), Qt.AspectRatioMode.KeepAspectRatio,
                                          Qt.TransformationMode.SmoothTransformation)
                 p.drawPixmap(x + (cw - pm.width()) // 2, y + (ch - pm.height()) // 2, pm)
             else:
@@ -143,7 +162,7 @@ class QuadView(QWidget):
             if i == self._active:
                 tag = "● 라이브"
             elif self._frozen[i]:
-                tag = "정지" + (f" · {self._eyes[i]}" if self._eyes[i] not in ("NA", None) else "")
+                tag = f"{i + 1} 정지" + (f" · {self._eyes[i]}" if self._eyes[i] not in ("NA", None) else "")
             else:
                 tag = ""
             if tag:
@@ -152,7 +171,8 @@ class QuadView(QWidget):
                 p.drawText(x + 12, y + 21, tag)
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
-        cw, ch = self.width() // 2, self.height() // 2
-        col = 0 if event.position().x() < cw else 1
-        row = 0 if event.position().y() < ch else 1
-        self.cellClicked.emit(row * 2 + col)
+        cols, rows = split_grid(self._n)
+        cw, ch = max(1, self.width() // cols), max(1, self.height() // rows)
+        col = min(cols - 1, int(event.position().x() // cw))
+        row = min(rows - 1, int(event.position().y() // ch))
+        self.cellClicked.emit(row * cols + col)

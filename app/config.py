@@ -39,6 +39,20 @@ class AppConfig:
     subfolder_template: str = "{chart_no}_{patient_id}/{date}"
     thumbnail_max_side: int = 120
     newest_on_top: bool = True
+    split_count: int = 4                     # 분할 화면 칸 수 (2 · 4 · 6 · 8 · 16)
+    # 촬영 모드 (자주 쓰는 카메라 · 촬영 설정 묶음) — app/capture/presets.py
+    capture_presets: list = field(default_factory=list)   # 저장한 촬영 모드들
+    active_preset: str = ""                                # 지금 쓰는 촬영 모드 이름
+    # 전송 (app/services/send_service.py)
+    send_method: str = "folder"              # folder | cloud | pacs
+    send_folder: str = ""                    # 폴더 전송 위치 (네트워크 공유 폴더 가능)
+    send_cloud_folder: str = ""              # 클라우드 동기화 폴더 (OneDrive · Google Drive · Dropbox · iCloud)
+    send_formats: list = field(default_factory=lambda: ["original"])   # original | jpg | pdf | dicom
+    send_pacs_host: str = ""
+    send_pacs_port: int = 104
+    send_pacs_ae: str = "PACS"               # 받는 쪽(PACS) AE Title
+    send_pacs_calling_ae: str = "SLITLAMP"   # 보내는 쪽(이 프로그램) AE Title
+    thumbs_split_eyes: bool = False          # 오른쪽 사진 목록을 OD(우안) · OS(좌안) 로 나눠 보기
     theme: str = "dark"                      # dark(기본, 영상 작업 공간) | light
     start_screen: str = "home"               # 시작 화면: home(홈 메뉴) | capture(바로 촬영)
     sounds_enabled: bool = True              # 효과음 (캡처 찰칵 · 정지영상 · 녹화 시작/중지)
@@ -56,6 +70,7 @@ class AppConfig:
     smart_peaking_sensitivity: int = 50      # 0~100
     smart_peaking_color: str = "red"         # red | green | yellow | cyan
     smart_roi: list = field(default_factory=list)   # 정규화 [x, y, w, h] (비면 화면 중앙 60%)
+    smart_bar_visible: bool = True           # 촬영 화면의 Smart 도구줄 보이기 (숨겨도 자동 촬영 설정은 유지)
     smart_best_shot: bool = True             # 사진 캡처 시 최근 0.6초 중 가장 선명한 프레임 저장
     smart_ready_pct: float = 85.0            # 초점 판정 기준 (최근 최고 선명도 대비 %)
     smart_cooldown_s: float = 2.5            # 자동 촬영 사이 최소 간격(초)
