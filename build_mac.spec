@@ -1,6 +1,7 @@
 # PyInstaller 스펙 (macOS, .app 번들).
 #   빌드:  ./build_mac.sh   (또는 pyinstaller build_mac.spec)
 #   결과:  dist/SlitLampImaging.app  (SLITLAMP_BUILD_BRAND=keeler 이면 dist/KeelerSlitLamp.app,
+#                                     explorer 이면 dist/SlitLampExplorer.app,
 #          SLITLAMP_BUILD_EDITION=agent 이면 dist/SlitLampAgent.app — AI 에이전트 에디션)
 #
 # Windows 용 build.spec 과 같은 구성에 macOS 번들 정보(카메라 권한 문구·아이콘)를 더한다.
@@ -8,16 +9,23 @@ import os
 
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
 
-APP_VERSION = "1.13.0"
+APP_VERSION = "1.14.0"
 BRAND = os.environ.get("SLITLAMP_BUILD_BRAND", "default").lower()
-KEELER = BRAND == "keeler"
 AGENT = os.environ.get("SLITLAMP_BUILD_EDITION", "standard").lower() == "agent"
-APP_NAME = "SlitLampAgent" if AGENT else ("KeelerSlitLamp" if KEELER else "SlitLampImaging")
-DISPLAY_NAME = ("슬릿램프 영상 시스템 AI 에이전트" if AGENT
-                else ("Keeler 슬릿램프 영상 시스템" if KEELER else "슬릿램프 영상 시스템"))
-APP_ICON = "assets/brand/keeler/app.icns" if KEELER else "assets/icons/app.icns"
-BUNDLE_ID = ("com.kukjemd.slitlampagent" if AGENT
-             else ("com.kukjemd.keelerslitlamp" if KEELER else "com.kukjemd.slitlampimaging"))
+# 판별 (앱 이름, 표시 이름, 아이콘, 번들 ID, 런타임 훅)
+BRANDS = {
+    "default": ("SlitLampImaging", "슬릿램프 영상 시스템", "assets/icons/app.icns",
+                "com.kukjemd.slitlampimaging", []),
+    "keeler": ("KeelerSlitLamp", "Keeler 슬릿램프 영상 시스템", "assets/brand/keeler/app.icns",
+               "com.kukjemd.keelerslitlamp", ["tools/rthooks/brand_keeler.py"]),
+    "explorer": ("SlitLampExplorer", "슬릿램프 영상 시스템 Explorer", "assets/brand/explorer/app.icns",
+                 "com.kukjemd.slitlampexplorer", ["tools/rthooks/brand_explorer.py"]),
+}
+APP_NAME, DISPLAY_NAME, APP_ICON, BUNDLE_ID, RTHOOKS = BRANDS.get(BRAND, BRANDS["default"])
+RTHOOKS = list(RTHOOKS)
+if AGENT:
+    APP_NAME, DISPLAY_NAME, BUNDLE_ID = "SlitLampAgent", "슬릿램프 영상 시스템 AI 에이전트", "com.kukjemd.slitlampagent"
+    RTHOOKS.append("tools/rthooks/edition_agent.py")
 
 datas = []
 binaries = []
@@ -26,6 +34,8 @@ hiddenimports = ["imageio_ffmpeg"]
 # 번들 ffmpeg 바이너리 동봉 (mp4 H.264 보장)
 binaries += collect_dynamic_libs("imageio_ffmpeg")
 datas += collect_data_files("imageio_ffmpeg")
+# Word 보고서(python-docx) 기본 서식 파일
+datas += collect_data_files("docx")
 
 # DICOM 내보내기 (pydicom 은 일부 모듈을 실행 중에 불러오므로 하위 모듈을 모두 포함, 테스트·예제 제외)
 hiddenimports += collect_submodules("pydicom", filter=lambda n: ".tests" not in n and ".examples" not in n)
@@ -48,8 +58,7 @@ a = Analysis(
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
-    runtime_hooks=(["tools/rthooks/brand_keeler.py"] if KEELER else [])
-    + (["tools/rthooks/edition_agent.py"] if AGENT else []),
+    runtime_hooks=RTHOOKS,
     excludes=[],
 )
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from typing import Callable
 
@@ -27,13 +28,17 @@ class CameraWorker(QObject):
     opened = Signal(int, int, float)   # width, height, fps
     error = Signal(str)
     stopped = Signal()
+    property_set = Signal(str, bool, float)   # 속성, 적용 여부, 적용 후 값 (카메라 속성 창)
 
-    def __init__(self, source_factory: Callable[[], FrameSource]):
+    def __init__(self, source_factory: Callable[[], FrameSource], initial_props: dict | None = None):
         super().__init__()
         self._factory = source_factory
         self._source: FrameSource | None = None
         self._running = False
         self._stop_requested = False      # 여는 도중(수 초)에 온 정지 요청도 잊지 않도록 따로 기억
+        # 카메라 속성 요청 — GUI 스레드에서 넣고 읽기 루프에서 적용 (OpenCV 장치는 한 스레드에서만 다룸)
+        self._prop_lock = threading.Lock()
+        self._pending_props: dict[str, float] = dict(initial_props or {})
 
     @Slot()
     def run(self) -> None:
@@ -54,6 +59,7 @@ class CameraWorker(QObject):
         self._running = True
         fails = 0
         while self._running and not self._stop_requested:
+            self._apply_pending_props()
             try:
                 ok, frame = self._source.read()
             except Exception as e:  # noqa: BLE001
@@ -76,6 +82,30 @@ class CameraWorker(QObject):
         except Exception:  # noqa: BLE001
             pass
         self.stopped.emit()
+
+    def request_property(self, key: str, value: float) -> None:
+        """스레드 안전: 다음 프레임을 읽기 전에 장치에 적용된다."""
+        with self._prop_lock:
+            self._pending_props[key] = float(value)
+
+    def property_value(self, key: str):
+        src = self._source
+        return src.get_property(key) if src is not None else None
+
+    def _apply_pending_props(self) -> None:
+        if not self._pending_props or self._source is None:
+            return
+        with self._prop_lock:
+            pending, self._pending_props = self._pending_props, {}
+        # 자동 노출·자동 WB 를 먼저 바꿔야 수동 값이 먹힌다
+        for key in sorted(pending, key=lambda k: 0 if k.startswith("auto") else 1):
+            ok = False
+            try:
+                ok = self._source.set_property(key, pending[key])
+            except Exception:  # noqa: BLE001
+                log.warning("camera property %s failed", key, exc_info=True)
+            now = self._source.get_property(key)
+            self.property_set.emit(key, bool(ok), float(now if now is not None else pending[key]))
 
     @Slot()
     def stop(self) -> None:

@@ -69,6 +69,9 @@ class AppConfig:
     agent_clip_after_s: float = 2.0
     agent_candidates: int = 4                # 추천 프레임 수
     agent_model_path: str = ""               # 장면 모델 경로 (비면 assets/models, 없으면 규칙)
+    camera_props: dict = field(default_factory=dict)  # 카메라 속성 {노출·게인·WB…} (app/capture/camera_props.py)
+    report_per_page: int = 2                 # 보고서 한 쪽 영상 수 (1 / 2 / 4)
+    slideshow_seconds: int = 3               # 슬라이드쇼 넘김 간격(초)
 
     @classmethod
     def config_path(cls) -> Path:

@@ -9,8 +9,10 @@ from pathlib import Path
 from app.db.agent_events_dao import AgentEventsDAO
 from app.db.captures_dao import CapturesDAO
 from app.db.exam_notes_dao import ExamNotesDAO
+from app.db.exams_dao import ExamsDAO
 from app.db.measurements_dao import MeasurementsDAO
 from app.db.patients_dao import PatientsDAO
+from app.db.ref_images_dao import RefImagesDAO
 
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 log = logging.getLogger(__name__)
@@ -48,6 +50,8 @@ class Database:
         self.measurements: MeasurementsDAO | None = None
         self.last_backup: Path | None = None
         self.exam_notes: ExamNotesDAO | None = None
+        self.exams: ExamsDAO | None = None
+        self.references: RefImagesDAO | None = None
 
     # ---- 열기 / 닫기 ----
     def init(self, backup: bool = True) -> "Database":
@@ -86,6 +90,8 @@ class Database:
         self.measurements = MeasurementsDAO(self._conn, self._lock)
         self.agent_events = AgentEventsDAO(self._conn, self._lock)
         self.exam_notes = ExamNotesDAO(self._conn, self._lock)
+        self.exams = ExamsDAO(self._conn, self._lock)
+        self.references = RefImagesDAO(self._conn, self._lock)
         return self
 
     def _check_integrity(self, conn: sqlite3.Connection) -> None:
@@ -109,6 +115,25 @@ class Database:
             with self._conn:
                 _add_missing_columns(self._conn, "patients",
                                      {"diagnosis": "TEXT", "doctor": "TEXT"})
+                _add_missing_columns(self._conn, "captures",
+                                     {"exam_id": "INTEGER REFERENCES exams(id) ON DELETE SET NULL"})
+                self._conn.execute("CREATE INDEX IF NOT EXISTS idx_captures_exam ON captures(exam_id)")
+                _backfill_exams(self._conn)
+
+    # ---- 복원 (Explorer 판 파일 메뉴 — 백업은 아래 backup_to) ----
+    def restore_from(self, src_path) -> None:
+        """백업 파일 내용으로 지금 DB 를 바꾼다 (연결은 그대로 — 다시 시작할 필요 없음)."""
+        src = sqlite3.connect(str(src_path))
+        try:
+            ok = src.execute("PRAGMA integrity_check").fetchone()[0]
+            tables = {r[0] for r in src.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if ok != "ok" or not {"patients", "captures"} <= tables:
+                raise ValueError("슬릿램프 영상 시스템의 백업 파일이 아닙니다.")
+            with self._lock:
+                src.backup(self._conn)
+        finally:
+            src.close()
+        self._migrate()                      # 구버전 백업이면 새 컬럼·검사 묶음을 채움
 
     def close(self) -> None:
         if self._conn is None:
@@ -125,6 +150,9 @@ class Database:
         self.captures = None
         self.measurements = None
         self.agent_events = None
+        self.exam_notes = None
+        self.exams = None
+        self.references = None
 
     @property
     def is_open(self) -> bool:
@@ -198,3 +226,22 @@ def _add_missing_columns(conn: sqlite3.Connection, table: str, cols: dict) -> No
         if name not in have:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
 
+
+
+def _backfill_exams(conn: sqlite3.Connection) -> None:
+    """검사가 없는 캡처(구버전·다른 판에서 찍은 영상)를 촬영 날짜별 검사로 묶는다."""
+    rows = conn.execute(
+        """SELECT DISTINCT patient_id, substr(captured_at, 1, 10) AS d
+           FROM captures WHERE exam_id IS NULL"""
+    ).fetchall()
+    for pid, day in rows:
+        r = conn.execute(
+            "SELECT id FROM exams WHERE patient_id=? AND exam_date=? ORDER BY id DESC LIMIT 1", (pid, day)
+        ).fetchone()
+        eid = r[0] if r else conn.execute(
+            "INSERT INTO exams (patient_id, exam_date, title) VALUES (?,?,?)", (pid, day, "세극등 검사")
+        ).lastrowid
+        conn.execute(
+            "UPDATE captures SET exam_id=? WHERE exam_id IS NULL AND patient_id=? AND substr(captured_at,1,10)=?",
+            (eid, pid, day),
+        )

@@ -1,6 +1,7 @@
 # PyInstaller 스펙 (Windows, one-folder).
 #   빌드:  pyinstaller build.spec                         → dist/SlitLampImaging/SlitLampImaging.exe
 #   Keeler: set SLITLAMP_BUILD_BRAND=keeler && pyinstaller build.spec → dist/KeelerSlitLamp/KeelerSlitLamp.exe
+#   Explorer 판: set SLITLAMP_BUILD_BRAND=explorer && pyinstaller build.spec → dist/SlitLampExplorer/SlitLampExplorer.exe
 #   AI 에이전트 에디션: set SLITLAMP_BUILD_EDITION=agent && pyinstaller build.spec → dist/SlitLampAgent/SlitLampAgent.exe
 #
 # imageio-ffmpeg 의 ffmpeg 바이너리와 PySide6 Qt 플러그인을 함께 수집한다.
@@ -11,10 +12,16 @@ from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, co
 BRAND = os.environ.get("SLITLAMP_BUILD_BRAND", "default").lower()
 EDITION = os.environ.get("SLITLAMP_BUILD_EDITION", "standard").lower()
 AGENT = EDITION == "agent"
-APP_NAME = "SlitLampAgent" if AGENT else ("KeelerSlitLamp" if BRAND == "keeler" else "SlitLampImaging")
-APP_ICON = "assets/brand/keeler/app.ico" if BRAND == "keeler" else "assets/icons/app.ico"
-RTHOOKS = ["tools/rthooks/brand_keeler.py"] if BRAND == "keeler" else []
+# 판별 실행파일 이름 · 아이콘 · 런타임 훅 (훅이 SLITLAMP_BRAND 를 정해 설치본이 항상 그 판으로 실행됨)
+BRANDS = {
+    "default": ("SlitLampImaging", "assets/icons/app.ico", []),
+    "keeler": ("KeelerSlitLamp", "assets/brand/keeler/app.ico", ["tools/rthooks/brand_keeler.py"]),
+    "explorer": ("SlitLampExplorer", "assets/brand/explorer/app.ico", ["tools/rthooks/brand_explorer.py"]),
+}
+APP_NAME, APP_ICON, RTHOOKS = BRANDS.get(BRAND, BRANDS["default"])
+RTHOOKS = list(RTHOOKS)
 if AGENT:
+    APP_NAME = "SlitLampAgent"
     RTHOOKS.append("tools/rthooks/edition_agent.py")
 
 datas = []
@@ -24,6 +31,8 @@ hiddenimports = ["imageio_ffmpeg"]
 # 번들 ffmpeg 바이너리 동봉 (mp4 H.264 보장)
 binaries += collect_dynamic_libs("imageio_ffmpeg")
 datas += collect_data_files("imageio_ffmpeg")
+# Word 보고서(python-docx) 기본 서식 파일
+datas += collect_data_files("docx")
 
 # DICOM 내보내기 (pydicom 은 일부 모듈을 실행 중에 불러오므로 하위 모듈을 모두 포함, 테스트·예제 제외)
 hiddenimports += collect_submodules("pydicom", filter=lambda n: ".tests" not in n and ".examples" not in n)

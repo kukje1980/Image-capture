@@ -1,6 +1,6 @@
-# Windows 설치파일(.exe) 자동 빌드 — 기본 / Keeler 전용
+# Windows 설치파일(.exe) 자동 빌드 — 기본 / Keeler 전용 / Explorer 판
 #   Actions 탭 → "Build Windows installer" → Run workflow 로 수동 실행하거나, 아래 경로가 바뀐 push 때 실행된다.
-#   결과물: 실행 화면 아래 Artifacts 의 SlitLampImaging-windows / KeelerSlitLamp-windows (설치파일)
+#   결과물: 실행 화면 아래 Artifacts 의 SlitLampImaging-windows / KeelerSlitLamp-windows / SlitLampExplorer-windows (설치파일)
 name: Build Windows installer
 
 on:
@@ -19,6 +19,9 @@ jobs:
           - brand: keeler
             app: KeelerSlitLamp
             iss: installer\keeler.iss
+          - brand: explorer
+            app: SlitLampExplorer
+            iss: installer\explorer.iss
           - brand: default
             edition: agent
             app: SlitLampAgent

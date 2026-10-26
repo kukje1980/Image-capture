@@ -58,6 +58,47 @@ class PatientsDAO:
             ).fetchall()
         return [self._row(r) for r in rows]
 
+    # 검색 항목 (Explorer 판 환자 목록) — 진단명·병력(증상·메모·검사 소견·검사 기록 소견)으로도 찾는다
+    SEARCH_FIELDS = {
+        "all": "전체",
+        "name": "이름",
+        "chart": "차트번호",
+        "diagnosis": "진단명",
+        "history": "병력·소견",
+    }
+
+    def search_by(self, q: str, field: str = "all", limit: int = 500) -> List[Patient]:
+        q = (q or "").strip()
+        if not q:
+            return self.list_all(limit=limit)
+        like = f"%{q}%"
+        exam_hit = ("EXISTS (SELECT 1 FROM exams e WHERE e.patient_id=patients.id "
+                    "AND (e.diagnosis LIKE ? OR e.memo LIKE ? OR e.title LIKE ?))")
+        conds = {
+            "name": (["name LIKE ?"], [like]),
+            "chart": (["chart_no LIKE ?", "patient_id LIKE ?"], [like, like]),
+            "diagnosis": (["diagnosis LIKE ?", "EXISTS (SELECT 1 FROM exams e WHERE e.patient_id=patients.id "
+                           "AND e.diagnosis LIKE ?)"], [like, like]),
+            "history": (["symptoms LIKE ?", "memo LIKE ?", exam_hit,
+                         "EXISTS (SELECT 1 FROM exam_notes n WHERE n.patient_id=patients.id AND n.notes LIKE ?)"],
+                        [like, like, like, like, like, like]),
+        }
+        if field in conds:
+            where, args = conds[field]
+        else:
+            where, args = [], []
+            for w, a in conds.values():
+                where += w
+                args += a
+            where.append("phone LIKE ?")
+            args.append(like)
+        with self._lock:
+            rows = self._c.execute(
+                f"SELECT * FROM patients WHERE {' OR '.join(where)} ORDER BY name LIMIT ?",
+                (*args, limit),
+            ).fetchall()
+        return [self._row(r) for r in rows]
+
     def list_all(self, limit: int = 500, offset: int = 0) -> List[Patient]:
         with self._lock:
             rows = self._c.execute(

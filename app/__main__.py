@@ -6,6 +6,7 @@
     python -m app --brand keeler       # Keeler 전용 화면 (로고·색)
     python -m app --edition agent      # AI 에이전트 에디션 (별도 데이터 폴더 SlitLampAgent)
     python -m app --import-samples <폴더|zip>   # 질환별 샘플 사진을 등록하고 끝냄 (화면 없음)
+    python -m app --brand explorer     # Explorer 판 (메뉴·툴바·환자/검사 트리·겹쳐보기·참조 영상·Word 보고서)
 """
 from __future__ import annotations
 
@@ -94,7 +95,10 @@ def main(argv=None) -> int:
     _apply_cli_overrides(argv, config)
     # 브랜드는 UI 모듈을 불러오기 전에 정한다 (아이콘 강조색 등이 import 시점에 정해짐)
     b = brand.select(brand.key_from(argv, getattr(config, "brand", "")))
-    from app.ui.main_window import MainWindow
+    if brand.layout() == "explorer":
+        from app.ui.explorer.explorer_window import ExplorerWindow as MainWindow
+    else:
+        from app.ui.main_window import MainWindow
     from app.ui.theme import build_qss, make_app_icon
     log.info("source_mode=%s media_root=%s export_root=%s db=%s",
              config.source_mode, config.media_root, config.export_root, config.db_path)

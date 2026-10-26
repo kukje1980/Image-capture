@@ -16,3 +16,4 @@ class Capture:
     eye: Optional[str] = None            # 'OD' | 'OS' | 'OU' | 'NA'
     duration_ms: Optional[int] = None    # 동영상만
     note: Optional[str] = None
+    exam_id: Optional[int] = None        # 검사(내원) 묶음 (exams.id)
