@@ -22,7 +22,7 @@ from app.ui.theme import ICON, ICON_ACCENT, ICON_ON_ACCENT, ICON_RECORD
 _EYE_CODES = ["NA", "OD", "OS"]
 _EYE_BUTTONS = [("OD", "OD", "우안"), ("OS", "OS", "좌안"), ("NA", "—", "미지정")]
 _BTN_W = 76            # 도크 버튼 고정 폭 (가장 긴 이름 '녹화 중지'·'정지영상' 기준)
-_BTN_W_COMPACT = 46    # 좁은 창(아이콘만)
+_BTN_W_COMPACT = 44    # 좁은 창(아이콘만)
 
 
 def tool_button(text: str, icon_name: str, obj: str, checkable: bool = False, color: str = ICON,
@@ -230,7 +230,7 @@ class ControlBar(QFrame):
             b.set_text_visible(not on)
         for b in self.eye_buttons.values():
             if on:
-                b.setFixedWidth(46)
+                b.setFixedWidth(_BTN_W_COMPACT)
             else:
                 b.setMinimumWidth(0)
                 b.setMaximumWidth(16777215)

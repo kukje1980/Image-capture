@@ -75,7 +75,7 @@ BRANDS: dict[str, dict] = {
         "k_colors": ["#6cbce8", "#1981b7", "#052133", "#ed6f1e"],
         "stripe": True,                             # 상단바 아래 K 4색 줄무늬
         "eye_colors": {"OD": "#6cbce8", "OS": "#ed6f1e", "OU": "#1981b7"},   # 우안 = 하늘, 좌안 = 주황
-        "home_image": "brand/keeler/home.jpg",      # 홈 화면 큰 사진 (없으면 K 곡선 그림)
+        "home_image": "brand/keeler/home.png",      # 홈 화면 큰 사진: 장비만 떼어 낸 Keeler 슬릿램프 (없으면 그림)
         "palette": {
             "dark": {
                 "bg": "#03131f", "panel": "#061c2c", "panel2": "#0a2436", "raised": "#0e2c42",
