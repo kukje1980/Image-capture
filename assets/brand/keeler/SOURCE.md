@@ -8,9 +8,11 @@
 - `theme.css` 색 — keeler.co.uk · keelerusa.com · keelerglobal.com 스타일시트에서 가장 많이 쓰인 브랜드 색
   #052133(네이비) · #1981b7(파랑) · #6cbce8(하늘) · #ed6f1e(주황) · #cde1ef / #f1f8fd(옅은 파랑)
 
-- `home.jpg` — 홈 화면 사진 원본: Keeler 슬릿램프 + 영상 시스템(KONNECT 화면) 장비 사진, 사용자 제공(2026-10-27, 700×700 흰 배경).
-- `home.png` — 위 사진에서 흰 배경을 떼어 낸 투명 PNG (Keeler 판 홈 화면에 쓰는 파일, 화면 바탕 위에 장비만).
-  다시 만들기: `python tools/make_home_cutout.py assets/brand/keeler/home.jpg assets/brand/keeler/home.png`
-  파일이 없으면 Keeler 색으로 그린 슬릿 빛줄기 그림이 보이고, 사용자는 앱의 '홈 사진 바꾸기' 로 언제든 바꿀 수 있습니다.
+- 홈 화면 사진 (모두 사용자 제공, 2026-10-27) — 원본 `home-*.jpg`, 배경을 떼어 낸 투명 PNG `home-*.png` (앱에서 쓰는 파일):
+  - `home-slitlamp` — Keeler 슬릿램프 단독 (옅은 그라데이션 배경 · 바닥 반사 제거) — Keeler 판 기본 홈 사진
+  - `home-system` — Keeler 슬릿램프 + 영상 시스템(KONNECT 화면) 장비 (흰 배경)
+  - `home-eyepiece` — 접안렌즈 확대 (흰 배경, 잘린 쪽은 서서히 사라지게)
+  다시 만들기: `python tools/make_home_cutout.py` (사진마다 떼는 방법 · 값은 그 파일의 PRESETS).
+  앱의 '홈 사진 바꾸기' 에서 셋 중 하나를 고르거나 내 사진을 넣을 수 있고, 파일이 없으면 Keeler 색으로 그린 슬릿 빛줄기 그림이 보입니다.
 
 로고·상표는 Keeler Ltd 소유이며, Keeler 측 사용 허락 범위에서 사용합니다.

@@ -66,8 +66,8 @@ def test_default_brand_has_no_stripe(win):
 # ---------------- 홈 화면 사진 ----------------
 def test_home_hero_photo(keeler, tmp_path):
     h = keeler.home
-    # Keeler: 기본 홈 사진 = 배경을 떼어 낸 Keeler 슬릿램프 장비 사진 (바탕 위에 장비만, 글자 없음)
-    assert h.hero_path() == brand.asset("brand/keeler/home.png") and Path(h.hero_path()).is_file()
+    # Keeler: 기본 홈 사진 = 배경을 떼어 낸 Keeler 슬릿램프 사진 (바탕 위에 장비만, 글자 없음)
+    assert h.hero_path() == brand.asset("brand/keeler/home-slitlamp.png") and Path(h.hero_path()).is_file()
     assert not h.hero.isHidden() and h.hero.has_photo() and h.hero.is_cutout()
     img = h.hero.photo().toImage()
     assert img.pixelColor(0, 0).alpha() == 0 and img.pixelColor(img.width() // 2, img.height() // 2).alpha() == 255
@@ -83,7 +83,48 @@ def test_home_hero_photo(keeler, tmp_path):
     assert not h.set_home_image(str(tmp_path / "없는 파일.jpg"))
     h.reset_home_image()
     assert keeler.config.home_image == "" and not own.exists()
-    assert h.hero_path() == brand.asset("brand/keeler/home.png") and h.hero.is_cutout()
+    assert h.hero_path() == brand.asset("brand/keeler/home-slitlamp.png") and h.hero.is_cutout()
+
+
+def test_home_builtin_photo_choices(keeler, tmp_path):
+    """'홈 사진 바꾸기' 에서 Keeler 사진 3장(슬릿램프 · 슬릿램프 + 영상 시스템 · 접안렌즈) 중에서 고른다."""
+    from app.ui import home_screen
+    h = keeler.home
+    names = [n for _, n in h.builtin_photos()]
+    assert names == ["슬릿램프", "슬릿램프 + 영상 시스템", "접안렌즈"]
+    for rel, _ in h.builtin_photos():                                  # 모두 배경 없는 장비 사진
+        assert h.use_builtin_photo(rel) and h.hero_path() == brand.asset(rel) and h.hero.is_cutout()
+        assert keeler.config.home_image == home_screen.BUILTIN + rel
+    # 내 사진을 넣었다가 Keeler 사진으로 바꾸면 복사해 둔 내 사진은 지운다
+    assert h.set_home_image(str(_png(tmp_path / "내 사진.png")))
+    own = Path(keeler.config.home_image)
+    picked = {}
+
+    def pick(menu, pos):
+        acts = menu.actions()
+        assert [a.text() for a in acts if a.text()] == names + ["내 사진 고르기…", "기본 사진으로 되돌리기"]
+        picked["checked"] = [a.text() for a in acts if a.isChecked()]
+        return acts[1]                                                 # '슬릿램프 + 영상 시스템'
+    h._exec_menu = pick
+    h._photo_menu()
+    assert picked["checked"] == []                                     # 내 사진일 땐 Keeler 사진 체크 없음
+    assert h.hero_path() == brand.asset("brand/keeler/home-system.png") and not own.exists()
+    h.reset_home_image()
+    assert h.hero_path() == brand.asset("brand/keeler/home-slitlamp.png")
+
+
+def test_photo_cutout_gradient_background():
+    """옅은 그라데이션 배경(스튜디오 사진)도 배경만 떼고, 바닥 선 아래 반사는 지운다."""
+    from app.services.photo_cutout import cutout_gradient_background, trim_transparent
+    h, w = 200, 160
+    y = np.linspace(250, 236, h)[:, None, None]
+    img = np.repeat(np.repeat(y, w, 1), 3, 2).astype(np.uint8)
+    img[40:150, 50:110] = (150, 150, 155)                              # 은색 장비
+    img[150:190, 50:110] = (225, 225, 228)                             # 바닥 반사
+    out = cutout_gradient_background(img, floor_pts=[(0, 150), (w, 150)])
+    assert out[5, 5, 3] == 0 and out[100, 80, 3] == 255 and out[170, 80, 3] == 0
+    t = trim_transparent(out)
+    assert t.shape[0] < h and t.shape[1] < w
 
 
 def test_home_hero_white_photo_cutout(qapp, tmp_path):

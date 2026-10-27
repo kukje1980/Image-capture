@@ -3,8 +3,9 @@
 참고한 장비 프로그램의 Welcome 화면처럼, 왼쪽에 인사말, 오른쪽에 아이콘 타일을 둔다.
 '다음부터 촬영 화면으로 바로 시작' 을 켜면 config.start_screen = "capture".
 
-왼쪽 위에는 큰 사진 칸(HomeHero) — Keeler 판은 슬릿램프 사진(없으면 슬릿 빛줄기 그림)이 기본으로 보이고,
-'홈 사진 바꾸기' 로 병원에서 쓰는 장비 사진 등으로 바꿀 수 있다 (config.home_image, 데이터 폴더 home/ 에 복사).
+왼쪽 위에는 큰 사진 칸(HomeHero) — Keeler 판은 배경을 떼어 낸 Keeler 장비 사진이 기본으로 보이고,
+'홈 사진 바꾸기' 로 Keeler 사진 중에서 고르거나(config.home_image = "brand:<경로>") 병원 장비 사진 등을 넣을 수 있다
+(데이터 폴더 home/ 에 복사).
 """
 from __future__ import annotations
 
@@ -36,6 +37,7 @@ from app.ui.icon_button import IconTextButton
 from app.ui.theme import ICON_ACCENT
 
 PHOTO_FILTER = "사진 (*.jpg *.jpeg *.png *.bmp *.webp)"
+BUILTIN = "brand:"                       # config.home_image 가 이것으로 시작하면 브랜드에 든 사진
 
 # (동작 id, 이름, 아이콘, 설명)
 TILES = [
@@ -158,11 +160,35 @@ class HomeScreen(QWidget):
 
     # ---- 홈 사진 ----
     def hero_path(self) -> str | None:
-        """지금 보여줄 사진: 사용자가 고른 사진 > 브랜드 기본 사진 (없으면 None → 그림)."""
+        """지금 보여줄 사진: 고른 사진(브랜드 사진 · 내 사진) > 브랜드 기본 사진 (없으면 None → 그림)."""
         own = getattr(self.config, "home_image", "") or ""
-        if own and Path(own).is_file():
+        if own.startswith(BUILTIN):
+            path = app_brand.asset(own[len(BUILTIN):])
+            if path:
+                return path
+        elif own and Path(own).is_file():
             return own
         return app_brand.asset(app_brand.current().get("home_image"))
+
+    @staticmethod
+    def builtin_photos() -> list:
+        """브랜드에 든 홈 사진 [(경로, 이름)] — 파일이 있는 것만."""
+        return [(rel, name) for rel, name in app_brand.current().get("home_images", []) if app_brand.asset(rel)]
+
+    def use_builtin_photo(self, rel: str) -> bool:
+        if not app_brand.asset(rel):
+            return False
+        self._drop_own_photo()
+        self.config.home_image = BUILTIN + rel
+        self._save_config()
+        self.refresh_hero()
+        return True
+
+    def _drop_own_photo(self) -> None:
+        """데이터 폴더 home/ 에 복사해 둔 내 사진은 지운다 (다른 사진으로 바꿀 때)."""
+        old = getattr(self.config, "home_image", "") or ""
+        if old and not old.startswith(BUILTIN) and Path(old).parent == paths.get_appdata_dir() / "home":
+            Path(old).unlink(missing_ok=True)
 
     def refresh_hero(self) -> None:
         path = self.hero_path()
@@ -179,35 +205,45 @@ class HomeScreen(QWidget):
         folder = paths.ensure_dir(paths.get_appdata_dir() / "home")
         dst = Path(folder) / f"home-{int(time.time() * 1000)}{Path(src).suffix.lower() or '.jpg'}"
         shutil.copyfile(src, dst)
-        old = getattr(self.config, "home_image", "") or ""
+        self._drop_own_photo()
         self.config.home_image = str(dst)
         self._save_config()
-        if old and Path(old).parent == Path(folder) and Path(old) != dst:
-            Path(old).unlink(missing_ok=True)
         self.refresh_hero()
         return True
 
     def reset_home_image(self) -> None:
-        old = getattr(self.config, "home_image", "") or ""
+        self._drop_own_photo()
         self.config.home_image = ""
         self._save_config()
-        folder = paths.get_appdata_dir() / "home"
-        if old and Path(old).parent == folder:
-            Path(old).unlink(missing_ok=True)
         self.refresh_hero()
 
     def _photo_menu(self) -> None:
         m = QMenu(self)
-        a_pick = m.addAction("사진 고르기…")
+        current = self.hero_path()
+        builtin = {}
+        for rel, name in self.builtin_photos():
+            a = m.addAction(name)
+            a.setCheckable(True)
+            a.setChecked(app_brand.asset(rel) == current)
+            builtin[a] = rel
+        if builtin:
+            m.addSeparator()
+        a_pick = m.addAction("내 사진 고르기…")
         a_reset = m.addAction("기본 사진으로 되돌리기")
         a_reset.setEnabled(bool(getattr(self.config, "home_image", "")))
-        act = m.exec(self.btn_photo.mapToGlobal(QPoint(0, self.btn_photo.height())))
-        if act is a_pick:
+        act = self._exec_menu(m, self.btn_photo.mapToGlobal(QPoint(0, self.btn_photo.height())))
+        if act in builtin:
+            self.use_builtin_photo(builtin[act])
+        elif act is a_pick:
             path, _ = QFileDialog.getOpenFileName(self, "홈 화면 사진 고르기", "", PHOTO_FILTER)
             if path and not self.set_home_image(path):
                 QMessageBox.warning(self, "홈 사진", "사진 파일을 열 수 없습니다.")
         elif act is a_reset:
             self.reset_home_image()
+
+    @staticmethod
+    def _exec_menu(menu, pos):
+        return menu.exec(pos)
 
     def _save_config(self) -> None:
         try:
