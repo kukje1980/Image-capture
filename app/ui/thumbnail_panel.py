@@ -19,6 +19,7 @@ from app.ui.thumbnail_widget import ThumbnailWidget
 
 _DOW = "월화수목금토일"
 _FILTERS = [("all", "전체"), ("OD", "OD"), ("OS", "OS"), ("video", "동영상")]
+PAGE = 120           # 한 번에 그리는 썸네일 수. 장기 추적 환자(수천 장)를 골라도 화면이 멈추지 않게 나눠 그린다
 
 
 def day_label(day: str) -> str:
@@ -40,6 +41,7 @@ class ThumbnailPanel(QFrame):
         self._patient_id = None
         self._filter = "all"
         self._items: list = []
+        self._limit = PAGE
 
         self.setObjectName("ThumbnailPanel")
         self.setFixedWidth(248)
@@ -98,6 +100,7 @@ class ThumbnailPanel(QFrame):
     # ---- 공개 API ----
     def set_patient(self, patient_id) -> None:
         self._patient_id = patient_id
+        self._limit = PAGE
         order = "desc" if self.newest_on_top else "asc"
         self._items = self.db.captures.list_by_patient(patient_id, order=order) if patient_id is not None else []
         self._rebuild()
@@ -114,7 +117,16 @@ class ThumbnailPanel(QFrame):
     def set_filter(self, key: str) -> None:
         self._filter = key if key in self.filter_buttons else "all"
         self.filter_buttons[self._filter].setChecked(True)
+        self._limit = PAGE
         self._rebuild()
+
+    def show_more(self) -> None:
+        """'더 보기': 다음 PAGE 장을 추가로 그린다."""
+        self._limit += PAGE
+        self._rebuild()
+
+    def shown_count(self) -> int:
+        return min(self._limit, len(self.visible_captures()))
 
     def count(self) -> int:
         return len(self._items)
@@ -129,6 +141,7 @@ class ThumbnailPanel(QFrame):
         while self._lay.count():
             w = self._lay.takeAt(0).widget()
             if w is not None and w is not self._empty:
+                w.setParent(None)              # 바로 떼어 내 findChild·메모리에 남지 않게
                 w.deleteLater()
         self._badge.setText(str(len(self._items)))
         shown = self.visible_captures()
@@ -143,6 +156,7 @@ class ThumbnailPanel(QFrame):
         for c in shown:
             d = (c.captured_at or "")[:10]
             per_day[d] = per_day.get(d, 0) + 1
+        total, shown = len(shown), shown[:self._limit]
         day = None
         for c in shown:
             d = (c.captured_at or "")[:10]
@@ -154,3 +168,9 @@ class ThumbnailPanel(QFrame):
             w = ThumbnailWidget(c)
             w.clicked.connect(self.thumbnailClicked.emit)
             self._lay.addWidget(w)
+        if total > len(shown):
+            more = QPushButton(f"이전 {min(PAGE, total - len(shown))}장 더 보기  ({len(shown)} / {total})")
+            more.setObjectName("MoreBtn")
+            more.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            more.clicked.connect(self.show_more)
+            self._lay.addWidget(more)
