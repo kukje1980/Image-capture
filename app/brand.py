@@ -75,7 +75,13 @@ BRANDS: dict[str, dict] = {
         "k_colors": ["#6cbce8", "#1981b7", "#052133", "#ed6f1e"],
         "stripe": True,                             # 상단바 아래 K 4색 줄무늬
         "eye_colors": {"OD": "#6cbce8", "OS": "#ed6f1e", "OU": "#1981b7"},   # 우안 = 하늘, 좌안 = 주황
-        "home_image": "brand/keeler/home.png",      # 홈 화면 큰 사진: 장비만 떼어 낸 Keeler 슬릿램프 (없으면 그림)
+        # 홈 화면 큰 사진: 배경을 떼어 낸 Keeler 장비 사진 (tools/make_home_cutout.py) — '홈 사진 바꾸기' 에서 고름
+        "home_image": "brand/keeler/home-slitlamp.png",
+        "home_images": [
+            ("brand/keeler/home-slitlamp.png", "슬릿램프"),
+            ("brand/keeler/home-system.png", "슬릿램프 + 영상 시스템"),
+            ("brand/keeler/home-eyepiece.png", "접안렌즈"),
+        ],
         "palette": {
             "dark": {
                 "bg": "#03131f", "panel": "#061c2c", "panel2": "#0a2436", "raised": "#0e2c42",

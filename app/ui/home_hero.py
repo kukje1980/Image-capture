@@ -1,6 +1,6 @@
 """홈 화면 큰 사진 칸 — 사용자가 고른 사진 > 브랜드 기본 사진 > (둘 다 없으면) 슬릿 빛줄기 그림. 글자는 넣지 않는다.
 
-- 배경이 투명한 사진(Keeler 기본: 장비만 떼어 낸 PNG)은 잘리지 않게 칸 안에 통째로(왼쪽 맞춤), 화면 바탕 위에 장비만 보인다.
+- 배경이 투명한 사진(Keeler: 장비만 떼어 낸 PNG)은 잘리지 않게 칸 안에 통째로(가운데보다 조금 오른쪽), 화면 바탕 위에 장비만 보인다.
 - 흰 배경 제품 사진은 불러올 때 배경을 떼어(app/services/photo_cutout.py) 같은 방식으로 보인다.
 - 그 밖의 사진은 둥근 칸을 꽉 채운다.
 - 사진이 없으면 슬릿램프로 본 눈(홍채·동공 위로 비스듬히 지나는 빛줄기)을 브랜드 색(Keeler: 로고 K 4색)으로 그린다.
@@ -55,6 +55,7 @@ class HomeHero(QWidget):
         self._colors = list(b.get("k_colors") or _DEFAULT_COLORS)
         self._pm = QPixmap()
         self._cut = False                    # True = 배경 없는 장비 사진 (바탕 위에 장비만)
+        self.photo_align = 0.70              # 장비 사진 가로 위치 — 가운데보다 오른쪽 (오른쪽 타일과 균형)
 
     def set_image(self, path: str | None) -> bool:
         """사진 파일을 보여준다. 없거나 열 수 없으면 그림으로 돌아가고 False."""
@@ -96,9 +97,10 @@ class HomeHero(QWidget):
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         r = QRectF(self.rect())
         if self.is_cutout():
-            # 바탕 위에 장비만 — 잘리지 않게 칸 안에 통째로 (왼쪽 맞춤: 아래 인사말과 같은 줄)
+            # 바탕 위에 장비만 — 잘리지 않게 칸 안에 통째로, 가로 위치는 photo_align (칸 폭 비율, 장비 가운데 기준)
             s = self._pm.size().scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatio)
-            p.drawPixmap(QRectF(0, (r.height() - s.height()) / 2, s.width(), s.height()),
+            x = min(max(0.0, r.width() * self.photo_align - s.width() / 2), r.width() - s.width())
+            p.drawPixmap(QRectF(x, (r.height() - s.height()) / 2, s.width(), s.height()),
                          self._pm, QRectF(self._pm.rect()))
             p.end()
             return
