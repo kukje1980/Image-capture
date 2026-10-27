@@ -6,8 +6,10 @@
   MULTI    16장(4×4) / 36장(6×6) 그리드. 클릭=비교 선택(최대 2), 더블클릭=1화면
   비교     선택한 2장 좌우 비교. 확대·스크롤 동기화, 보정 동일 적용
   grid     촬영 화면의 '멀티' (embedded=True) — 고른 사진 · 참조 사진 격자(app/ui/multi_view.py).
-           위 도구줄은 숨기고 오른쪽 메뉴(보정 · 필터 · 편집 · 스마트 · 분석 · 정밀 분석)가 누른 칸에 적용된다.
-           기본 도구는 돋보기, 참조 사진 칸은 편집본 저장 · 측정 기록 · 코멘트에서 빠진다.
+           위 도구줄은 숨기고 오른쪽 메뉴가 누른 칸에 적용된다. 메뉴는 세 개: 보정 · 편집(보기 → 도구 → 필터 → 회전·반전) ·
+           분석(측정 종류 하나 고르고 실행 — multi_analysis.py). 실행 취소 · 다시 실행 · 원본 · 주석 지우기 · 편집본 저장은
+           메뉴 아래 늘 보이는 줄에. 스마트(LIVE 전용)는 없다. 기본 도구는 돋보기, 참조 사진 칸은 편집본 저장 · 측정 기록 ·
+           코멘트에서 빠진다.
 스마트 캡처 (사이드 '스마트' 탭 · LIVE)
   초점 판정(중앙 ROI 선명도) · Best Shot(최근 1초 중 가장 선명한 프레임) · Smart Freeze / Auto Save
   포커스 피킹 · 실시간 화질 점검(초점·노출·안정·반사)  — app/capture/pro_smart_capture.py
@@ -79,6 +81,7 @@ from app.ui.patient_dialog import PatientDialog
 from app.ui.pro import print_util
 from app.ui.pro.analysis_panel import AnalysisPanel
 from app.ui.pro.image_canvas import ImageCanvas
+from app.ui.pro.multi_analysis import MultiAnalysisPanel
 from app.ui.pro.multi_grid import MultiGrid
 from app.ui.pro.smart_panel import PEAKING_COLORS, AnalysisTab, SmartTab
 from app.ui.theme import ICON, ICON_ACCENT, ICON_ON_ACCENT
@@ -396,32 +399,39 @@ class ProWorkspace(QWidget):
         self.tabs.setObjectName("ProTabs")
         self.tabs.setDocumentMode(True)
         self.tabs.addTab(self._scroll(self._tab_adjust()), "보정")
-        self.tabs.addTab(self._scroll(self._tab_filter()), "필터")
+        if not self.embedded:
+            self.tabs.addTab(self._scroll(self._tab_filter()), "필터")
         self.tabs.addTab(self._scroll(self._tab_edit()), "편집")
         self.smart = SmartTab(self.config)
-        self.analysis = AnalysisTab()
-        self.tabs.addTab(self._scroll(self.smart), "스마트")
-        self.tabs.addTab(self._scroll(self.analysis), "분석")
         self.smart.settingsChanged.connect(self._on_smart_settings)
         self.smart.bestShotClicked.connect(self.freeze_best_shot)
-        self.analysis.fluoClicked.connect(self.measure_fluorescein)
-        self.analysis.rednessClicked.connect(self.measure_redness)
+        if self.embedded:
+            # 멀티: 필터는 편집 탭 안에, 스마트(LIVE 전용)는 없고, 분석 + 정밀 분석은 한 탭(측정 종류 하나 고르고 실행)
+            self.smart.hide()
+            self.analysis = self.advanced_analysis = MultiAnalysisPanel(self)
+            self.tabs.addTab(self._scroll(self.analysis), "분석")
+        else:
+            self.analysis = AnalysisTab()
+            self.tabs.addTab(self._scroll(self.smart), "스마트")
+            self.tabs.addTab(self._scroll(self.analysis), "분석")
+            self.analysis.fluoClicked.connect(self.measure_fluorescein)
+            self.analysis.rednessClicked.connect(self.measure_redness)
+            self.analysis.addNoteClicked.connect(self.record_measurement)
+            self.analysis.clearClicked.connect(self.clear_analysis)
+            self.analysis.ghostChanged.connect(self.set_ghost)
+            self.analysis.alignClicked.connect(self.align_pair)
+            self.analysis.blinkToggled.connect(self.set_blink)
+            self.analysis.nuclearClicked.connect(self.measure_nuclear)
+            self.analysis.corticalClicked.connect(self.measure_cortical)
+            self.analysis.cataractRecordClicked.connect(self.record_cataract)
+            self.analysis.guideToggled.connect(lambda _on: self._update_side())
+            self.advanced_analysis = AnalysisPanel(self)
+            self.tabs.addTab(self._scroll(self.advanced_analysis), "정밀 분석")
         self.analysis.set_red_sensitivity(int(getattr(self.config, "redness_sensitivity", 5) or 5))
         self.analysis.rednessSensitivityChanged.connect(self._on_red_sensitivity)
-        self.analysis.addNoteClicked.connect(self.record_measurement)
-        self.analysis.clearClicked.connect(self.clear_analysis)
-        self.analysis.ghostChanged.connect(self.set_ghost)
-        self.analysis.alignClicked.connect(self.align_pair)
-        self.analysis.blinkToggled.connect(self.set_blink)
-        self.analysis.nuclearClicked.connect(self.measure_nuclear)
-        self.analysis.corticalClicked.connect(self.measure_cortical)
-        self.analysis.cataractRecordClicked.connect(self.record_cataract)
-        self.analysis.guideToggled.connect(lambda _on: self._update_side())
         self.analysis.set_enabled_for(self._mode)
-        self.advanced_analysis = AnalysisPanel(self)
-        self.tabs.addTab(self._scroll(self.advanced_analysis), "정밀 분석")
         # 탭 6개가 사이드 폭(276px)에 한 줄로 들어가지 않아 스마트·분석·정밀 분석이 화살표 뒤로 숨던 문제 →
-        # 기본 탭 줄은 숨기고 3×2 버튼 격자로 모든 탭을 항상 보이게 한다 (탭 위젯·순서는 그대로)
+        # 기본 탭 줄은 숨기고 3열 버튼 격자로 모든 탭을 항상 보이게 한다 (탭 위젯·순서는 그대로, 멀티는 3개 한 줄)
         self.tabs.tabBar().hide()
         grid = QFrame()
         grid.setObjectName("ProTabGrid")
@@ -443,6 +453,21 @@ class ProWorkspace(QWidget):
         self.tab_buttons[self.tabs.currentIndex()].setChecked(True)
         lay.addWidget(grid)
         lay.addWidget(self.tabs, 1)
+
+        self.edit_bar = None
+        if self.embedded:
+            # 멀티: 편집 이력은 어느 메뉴에서든 바로 쓰게 메뉴 아래 늘 보이는 줄에
+            self.edit_bar = QFrame()
+            self.edit_bar.setObjectName("ProCard")
+            bl = QGridLayout(self.edit_bar)
+            bl.setContentsMargins(6, 6, 6, 6)
+            bl.setSpacing(4)
+            bl.addWidget(self.b_undo, 0, 0)
+            bl.addWidget(self.b_redo, 0, 1)
+            bl.addWidget(self.b_orig, 1, 0)
+            bl.addWidget(self.b_clear, 1, 1)
+            bl.addWidget(self.b_edit_save, 2, 0, 1, 2)
+            lay.addWidget(self.edit_bar)
 
         self.lbl_sel = QLabel("MULTI에서 영상 2장을 클릭해 선택한 뒤 '비교'를 누르세요.")
         self.lbl_sel.setWordWrap(True)
@@ -545,12 +570,8 @@ class ProWorkspace(QWidget):
         self._update_value_labels()
         return w
 
-    def _tab_filter(self) -> QWidget:
-        w = QWidget()
-        w.setObjectName("ProTabPage")
-        lay = QVBoxLayout(w)
-        lay.setContentsMargins(2, 8, 4, 4)
-        lay.setSpacing(8)
+    def _filter_form(self) -> QFormLayout:
+        """노이즈 제거 · 선명하게 · 국소 대비 향상 콤보 (Pro 검토는 '필터' 탭, 멀티는 편집 탭 안)."""
         form = QFormLayout()
         form.setSpacing(6)
         self.c_denoise = QComboBox()
@@ -562,7 +583,17 @@ class ProWorkspace(QWidget):
         form.addRow("노이즈 제거", self.c_denoise)
         form.addRow("선명하게", self.c_sharpen)
         form.addRow("국소 대비 향상", self.c_enhance)
-        lay.addLayout(form)
+        for c in (self.c_denoise, self.c_sharpen, self.c_enhance):
+            c.currentIndexChanged.connect(self._on_adjust)
+        return form
+
+    def _tab_filter(self) -> QWidget:
+        w = QWidget()
+        w.setObjectName("ProTabPage")
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(2, 8, 4, 4)
+        lay.setSpacing(8)
+        lay.addLayout(self._filter_form())
         tip = QLabel("· 노이즈 제거: 어두운 영상의 잡티 감소\n"
                      "· 선명하게: 경계(각막·수정체 단면)를 또렷하게\n"
                      "· 국소 대비 향상: 미세한 밝기 차이(혼탁·부종)를 강조\n"
@@ -571,43 +602,37 @@ class ProWorkspace(QWidget):
         tip.setObjectName("Muted")
         lay.addWidget(tip)
         lay.addStretch(1)
-        for c in (self.c_denoise, self.c_sharpen, self.c_enhance):
-            c.currentIndexChanged.connect(self._on_adjust)
         return w
 
-    def _tab_edit(self) -> QWidget:
-        w = QWidget()
-        w.setObjectName("ProTabPage")
-        lay = QVBoxLayout(w)
-        lay.setContentsMargins(2, 8, 4, 4)
-        lay.setSpacing(6)
-
-        lay.addWidget(self._sub("보기"))
+    def _view_row(self) -> QGridLayout:
         g0 = QGridLayout()
         g0.setSpacing(4)
-        self.b_fit = self._btn("맞춤", "화면 맞춤", icon="fit")
+        self.b_fit = self._btn("맞춤", "모든 칸을 창에 맞춤" if self.embedded else "화면 맞춤", icon="fit")
         self.b_zin = self._btn("확대", "확대", icon="zin")
         self.b_zout = self._btn("축소", "축소", icon="zout")
         g0.addWidget(self.b_fit, 0, 0)
         g0.addWidget(self.b_zin, 0, 1)
         g0.addWidget(self.b_zout, 0, 2)
-        lay.addLayout(g0)
+        return g0
 
-        lay.addWidget(self._sub("회전 · 반전"))
+    def _rotate_row(self) -> QGridLayout:
         g1 = QGridLayout()
         g1.setSpacing(4)
         g1.addWidget(self.b_rot_l, 0, 0)
         g1.addWidget(self.b_rot_r, 0, 1)
         g1.addWidget(self.b_flip_h, 0, 2)
         g1.addWidget(self.b_flip_v, 0, 3)
-        lay.addLayout(g1)
+        return g1
 
-        lay.addWidget(self._sub("도구 (주석 · 측정)"))
+    def _tools_block(self) -> QVBoxLayout:
+        """도구 3×3 + 눈금 줄."""
+        block = QVBoxLayout()
+        block.setSpacing(6)
         g2 = QGridLayout()
         g2.setSpacing(4)
         for k, (t, *_rest) in enumerate(_TOOLS):
             g2.addWidget(self.tool_buttons[t], k // 3, k % 3)
-        lay.addLayout(g2)
+        block.addLayout(g2)
         cal = QHBoxLayout()
         self.lbl_calib = QLabel()
         self.lbl_calib.setObjectName("Muted")
@@ -617,9 +642,10 @@ class ProWorkspace(QWidget):
         self.b_calib_clear.setFixedWidth(52)
         cal.addWidget(self.lbl_calib, 1)
         cal.addWidget(self.b_calib_clear)
-        lay.addLayout(cal)
+        block.addLayout(cal)
+        return block
 
-        lay.addWidget(self._sub("편집 이력"))
+    def _history_grid(self) -> QGridLayout:
         g3 = QGridLayout()
         g3.setSpacing(4)
         g3.addWidget(self.b_undo, 0, 0)
@@ -627,7 +653,36 @@ class ProWorkspace(QWidget):
         g3.addWidget(self.b_orig, 1, 0)
         g3.addWidget(self.b_clear, 1, 1)
         g3.addWidget(self.b_edit_save, 2, 0, 1, 2)
-        lay.addLayout(g3)
+        return g3
+
+    def _tab_edit(self) -> QWidget:
+        w = QWidget()
+        w.setObjectName("ProTabPage")
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(2, 8, 4, 4)
+        lay.setSpacing(6)
+
+        lay.addWidget(self._sub("보기"))
+        lay.addLayout(self._view_row())
+        if self.embedded:
+            # 멀티: 보기 → 도구 → 필터 → 회전 · 반전 (편집 이력은 메뉴 아래 늘 보이는 줄에)
+            lay.addWidget(self._sub("도구 (주석 · 측정)"))
+            lay.addLayout(self._tools_block())
+            lay.addWidget(self._sub("필터"))
+            lay.addLayout(self._filter_form())
+            tip = QLabel("누른 칸에 적용 — 보정 탭 '모든 칸에 같이 적용' 을 켜면 필터도 모든 칸에")
+            tip.setWordWrap(True)
+            tip.setObjectName("Muted")
+            lay.addWidget(tip)
+            lay.addWidget(self._sub("회전 · 반전"))
+            lay.addLayout(self._rotate_row())
+        else:
+            lay.addWidget(self._sub("회전 · 반전"))
+            lay.addLayout(self._rotate_row())
+            lay.addWidget(self._sub("도구 (주석 · 측정)"))
+            lay.addLayout(self._tools_block())
+            lay.addWidget(self._sub("편집 이력"))
+            lay.addLayout(self._history_grid())
         lay.addStretch(1)
 
         self.b_fit.clicked.connect(self._fit_all)
@@ -1338,7 +1393,7 @@ class ProWorkspace(QWidget):
         except Exception:  # noqa: BLE001
             self._tag = ""
         name = analysis.ILLUMINATION_LABELS.get(self._tag, "-")
-        self.analysis.lbl_tag.setText(f"추정 조명: {name}  (색 분포 기준 · 코멘트 기록 시 함께 저장)")
+        self.analysis.lbl_tag.setText(f"추정 조명: {name}  (색 분포 기준 · 기록에 함께 저장)")
 
     def _measure_roi(self):
         """'원' 주석의 마지막 것을 측정 영역으로 (없으면 전체)."""
@@ -1373,7 +1428,7 @@ class ProWorkspace(QWidget):
         self._last_measure = "redness"
         if r["vessel_pct"] >= 40:
             self.analysis.lbl_result.setText(
-                self.analysis.lbl_result.text() + "\n붉은 표시가 넓으면 '충혈 민감도' 를 낮추거나, 편집 탭 '원' 으로 결막만 둘러 측정하세요")
+                self.analysis.lbl_result.text() + "\n붉은 표시가 넓으면 민감도를 낮추거나 '원' 으로 결막만 둘러 측정하세요")
         return r
 
     def _on_red_sensitivity(self, v: int) -> None:
@@ -1391,7 +1446,7 @@ class ProWorkspace(QWidget):
         cv = self._an_canvas()
         if cv is not None:
             cv.set_overlay(_mask_qimage(mask, rgb, alpha), 1.0)
-        self.analysis.lbl_result.setText(self._analysis_text + "\n(표시 레이어는 저장본에 들어가지 않습니다)")
+        self.analysis.lbl_result.setText(self._analysis_text + "\n(표시 레이어는 저장본에 안 들어감)")
 
     def clear_analysis(self) -> None:
         self._analysis_mask, self._analysis_text = None, ""

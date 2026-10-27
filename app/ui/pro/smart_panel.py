@@ -3,6 +3,8 @@
 스마트 캡처  자동 촬영 모드 · 관심 영역 · Best Shot · 포커스 피킹 · 실시간 화질 점검(초점/노출/안정/반사)
 분석         조명 모드 태그 · 형광 염색 면적 · 충혈 지수 · 경과 비교(고스트 겹치기 · 정렬 · 깜빡임 전환)
              · 백내장: 수정체 혼탁 지수(핵·피질) · 촬영 조건 메모 · LOCS III 의사 입력(라벨) · 경과 그래프 · LIVE 촬영 가이드
+촬영 화면의 멀티는 이 두 탭 대신 app/ui/pro/multi_analysis.py (분석 + 정밀 분석을 한 흐름으로) 를 쓰고,
+'충혈 민감도' 줄(RednessSlider) · LOCS 입력(locs_inputs) 은 여기 것을 같이 쓴다.
 """
 from __future__ import annotations
 
@@ -27,11 +29,13 @@ from app.capture.pro_smart_capture import AUTO_MODES
 
 PEAKING_COLORS = {"red": ("빨강", (255, 59, 48)), "green": ("초록", (52, 211, 153)), "cyan": ("시안", (34, 211, 238))}
 _QUALITY_ROWS = [("focus", "초점"), ("exposure", "노출"), ("stability", "안정"), ("reflection", "반사")]
+LOCS_KEYS = ("NO", "NC", "C", "P")
 
 
 def _sub(text: str) -> QLabel:
     lbl = QLabel(text)
     lbl.setObjectName("PanelHeader")
+    lbl.setWordWrap(True)                 # 사이드 폭(276px)보다 긴 제목이 칸을 옆으로 밀지 않게
     return lbl
 
 
@@ -40,6 +44,61 @@ def _muted(text: str = "") -> QLabel:
     lbl.setObjectName("Muted")
     lbl.setWordWrap(True)
     return lbl
+
+
+class RednessSlider(QWidget):
+    """'충혈 민감도' 한 줄 — 1~10, 5 = 기본. 낮추면 더 붉은 곳만, 높이면 옅은 붉은 기까지."""
+
+    valueChanged = Signal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(4)
+        row.addWidget(_muted("충혈 민감도"))
+        self.slider = QSlider(Qt.Orientation.Horizontal)
+        self.slider.setRange(1, 10)
+        self.slider.setValue(5)
+        self.slider.setToolTip("충혈 지수의 붉은 화소 기준 — 낮추면 더 붉은 곳만, 높이면 옅은 붉은 기까지 표시 · 5 = 기본\n"
+                               "측정한 뒤 움직이면 바로 다시 측정합니다 (경과 비교는 같은 민감도끼리)")
+        self.label = _muted("")
+        self.label.setFixedWidth(50)
+        row.addWidget(self.slider, 1)
+        row.addWidget(self.label)
+        self.slider.valueChanged.connect(self._on)
+        self._on(self.slider.value(), emit=False)
+
+    def _on(self, v: int, emit: bool = True) -> None:
+        self.label.setText(f"{v}" + (" · 기본" if v == 5 else ""))
+        if emit:
+            self.valueChanged.emit(int(v))
+
+    def value(self) -> int:
+        return self.slider.value()
+
+    def set_value(self, v: int) -> None:
+        self.slider.blockSignals(True)
+        self.slider.setValue(min(10, max(1, int(v))))
+        self.slider.blockSignals(False)
+        self._on(self.slider.value(), emit=False)
+
+
+def locs_inputs(grid: QGridLayout) -> dict:
+    """LOCS III 의사 입력(NO · NC · C · P, 1~6 · 0 = 미입력) 네 칸을 grid 에 2×2 로 놓고 {등급: QSpinBox} 를 돌려준다."""
+    boxes = {}
+    for i, key in enumerate(LOCS_KEYS):
+        sb = QSpinBox()
+        sb.setRange(0, 6)
+        sb.setSpecialValueText("-")
+        sb.setToolTip(f"의사 입력 {key} 등급 1~6 (0 = 미입력). 등급 추정 모델 학습용 라벨로 쌓입니다")
+        sb.setMinimumWidth(48)
+        boxes[key] = sb
+        lbl = _muted(key)
+        lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        grid.addWidget(lbl, i // 2, (i % 2) * 2)
+        grid.addWidget(sb, i // 2, (i % 2) * 2 + 1)
+    return boxes
 
 
 class SmartTab(QWidget):
@@ -201,7 +260,7 @@ class AnalysisTab(QWidget):
         self.lbl_tag = _muted("1화면에서 영상을 열면 자동으로 추정합니다.")
         lay.addWidget(self.lbl_tag)
 
-        lay.addWidget(_sub("측정 (1화면 · 멀티의 누른 칸 · '원' 주석 = 측정 영역)"))
+        lay.addWidget(_sub("측정 ('원' 주석을 그리면 그 안만)"))
         g = QGridLayout()
         g.setSpacing(4)
         self.b_fluo = QPushButton("형광 염색 면적")
@@ -219,18 +278,9 @@ class AnalysisTab(QWidget):
         g.addWidget(self.b_note, 1, 0)
         g.addWidget(self.b_clear, 1, 1)
         lay.addLayout(g)
-        sens = QHBoxLayout()
-        sens.addWidget(_muted("충혈 민감도"))
-        self.s_red_sens = QSlider(Qt.Orientation.Horizontal)
-        self.s_red_sens.setRange(1, 10)
-        self.s_red_sens.setValue(5)
-        self.s_red_sens.setToolTip("충혈 지수의 붉은 화소 기준 — 낮추면 더 붉은 곳만, 높이면 옅은 붉은 기까지 표시 · 5 = 기본\n"
-                                   "측정한 뒤 움직이면 바로 다시 측정합니다 (경과 비교는 같은 민감도끼리)")
-        self.lbl_red_sens = _muted("")
-        self.lbl_red_sens.setFixedWidth(50)
-        sens.addWidget(self.s_red_sens, 1)
-        sens.addWidget(self.lbl_red_sens)
-        lay.addLayout(sens)
+        self.red = RednessSlider()
+        self.s_red_sens, self.lbl_red_sens = self.red.slider, self.red.label
+        lay.addWidget(self.red)
         self.lbl_result = _muted("-")
         lay.addWidget(self.lbl_result)
 
@@ -283,18 +333,7 @@ class AnalysisTab(QWidget):
         lay.addWidget(_muted("LOCS III 의사 입력 (1~6, 라벨 데이터)"))
         g4 = QGridLayout()
         g4.setSpacing(4)
-        self.locs = {}
-        for i, key in enumerate(("NO", "NC", "C", "P")):
-            sb = QSpinBox()
-            sb.setRange(0, 6)
-            sb.setSpecialValueText("-")
-            sb.setToolTip(f"의사 입력 {key} 등급 1~6 (0 = 미입력). 등급 추정 모델 학습용 라벨로 쌓입니다")
-            sb.setMinimumWidth(48)
-            self.locs[key] = sb
-            lbl = _muted(key)
-            lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            g4.addWidget(lbl, i // 2, (i % 2) * 2)
-            g4.addWidget(sb, i // 2, (i % 2) * 2 + 1)
+        self.locs = locs_inputs(g4)
         lay.addLayout(g4)
         self.b_cat_record = QPushButton("측정 기록")
         self.b_cat_record.setObjectName("ProPrimary")
@@ -321,8 +360,7 @@ class AnalysisTab(QWidget):
 
         self.b_fluo.clicked.connect(self.fluoClicked.emit)
         self.b_red.clicked.connect(self.rednessClicked.emit)
-        self.s_red_sens.valueChanged.connect(self._on_red_sens)
-        self._on_red_sens(self.s_red_sens.value(), emit=False)
+        self.red.valueChanged.connect(self.rednessSensitivityChanged)
         self.b_note.clicked.connect(self.addNoteClicked.emit)
         self.b_clear.clicked.connect(self.clearClicked.emit)
         self.s_ghost.valueChanged.connect(self._on_ghost)
@@ -333,16 +371,8 @@ class AnalysisTab(QWidget):
         self.lbl_ghost.setText("끄기" if v == 0 else f"{v}%")
         self.ghostChanged.emit(v)
 
-    def _on_red_sens(self, v: int, emit: bool = True) -> None:
-        self.lbl_red_sens.setText(f"{v}" + (" · 기본" if v == 5 else ""))
-        if emit:
-            self.rednessSensitivityChanged.emit(int(v))
-
     def set_red_sensitivity(self, v: int) -> None:
-        self.s_red_sens.blockSignals(True)
-        self.s_red_sens.setValue(min(10, max(1, int(v))))
-        self.s_red_sens.blockSignals(False)
-        self._on_red_sens(self.s_red_sens.value(), emit=False)
+        self.red.set_value(v)
 
     def set_enabled_for(self, mode: str, can_record: bool = True) -> None:
         """측정은 1화면 · 멀티(누른 칸), 기록(코멘트 · 측정 기록)은 환자 사진일 때만 (참조 사진 칸은 측정만)."""

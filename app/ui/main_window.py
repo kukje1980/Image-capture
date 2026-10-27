@@ -268,7 +268,6 @@ class MainWindow(QMainWindow):
         self.multi_view.cellActivated.connect(self._on_multi_cell_activated)
         self.multi_pro.savedCapture.connect(self._on_pro_saved)          # 편집본 · 분석 결과 · 코멘트
         self.multi_pro.patientUpdated.connect(self._on_pro_patient_updated)
-        self.multi_pro.smart.settingsChanged.connect(self._on_multi_smart_settings)
         self.ref_bar.selectionChanged.connect(self._safe("참조", lambda: self._on_refs_changed(self.ref_bar.selected_refs())))
         self.ref_bar.libraryRequested.connect(self._safe("참조 라이브러리", lambda: self.open_references()))
         self.ref_bar.hideRequested.connect(lambda: self._set_ref_bar_visible(False))
@@ -1175,12 +1174,6 @@ class MainWindow(QMainWindow):
             dlg.exec()
             return
         self._on_thumbnail_clicked(cap)
-
-    def _on_multi_smart_settings(self) -> None:
-        """멀티 화면 '스마트' 탭에서 바꾼 피킹 · Best Shot 을 촬영 화면 Smart 줄에도."""
-        cfg = self.config
-        self.smart_bar.set_state(cfg.smart_mode, cfg.smart_peaking, cfg.smart_peaking_sensitivity, cfg.smart_best_shot)
-        self._apply_smart(save=False)
 
     def _on_save_multi(self) -> None:
         if self._current_patient is None:

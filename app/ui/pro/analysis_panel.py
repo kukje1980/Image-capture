@@ -124,6 +124,12 @@ class AnalysisPanel(QWidget):
         self.setObjectName("ProTabPage")
         self.result: Optional[clinical.AnalysisResult] = None
         self._result_canvas = None
+        self._build_ui()
+        self.sync()
+
+    def _build_ui(self) -> None:
+        """위젯 · 배치 (멀티 화면의 MultiAnalysisPanel 은 같은 이름의 위젯을 다른 배치로 만든다)."""
+        ws = self.ws
         lay = QVBoxLayout(self)
         lay.setContentsMargins(2, 8, 4, 4)
         lay.setSpacing(6)
@@ -194,14 +200,15 @@ class AnalysisPanel(QWidget):
         self.b_best.clicked.connect(self.open_sharpest)
         self.b_tbut.clicked.connect(self._tbut_dialog)
         self.b_dicom.clicked.connect(self._dicom_dialog)
-        self.sync()
 
     # ---- 상태 ----
     def kind(self) -> str:
         return self.c_kind.currentData()
 
     def set_kind(self, kind: str) -> None:
-        self.c_kind.setCurrentIndex(list(clinical.KINDS).index(kind))
+        i = self.c_kind.findData(kind)
+        if i >= 0:
+            self.c_kind.setCurrentIndex(i)
 
     def _on_kind(self, *_) -> None:
         self.chk_dark.setVisible(self.kind() == "meibography")
