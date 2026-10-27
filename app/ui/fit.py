@@ -20,6 +20,7 @@ class HScroll(QScrollArea):
         self._on_compact = on_compact
         self._compact = False
         self._full_w = 0
+        self._ready = False                    # 만드는 중(맥은 setFrameShape 등에서 바로 resizeEvent)에는 on_compact 를 부르지 않음
         self.setWidget(inner)
         inner.setAutoFillBackground(False)     # setWidget 이 켜는 바탕 채우기를 끔 — 줄 자체 QSS 바탕만 보이게
         self.setWidgetResizable(True)
@@ -31,6 +32,7 @@ class HScroll(QScrollArea):
         inner.installEventFilter(self)
         self.setVisible(not inner.isHidden())
         self._sync()
+        self._ready = True                     # 이후 크기가 정해질 때(resizeEvent) 줄이기 · 되돌리기
 
     def inner(self):
         return self._inner
@@ -61,7 +63,7 @@ class HScroll(QScrollArea):
         self._sync()
 
     def _fit(self) -> None:
-        if self._on_compact is None:
+        if self._on_compact is None or not self._ready:
             return
         vw = self.viewport().width()
         if not self._compact:
