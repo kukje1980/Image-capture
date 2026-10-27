@@ -1,16 +1,19 @@
-"""홈 화면 큰 사진 칸 — 사용자가 고른 사진 > 브랜드 기본 사진 > (둘 다 없으면) 슬릿 빛줄기 그림.
+"""홈 화면 큰 사진 칸 — 사용자가 고른 사진 > 브랜드 기본 사진 > (둘 다 없으면) 슬릿 빛줄기 그림. 글자는 넣지 않는다.
 
-그림은 슬릿램프로 본 눈(홍채·동공 위로 비스듬히 지나는 좁은 빛줄기)을 브랜드 색으로 그린 것이다.
-Keeler 판은 로고 K 의 4색 — 하늘 · 파랑 · 네이비 · 주황 — 을 쓴다.
+- 배경이 투명한 사진(Keeler 기본: 장비만 떼어 낸 PNG)은 잘리지 않게 칸 안에 통째로(왼쪽 맞춤), 화면 바탕 위에 장비만 보인다.
+- 흰 배경 제품 사진은 불러올 때 배경을 떼어(app/services/photo_cutout.py) 같은 방식으로 보인다.
+- 그 밖의 사진은 둥근 칸을 꽉 채운다.
+- 사진이 없으면 슬릿램프로 본 눈(홍채·동공 위로 비스듬히 지나는 빛줄기)을 브랜드 색(Keeler: 로고 K 4색)으로 그린다.
 """
 from __future__ import annotations
 
 import math
 
+import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import (
     QColor,
-    QFont,
+    QImage,
     QLinearGradient,
     QPainter,
     QPainterPath,
@@ -21,9 +24,25 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from app import brand as app_brand
+from app.services.photo_cutout import cutout_white_background, is_white_background, trim_transparent
 
 # 브랜드에 k_colors 가 없을 때: 하늘 · 파랑 · 바탕 · 포인트
 _DEFAULT_COLORS = ["#5eead4", "#0f8f84", "#0b1220", "#f59e0b"]
+_CUT_MAX_SIDE = 1400                       # 배경 떼기 전에 이 크기로 줄임 (큰 사진도 빠르게)
+
+
+def _to_bgr(img: QImage) -> np.ndarray:
+    img = img.convertToFormat(QImage.Format.Format_RGB888)
+    w, h, bpl = img.width(), img.height(), img.bytesPerLine()
+    buf = np.frombuffer(img.constBits(), dtype=np.uint8, count=bpl * h)
+    return buf.reshape(h, bpl)[:, : w * 3].reshape(h, w, 3)[..., ::-1].copy()
+
+
+def _from_bgra(bgra: np.ndarray) -> QPixmap:
+    h, w = bgra.shape[:2]
+    data = np.ascontiguousarray(bgra)
+    img = QImage(data.data, w, h, w * 4, QImage.Format.Format_ARGB32)   # 메모리 순서 B,G,R,A = ARGB32
+    return QPixmap.fromImage(img.copy())
 
 
 class HomeHero(QWidget):
@@ -34,18 +53,41 @@ class HomeHero(QWidget):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         b = app_brand.current()
         self._colors = list(b.get("k_colors") or _DEFAULT_COLORS)
-        self._caption = "SLIT LAMP IMAGING"
-        self._logo = app_brand.asset(b.get("header_logo") or b.get("logo_dark") or b.get("logo"))
         self._pm = QPixmap()
+        self._cut = False                    # True = 배경 없는 장비 사진 (바탕 위에 장비만)
 
     def set_image(self, path: str | None) -> bool:
         """사진 파일을 보여준다. 없거나 열 수 없으면 그림으로 돌아가고 False."""
-        self._pm = QPixmap(path) if path else QPixmap()
+        pm = QPixmap(path) if path else QPixmap()
+        self._cut = False
+        if not pm.isNull():
+            if pm.hasAlphaChannel() and self._transparent_corners(pm.toImage()):
+                self._cut = True
+            else:
+                if max(pm.width(), pm.height()) > _CUT_MAX_SIDE:
+                    pm = pm.scaled(_CUT_MAX_SIDE, _CUT_MAX_SIDE, Qt.AspectRatioMode.KeepAspectRatio,
+                                   Qt.TransformationMode.SmoothTransformation)
+                bgr = _to_bgr(pm.toImage())
+                if is_white_background(bgr):          # 흰 배경 제품 사진 → 장비만 떼어 냄
+                    pm = _from_bgra(trim_transparent(cutout_white_background(bgr)))
+                    self._cut = True
+        self._pm = pm
         self.update()
         return not self._pm.isNull()
 
+    @staticmethod
+    def _transparent_corners(img: QImage) -> bool:
+        w, h = img.width(), img.height()
+        return all(img.pixelColor(x, y).alpha() < 16 for x, y in ((0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)))
+
     def has_photo(self) -> bool:
         return not self._pm.isNull()
+
+    def is_cutout(self) -> bool:
+        return self.has_photo() and self._cut
+
+    def photo(self) -> QPixmap:
+        return QPixmap(self._pm)
 
     # ---- 그리기 ----
     def paintEvent(self, _e) -> None:  # noqa: N802
@@ -53,6 +95,13 @@ class HomeHero(QWidget):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         r = QRectF(self.rect())
+        if self.is_cutout():
+            # 바탕 위에 장비만 — 잘리지 않게 칸 안에 통째로 (왼쪽 맞춤: 아래 인사말과 같은 줄)
+            s = self._pm.size().scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatio)
+            p.drawPixmap(QRectF(0, (r.height() - s.height()) / 2, s.width(), s.height()),
+                         self._pm, QRectF(self._pm.rect()))
+            p.end()
+            return
         clip = QPainterPath()
         clip.addRoundedRect(r, 18, 18)
         p.setClipPath(clip)
@@ -60,14 +109,8 @@ class HomeHero(QWidget):
             s = self._pm.size().scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatioByExpanding)
             p.drawPixmap(QRectF((r.width() - s.width()) / 2, (r.height() - s.height()) / 2, s.width(), s.height()),
                          self._pm, QRectF(self._pm.rect()))
-            # 아래쪽을 살짝 어둡게 — 글자가 사진 위에서도 읽히게
-            g = QLinearGradient(0, r.height() * 0.55, 0, r.height())
-            g.setColorAt(0, QColor(0, 0, 0, 0))
-            g.setColorAt(1, QColor(0, 0, 0, 170))
-            p.fillRect(r, g)
         else:
             self._paint_art(p, r)
-        self._paint_caption(p, r)
         p.end()
 
     def _paint_art(self, p: QPainter, r: QRectF) -> None:
@@ -150,23 +193,3 @@ class HomeHero(QWidget):
         # 동공 반사점
         p.setBrush(QColor(255, 255, 255, 210))
         p.drawEllipse(QPointF(cx + R * 0.16, cy - R * 0.18), R * 0.06, R * 0.045)
-
-    def _paint_caption(self, p: QPainter, r: QRectF) -> None:
-        sky = QColor(self._colors[0])
-        pad = max(16.0, r.width() * 0.05)
-        y = r.bottom() - pad
-        if self._logo:
-            from PySide6.QtSvg import QSvgRenderer
-            svg = QSvgRenderer(self._logo)
-            ds = svg.defaultSize()
-            lh = max(20.0, min(40.0, r.height() * 0.11))
-            lw = ds.width() * lh / max(1, ds.height())
-            svg.render(p, QRectF(r.left() + pad, y - lh - 20, lw, lh))
-        f = QFont()
-        f.setPixelSize(12)
-        f.setBold(True)
-        f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 2.5)
-        p.setFont(f)
-        p.setPen(sky)
-        p.drawText(QRectF(r.left() + pad, y - 16, r.width() - pad * 2, 16),
-                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, self._caption)

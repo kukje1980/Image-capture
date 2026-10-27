@@ -66,7 +66,11 @@ def test_default_brand_has_no_stripe(win):
 # ---------------- 홈 화면 사진 ----------------
 def test_home_hero_photo(keeler, tmp_path):
     h = keeler.home
-    assert not h.hero.isHidden() and not h.hero.has_photo()            # Keeler: 사진이 없으면 슬릿 빛줄기 그림
+    # Keeler: 기본 홈 사진 = 배경을 떼어 낸 Keeler 슬릿램프 장비 사진 (바탕 위에 장비만, 글자 없음)
+    assert h.hero_path() == brand.asset("brand/keeler/home.png") and Path(h.hero_path()).is_file()
+    assert not h.hero.isHidden() and h.hero.has_photo() and h.hero.is_cutout()
+    img = h.hero.photo().toImage()
+    assert img.pixelColor(0, 0).alpha() == 0 and img.pixelColor(img.width() // 2, img.height() // 2).alpha() == 255
     pm = h.hero.grab()
     assert not pm.isNull() and pm.width() > 100
     src = _png(tmp_path / "장비 사진" / "keeler 슬릿.png")
@@ -74,10 +78,37 @@ def test_home_hero_photo(keeler, tmp_path):
     own = Path(keeler.config.home_image)
     assert own.is_file() and own.parent.name == "home" and own != src  # 데이터 폴더로 복사
     assert h.hero.has_photo() and h.hero_path() == str(own)
+    assert not h.hero.is_cutout()                                     # 배경이 있는 사진은 칸을 꽉 채움
+    assert not h.hero.grab().isNull()
     assert not h.set_home_image(str(tmp_path / "없는 파일.jpg"))
     h.reset_home_image()
-    assert keeler.config.home_image == "" and not own.exists() and not h.hero.has_photo()
-    assert not h.hero.isHidden()
+    assert keeler.config.home_image == "" and not own.exists()
+    assert h.hero_path() == brand.asset("brand/keeler/home.png") and h.hero.is_cutout()
+
+
+def test_home_hero_white_photo_cutout(qapp, tmp_path):
+    """흰 배경 제품 사진은 불러올 때 배경을 떼어 장비만 보인다."""
+    from app.ui.home_hero import HomeHero
+    img = np.full((120, 160, 3), 255, np.uint8)
+    img[30:100, 50:110] = (60, 50, 40)                                  # 장비
+    img[40:60, 60:100] = (220, 222, 225)                               # 장비 안의 밝은 부분은 그대로
+    path = tmp_path / "흰 배경.jpg"
+    cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 95])[1].tofile(str(path))
+    hero = HomeHero()
+    hero.resize(400, 300)
+    assert hero.set_image(str(path)) and hero.is_cutout()
+    q = hero.photo().toImage()
+    assert q.pixelColor(2, 2).alpha() == 0 and q.pixelColor(80, 65).alpha() == 255
+    assert q.pixelColor(80, 50).alpha() == 255                         # 밝은 회색 부분은 지우지 않음
+    assert not hero.grab().isNull()
+
+
+def test_home_hero_art_without_photo(qapp):
+    from app.ui.home_hero import HomeHero
+    hero = HomeHero()
+    hero.resize(520, 360)
+    assert not hero.set_image(None) and not hero.has_photo() and not hero.is_cutout()
+    assert not hero.grab().isNull()                                    # 사진이 없으면 슬릿 빛줄기 그림
 
 
 def test_default_brand_home_photo_optional(win, tmp_path):
@@ -94,20 +125,44 @@ def test_narrow_window_no_overlap(qapp, keeler):
     w.resize(1500, 860)
     _wait(qapp, lambda: not w._topbar_compact, 1.0)
     assert not w._topbar_compact and all(b.is_text_visible() for b in w.nav_buttons)
-    assert w.minimumSizeHint().width() < 1100                          # 1280px(150% 배율) 화면에도 들어감
-    w.resize(1010, 700)
-    assert _wait(qapp, lambda: w._topbar_compact, 2.0)
-    assert not any(b.is_text_visible() for b in w.nav_buttons)
-    assert w.btn_mode_capture.text() == "촬영" and "촬영" in w.btn_mode_capture.toolTip()
+    # 1280px(1920×1080 · 150% 배율) 화면에도 들어감 — Windows 글꼴은 더 넓어 약 1110px (리눅스 약 1000px)
+    min_w = w.minimumSizeHint().width()
+    assert min_w < 1200
+    w.resize(min_w, 700)                                               # 가장 좁게
+    _wait(qapp, lambda: w.width() <= min_w + 2, 2.0)
+    for _ in range(20):
+        qapp.processEvents()
+    # 상단바가 다 들어가지 않으면 아이콘만 (이름은 풍선 도움말)
+    assert w._topbar_compact == (w.topbar.width() < w._topbar_full_w)
+    assert all(b.is_text_visible() != w._topbar_compact for b in w.nav_buttons)
+    if w._topbar_compact:
+        assert w.btn_mode_capture.text() == "촬영" and "촬영" in w.btn_mode_capture.toolTip()
     for b in w.nav_buttons:                                            # 눌려 찌그러진 버튼 없음
         assert b.width() >= b.minimumSizeHint().width() and b.height() >= b.minimumSizeHint().height()
-    assert w.control_bar.is_compact()
+    assert w.control_bar.is_compact()                                  # 촬영 도크도 아이콘만
     sc = w.control_bar.parentWidget().parentWidget()                   # HScroll(뷰포트(도크))
     assert sc.objectName() == "HScroll"
-    assert _wait(qapp, lambda: not sc.overflowing(), 2.0)             # 아이콘만으로 셔터까지 한 줄에
+    ok = _wait(qapp, lambda: not sc.overflowing(), 2.0)               # 아이콘만으로 셔터까지 한 줄에
+    assert ok, (f"window {w.width()} min {min_w} viewport {sc.viewport().width()} "
+                f"dock {w.control_bar.minimumSizeHint().width()} thumbs {w.thumbnail_panel.width()} "
+                f"eye {[b.width() for b in w.control_bar.eye_buttons.values()]}")
+    for b in w.control_bar._sized_buttons:
+        if b.isVisible():
+            assert b.width() >= b.minimumSizeHint().width()
     w.resize(1600, 900)
     assert _wait(qapp, lambda: not w._topbar_compact and not w.control_bar.is_compact(), 2.0)
     assert all(b.is_text_visible() for b in w.nav_buttons)
+
+
+def test_topbar_compact_when_narrower_than_full(qapp, keeler):
+    w = keeler
+    w.resize(1600, 900)
+    _wait(qapp, lambda: not w._topbar_compact, 1.0)
+    full = w._topbar_full_w
+    w.topbar.resize(full - 40, w.topbar.height())                     # 상단바가 다 들어가지 않는 폭
+    assert w._topbar_compact and not any(b.is_text_visible() for b in w.nav_buttons)
+    w.topbar.resize(full + 40, w.topbar.height())
+    assert not w._topbar_compact and all(b.is_text_visible() for b in w.nav_buttons)
 
 
 def test_smart_bar_hidden_with_wrapper(qapp, win):
