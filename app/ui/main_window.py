@@ -257,6 +257,9 @@ class MainWindow(QMainWindow):
         self.quad_view.cellClicked.connect(self._on_quad_cell_clicked)
         self.thumbnail_panel.thumbnailClicked.connect(self._on_thumbnail_clicked)   # 두 번 클릭: 큰 화면
         self.thumbnail_panel.selectionChanged.connect(self._on_selection_changed)   # 한 번 클릭: 선택
+        # 오른쪽 클릭 = '멀티' (사진 목록의 사진: 그 사진도 골라서 · 라이브 영상: 고른 사진으로)
+        self.thumbnail_panel.multiRequested.connect(self._safe("오른쪽 클릭 멀티", lambda: self._multi_by_right_click()))
+        self.video_view.rightClicked.connect(self._safe("오른쪽 클릭 멀티", lambda: self._multi_by_right_click()))
         self.control_bar.multiToggled.connect(self._on_multi_toggled)
         self.control_bar.saveMultiClicked.connect(self._safe("멀티 저장", lambda: self._on_save_multi()))
         self.control_bar.sendClicked.connect(self._safe("전송", lambda: self._on_send()))
@@ -1133,6 +1136,18 @@ class MainWindow(QMainWindow):
                                          "참조 사진을 고른 뒤 '멀티'를 누르세요", 5000)
             return
         self._enter_multi(items)
+
+    def _multi_by_right_click(self) -> None:
+        """오른쪽 클릭으로 멀티 화면 — '멀티' 버튼을 누른 것과 같음 (이미 멀티면 그대로)."""
+        if self._multi:
+            return
+        items = self._multi_items()
+        if not items:
+            self.statusBar().showMessage("오른쪽 사진 목록에서 사진을 고르거나 사진 위에서 오른쪽 클릭하면 멀티 화면으로 봅니다", 5000)
+            return
+        self._enter_multi(items)
+        self.statusBar().showMessage(f"멀티 화면 ({len(items)}장) — 사진 목록에서 오른쪽 클릭으로 더 넣기 · "
+                                     "'멀티' 를 다시 누르면 닫기", 5000)
 
     def _enter_multi(self, items: list) -> None:
         if self._quad:

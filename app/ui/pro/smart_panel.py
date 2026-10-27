@@ -179,6 +179,7 @@ class AnalysisTab(QWidget):
     tagClicked = Signal()
     fluoClicked = Signal()
     rednessClicked = Signal()
+    rednessSensitivityChanged = Signal(int)   # 충혈 민감도 1~10
     addNoteClicked = Signal()
     clearClicked = Signal()
     ghostChanged = Signal(int)           # 0~100 (0 = 끄기)
@@ -218,6 +219,18 @@ class AnalysisTab(QWidget):
         g.addWidget(self.b_note, 1, 0)
         g.addWidget(self.b_clear, 1, 1)
         lay.addLayout(g)
+        sens = QHBoxLayout()
+        sens.addWidget(_muted("충혈 민감도"))
+        self.s_red_sens = QSlider(Qt.Orientation.Horizontal)
+        self.s_red_sens.setRange(1, 10)
+        self.s_red_sens.setValue(5)
+        self.s_red_sens.setToolTip("충혈 지수의 붉은 화소 기준 — 낮추면 더 붉은 곳만, 높이면 옅은 붉은 기까지 표시 · 5 = 기본\n"
+                                   "측정한 뒤 움직이면 바로 다시 측정합니다 (경과 비교는 같은 민감도끼리)")
+        self.lbl_red_sens = _muted("")
+        self.lbl_red_sens.setFixedWidth(50)
+        sens.addWidget(self.s_red_sens, 1)
+        sens.addWidget(self.lbl_red_sens)
+        lay.addLayout(sens)
         self.lbl_result = _muted("-")
         lay.addWidget(self.lbl_result)
 
@@ -308,6 +321,8 @@ class AnalysisTab(QWidget):
 
         self.b_fluo.clicked.connect(self.fluoClicked.emit)
         self.b_red.clicked.connect(self.rednessClicked.emit)
+        self.s_red_sens.valueChanged.connect(self._on_red_sens)
+        self._on_red_sens(self.s_red_sens.value(), emit=False)
         self.b_note.clicked.connect(self.addNoteClicked.emit)
         self.b_clear.clicked.connect(self.clearClicked.emit)
         self.s_ghost.valueChanged.connect(self._on_ghost)
@@ -317,6 +332,17 @@ class AnalysisTab(QWidget):
     def _on_ghost(self, v: int) -> None:
         self.lbl_ghost.setText("끄기" if v == 0 else f"{v}%")
         self.ghostChanged.emit(v)
+
+    def _on_red_sens(self, v: int, emit: bool = True) -> None:
+        self.lbl_red_sens.setText(f"{v}" + (" · 기본" if v == 5 else ""))
+        if emit:
+            self.rednessSensitivityChanged.emit(int(v))
+
+    def set_red_sensitivity(self, v: int) -> None:
+        self.s_red_sens.blockSignals(True)
+        self.s_red_sens.setValue(min(10, max(1, int(v))))
+        self.s_red_sens.blockSignals(False)
+        self._on_red_sens(self.s_red_sens.value(), emit=False)
 
     def set_enabled_for(self, mode: str, can_record: bool = True) -> None:
         """측정은 1화면 · 멀티(누른 칸), 기록(코멘트 · 측정 기록)은 환자 사진일 때만 (참조 사진 칸은 측정만)."""

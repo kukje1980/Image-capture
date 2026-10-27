@@ -406,6 +406,8 @@ class ProWorkspace(QWidget):
         self.smart.bestShotClicked.connect(self.freeze_best_shot)
         self.analysis.fluoClicked.connect(self.measure_fluorescein)
         self.analysis.rednessClicked.connect(self.measure_redness)
+        self.analysis.set_red_sensitivity(int(getattr(self.config, "redness_sensitivity", 5) or 5))
+        self.analysis.rednessSensitivityChanged.connect(self._on_red_sensitivity)
         self.analysis.addNoteClicked.connect(self.record_measurement)
         self.analysis.clearClicked.connect(self.clear_analysis)
         self.analysis.ghostChanged.connect(self.set_ghost)
@@ -789,6 +791,7 @@ class ProWorkspace(QWidget):
         self.single_canvas.set_adjust(self._adj)
         self.single_canvas.set_caption(caption_of(cap, self._idx + 1, len(self._caps)))
         self._analysis_mask, self._analysis_text = None, ""
+        self._last_measure = None
         self.analysis.lbl_result.setText("-")
         self._cat = None
         self.analysis.lbl_cat.setText("-")
@@ -1355,27 +1358,44 @@ class ProWorkspace(QWidget):
         area = "측정 영역" if self._measure_roi() else "전체"
         self._analysis_text = f"형광 염색 면적 {r['ratio']:.1f}% ({area}){mm}"
         self._show_result(r["mask"], (52, 211, 153))
+        self._last_measure = "fluo"
         return r
 
     def measure_redness(self) -> dict | None:
         img = self._an_image()
         if img is None:
             return None
-        r = analysis.redness_index(img, self._measure_roi())
+        r = analysis.redness_index(img, self._measure_roi(), self.analysis.s_red_sens.value())
         area = "측정 영역" if self._measure_roi() else "전체"
-        self._analysis_text = f"충혈 지수 {r['index']:.0f}/100 · 혈관 화소 {r['vessel_pct']:.1f}% ({area})"
-        self._show_result(r["mask"], (255, 59, 48))
+        self._analysis_text = (f"충혈 지수 {r['index']:.0f}/100 · 혈관 화소 {r['vessel_pct']:.1f}% "
+                               f"({area} · 민감도 {r['sensitivity']})")
+        self._show_result(r["mask"], (255, 59, 48), alpha=115)   # 옅게 — 아래 조직이 보이게
+        self._last_measure = "redness"
+        if r["vessel_pct"] >= 40:
+            self.analysis.lbl_result.setText(
+                self.analysis.lbl_result.text() + "\n붉은 표시가 넓으면 '충혈 민감도' 를 낮추거나, 편집 탭 '원' 으로 결막만 둘러 측정하세요")
         return r
 
-    def _show_result(self, mask, rgb) -> None:
+    def _on_red_sensitivity(self, v: int) -> None:
+        """충혈 민감도: 저장하고, 방금 충혈 지수를 쟀으면 바로 다시 잰다."""
+        self.config.redness_sensitivity = int(v)
+        try:
+            self.config.save()
+        except Exception:  # noqa: BLE001
+            log.warning("redness_sensitivity 저장 실패", exc_info=True)
+        if getattr(self, "_last_measure", None) == "redness" and self._an_image() is not None:
+            self.measure_redness()
+
+    def _show_result(self, mask, rgb, alpha: int = 150) -> None:
         self._analysis_mask = mask
         cv = self._an_canvas()
         if cv is not None:
-            cv.set_overlay(_mask_qimage(mask, rgb, 150), 1.0)
+            cv.set_overlay(_mask_qimage(mask, rgb, alpha), 1.0)
         self.analysis.lbl_result.setText(self._analysis_text + "\n(표시 레이어는 저장본에 들어가지 않습니다)")
 
     def clear_analysis(self) -> None:
         self._analysis_mask, self._analysis_text = None, ""
+        self._last_measure = None
         for cv in [self.single_canvas] + self.grid_view.canvases():
             cv.set_overlay(None)
         self.analysis.lbl_result.setText("-")

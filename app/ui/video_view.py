@@ -53,6 +53,7 @@ def scaled_font(base: QFont, factor: float, bold: bool = False) -> QFont:
 
 class VideoView(QWidget):
     roiSelected = Signal(object)      # 정규화 (x, y, w, h) — None 이면 기본(중앙)으로
+    rightClicked = Signal()           # 오른쪽 클릭 (촬영 화면: 고른 사진을 멀티로)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -130,6 +131,9 @@ class VideoView(QWidget):
         return x, y
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.RightButton and not self._roi_selecting:
+            self.rightClicked.emit()                # 촬영 화면: 고른 사진을 멀티로
+            return
         if self._roi_selecting and event.button() == Qt.MouseButton.LeftButton:
             self._drag_from = self._drag_to = event.position()
             self.update()

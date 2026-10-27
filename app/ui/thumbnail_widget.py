@@ -33,6 +33,7 @@ def _load_pixmap(capture: Capture) -> QPixmap | None:
 class ThumbnailWidget(QWidget):
     clicked = Signal(object)        # Capture — 한 번 클릭 (촬영 화면: 선택)
     doubleClicked = Signal(object)  # Capture — 두 번 클릭 (큰 화면으로 보기)
+    rightClicked = Signal(object)   # Capture — 오른쪽 클릭 (촬영 화면: 멀티로 모아 보기)
 
     def __init__(self, capture: Capture, parent=None):
         super().__init__(parent)
@@ -148,6 +149,8 @@ class ThumbnailWidget(QWidget):
     def mousePressEvent(self, event) -> None:  # noqa: N802
         if event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit(self.capture)
+        elif event.button() == Qt.MouseButton.RightButton:
+            self.rightClicked.emit(self.capture)
 
     def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
         if event.button() == Qt.MouseButton.LeftButton:

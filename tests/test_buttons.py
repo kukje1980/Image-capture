@@ -656,3 +656,104 @@ def test_reference_bar_in_multi_fits_small_screen(qapp, win):
     hint = win.minimumSizeHint()
     assert hint.height() <= 680 and hint.width() < 1200
     assert win.ref_bar.height() <= 80                                    # 참조 줄은 낮게
+
+
+# ---------------- 오른쪽 클릭 = 멀티 · 큰 보기 돋보기 · 충혈 민감도 ----------------
+def test_right_click_opens_multi(qapp, win):
+    caps = _photos(win, 3)
+    panel = win.thumbnail_panel
+    QTest.mouseClick(panel._widgets[caps[0].id], Qt.MouseButton.LeftButton)       # 1장 고름
+    QTest.mouseClick(panel._widgets[caps[2].id], Qt.MouseButton.RightButton)      # 다른 사진 오른쪽 클릭 → 그 사진도 골라 멀티
+    for _ in range(5):
+        qapp.processEvents()
+    assert win._multi and [c.id for c in win.multi_view.captures()] == [caps[0].id, caps[2].id]
+    assert panel.btn_multi.isChecked() and win.control_bar.btn_multi.isChecked()
+    QTest.mouseClick(panel._widgets[caps[2].id], Qt.MouseButton.RightButton)      # 이미 고른 사진 → 그대로
+    assert win._multi and win.multi_view.count() == 2
+    QTest.mouseClick(panel.btn_multi, Qt.MouseButton.LeftButton)                  # '멀티' 로 닫기 (선택 초기화)
+    assert not win._multi and panel.selected_captures() == []
+    QTest.mouseClick(win.video_view, Qt.MouseButton.RightButton)                  # 고른 사진 없이 영상 오른쪽 클릭 → 안내만
+    assert not win._multi and "오른쪽 클릭" in win.statusBar().currentMessage()
+    QTest.mouseClick(panel._widgets[caps[1].id], Qt.MouseButton.LeftButton)
+    QTest.mouseClick(win.video_view, Qt.MouseButton.RightButton)                  # 라이브 영상 오른쪽 클릭 → 고른 사진으로 멀티
+    for _ in range(5):
+        qapp.processEvents()
+    assert win._multi and [c.id for c in win.multi_view.captures()] == [caps[1].id]
+
+
+def test_image_viewer_has_magnifier(qapp, win):
+    caps = _photos(win, 1)
+    from app.ui.image_viewer import ImageViewerDialog
+    dlg = ImageViewerDialog(caps[0], win)
+    dlg.show()
+    qapp.processEvents()
+    cv = dlg.canvas
+    assert cv.image() is not None and cv.tool() == "magnify" and dlg.tool_buttons["magnify"].isChecked()
+    vp = cv.viewport()
+    QTest.mousePress(vp, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, vp.rect().center())
+    assert cv._lens is not None                                                    # 누르는 동안 확대 렌즈
+    QTest.mouseRelease(vp, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, vp.rect().center())
+    assert cv._lens is None
+    dlg.tool_buttons["pan"].click()
+    assert cv.tool() == "pan"
+    dlg.b_fit.click()
+    dlg.close()
+
+
+def test_redness_sensitivity_slider_remeasures(qapp, win):
+    import re
+
+    import numpy as np
+    from app.services.capture_service import CaptureService
+    img = np.zeros((120, 160, 3), np.uint8)
+    img[:] = (90, 110, 200)                                                        # 옅게 붉은 바탕 (BGR)
+    img[40:80, 40:120] = (60, 70, 230)                                             # 더 붉은 부위
+    cap = CaptureService(win.db, win.config).save_photo(img, win._current_patient, eye="OD")
+    panel = win.thumbnail_panel
+    panel.set_patient(win._current_patient.id)
+    qapp.processEvents()
+    QTest.mouseClick(panel._widgets[cap.id], Qt.MouseButton.RightButton)          # 오른쪽 클릭으로 멀티
+    mp = win.multi_pro
+    assert mp.analysis.s_red_sens.value() == 5 and "기본" in mp.analysis.lbl_red_sens.text()
+    r5 = mp.measure_redness()
+    assert "민감도 5" in mp._analysis_text and r5["vessel_pct"] > 90
+    mp.analysis.s_red_sens.setValue(1)                                             # 낮추면 바로 다시 측정 (더 붉은 곳만)
+    pct1 = float(re.search(r"혈관 화소 ([\d.]+)%", mp._analysis_text).group(1))
+    assert "민감도 1" in mp._analysis_text and pct1 < r5["vessel_pct"] and win.config.redness_sensitivity == 1
+    mp.clear_analysis()
+    mp.analysis.s_red_sens.setValue(8)                                             # 측정 안 했으면 다시 재지 않음
+    assert mp._analysis_text == "" and win.config.redness_sensitivity == 8
+
+
+def test_multi_reset_button_returns_to_live(qapp, win, tmp_path):
+    caps = _enter_multi(qapp, win, 2)
+    cb, panel = win.control_bar, win.thumbnail_panel
+    assert cb.btn_close_multi.isVisible() and cb.btn_close_multi.text() == "초기화"
+    assert not cb.btn_clear_quad.isVisible()
+    x_send = cb.btn_send.mapTo(cb, cb.btn_send.rect().topLeft()).x()
+    assert cb.btn_close_multi.mapTo(cb, cb.btn_close_multi.rect().topLeft()).x() > x_send   # 전송 오른쪽
+    QTest.mouseClick(cb.btn_close_multi, Qt.MouseButton.LeftButton)
+    for _ in range(5):
+        qapp.processEvents()
+    assert not win._multi and win.view_stack.currentIndex() == 0                      # 라이브 촬영 화면으로
+    assert panel.selected_captures() == [] and not panel.btn_multi.isChecked()
+    assert not cb.btn_close_multi.isVisible()
+    QTest.mouseClick(panel._widgets[caps[0].id], Qt.MouseButton.RightButton)         # 다시 오른쪽 클릭 → 멀티
+    assert win._multi and cb.btn_close_multi.isVisible()
+
+
+def test_long_photo_notes_do_not_widen_window(qapp, win):
+    """코멘트가 아주 긴 사진(샘플 출처 · 주소)이 있어도 창 최소 폭이 화면(1920)보다 커지지 않게 — Pro MULTI 캡션."""
+    import numpy as np
+    from app.services.capture_service import CaptureService
+    svc = CaptureService(win.db, win.config)
+    note = "[샘플] 안검염 염증 및 마이봄샘 입구/도관 폐쇄 (저해상도 600×454)\n출처: University of Iowa EyeRounds; " + \
+           "https://eyerounds.org/atlas/pages/Blepharitis-and-meibomian-gland-dysfunction-with-a-very-long-address.html " * 3
+    for i in range(3):
+        svc.save_photo(np.full((120, 160, 3), 60 + i * 40, np.uint8), win._current_patient, eye="OD", note=note)
+    win.pro.reload()
+    win.thumbnail_panel.set_patient(win._current_patient.id)
+    for _ in range(5):
+        qapp.processEvents()
+    assert win.pro.minimumSizeHint().width() < 1200
+    assert win.minimumSizeHint().width() < 1200

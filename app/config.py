@@ -68,6 +68,7 @@ class AppConfig:
     smart_auto_mode: str = "off"             # off | freeze(초점 맞으면 자동 정지) | save(자동 저장)
     smart_roi_frac: float = 0.5              # 초점 판정 관심 영역 (화면 중앙 비율 0.2~1.0)
     pro_smart_peaking_sensitivity: int = 2       # 1(적게) ~ 3(많이)
+    redness_sensitivity: int = 5             # 분석 탭 충혈 민감도 1(가장 붉은 곳만) ~ 10, 5 = 기본 (app/capture/analysis.py)
     # Smart Capture (app/capture/smart_capture.py)
     smart_mode: str = "off"                  # off | freeze(초점 맞는 순간 자동 정지) | snapshot(자동 저장)
     smart_peaking: bool = False              # 포커스 피킹 표시

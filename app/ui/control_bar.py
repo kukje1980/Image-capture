@@ -122,6 +122,8 @@ class ControlBar(QFrame):
                                       tip="녹화 시작/중지")
         self.btn_save_quad = tool_button("저장", "save", "Primary", color=ICON_ON_ACCENT, tip="분할 화면 저장 (칸별 + 합성)")
         self.btn_clear_quad = tool_button("비우기", "eraser", "ToolBtn", tip="분할 칸 모두 비우기")
+        self.btn_close_multi = tool_button("초기화", "history", "ToolBtn",
+                                           tip="멀티 화면 닫기 — 고른 사진 · 참조를 비우고 라이브 촬영 화면으로 ('멀티' 를 다시 누른 것과 같음)")
 
         self.btn_smart = tool_button("Smart", "aperture", "Pause", checkable=True, on_color=ICON_ACCENT,
                                      tip="Smart 도구줄 보이기 / 숨기기 (자동 촬영 설정은 그대로 유지)")
@@ -156,7 +158,7 @@ class ControlBar(QFrame):
         cl.setContentsMargins(0, 0, 0, 0)
         cl.setSpacing(6)
         self._save_slot = self._slot(self.btn_save_quad, self.btn_save_multi)
-        self._clear_slot = self._slot(self.btn_clear_quad)
+        self._clear_slot = self._slot(self.btn_clear_quad, self.btn_close_multi)   # 분할 = 비우기 · 멀티 = 초기화 (같은 자리)
         self.still_group = QFrame()
         self.still_group.setObjectName("DockGroup")      # 분할 · 저장 · 정지영상 묶음
         gl = QHBoxLayout(self.still_group)
@@ -194,7 +196,7 @@ class ControlBar(QFrame):
         self._sized_buttons = (self.btn_preset, self.btn_quad, self.btn_pause, self.btn_smart, self.btn_refs,
                                self.btn_multi,
                                self.btn_send, self.btn_freeze, self.btn_record, self.btn_save_quad,
-                               self.btn_clear_quad, self.btn_save_multi)
+                               self.btn_clear_quad, self.btn_save_multi, self.btn_close_multi)
         self._apply_widths()
         lay.addWidget(self.status_dot)
         lay.addWidget(self.status)
@@ -212,6 +214,7 @@ class ControlBar(QFrame):
         self.btn_refs.toggled.connect(self.refsToggled.emit)
         self.btn_multi.toggled.connect(self.multiToggled.emit)
         self.btn_save_multi.clicked.connect(lambda: self.saveMultiClicked.emit())
+        self.btn_close_multi.clicked.connect(lambda: self.btn_multi.setChecked(False))   # → multiToggled(False)
         self.btn_send.clicked.connect(lambda: self.sendClicked.emit())
         self.btn_preset.clicked.connect(lambda: self.presetClicked.emit())
         self.eye_combo.currentIndexChanged.connect(self._sync_eye_buttons)
@@ -349,6 +352,7 @@ class ControlBar(QFrame):
             b.blockSignals(False)
         self._multi_on = bool(on)
         self._sync_save_slot()
+        self.btn_close_multi.setVisible(bool(on))
         self.btn_freeze.setEnabled(not on and self.btn_capture.isEnabled())   # 숨기지 않고 끔 (자리 유지)
 
     def set_preset_name(self, name: str) -> None:
