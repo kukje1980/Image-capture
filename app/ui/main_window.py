@@ -33,6 +33,7 @@ from app import edition as app_edition
 from app import paths
 from app import shortcuts
 from app import sounds
+from app import usb_buttons
 from app.agent import dataset as agent_dataset
 from app.agent.core import AgentSettings
 from app.agent.events import EventLog
@@ -184,6 +185,9 @@ class MainWindow(QMainWindow):
         left.setSpacing(10)
         self.video_view = VideoView()
         self.quad_view = QuadView()
+        # 영상을 누르면 키보드 초점이 영상으로 (환자 검색칸에서 빠져나와 슬릿램프 USB 버튼 · 단축키가 바로 동작)
+        for v in (self.video_view, self.quad_view):
+            v.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self.view_stack = QStackedWidget()
         self.view_stack.addWidget(self.video_view)   # index 0 = 단일
         self.view_stack.addWidget(self.quad_view)     # index 1 = 분할 (2 · 4 · 6 · 8 · 16칸)
@@ -237,6 +241,8 @@ class MainWindow(QMainWindow):
         self.patient_list.editPatient.connect(lambda pid: self._edit_patient_from_list(pid))
 
         self.patient_panel.patientChanged.connect(self._on_patient_changed)
+        # 환자 검색칸에서 Enter = 검색 끝 → 초점을 영상으로 (USB 버튼 · 단축키가 바로 동작)
+        self.patient_panel.search.returnPressed.connect(lambda: self._focus_capture_view() if self._mode == "capture" else None)
         self.control_bar.pauseToggled.connect(self._on_pause)
         self.control_bar.captureClicked.connect(self._on_capture)
         self.control_bar.recordToggled.connect(self._on_record_toggle)
@@ -305,6 +311,11 @@ class MainWindow(QMainWindow):
         self._set_smart_bar_visible(bool(getattr(cfg, "smart_bar_visible", True)), save=False)
         self._set_ref_bar_visible(bool(getattr(cfg, "ref_bar_visible", False)), save=False)
         self._install_shortcuts()
+        # 슬릿램프 USB 버튼(키 조합을 보내는 장치) — 앱 전체 키 이벤트에서 누름 · 뗌을 보고 촬영 동작을 부른다
+        self.usb_filter = usb_buttons.UsbButtonFilter(
+            usb_buttons.load(self.config), run=self._on_usb_button, context=self._usb_context,
+            ignored=self._on_usb_ignored, parent=self)
+        QApplication.instance().installEventFilter(self.usb_filter)
         self.set_mode("capture" if getattr(self.config, "start_screen", "home") == "capture" else "home")
 
     def _build_topbar(self) -> QFrame:
@@ -516,8 +527,13 @@ class MainWindow(QMainWindow):
             sc.deleteLater()
         self._keys = shortcuts.load(self.config)
         self._shortcut_objs = {}
+        usb_keys = [b["key"] for b in usb_buttons.load(self.config).values()]
         for aid, key in self._keys.items():
             if not key:
+                continue
+            if any(usb_buttons.same_key(key, k) for k in usb_keys):
+                # 같은 키를 USB 버튼이 쓰면 USB 버튼이 먼저 (한 번 눌러 두 동작이 겹치지 않게)
+                log.warning("단축키 %s(%s) 는 USB 버튼 키와 같아 쓰지 않습니다", aid, key)
                 continue
             sc = QShortcut(QKeySequence(key), self)
             sc.setContext(Qt.ShortcutContext.WindowShortcut)
@@ -595,6 +611,65 @@ class MainWindow(QMainWindow):
         elif aid == "newPatient":
             self.patient_panel.new_patient()
 
+    # ---- 슬릿램프 USB 버튼 (app/usb_buttons.py) ----
+    def _focus_capture_view(self) -> None:
+        """촬영 화면을 열 때 키보드 초점을 영상으로 — 검색칸에 남아 USB 버튼이 무시되지 않게."""
+        fw = QApplication.focusWidget()
+        if fw is None or fw is self or not self.mode_stack.widget(0).isAncestorOf(fw) or fw is self.patient_panel.search:
+            (self.quad_view if self._quad else self.video_view).setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def showEvent(self, e) -> None:  # noqa: N802
+        super().showEvent(e)
+        if not getattr(self, "_focused_once", False) and self._mode == "capture":
+            self._focused_once = True
+            QTimer.singleShot(0, self._focus_capture_view)
+
+    def _usb_context(self) -> str | None:
+        """USB 버튼을 지금 실행해도 되면 None, 아니면 그 이유 (window · screen · text)."""
+        from PySide6.QtWidgets import (QAbstractSpinBox, QComboBox, QKeySequenceEdit, QLineEdit,
+                                       QPlainTextEdit, QTextEdit)
+        if QApplication.activeWindow() is not self or QApplication.activeModalWidget() is not None:
+            return "window"                       # 설정 · 안내 창 · 다른 프로그램
+        if self._mode != "capture" or self.mode_stack.currentIndex() != 0:
+            return "screen"                       # 촬영 화면에서만
+        fw = QApplication.focusWidget()
+        if isinstance(fw, (QLineEdit, QTextEdit, QPlainTextEdit, QAbstractSpinBox, QKeySequenceEdit)) or (
+                isinstance(fw, QComboBox) and fw.isEditable()):
+            return "text"                         # 환자 검색 등 글자 입력 중
+        return None
+
+    def _on_usb_ignored(self, bid: str, reason: str) -> None:
+        name = usb_buttons.button_label(bid)
+        if reason == "text":
+            self.statusBar().showMessage(f"USB {name}: 입력칸에 글자를 쓰는 중이라 실행하지 않았습니다 — "
+                                         "영상 화면을 한 번 누른 뒤 다시 누르세요", 5000)
+        elif reason == "screen":
+            self.statusBar().showMessage(f"USB {name}: 촬영 화면에서만 동작합니다", 3000)
+
+    def _on_usb_button(self, bid: str, action: str) -> None:
+        """USB 버튼 → 촬영 도크 버튼과 같은 동작 (녹화 시작/정지 · 스틸 정지/해제 · 사진 캡처)."""
+        if self._usb_context() is not None:      # 누른 뒤 실행 전에 화면이 바뀐 경우
+            return
+        cb = self.control_bar
+        name = usb_buttons.button_label(bid)
+        btn = {"record": cb.btn_record, "freeze": cb.btn_freeze, "capture": cb.btn_capture}.get(action)
+        if btn is None:
+            return
+        if not btn.isEnabled():
+            why = "멀티 화면" if self._multi else ("동영상 파일 마무리 중" if self._pending_video else "환자 · 카메라 확인")
+            self.statusBar().showMessage(f"USB {name}: 지금은 '{usb_buttons.action_label(action)}' 을 쓸 수 없습니다 ({why})", 4000)
+            return
+        self.events.log("usb_button", button=bid, action=action)
+        self._run_action(action)
+        if action == "record":
+            text = "녹화 시작" if self._recording else "녹화 정지"
+        elif action == "freeze":
+            text = ("분할 칸 채움" if self._quad else
+                    "스틸 화면 정지 (저장하지 않음)" if self._single_frozen else "라이브로 복귀")
+        else:
+            text = "사진 캡처"
+        self.statusBar().showMessage(f"USB {name}: {text}", 3000)
+
     def _set_fullscreen(self, on: bool) -> None:
         """영상 전체 화면: 창을 화면 가득 채우고 상단바(환자 검색 포함)·썸네일·상태바를 숨김 (Esc 로 해제)."""
         if on == self._fullscreen:
@@ -615,7 +690,9 @@ class MainWindow(QMainWindow):
 
     def _open_shortcuts(self, parent=None) -> None:
         parent = parent if parent is not None and parent is not False else self
-        dlg = ShortcutsDialog(self._keys, parent)
+        taken = {b["key"]: f"슬릿램프 USB {usb_buttons.button_label(bid)}({usb_buttons.action_label(b['action'])})"
+                 for bid, b in usb_buttons.load(self.config).items() if b["key"]}
+        dlg = ShortcutsDialog(self._keys, parent, taken=taken)
         if dlg.exec():
             self.config.shortcuts = dlg.values()
             try:
@@ -847,6 +924,7 @@ class MainWindow(QMainWindow):
             self.pro.setFocus()
         elif name == "capture":
             self.thumbnail_panel.set_patient(p.id if p else None)
+            self._focus_capture_view()
         elif name == "exam":
             self.exam_screen.set_patient(p)
         elif name == "patients":
@@ -1791,6 +1869,8 @@ class MainWindow(QMainWindow):
             else:
                 self.agent.stop()
             self._apply_agent(save=False)
+            self.usb_filter.set_buttons(usb_buttons.load(self.config))
+            self._install_shortcuts()                  # USB 버튼 키와 겹치는 단축키는 쉬게
             self.events.log("settings", source="dialog")
             self._restart_camera()
 
@@ -1902,6 +1982,7 @@ class MainWindow(QMainWindow):
     # ---- 종료 ----
     def closeEvent(self, event) -> None:  # noqa: N802
         self._closing = True
+        QApplication.instance().removeEventFilter(self.usb_filter)
         self._reconnect_timer.stop()
         try:
             if self._recording:
