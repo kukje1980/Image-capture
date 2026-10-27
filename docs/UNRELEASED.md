@@ -1,4 +1,9 @@
-# SlitLamp v1.17.3
+# 다음 배포에 들어갈 변경 (아직 배포 안 함)
+
+변경은 이 브랜치에만 모아 두고, **최종 배포 때** 버전 번호를 정해(앱 · 설치파일 · 웹 버전 파일, docs/RELEASE-x.y.z.md,
+VERSIONS.md, README) main 에 합쳐 한 번에 배포한다. 배포하면 이 목록은 그 버전의 릴리스 노트로 옮기고 비운다.
+
+마지막 배포판: v1.17.2 (2026-10-27)
 
 - **차트번호(아이디) 중복 안내**: 신규 환자를 등록할 때 이미 있는 차트번호를 넣으면, 예전처럼
   'UNIQUE constraint failed' 오류를 띄우지 않고 등록된 환자(이름 · 생년월일 · 성별 · 진단명)를 보여 줍니다.
@@ -13,12 +18,3 @@
     (이름: 차트번호_촬영시각_안구_번호, 같은 이름이 있으면 _2 … 로 덮어쓰지 않음).
   - **인쇄 · PDF** 도 고른 사진이 있으면 그 사진만(고른 순서대로) 넣습니다. 고르지 않으면 예전처럼 그날 사진 전부.
   - 창 폭에 맞춰 한 줄의 사진 수가 바뀌고(좁으면 2장), 좁은 창에서는 위쪽 버튼이 아이콘만 남습니다.
-
-다운로드
-- Windows: SlitLampImaging-Setup-1.17.3.exe (기본), KeelerSlitLamp-Setup-1.17.3.exe (Keeler),
-  SlitLampExplorer-Setup-1.17.3.exe (Explorer 판), KeelerExplorer-Setup-1.17.3.exe (Keeler Explorer 판),
-  SlitLampAgent-Setup-1.17.3.exe (AI 에이전트).
-- Mac: 기본 / Keeler / Explorer / Keeler Explorer / 에이전트 각각 arm64(Apple Silicon) · x86_64(Intel) DMG.
-- 웹: SlitLamp-Web-1.17.3.zip. 전체 소스: SlitLamp-Source-1.17.3.zip. SHA256SUMS.txt 로 무결성을 확인할 수 있습니다.
-
-기존 데이터 · 설정은 그대로 씁니다.
