@@ -361,6 +361,9 @@ class MainWindow(QMainWindow):
 
         # 카메라 재연결 · 단축키 · 샘플 · 테마는 모두 설정 창 안으로 (오른쪽에는 설정 하나)
         tw, tl = seg()
+        self.btn_refs = nav("참조 영상", "image", "질환별 참조 영상 · 샘플 사진을 보고 지금 환자 사진과 나란히 비교")
+        self.btn_refs.clicked.connect(self._safe("참조 영상", lambda: self.open_references()))
+        tl.addWidget(self.btn_refs)
         self.btn_settings = nav("설정", "gear", "설정 — 카메라 다시 연결 · 단축키 · 샘플 사진 · 화면 테마 · Smart 도구줄 · 저장 위치")
         self.btn_settings.clicked.connect(self._safe("설정", lambda: self._open_settings()))
         self.act_theme = QAction(self)
@@ -377,7 +380,9 @@ class MainWindow(QMainWindow):
         from PySide6.QtGui import QPainter, QPixmap
         from PySide6.QtSvg import QSvgRenderer
         key = "logo_dark" if self.config.theme == "dark" else "logo"
-        path = app_brand.asset(self.brand.get(key)) or app_brand.asset(self.brand.get("logo"))
+        # 브랜드 색 상단바(Keeler 네이비)면 테마와 상관없이 상단바용 로고(흰 글자)
+        path = (app_brand.asset(self.brand.get("header_logo")) or app_brand.asset(self.brand.get(key))
+                or app_brand.asset(self.brand.get("logo")))
         r = QSvgRenderer(path)
         size = r.defaultSize()
         h = 40
@@ -1668,28 +1673,86 @@ class MainWindow(QMainWindow):
             self.events.log("settings", source="dialog")
             self._restart_camera()
 
-    def _import_samples(self, parent=None) -> None:
-        """받아 둔 샘플 사진 폴더(질환별 하위 폴더 + metadata.json)를 질환별 샘플 환자로 등록."""
+    # ---- 참조 영상 (질환별 대표 영상 · 샘플 사진) ----
+    def _reference_capture(self):
+        """비교·등록할 지금 환자 사진: Pro 1화면 영상 → 사진 목록에서 고른 사진(마지막) → 가장 최근 사진."""
+        if self.mode_stack.currentIndex() == MODES.index("pro") and self.pro.mode() == "single":
+            caps, i = self.pro.captures(), self.pro.current_index()
+            if 0 <= i < len(caps):
+                return caps[i]
+        photos = [c for c in self.thumbnail_panel.selected_captures() if c.media_type == "photo"]
+        if photos:
+            return photos[-1]
+        p = self._current_patient
+        if p is None:
+            return None
+        return next((c for c in self.db.captures.list_by_patient(p.id) if c.media_type == "photo"), None)
+
+    def open_references(self):
+        """참조 영상 라이브러리 — 등록한 참조 영상 + 가져온 샘플 사진(질환별). 지금 환자 사진과 비교·등록."""
+        from app.ui.explorer.reference_library import ReferenceLibraryDialog
+        from app.ui.pro.pro_workspace import caption_of, load_bgr
+        cap = self._reference_capture()
+        current = None
+        if cap is not None:
+            img = load_bgr(cap.file_path)
+            if img is not None:
+                who = self._current_patient.name if self._current_patient else ""
+                current = (img, f"{who} · {caption_of(cap)}")
+        dlg = ReferenceLibraryDialog(self.db, self, current=current,
+                                     on_import_samples=lambda parent: self._import_samples(parent),
+                                     on_register=lambda parent: self._register_reference(cap, parent))
+        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        dlg.show()
+        self._refs_dialog = dlg
+        return dlg
+
+    def _register_reference(self, cap, parent=None, values=None) -> bool:
+        """지금 환자 사진을 참조 영상으로 등록 (분류·제목·설명, 라이브러리 폴더에 사본)."""
+        from app.ui.explorer.dialogs import ReferenceDialog
+        if cap is None:
+            return False
+        if values is None:
+            p = self._current_patient
+            dlg = ReferenceDialog(parent or self, self.db.references.categories(),
+                                  title=(p.diagnosis or "") if p else "")
+            if not dlg.exec():
+                return False
+            values = dlg.values()
+        try:
+            ref = self.service.add_reference(cap, *values)
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(parent or self, "참조 영상", f"등록하지 못했습니다.\n{e}")
+            return False
+        self.statusBar().showMessage(f"참조 영상으로 등록했습니다 ({ref.category})", 4000)
+        return True
+
+    def _import_samples(self, parent=None, folder=None) -> bool:
+        """받아 둔 샘플 사진 폴더(질환별 하위 폴더 + metadata.json)를 질환별 샘플 환자로 등록.
+        등록한 사진은 참조 영상의 '샘플 사진' 에 질환별로도 보인다."""
         from app.services.sample_import import import_samples
         parent = parent if parent is not None and parent is not False else self
-        start = Path.home() / "Downloads"           # 받아 둔 폴더는 보통 '다운로드'에 있다
-        folder = QFileDialog.getExistingDirectory(
-            parent, "샘플 사진 폴더 선택 (질환별 하위 폴더 + metadata.json)",
-            str(start if start.is_dir() else Path.home()))
+        if folder is None:
+            start = Path.home() / "Downloads"           # 받아 둔 폴더는 보통 '다운로드'에 있다
+            folder = QFileDialog.getExistingDirectory(
+                parent, "샘플 사진 폴더 선택 (질환별 하위 폴더 + metadata.json)",
+                str(start if start.is_dir() else Path.home()))
         if not folder:
-            return
+            return False
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             result = import_samples(self.db, self.config, folder)
         except (OSError, ValueError) as e:
             QApplication.restoreOverrideCursor()
             QMessageBox.warning(parent, "샘플 사진", f"샘플 사진을 가져오지 못했습니다.\n{e}")
-            return
+            return False
         QApplication.restoreOverrideCursor()
         self.patient_panel._reload()
         QMessageBox.information(
             parent, "샘플 사진",
-            result.summary() + "\n\n환자 목록에서 '샘플 · 질환명' 환자를 고르면 사진을 볼 수 있습니다.")
+            result.summary() + "\n\n환자 목록에서 '샘플 · 질환명' 환자를 고르거나, 위쪽 '참조 영상' 의 "
+            "'샘플 사진' 에서 질환별로 보고 지금 환자 사진과 비교할 수 있습니다.")
+        return True
 
     # ---- 종료 ----
     def closeEvent(self, event) -> None:  # noqa: N802

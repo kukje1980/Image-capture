@@ -64,11 +64,11 @@ BRANDS: dict[str, dict] = {
         "icon_accent": "#4aa8dc",
         "icon_on_accent": "#052133",
         "report_rule": "#052133",
-        # 홈페이지처럼 머리(메뉴바·툴바)는 밝은/어두운 테마와 상관없이 Keeler 네이비 + 흰 글자 로고,
+        # 홈페이지처럼 머리(기본판 상단바 · Explorer 메뉴바·툴바)는 밝은/어두운 테마와 상관없이 Keeler 네이비 + 흰 글자 로고,
         # 아래 선과 셔터 링은 로고 마크의 하늘색·주황 (assets/brand/keeler/SOURCE.md 의 브랜드 색)
         "header": {"bg": "#052133", "hover": "#0e2c42", "rule": "#12334b", "line": "#1981b7",
                    "ink": "#ffffff", "ink_soft": "#cfe0ec", "disabled": "#4f6b80",
-                   "accent": "#6cbce8", "active": "#12344a"},
+                   "accent": "#6cbce8", "active": "#12344a", "seg": "#0a2436"},
         "header_logo": "brand/keeler/logo-dark.svg",
         "shutter_ring": "rgba(237, 111, 30, 0.85)",
         "palette": {

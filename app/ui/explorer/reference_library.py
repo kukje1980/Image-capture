@@ -45,26 +45,32 @@ def _short(text: str, n: int = _GRID_TITLE_MAX) -> str:
 
 
 class ReferenceLibraryDialog(QDialog):
-    def __init__(self, db, parent=None, current=None, on_import_samples=None):
+    def __init__(self, db, parent=None, current=None, on_import_samples=None, on_register=None):
         """current: (bgr, caption) — 비교할 환자 영상 (없으면 비교 버튼 비활성).
-        on_import_samples(parent) — '샘플 사진 가져오기' 를 실행하고 가져왔으면 True (없으면 버튼 숨김)."""
+        on_import_samples(parent) — '샘플 사진 가져오기' 를 실행하고 가져왔으면 True (없으면 버튼 숨김).
+        on_register(parent) — 현재 환자 영상을 참조로 등록하고 등록했으면 True (없으면 버튼 숨김)."""
         super().__init__(parent)
         self.setWindowTitle("참조 영상 라이브러리")
         self.resize(1180, 740)
         self.db = db
         self._current = current
         self._on_import_samples = on_import_samples
+        self._on_register = on_register
         self._refs = []
 
         self.cats = QListWidget()
         self.b_samples = QPushButton("샘플 사진 가져오기…")
         self.b_samples.setToolTip("받아 둔 질환별 샘플 사진 폴더(질환별 하위 폴더 + metadata.json)를 골라 등록합니다")
         self.b_samples.setVisible(on_import_samples is not None)
+        self.b_register = QPushButton("현재 영상 참조 등록…")
+        self.b_register.setToolTip("지금 고른 환자 영상을 분류·제목·설명과 함께 참조 영상으로 등록합니다 (사본 보관)")
+        self.b_register.setVisible(on_register is not None and current is not None)
         left = QWidget()
         left.setFixedWidth(230)
         ll = QVBoxLayout(left)
         ll.setContentsMargins(0, 0, 0, 0)
         ll.addWidget(self.cats, 1)
+        ll.addWidget(self.b_register)
         ll.addWidget(self.b_samples)
 
         self.search = QLineEdit()
@@ -127,6 +133,7 @@ class ReferenceLibraryDialog(QDialog):
         self.b_edit.clicked.connect(self.edit_current)
         self.b_delete.clicked.connect(self.delete_current)
         self.b_samples.clicked.connect(self.import_samples)
+        self.b_register.clicked.connect(self.register_current)
         self.reload()
 
     # ---- 목록 ----
@@ -260,6 +267,10 @@ class ReferenceLibraryDialog(QDialog):
 
     def import_samples(self) -> None:
         if self._on_import_samples is not None and self._on_import_samples(self):
+            self.reload()
+
+    def register_current(self) -> None:
+        if self._on_register is not None and self._on_register(self):
             self.reload()
 
     def edit_current(self) -> None:
