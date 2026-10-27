@@ -361,9 +361,10 @@ class ExamScreen(QWidget):
         for b in self._head_buttons:
             b.set_text_visible(not on)
             b.setMinimumWidth(40 if on else int(b.property("full_min_w") or 56))
-        row = self.head_buttons.inner()
-        row.layout().invalidate()
-        row.updateGeometry()
+        row = self._head_buttons[0].parentWidget()
+        if row is not None and row.layout() is not None:
+            row.layout().invalidate()
+            row.updateGeometry()
 
     # ---------------- 영상 선택 · 선택 저장 ----------------
     def selected_captures(self) -> list:
