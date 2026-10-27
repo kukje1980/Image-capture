@@ -5,11 +5,16 @@ cd /d "%~dp0"
 rem 사용:  build_installer.bat          기본 버전
 rem        build_installer.bat keeler   Keeler 전용 버전
 rem        build_installer.bat explorer Explorer 판 (메뉴·툴바·환자/검사 트리 화면)
+rem        build_installer.bat keeler_explorer  Keeler Explorer 판 (Keeler 로고·색 + Explorer 화면)
 set "BRAND=%~1"
 if /i "%BRAND%"=="keeler" (
   set "SLITLAMP_BUILD_BRAND=keeler"
   set "ISS=installer\keeler.iss"
   set "OUTNAME=KeelerSlitLamp"
+) else if /i "%BRAND%"=="keeler_explorer" (
+  set "SLITLAMP_BUILD_BRAND=keeler_explorer"
+  set "ISS=installer\keeler_explorer.iss"
+  set "OUTNAME=KeelerExplorer"
 ) else if /i "%BRAND%"=="explorer" (
   set "SLITLAMP_BUILD_BRAND=explorer"
   set "ISS=installer\explorer.iss"

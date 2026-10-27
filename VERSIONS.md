@@ -93,4 +93,6 @@ v1.8.0 이후 `main` 에 들어온 변경을 모두 합친 최종판입니다 (`
   라이브러리 · 파일 메뉴 · 설정에서 샘플 사진 가져오기.
 - Explorer 판: 촬영 막대에 **정지영상**(멈춤 ↔ 라이브)과 **분할 정지영상**(2·4·6·8·16칸, 칸별 + 합성 저장).
 - Explorer 판: **영상 목록 세로 (오른쪽)** 배치 (보기 메뉴 · 칸 끌어 옮기기, 설정에 기억). 정지영상 단축키(X) 수정.
+- **Keeler Explorer 판(KeelerExplorer)** 추가: Explorer 화면 + Keeler 로고·색·아이콘. 설치파일 `KeelerExplorer-Setup-1.15.1.exe`,
+  `KeelerExplorer-1.15.1-mac-arm64/x86_64.dmg`.
 - 다른 판·웹은 v1.15.0 과 같음.

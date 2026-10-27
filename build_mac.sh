@@ -3,6 +3,7 @@
 #   사용:  ./build_mac.sh            (기본)      → dist/SlitLampImaging.app + .dmg
 #          ./build_mac.sh keeler     (Keeler 전용) → dist/KeelerSlitLamp.app + .dmg
 #          ./build_mac.sh explorer   (Explorer 판) → dist/SlitLampExplorer.app + .dmg
+#          ./build_mac.sh keeler_explorer (Keeler Explorer 판) → dist/KeelerExplorer.app + .dmg
 #          ./build_mac.sh agent      (AI 에이전트 에디션) → dist/SlitLampAgent.app + .dmg
 # 필요:   macOS 11 이상, Python 3.11 이상 (python.org 설치본 또는 Homebrew)
 set -euo pipefail
@@ -33,6 +34,7 @@ else
   case "$VARIANT" in
     keeler)   APP="KeelerSlitLamp";   VOL="Keeler SlitLamp" ;;
     explorer) APP="SlitLampExplorer"; VOL="SlitLamp Explorer" ;;
+    keeler_explorer) APP="KeelerExplorer"; VOL="Keeler Explorer" ;;
     *)        APP="SlitLampImaging";  VOL="SlitLamp Imaging" ;;
   esac
 fi

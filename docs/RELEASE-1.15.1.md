@@ -1,6 +1,7 @@
 # SlitLamp v1.15.1
 
-Explorer 판(SlitLampExplorer)을 고쳤습니다. 기본판 · Keeler 판 · AI 에이전트 판은 v1.15.0 과 같습니다.
+Explorer 판(SlitLampExplorer)을 고치고, Keeler 로고·색으로 만든 **Keeler Explorer 판(KeelerExplorer)** 을 추가했습니다.
+기본판 · Keeler 판 · AI 에이전트 판은 v1.15.0 과 같습니다.
 
 - **샘플 사진을 참조 영상으로**: '샘플 사진 가져오기'로 등록한 질환별 샘플 사진이 **참조 영상** 라이브러리의
   '샘플 사진' 아래 질환별(건성안 · 백내장 …)로 바로 보입니다. 사진을 복사하지 않고 원본을 그대로 보여 주며,
@@ -12,11 +13,15 @@ Explorer 판(SlitLampExplorer)을 고쳤습니다. 기본판 · Keeler 판 · AI
 - **영상 목록 세로 배치**: **보기 → 영상 목록 세로 (오른쪽)** 을 켜거나 영상 목록 칸을 끌어 오른쪽에 놓으면
   썸네일이 오른쪽 세로 줄로 바뀝니다. 다음 실행에도 같은 배치로 열립니다.
 - 정지영상 단축키(X)가 Explorer 판에서 동작하지 않던 문제를 고쳤습니다.
+- **Keeler Explorer 판(새로)**: Explorer 판의 화면·기능 그대로에 Keeler 로고(툴바 오른쪽 끝, 밝은/어두운 테마별)와
+  Keeler 네이비·파랑 색, Keeler 아이콘, "Keeler 슬릿램프 영상 보고서" 제목을 입혔습니다. 다른 판과 나란히 설치되고
+  환자 DB·영상은 같은 데이터 폴더를 함께 씁니다.
 
 다운로드
 - Windows: SlitLampImaging-Setup-1.15.1.exe (기본), KeelerSlitLamp-Setup-1.15.1.exe (Keeler),
-  **SlitLampExplorer-Setup-1.15.1.exe (Explorer 판)**, SlitLampAgent-Setup-1.15.1.exe (AI 에이전트).
-- Mac: 기본 / Keeler / Explorer / 에이전트 각각 arm64(Apple Silicon) · x86_64(Intel) DMG.
+  **SlitLampExplorer-Setup-1.15.1.exe (Explorer 판)**, **KeelerExplorer-Setup-1.15.1.exe (Keeler Explorer 판)**,
+  SlitLampAgent-Setup-1.15.1.exe (AI 에이전트).
+- Mac: 기본 / Keeler / Explorer / Keeler Explorer / 에이전트 각각 arm64(Apple Silicon) · x86_64(Intel) DMG.
 - 웹: SlitLamp-Web-1.15.1.zip. 전체 소스: SlitLamp-Source-1.15.1.zip. SHA256SUMS.txt 로 무결성을 확인할 수 있습니다.
 
 기존 데이터 · 설정은 그대로 씁니다.

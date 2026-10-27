@@ -1,8 +1,9 @@
-# v1.15.1 — Explorer 판: 샘플 사진을 참조 영상으로 · 정지영상 · 분할 정지영상 · 영상 목록 세로 배치
+# v1.15.1 — Explorer 판: 샘플 사진을 참조 영상으로 · 정지영상 · 분할 정지영상 · 영상 목록 세로 배치 · Keeler Explorer 판
 
 Explorer 판 **참조 영상** 라이브러리에 가져온 **샘플 사진**이 질환별로 보이고 현재 환자 영상과 바로 비교됩니다(복사 없이 원본 · 출처·라이선스 표시).
 촬영 막대에 기본판과 같은 **정지영상**(누르면 멈춤 · 다시 누르면 라이브)과 **분할**(2·4·6·8·16칸 채우기 · 저장)을 넣고,
-**보기 → 영상 목록 세로 (오른쪽)** 로 아래 영상 목록 칸을 오른쪽 세로 줄로 바꿀 수 있습니다. 자세한 내용: [docs/RELEASE-1.15.1.md](docs/RELEASE-1.15.1.md)
+**보기 → 영상 목록 세로 (오른쪽)** 로 아래 영상 목록 칸을 오른쪽 세로 줄로 바꿀 수 있습니다.
+Keeler 로고·색으로 만든 **Keeler Explorer 판(KeelerExplorer)** 도 추가했습니다. 자세한 내용: [docs/RELEASE-1.15.1.md](docs/RELEASE-1.15.1.md)
 
 ## v1.15.0 — 촬영 화면: 멀티 · 분할 2~16칸 · 전송(폴더 · 클라우드 · PACS) · 촬영 모드 · 버튼 클릭 문제 수정
 
@@ -233,6 +234,19 @@ python tools/agent_train/train_scene.py --data <공개 데이터> --data <병원
 
 직접 만들기: 윈도우 `build_installer.bat explorer` · 맥 `./build_mac.sh explorer`
 기존 설치본을 Explorer 화면으로 쓰기: 실행 옵션 `--brand explorer` 또는 `config.json` 에 `"brand": "explorer"`
+
+### Keeler Explorer 판 (윈도우 · 맥)
+Explorer 판의 화면·기능 그대로에 **Keeler 로고·브랜드 색**(네이비 · 파랑)을 입힌 판입니다. 툴바 오른쪽 끝에 Keeler 로고(밝은/어두운 테마에 맞춰),
+창 제목은 "Keeler 슬릿램프 영상 시스템 Explorer", 인쇄·Word 보고서 제목은 "Keeler 슬릿램프 영상 보고서", 아이콘은 Keeler 로고 마크입니다.
+다른 판과 이름·설치 위치·AppId 가 달라 **한 PC에 나란히 설치**되고, 환자 DB·영상은 같은 데이터 폴더를 함께 씁니다.
+
+| 받는 곳 (GitHub → Releases, v1.15.1 부터) | 파일 |
+|------|------|
+| 윈도우 | `KeelerExplorer-Setup-<버전>.exe` |
+| 맥 | `KeelerExplorer-<버전>-mac-arm64.dmg`(M1/M2/M3) · `KeelerExplorer-<버전>-mac-x86_64.dmg`(Intel) |
+
+직접 만들기: 윈도우 `build_installer.bat keeler_explorer` · 맥 `./build_mac.sh keeler_explorer`
+기존 설치본을 Keeler Explorer 화면으로 쓰기: 실행 옵션 `--brand keeler_explorer` 또는 `config.json` 에 `"brand": "keeler_explorer"`
 
 > 기능 구성은 시판 세극등 영상 시스템(환자/검사 트리, Overlay·Compare·Reference Image·Slide Show·Make Report,
 > Camera Property)의 공개 사용 설명서에 나오는 워크플로를 참고했습니다. 화면·코드·문구는 이 저장소에서 새로 만들었습니다.

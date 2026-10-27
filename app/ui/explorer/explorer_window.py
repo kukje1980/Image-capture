@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QStackedWidget,
     QStatusBar,
     QToolBar,
@@ -224,8 +225,43 @@ class ExplorerWindow(QMainWindow):
                   self.act_pro, self.act_overlay, self.act_compare, self.act_ref_add, self.act_ref_lib,
                   self.act_slideshow, self.act_report, None, self.act_import, self.act_export):
             tb.addSeparator() if a is None else tb.addAction(a)
+        # 브랜드 로고 (Keeler Explorer 판 등) — 툴바 오른쪽 끝, 테마에 맞춰 밝은/어두운 배경용으로
+        self.brand_logo = None
+        if app_brand.asset(self.brand.get("logo")):
+            spacer = QWidget()
+            spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+            spacer.setStyleSheet("background: transparent;")
+            tb.addWidget(spacer)
+            self.brand_logo = QLabel()
+            self.brand_logo.setObjectName("BrandLogo")
+            self.brand_logo.setContentsMargins(8, 0, 10, 0)
+            tb.addWidget(self.brand_logo)
+            self._render_brand_logo()
         self.addToolBar(tb)
         self.toolbar = tb
+
+    def _render_brand_logo(self) -> None:
+        if self.brand_logo is None:
+            return
+        from PySide6.QtCore import QRectF
+        from PySide6.QtGui import QPainter, QPixmap
+        from PySide6.QtSvg import QSvgRenderer
+        key = "logo_dark" if self.config.theme == "dark" else "logo"
+        path = app_brand.asset(self.brand.get(key)) or app_brand.asset(self.brand.get("logo"))
+        r = QSvgRenderer(path)
+        size = r.defaultSize()
+        h = 30
+        w = max(1, round(size.width() * h / max(1, size.height())))
+        ratio = 2
+        pm = QPixmap(w * ratio, h * ratio)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        r.render(p, QRectF(0, 0, w * ratio, h * ratio))
+        p.end()
+        pm.setDevicePixelRatio(ratio)
+        self.brand_logo.setPixmap(pm)
+        self.brand_logo.setFixedSize(w + 18, h)
 
     def _build_central(self) -> None:
         central = QWidget()
@@ -1071,6 +1107,7 @@ class ExplorerWindow(QMainWindow):
         if app is not None:
             app.setStyleSheet(build_qss(self.config.theme))
         self.act_theme.setIcon(icons.icon("sun" if self.config.theme == "dark" else "moon", ICON, 20))
+        self._render_brand_logo()
         self._save_config()
 
     def set_thumbs_vertical(self, on: bool, save: bool = True) -> None:

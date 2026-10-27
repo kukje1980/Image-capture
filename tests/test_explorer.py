@@ -214,8 +214,8 @@ def test_explorer_brand_and_build_files(monkeypatch):
     iss = (root / "installer" / "explorer.iss").read_text(encoding="utf-8-sig")
     assert "SlitLampExplorer.exe" in iss and "brand\\explorer\\app.ico" in iss
     ids = {f: (root / "installer" / f).read_text(encoding="utf-8-sig").split("AppId=")[1].split("\n")[0]
-           for f in ("slitlamp.iss", "keeler.iss", "explorer.iss")}
-    assert len(set(ids.values())) == 3                               # 세 판을 나란히 설치 가능
+           for f in ("slitlamp.iss", "keeler.iss", "explorer.iss", "keeler_explorer.iss", "agent.iss")}
+    assert len(set(ids.values())) == 5                               # 모든 판을 나란히 설치 가능
     assert "brand_explorer.py" in (root / "build.spec").read_text(encoding="utf-8")
     assert (root / "tools" / "rthooks" / "brand_explorer.py").is_file()
     for f in ("app.ico", "app.icns", "app.png"):
@@ -474,3 +474,51 @@ def test_window_thumbs_vertical(qapp, win):
     w._on_thumb_dock_moved(Qt.DockWidgetArea.BottomDockWidgetArea)        # 끌어서 아래로 옮긴 경우
     assert not w.thumbs.is_vertical() and not w.act_thumbs_vertical.isChecked()
     assert w.config.explorer_thumbs_vertical is False
+
+
+
+# ---------------- Keeler Explorer 판 ----------------
+def test_keeler_explorer_brand_and_build_files(monkeypatch):
+    monkeypatch.delenv(brand.ENV_KEY, raising=False)
+    try:
+        b = brand.select("Keeler-Explorer")                            # 대소문자·'-' 섞여도 같은 판
+        assert b["key"] == "keeler_explorer" and brand.layout() == "explorer"
+        assert "Keeler" in b["app_name"] and "Explorer" in b["window_title"]
+        assert b["report_title"] == brand.BRANDS["keeler"]["report_title"]
+        for k in ("logo", "logo_dark", "icon"):
+            assert brand.asset(b[k]), k
+        from app.ui import theme
+        assert theme.palette("dark")["accent"] == "#6cbce8"             # Keeler 색
+        assert brand.key_from(["app", "--brand", "keeler explorer"]) == "keeler_explorer"
+    finally:
+        brand.select("default")
+    root = Path(__file__).resolve().parents[1]
+    iss = (root / "installer" / "keeler_explorer.iss").read_text(encoding="utf-8-sig")
+    assert "KeelerExplorer.exe" in iss and "brand\\keeler\\app.ico" in iss and "SlitLampExplorer" not in iss
+    for spec in ("build.spec", "build_mac.spec"):
+        text = (root / spec).read_text(encoding="utf-8")
+        assert "KeelerExplorer" in text and "brand_keeler_explorer.py" in text
+    assert (root / "tools" / "rthooks" / "brand_keeler_explorer.py").is_file()
+    assert "keeler_explorer" in (root / "build_mac.sh").read_text(encoding="utf-8")
+    assert "keeler_explorer" in (root / "build_installer.bat").read_text(encoding="utf-8")
+    for wf in ("build-windows.yml", "build-mac.yml"):
+        assert "KeelerExplorer" in (root / ".github" / "workflows" / wf).read_text(encoding="utf-8")
+
+
+def test_keeler_explorer_window_shows_logo(qapp, app_env, monkeypatch):
+    config, db = app_env
+    config.source_mode = "synthetic"
+    config.capture_width, config.capture_height = 160, 120
+    config.save = lambda: None
+    monkeypatch.setenv(brand.ENV_KEY, "keeler_explorer")
+    from app.ui.explorer.explorer_window import ExplorerWindow
+    w = ExplorerWindow(config, db)
+    try:
+        assert w.windowTitle() == "Keeler 슬릿램프 영상 시스템 Explorer"
+        assert w.brand_logo is not None and not w.brand_logo.pixmap().isNull()
+        dark = w.brand_logo.pixmap().toImage()
+        w.toggle_theme()                                                  # 밝은 화면용 로고로 다시 그림
+        assert w.brand_logo.pixmap().toImage() != dark
+    finally:
+        w.close()
+        brand.select("default")

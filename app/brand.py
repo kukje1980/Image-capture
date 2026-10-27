@@ -1,7 +1,8 @@
 """데스크탑 앱 브랜드(이름·로고·아이콘·색) 설정 — 웹의 web/app/brands.py 와 같은 구성.
 
 브랜드 선택 우선순위
-    1) 실행 옵션  --brand keeler   (--brand explorer = Explorer 판: 메뉴·툴바·환자/검사 트리 화면)
+    1) 실행 옵션  --brand keeler   (--brand explorer = Explorer 판: 메뉴·툴바·환자/검사 트리 화면,
+                                    --brand keeler_explorer = Keeler 로고·색의 Explorer 판)
     2) 환경변수  SLITLAMP_BRAND=keeler   (Keeler 전용 설치본은 빌드 때 이 값이 들어감)
     3) 설정 파일 config.json 의 "brand"
     4) 기본 (슬릿램프 영상 시스템)
@@ -82,6 +83,19 @@ BRANDS: dict[str, dict] = {
     },
 }
 
+# Keeler Explorer 판 — Keeler 로고·색 그대로 + Explorer 화면 (메뉴·툴바·환자/검사 트리·겹쳐보기·참조 영상 …)
+BRANDS["keeler_explorer"] = {
+    **BRANDS["keeler"],
+    "app_name": "Keeler 슬릿램프 영상 시스템 Explorer",
+    "window_title": "Keeler 슬릿램프 영상 시스템 Explorer",
+    "layout": "explorer",
+}
+
+
+def _norm(key: str | None) -> str:
+    """'Keeler-Explorer' · 'keeler explorer' 처럼 적어도 같은 브랜드로."""
+    return (key or "").strip().lower().replace("-", "_").replace(" ", "_")
+
 
 def _assets_dir() -> Path:
     base = getattr(sys, "_MEIPASS", None)          # PyInstaller 번들 안
@@ -94,24 +108,25 @@ def key_from(argv=None, config_brand: str | None = None) -> str:
     argv = list(sys.argv if argv is None else argv)
     for i, a in enumerate(argv):
         if a == "--brand" and i + 1 < len(argv):
-            return argv[i + 1].strip().lower()
+            return _norm(argv[i + 1])
         if a.startswith("--brand="):
-            return a.split("=", 1)[1].strip().lower()
-    env = os.environ.get(ENV_KEY, "").strip().lower()
+            return _norm(a.split("=", 1)[1])
+    env = _norm(os.environ.get(ENV_KEY, ""))
     if env:
         return env
-    return (config_brand or "default").strip().lower() or "default"
+    return _norm(config_brand) or "default"
 
 
 def select(key: str) -> dict:
     """브랜드를 정하고 환경변수에도 기록 (이후 import 되는 UI 모듈이 같은 값을 보게)."""
+    key = _norm(key)
     key = key if key in BRANDS else "default"
     os.environ[ENV_KEY] = key
     return current()
 
 
 def current() -> dict:
-    key = os.environ.get(ENV_KEY, "default").strip().lower()
+    key = _norm(os.environ.get(ENV_KEY, "default"))
     if key not in BRANDS:
         key = "default"
     return {"key": key, **BRANDS[key]}
