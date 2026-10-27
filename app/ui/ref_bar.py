@@ -25,7 +25,7 @@ from app.ui.multi_view import ref_key
 from app.ui.theme import ICON, ICON_ACCENT
 
 ALL = ("all", None)
-_THUMB = QSize(72, 54)
+_THUMB = QSize(64, 48)                   # 줄 높이를 낮게 — 열어도 창 최소 높이가 크게 늘지 않게
 
 
 class RefBar(QFrame):
@@ -41,7 +41,7 @@ class RefBar(QFrame):
         self._chosen: dict = {}               # ref_key → RefImage (고른 순서)
         self._loaded = False
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(10, 4, 12, 4)
+        lay.setContentsMargins(10, 2, 12, 2)
         lay.setSpacing(6)
 
         title = QLabel()
@@ -68,7 +68,7 @@ class RefBar(QFrame):
         self.list.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
         self.list.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.list.setFixedHeight(_THUMB.height() + 26)
+        self.list.setFixedHeight(_THUMB.height() + 18)
         self.list.setMinimumWidth(120)
         self.list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.list.setToolTip("누르면 멀티 화면에 같이 보기 · 다시 누르면 빼기")

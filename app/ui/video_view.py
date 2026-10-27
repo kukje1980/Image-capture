@@ -57,7 +57,7 @@ class VideoView(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._pixmap: QPixmap | None = None
-        self.setMinimumSize(480, 360)
+        self.setMinimumSize(480, 270)          # 16:9 — 아래 줄(참조 · Smart)을 열어도 작은 화면(720px)에 창이 들어가게
         self._placeholder = "카메라 연결 대기 중..."
         self._patient = ""
         self._eye = "NA"

@@ -488,7 +488,7 @@ def test_multi_has_pro_side_menus_and_magnifier_default(qapp, win):
     assert mv._cells[1].property("active") and not mv._cells[0].property("active")
     QTest.mouseRelease(vp, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, vp.rect().center())
     assert cv1._lens is None
-    assert "2번 칸" in mp.lbl_img.text()
+    assert not mp.info_card.isVisible() and win.pro.info_card.isVisibleTo(win.pro)   # 멀티에는 '영상 정보' 없음 (Pro 는 그대로)
 
 
 def test_multi_pro_edit_adjust_and_tools(qapp, win):
@@ -627,7 +627,7 @@ def test_reference_bar_pick_shows_in_multi(qapp, win, tmp_path):
     assert "참조" in win.multi_view.canvases()[1]._caption
     mp = win.multi_pro
     win.multi_view.set_active(win.multi_view.canvases()[1])               # 참조 칸: 측정은 되고 기록은 안 됨
-    assert mp.current_capture() is None and "참조" in mp.lbl_img.text()
+    assert mp.current_capture() is None
     assert mp.analysis.b_red.isEnabled() and not mp.analysis.b_note.isEnabled()
     mp.b_flip_h.click()                                                   # 참조 칸 편집은 편집본 저장에서 빠짐
     assert not mp.b_edit_save.isEnabled()
@@ -638,3 +638,16 @@ def test_reference_bar_pick_shows_in_multi(qapp, win, tmp_path):
     rb.toggle(0)
     QTest.mouseClick(panel.btn_multi, Qt.MouseButton.LeftButton)          # 멀티를 다시 누르면 참조 선택도 초기화
     assert not win._multi and rb.selected_refs() == [] and panel.selected_captures() == []
+
+
+def test_reference_bar_in_multi_fits_small_screen(qapp, win):
+    """1920×1080 화면 · 150% 배율 = 1280×720 (작업 표시줄 빼면 약 680) — 멀티에서 참조 줄을 열어도 창이 화면보다 커지지 않게."""
+    _enter_multi(qapp, win, 2)
+    assert win.minimumSizeHint().height() <= 680
+    win.control_bar.btn_refs.click()
+    for _ in range(5):
+        qapp.processEvents()
+    assert win.ref_bar.isVisible()
+    hint = win.minimumSizeHint()
+    assert hint.height() <= 680 and hint.width() < 1200
+    assert win.ref_bar.height() <= 80                                    # 참조 줄은 낮게

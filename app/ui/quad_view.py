@@ -34,7 +34,7 @@ class QuadView(QWidget):
 
     def __init__(self, parent=None, count: int = 4):
         super().__init__(parent)
-        self.setMinimumSize(480, 360)
+        self.setMinimumSize(480, 270)          # 16:9 — 아래 줄(참조 · Smart)을 열어도 작은 화면(720px)에 창이 들어가게
         self._n = count if count in _GRIDS else 4
         self.reset()
 
