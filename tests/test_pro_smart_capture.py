@@ -291,3 +291,19 @@ def test_pro_analysis_measure_record_and_compare(qapp, app_env):
     assert ws._blink_timer.isActive()
     ws.set_mode("single")
     assert not ws._blink_timer.isActive()
+
+
+def test_redness_sensitivity_thresholds():
+    """민감도 5 = 예전 기준(1.45, 1.30), 낮출수록 엄격 · 높일수록 느슨. 지수(index)는 민감도와 무관."""
+    from app.capture import analysis
+    assert analysis.redness_thresholds(5) == (1.45, 1.30)
+    ks = [analysis.redness_thresholds(s) for s in range(1, 11)]
+    assert all(a[0] > b[0] and a[1] > b[1] for a, b in zip(ks, ks[1:]))
+    assert analysis.redness_thresholds(0) == analysis.redness_thresholds(1)
+    img = np.zeros((90, 120, 3), np.uint8)
+    img[:] = (90, 110, 200)
+    img[30:60, 30:90] = (60, 70, 230)
+    res = [analysis.redness_index(img, None, s) for s in (1, 5, 10)]
+    assert res[0]["vessel_pct"] <= res[1]["vessel_pct"] <= res[2]["vessel_pct"]
+    assert res[0]["vessel_pct"] < res[2]["vessel_pct"]
+    assert len({round(r["index"], 6) for r in res}) == 1 and [r["sensitivity"] for r in res] == [1, 5, 10]

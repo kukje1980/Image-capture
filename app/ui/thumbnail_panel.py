@@ -1,7 +1,8 @@
 """우측 썸네일 패널: 헤더(개수) + 필터(전체/OD/OS/동영상) + 촬영일별 묶음 목록.
 
 한 번 클릭 = 선택(번호 표시, 다시 누르면 해제) · 두 번 클릭 = 큰 화면으로 보기(thumbnailClicked).
-선택한 사진은 제목 줄 오른쪽(OD · OS 위)의 '멀티' 로 한 번에 모아 보고 편집한다."""
+선택한 사진은 제목 줄 오른쪽(OD · OS 위)의 '멀티' 로 한 번에 모아 보고 편집한다.
+오른쪽 클릭 = '멀티' (그 사진을 안 골랐으면 골라서, multiRequested)."""
 from __future__ import annotations
 
 import time
@@ -40,6 +41,7 @@ def day_label(day: str) -> str:
 class ThumbnailPanel(QFrame):
     thumbnailClicked = Signal(object)  # Capture — 두 번 클릭: 큰 화면으로 보기
     selectionChanged = Signal(list)    # 선택한 Capture 목록 (선택 순서)
+    multiRequested = Signal(object)    # Capture — 오른쪽 클릭: (안 골랐으면 고르고) 멀티로 모아 보기
 
     def __init__(self, db, newest_on_top: bool = True, parent=None, split_eyes: bool = False):
         super().__init__(parent)
@@ -76,7 +78,8 @@ class ThumbnailPanel(QFrame):
         self.btn_multi.setIconSize(QSize(15, 15))
         self.btn_multi.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.btn_multi.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_multi.setToolTip("아래 목록에서 한 번씩 눌러 고른 사진들을 한 화면에 모아 보고 편집 · 다시 누르면 선택 초기화")
+        self.btn_multi.setToolTip("아래 목록에서 한 번씩 눌러 고른 사진들을 한 화면에 모아 보고 편집 · 다시 누르면 선택 초기화\n"
+                                  "(사진이나 라이브 영상 위에서 마우스 오른쪽 클릭해도 멀티 화면)")
         head.addWidget(self.btn_multi)
         outer.addLayout(head)
 
@@ -179,6 +182,7 @@ class ThumbnailPanel(QFrame):
         w = ThumbnailWidget(c)
         w.clicked.connect(self._on_press)
         w.doubleClicked.connect(self._on_double)
+        w.rightClicked.connect(self._on_right)
         self._widgets[c.id] = w
         self._lay.addWidget(w)
 
@@ -205,6 +209,12 @@ class ThumbnailPanel(QFrame):
             self._pre_click = (capture.id, list(self._selected))
         self._last_press = (capture.id, now)
         self.toggle_selection(capture)
+
+    def _on_right(self, capture) -> None:
+        """오른쪽 클릭 = '멀티' — 그 사진을 아직 안 골랐으면 고르고(고른 순서 맨 뒤) 멀티 화면으로."""
+        if capture.id not in self._selected:
+            self.toggle_selection(capture)
+        self.multiRequested.emit(capture)
 
     def _on_double(self, capture) -> None:
         # 두 번 클릭 = 큰 화면으로 보기. 클릭으로 바뀐 선택은 두 번 클릭 전 상태로 되돌린다

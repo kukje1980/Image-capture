@@ -12,7 +12,7 @@ from collections import OrderedDict
 
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QImageReader, QPixmap
-from PySide6.QtWidgets import QFrame, QGridLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QGridLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 from app.ui.theme import EYE_COLORS
 
@@ -60,11 +60,15 @@ class _Cell(QFrame):
         if cap is not None:
             when = (cap.captured_at or "")[2:16].replace("-", ".")
             eye = cap.eye if cap.eye and cap.eye != "NA" else ""
-            note = f"&nbsp; <span style='color:#8a94a6'>{html.escape(cap.note)}</span>" if cap.note else ""
+            short = (cap.note or "").strip().splitlines()[0] if (cap.note or "").strip() else ""
+            short = short if len(short) <= 40 else short[:39] + "…"       # 긴 코멘트(샘플 출처 · 주소)는 한 줄 · 줄여서
+            note = f"&nbsp; <span style='color:#8a94a6'>{html.escape(short)}</span>" if short else ""
             eye_html = (f"<b style='color:{EYE_COLORS.get(eye, '#a3acba')}'>{eye}</b>&nbsp; " if eye else "")
             cap_lbl = QLabel(f"<span style='color:#6b7586'><b>{number}</b></span>&nbsp; {eye_html}{when}{note}")
             cap_lbl.setObjectName("MultiCaption")
             cap_lbl.setTextFormat(Qt.TextFormat.RichText)
+            # 글자 길이가 칸 · 창의 최소 폭을 늘리지 않게 (예전: 코멘트가 긴 사진이 있으면 창이 화면보다 넓어짐)
+            cap_lbl.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
             cap_lbl.setToolTip(" · ".join(x for x in (str(number), cap.captured_at or "", eye, cap.note or "") if x))
             lay.addWidget(cap_lbl)
         self._badge = QLabel("", self)

@@ -83,11 +83,23 @@ def fluorescein_area(frame: np.ndarray, roi: tuple | None = None, px_per_mm: flo
     return out
 
 
-def redness_index(frame: np.ndarray, roi: tuple | None = None) -> dict:
-    """충혈 지수 (상대 측정값). {'index': 0~100, 'vessel_pct': 혈관 화소 %, 'mask'}.
+REDNESS_SENS_DEFAULT = 5          # 충혈 민감도 1(가장 붉은 곳만) ~ 10(옅은 붉은 기까지), 5 = 예전과 같은 기준
 
-    index = ROI 의 적색 비율 r/(r+g+b) 를 1/3(무채색)~0.6(강한 적색) 사이로 정규화한 평균.
-    같은 조명·배율로 찍은 경과 영상끼리 비교할 때 의미가 있다 (등급 판정 아님).
+
+def redness_thresholds(sensitivity: int = REDNESS_SENS_DEFAULT) -> tuple[float, float]:
+    """민감도 → (R/G, R/B) 기준. 5 = (1.45, 1.30) 예전 값, 1 = (1.85, 1.60), 10 = (1.15, 1.08)."""
+    s = min(10, max(1, int(sensitivity)))
+    if s <= 5:
+        return 1.45 + (5 - s) * 0.10, 1.30 + (5 - s) * 0.075
+    return 1.45 - (s - 5) * 0.06, 1.30 - (s - 5) * 0.044
+
+
+def redness_index(frame: np.ndarray, roi: tuple | None = None, sensitivity: int = REDNESS_SENS_DEFAULT) -> dict:
+    """충혈 지수 (상대 측정값). {'index': 0~100, 'vessel_pct': 붉은(혈관 · 충혈) 화소 %, 'mask', 'sensitivity'}.
+
+    index = ROI 의 적색 비율 r/(r+g+b) 를 1/3(무채색)~0.6(강한 적색) 사이로 정규화한 평균 (민감도와 무관).
+    vessel_pct · mask = R 이 G · B 보다 기준 배 이상 큰 화소 — 기준은 민감도로 조절 (낮을수록 더 붉은 곳만).
+    같은 조명·배율 · 같은 민감도로 찍은 경과 영상끼리 비교할 때 의미가 있다 (등급 판정 아님).
     """
     small, s = _shrink(frame, _WORK_SIDE)
     f = small.astype(np.float32)
@@ -100,10 +112,12 @@ def redness_index(frame: np.ndarray, roi: tuple | None = None) -> dict:
         return {"index": 0.0, "vessel_pct": 0.0, "mask": np.zeros((fh, fw), bool)}
     rr = r / tot
     idx = np.clip((rr - 1 / 3) / (0.6 - 1 / 3), 0, 1)
-    vessel = roi_m & (r > 1.45 * g) & (r > 1.3 * b) & (v > 50)
+    kg, kb = redness_thresholds(sensitivity)
+    vessel = roi_m & (r > kg * g) & (r > kb * b) & (v > 50)
     fh, fw = frame.shape[:2]
     return {"index": float(idx[roi_m].mean() * 100), "vessel_pct": 100.0 * float(vessel.sum()) / float(roi_m.sum()),
-            "mask": cv2.resize(vessel.astype(np.uint8), (fw, fh), interpolation=cv2.INTER_NEAREST) > 0}
+            "mask": cv2.resize(vessel.astype(np.uint8), (fw, fh), interpolation=cv2.INTER_NEAREST) > 0,
+            "sensitivity": min(10, max(1, int(sensitivity)))}
 
 
 def align_to(moving: np.ndarray, reference: np.ndarray) -> tuple[np.ndarray, bool]:

@@ -257,6 +257,9 @@ class MainWindow(QMainWindow):
         self.quad_view.cellClicked.connect(self._on_quad_cell_clicked)
         self.thumbnail_panel.thumbnailClicked.connect(self._on_thumbnail_clicked)   # 두 번 클릭: 큰 화면
         self.thumbnail_panel.selectionChanged.connect(self._on_selection_changed)   # 한 번 클릭: 선택
+        # 오른쪽 클릭 = '멀티' (사진 목록의 사진: 그 사진도 골라서 · 라이브 영상: 고른 사진으로)
+        self.thumbnail_panel.multiRequested.connect(self._safe("오른쪽 클릭 멀티", lambda: self._multi_by_right_click()))
+        self.video_view.rightClicked.connect(self._safe("오른쪽 클릭 멀티", lambda: self._multi_by_right_click()))
         self.control_bar.multiToggled.connect(self._on_multi_toggled)
         self.control_bar.saveMultiClicked.connect(self._safe("멀티 저장", lambda: self._on_save_multi()))
         self.control_bar.sendClicked.connect(self._safe("전송", lambda: self._on_send()))
@@ -319,7 +322,7 @@ class MainWindow(QMainWindow):
         self.set_mode("capture" if getattr(self.config, "start_screen", "home") == "capture" else "home")
 
     def _build_topbar(self) -> QFrame:
-        """브랜드 + 아이콘 메뉴: [촬영 | Pro 검토] [신규 환자 | 정보 수정] … [카메라 | 단축키 | 설정 | 테마]."""
+        """브랜드 + 아이콘 메뉴: [홈 | 촬영 | Pro 검토 | 검사 기록 | 환자 목록] [신규 환자 | 정보 수정] 환자 검색 … [설정]."""
         bar = QFrame()
         bar.setObjectName("TopBar")
         # 아래 화면(멀티의 Pro 메뉴 등)이 커도 상단바 높이는 그대로 — 눌리면 메뉴 글자가 아이콘 위로 겹친다
@@ -383,10 +386,14 @@ class MainWindow(QMainWindow):
         self.btn_mode_capture = nav("촬영", "camera", "실시간 촬영 화면", checkable=True)
         self.btn_mode_pro = nav("Pro 검토", "review", self.act_pro.toolTip(), checkable=True)
         self.btn_mode_exam = nav("검사 기록", "clipboard", "촬영일별 영상 모음과 검사 소견", checkable=True)
+        self.btn_mode_patients = nav("환자 목록", "list", "등록된 환자 목록 — 차트번호 · 이름으로 찾아 촬영 · 검사 기록으로",
+                                     checkable=True)
         self.mode_buttons = {"home": self.btn_mode_home, "capture": self.btn_mode_capture,
-                             "pro": self.btn_mode_pro, "exam": self.btn_mode_exam}
+                             "pro": self.btn_mode_pro, "exam": self.btn_mode_exam,
+                             "patients": self.btn_mode_patients}
         grp = QButtonGroup(self)
-        for mode, name in (("home", "home"), ("capture", "camera"), ("pro", "review"), ("exam", "clipboard")):
+        for mode, name in (("home", "home"), ("capture", "camera"), ("pro", "review"), ("exam", "clipboard"),
+                           ("patients", "list")):
             btn = self.mode_buttons[mode]
             ic = icons.icon(name, ICON, 20)
             ic.addPixmap(icons.pixmap(name, ICON_ACCENT, 20), ic.Mode.Normal, ic.State.On)
@@ -931,7 +938,7 @@ class MainWindow(QMainWindow):
             self.patient_list.reload()
             self.patient_list.set_current(p.id if p else None)
             self.patient_list.search.setFocus()
-        # 홈 · 환자 목록에서는 상단 메뉴 중 켜진 칸이 없다 (홈 버튼만 켜짐)
+        # 화면 버튼(홈 · 촬영 · Pro 검토 · 검사 기록 · 환자 목록) 중 지금 화면이 켜짐
         self.mode_buttons.get(name, self.btn_mode_home).setChecked(True)
         self.statusBar().showMessage({"home": "홈", "capture": "촬영", "pro": "Pro 모드", "exam": "검사 기록",
                                       "patients": "환자 목록"}[name], 3000)
@@ -1129,6 +1136,18 @@ class MainWindow(QMainWindow):
                                          "참조 사진을 고른 뒤 '멀티'를 누르세요", 5000)
             return
         self._enter_multi(items)
+
+    def _multi_by_right_click(self) -> None:
+        """오른쪽 클릭으로 멀티 화면 — '멀티' 버튼을 누른 것과 같음 (이미 멀티면 그대로)."""
+        if self._multi:
+            return
+        items = self._multi_items()
+        if not items:
+            self.statusBar().showMessage("오른쪽 사진 목록에서 사진을 고르거나 사진 위에서 오른쪽 클릭하면 멀티 화면으로 봅니다", 5000)
+            return
+        self._enter_multi(items)
+        self.statusBar().showMessage(f"멀티 화면 ({len(items)}장) — 사진 목록에서 오른쪽 클릭으로 더 넣기 · "
+                                     "'멀티' 를 다시 누르면 닫기", 5000)
 
     def _enter_multi(self, items: list) -> None:
         if self._quad:
