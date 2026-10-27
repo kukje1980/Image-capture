@@ -66,10 +66,15 @@ def test_icon_button_api_and_click(qapp):
 
 def test_top_menu_clicks_switch_screens(qapp, win):
     for name, mode in (("btn_mode_exam", "exam"), ("btn_mode_pro", "pro"), ("btn_mode_home", "home"),
-                       ("btn_mode_capture", "capture")):
+                       ("btn_mode_patients", "patients"), ("btn_mode_capture", "capture")):
         QTest.mouseClick(getattr(win, name), Qt.MouseButton.LeftButton)
         qapp.processEvents()
         assert win.mode() == mode, name
+        assert getattr(win, name).isChecked(), name                      # 지금 화면 버튼이 켜짐
+    assert win.btn_mode_patients.text() == "환자 목록" and win.btn_mode_patients.isVisible()
+    win.set_mode("patients")                                             # 홈 타일 · 단축키 L 로 가도 위 버튼이 켜짐
+    assert win.btn_mode_patients.isChecked() and not win.btn_mode_home.isChecked()
+    win.set_mode("capture")
     for gone in ("btn_camera", "btn_keys", "btn_samples", "btn_theme"):   # 설정 창 안으로 옮김
         assert not hasattr(win, gone)
 
