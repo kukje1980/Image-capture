@@ -17,6 +17,7 @@ from app.db.database import Database
 from app.models.exam import Exam
 from app.models.patient import Patient
 from app.services.capture_service import CaptureService
+from app.ui import split_menu
 
 
 @pytest.fixture(scope="module")
@@ -450,15 +451,42 @@ def test_window_split_freeze(qapp, win):
     w.stop_split()
     assert not w._split and w.view.currentIndex() == 0 and not w.act_split.isChecked()
 
-    # 메뉴에서 칸 수 고르기 (고른 칸 수는 설정에 저장)
-    w._exec_menu = lambda menu, pos: next(a for a in menu.actions() if a.text() == "6분할")
-    w.act_split.setChecked(True)
-    assert w._split and w.quad.count() == 6 and w.config.split_count == 6
-    w.act_split.setChecked(False)
-    w._exec_menu = lambda menu, pos: None                                 # 메뉴를 닫으면 켜지 않음
+    # 처음 한 번: 메뉴를 닫으면 켜지 않음
+    assert not w.config.split_count_saved
+    w._exec_menu = lambda menu, pos: None
     w.act_split.setChecked(True)
     qapp.processEvents()
     assert not w._split and not w.act_split.isChecked() and not w.btn_split.isChecked()
+
+    # 메뉴에서 칸 수 고르기 → 고른 칸 수가 저장되고, 그다음부터는 묻지 않고 그 칸 수로 바로
+    asked = []
+
+    def pick(text):
+        def run(menu, pos):
+            asked.append(text)
+            return next(a for a in menu.actions() if a.text() == text)
+        return run
+    w._exec_menu = pick("6분할")
+    w.act_split.setChecked(True)
+    assert w._split and w.quad.count() == 6 and w.config.split_count == 6 and w.config.split_count_saved
+    w.act_split.setChecked(False)
+    w._exec_menu = lambda menu, pos: pytest.fail("저장한 뒤에는 묻지 않아야 함")
+    w.btn_split.click()
+    assert w._split and w.quad.count() == 6 and asked == ["6분할"]
+    assert "저장한 6분할" in w.btn_split.toolTip()
+
+    # 칸 수 바꾸기 (오른쪽 클릭 · 카메라 메뉴): 분할 중이면 새 칸 수로 다시 시작
+    w._exec_menu = pick("2분할")
+    w.act_split_count.trigger()
+    assert w._split and w.quad.count() == 2 and w.config.split_count == 2
+    w.stop_split()
+    # '누를 때마다 칸 수 묻기' 를 다시 켜면 다음부터 또 묻는다
+    w._exec_menu = pick(split_menu.ASK_TEXT)
+    w.change_split_count()
+    assert not w.config.split_count_saved and not w._split
+    w._exec_menu = pick("8분할")
+    w.act_split.setChecked(True)
+    assert w._split and w.quad.count() == 8 and asked[-1] == "8분할"
 
 
 # ---------------- 영상 목록 세로 배치 ----------------

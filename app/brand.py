@@ -71,6 +71,11 @@ BRANDS: dict[str, dict] = {
                    "accent": "#6cbce8", "active": "#12344a", "seg": "#0a2436"},
         "header_logo": "brand/keeler/logo-dark.svg",
         "shutter_ring": "rgba(237, 111, 30, 0.85)",
+        # 로고 K 마크의 4색 — 하늘(위 곡선) · 파랑 · 네이비(세로획) · 주황(아래 곡선)
+        "k_colors": ["#6cbce8", "#1981b7", "#052133", "#ed6f1e"],
+        "stripe": True,                             # 상단바 아래 K 4색 줄무늬
+        "eye_colors": {"OD": "#6cbce8", "OS": "#ed6f1e", "OU": "#1981b7"},   # 우안 = 하늘, 좌안 = 주황
+        "home_image": "brand/keeler/home.jpg",      # 홈 화면 큰 사진 (없으면 K 곡선 그림)
         "palette": {
             "dark": {
                 "bg": "#03131f", "panel": "#061c2c", "panel2": "#0a2436", "raised": "#0e2c42",
@@ -78,6 +83,7 @@ BRANDS: dict[str, dict] = {
                 "rule": "#12334b", "rule_strong": "#1b425f",
                 "accent": "#6cbce8", "accent_hover": "#a9dbf5", "accent_ink": "#052133", "accent_soft": "#12344a",
                 "field": "#041624", "disabled": "#2d4a60",
+                "od": "#6cbce8", "os": "#ed6f1e", "ou": "#4aa8dc",
             },
             "light": {
                 "bg": "#f1f8fd", "panel": "#ffffff", "panel2": "#f4f9fd", "raised": "#ffffff",
@@ -85,6 +91,7 @@ BRANDS: dict[str, dict] = {
                 "rule": "#d3dde3", "rule_strong": "#bccbd6",
                 "accent": "#1981b7", "accent_hover": "#0f6593", "accent_ink": "#ffffff", "accent_soft": "#cde1ef",
                 "field": "#ffffff", "disabled": "#b7c6d1",
+                "od": "#1981b7", "os": "#d9621a", "ou": "#0f6593",
             },
         },
     },

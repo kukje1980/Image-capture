@@ -32,7 +32,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
-    QMenu,
     QMessageBox,
     QPushButton,
     QSizePolicy,
@@ -47,7 +46,7 @@ from app import brand as app_brand
 from app import paths, shortcuts, sounds
 from app.capture.camera_controller import CameraController
 from app.services.capture_service import CaptureService
-from app.ui import icons
+from app.ui import icons, split_menu
 from app.ui.control_bar import tool_button
 from app.ui.explorer.camera_props_dialog import CameraPropsDialog
 from app.ui.explorer.compare_dialog import MAX_ITEMS, CompareDialog
@@ -170,6 +169,8 @@ class ExplorerWindow(QMainWindow):
         self.act_split = A("분할", "quad", self._on_split_toggled,
                            "분할 정지영상 — 2 · 4 · 6 · 8 · 16칸 중 골라 칸마다 정지영상 채우기", checkable=True)
         self.act_split_save = A("분할 저장", "save", self.save_split, "분할 칸별 영상 + 합성 영상을 이 검사에 저장")
+        self.act_split_count = A("분할 칸 수 바꾸기…", "quad", self.change_split_count,
+                                 "2 · 4 · 6 · 8 · 16칸 중 다시 고르기 (고른 칸 수는 저장되어 분할을 누르면 바로 시작)")
         self.act_props = A("카메라 속성", "aperture", self.open_camera_props, "노출 · 게인 · 화이트밸런스")
         self.act_reconnect = A("카메라 재연결", "videocam", self.restart_camera, "캡처 장비 다시 연결")
         self.act_record.setIcon(icons.icon("rec", ICON_RECORD, 20))
@@ -200,7 +201,7 @@ class ExplorerWindow(QMainWindow):
             m.addSeparator() if a is None else m.addAction(a)
         m = mb.addMenu("카메라(&C)")
         for a in (self.act_live, self.act_capture, self.act_record, None,
-                  self.act_freeze, self.act_split, self.act_split_save, None,
+                  self.act_freeze, self.act_split, self.act_split_save, self.act_split_count, None,
                   self.act_props, self.act_reconnect):
             m.addSeparator() if a is None else m.addAction(a)
         m = mb.addMenu("영상(&I)")
@@ -239,6 +240,7 @@ class ExplorerWindow(QMainWindow):
             self._render_brand_logo()
         self.addToolBar(tb)
         self.toolbar = tb
+        # Keeler: 도구줄 아래 선은 로고 K 의 4색 줄무늬 (theme._brand_qss 의 QToolBar#ExplorerTools 테두리)
 
     def _render_brand_logo(self) -> None:
         if self.brand_logo is None:
@@ -325,6 +327,9 @@ class ExplorerWindow(QMainWindow):
             return b
 
         self.btn_split = btn("분할", "Pause", "quad", ICON, self.act_split)
+        self.btn_split.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.btn_split.customContextMenuRequested.connect(lambda _pos: self.change_split_count())
+        self._sync_split_tip()
         self.btn_split_save = btn("분할 저장", "ToolBtn", "save", ICON, self.act_split_save)
         self.btn_split_save.setVisible(False)
         self.btn_freeze = btn("정지영상", "Freeze", "freeze", ICON_ACCENT, self.act_freeze)
@@ -665,6 +670,9 @@ class ExplorerWindow(QMainWindow):
 
     def _on_split_toggled(self, on: bool) -> None:
         if on and not self._split:
+            if getattr(self.config, "split_count_saved", False):
+                self.start_split(int(getattr(self.config, "split_count", 4) or 4))   # 저장한 칸 수로 바로
+                return
             n = self._choose_split_count(self.btn_split)
             if n is None:                          # 메뉴를 닫으면 켜지 않음
                 # 버튼 ↔ 메뉴 항목이 서로 체크를 맞추는 중이라, 이 신호 처리가 다 끝난 뒤에 끈다 (되켜짐 반복 방지)
@@ -685,23 +693,25 @@ class ExplorerWindow(QMainWindow):
         return menu.exec(pos)
 
     def _choose_split_count(self, anchor) -> int | None:
-        """분할 칸 수(2 · 4 · 6 · 8 · 16)를 고른다. 고른 칸 수는 다음에도 쓰도록 저장."""
-        menu = QMenu(self)
-        current = int(getattr(self.config, "split_count", 4) or 4)
-        counts = {}
-        for n in SPLIT_COUNTS:
-            a = menu.addAction(f"{n}분할")
-            a.setCheckable(True)
-            a.setChecked(n == current)
-            a.setData(n)
-            counts[a.text()] = n
-        pos = anchor.mapToGlobal(anchor.rect().topLeft())
-        pos.setY(pos.y() - menu.sizeHint().height() - 4)
-        try:
-            chosen = self._exec_menu(menu, pos)
-            return counts.get(chosen.text()) if chosen is not None else None
-        finally:
-            menu.deleteLater()                     # 누를 때마다 새 메뉴 — 지난 메뉴는 정리
+        """분할 칸 수(2 · 4 · 6 · 8 · 16)를 고른다. 고른 칸 수는 저장되어 다음부터 분할은 묻지 않고 바로 시작."""
+        n = split_menu.choose(self.config, self, anchor, self._exec_menu)
+        self._sync_split_tip()
+        if n:
+            self._status(f"{n}분할로 저장 — 다음부터 분할은 바로 {n}분할 (칸 수 바꾸기: 분할 버튼 오른쪽 클릭 · 카메라 메뉴)")
+        return n
+
+    def change_split_count(self) -> None:
+        """칸 수 고르기 메뉴를 (저장 여부와 상관없이) 띄운다. 분할 중이면 고른 칸 수로 다시 시작."""
+        n = self._choose_split_count(self.btn_split)
+        if n and self._split:
+            self.start_split(n)
+
+    def _sync_split_tip(self) -> None:
+        n = int(getattr(self.config, "split_count", 4) or 4)
+        tip = (f"분할 정지영상 — 저장한 {n}분할로 바로 시작 (칸 수 바꾸기: 오른쪽 클릭 · 카메라 메뉴)"
+               if getattr(self.config, "split_count_saved", False)
+               else "분할 정지영상 — 누르면 2 · 4 · 6 · 8 · 16칸 중에서 고릅니다 (고른 칸 수는 저장)")
+        self.btn_split.setToolTip(tip)
 
     def start_split(self, n: int | None = None) -> None:
         n = n if n in SPLIT_COUNTS else int(getattr(self.config, "split_count", 4) or 4)
@@ -918,7 +928,31 @@ class ExplorerWindow(QMainWindow):
             return None
         if len(caps) > MAX_ITEMS:
             self._status(f"앞의 {MAX_ITEMS}장만 비교합니다")
-        return self._show(CompareDialog(self._photo_items(caps[:MAX_ITEMS]), self))
+        exam_id = caps[0].exam_id
+
+        def save(img):
+            return self._save_screen(img, "비교", eye=caps[0].eye, exam_id=exam_id)
+
+        return self._show(CompareDialog(self._photo_items(caps[:MAX_ITEMS]), self,
+                                        on_save=save if self.patient else None))
+
+    def _save_screen(self, img, note: str, eye: str | None = None, exam_id=None) -> str | None:
+        """비교 화면 등을 한 장의 사진으로 선택한 검사(없으면 오늘 검사)에 저장."""
+        if not self._require_patient():
+            return None
+        if exam_id is None and self.exam is not None:
+            exam_id = self.exam.id
+        try:
+            cap = self.service.save_photo(img, self.patient, eye=eye if eye in ("OD", "OS", "OU") else "NA",
+                                          note=note, exam_id=exam_id)
+        except Exception as e:  # noqa: BLE001
+            log.exception("screen save failed")
+            QMessageBox.warning(self, "화면 저장", f"저장하지 못했습니다.\n{e}")
+            return None
+        sounds.play("shutter")
+        self._refresh_after_edit()
+        self._status(f"화면을 저장했습니다 ({note})")
+        return f"저장했습니다 ({cap.captured_at})"
 
     def add_reference(self, values=None):
         cap = self.thumbs.current()
@@ -947,10 +981,13 @@ class ExplorerWindow(QMainWindow):
             if img is not None:
                 who = self.patient.name if self.patient else ""
                 current = (img, f"{who} · {caption_of(cur)}")
+        eye = cur.eye if cur is not None else None
+        exam_id = cur.exam_id if cur is not None else None
         return self._show(ReferenceLibraryDialog(
             self.db, self, current=current,
             on_import_samples=lambda parent: self.import_samples(parent=parent),
-            on_register=lambda parent: self.add_reference() is not None))
+            on_register=lambda parent: self.add_reference() is not None,
+            on_save_screen=lambda img, note: self._save_screen(img, note, eye=eye, exam_id=exam_id)))
 
     def import_samples(self, folder=None, parent=None) -> bool:
         """받아 둔 샘플 사진 폴더(질환별 하위 폴더 + metadata.json, zip 도 가능)를 질환별 샘플 환자로 등록.

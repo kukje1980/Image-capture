@@ -2,26 +2,40 @@
 
 참고한 장비 프로그램의 Welcome 화면처럼, 왼쪽에 인사말, 오른쪽에 아이콘 타일을 둔다.
 '다음부터 촬영 화면으로 바로 시작' 을 켜면 config.start_screen = "capture".
+
+왼쪽 위에는 큰 사진 칸(HomeHero) — Keeler 판은 슬릿램프 사진(없으면 슬릿 빛줄기 그림)이 기본으로 보이고,
+'홈 사진 바꾸기' 로 병원에서 쓰는 장비 사진 등으로 바꿀 수 있다 (config.home_image, 데이터 폴더 home/ 에 복사).
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QSize, Qt, Signal
+import shutil
+import time
+from pathlib import Path
+
+from PySide6.QtCore import QPoint, QSize, Qt, Signal
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
+    QFileDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QMenu,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
-from app import __version__
+from app import __version__, paths
 from app import brand as app_brand
 from app.ui import icons
+from app.ui.home_hero import HomeHero
 from app.ui.icon_button import IconTextButton
 from app.ui.theme import ICON_ACCENT
+
+PHOTO_FILTER = "사진 (*.jpg *.jpeg *.png *.bmp *.webp)"
 
 # (동작 id, 이름, 아이콘, 설명)
 TILES = [
@@ -46,28 +60,50 @@ class HomeScreen(QWidget):
         root.setContentsMargins(48, 36, 48, 28)
         root.setSpacing(40)
 
-        # 왼쪽: 인사말 + 안내
+        br = app_brand.current()
+        k = br.get("k_colors")
+
+        # 왼쪽: 큰 사진 + 인사말 + 안내
         left = QVBoxLayout()
         left.setSpacing(6)
-        left.addStretch(2)
+        self.hero = HomeHero()
+        left.addWidget(self.hero, 5)
+        self.spacer_top = QWidget()                # 사진이 없을 때 인사말을 가운데쯤으로
+        left.addWidget(self.spacer_top, 2)
+        left.addSpacing(14)
+        self.kicker = None
+        if k:
+            self.kicker = QLabel(f"{br.get('short_name', 'KEELER').upper()}  ·  SLIT LAMP IMAGING")
+            self.kicker.setObjectName("HomeKicker")
+            left.addWidget(self.kicker)
         hello = QLabel("환영합니다")
         hello.setObjectName("HomeTitle")
-        sub = QLabel(app_brand.current()["app_name"])
+        sub = QLabel(br["app_name"])
         sub.setObjectName("HomeSub")
+        sub.setWordWrap(True)
         guide = QLabel("환자를 등록하거나 선택한 뒤 촬영을 시작하세요.\n"
                        "촬영한 사진·동영상은 환자별로 저장되고, 검사 기록에서 소견과 함께 볼 수 있습니다.")
         guide.setObjectName("HomeGuide")
         guide.setWordWrap(True)
         left.addWidget(hello)
         left.addWidget(sub)
+        if k:
+            rule = QFrame()
+            rule.setObjectName("HomeRule")               # 짧은 K 4색 밑줄
+            left.addSpacing(6)
+            left.addWidget(rule)
         left.addSpacing(10)
         left.addWidget(guide)
-        left.addStretch(3)
+        left.addStretch(1)
         links = QHBoxLayout()
         links.setSpacing(14)
         self.btn_keys = self._link("단축키 안내", "keyboard")
         self.btn_keys.clicked.connect(lambda: self.action.emit("shortcuts"))
         links.addWidget(self.btn_keys)
+        self.btn_photo = self._link("홈 사진 바꾸기", "image")
+        self.btn_photo.setToolTip("홈 화면 큰 사진을 병원 장비 사진 등으로 바꿉니다")
+        self.btn_photo.clicked.connect(lambda: self._photo_menu())
+        links.addWidget(self.btn_photo)
         links.addStretch(1)
         left.addLayout(links)
         self.chk_skip = QCheckBox("다음부터 촬영 화면으로 바로 시작")
@@ -84,9 +120,14 @@ class HomeScreen(QWidget):
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setSpacing(14)
         self.tiles: dict[str, IconTextButton] = {}
+        # Keeler: 아이콘을 로고 K 의 하늘 · 파랑 · 주황으로 번갈아 (네이비는 상단바·사진 바탕색)
+        tile_colors = [k[0], k[1], k[3]] if k else [ICON_ACCENT]
         for i, (aid, text, icon, tip) in enumerate(TILES):
-            b = IconTextButton(text, icons.icon(icon, ICON_ACCENT, 40, disabled="#4a5262"), 40)
+            col = tile_colors[i % len(tile_colors)]
+            b = IconTextButton(text, icons.icon(icon, col, 40, disabled="#4a5262"), 40)
             b.setObjectName("HomeTile")
+            if k:
+                b.setProperty("kc", str(i % 3))
             b.layout().setSpacing(12)
             b.setToolTip(tip)
             b.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -103,6 +144,7 @@ class HomeScreen(QWidget):
         self.lbl_version.setObjectName("HomeGuide")
         wrap.addWidget(self.lbl_version, 0, Qt.AlignmentFlag.AlignRight)
         root.addLayout(wrap, 6)
+        self.refresh_hero()
 
     @staticmethod
     def _link(text: str, icon: str) -> QPushButton:
@@ -113,6 +155,65 @@ class HomeScreen(QWidget):
         b.setCursor(Qt.CursorShape.PointingHandCursor)
         b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         return b
+
+    # ---- 홈 사진 ----
+    def hero_path(self) -> str | None:
+        """지금 보여줄 사진: 사용자가 고른 사진 > 브랜드 기본 사진 (없으면 None → 그림)."""
+        own = getattr(self.config, "home_image", "") or ""
+        if own and Path(own).is_file():
+            return own
+        return app_brand.asset(app_brand.current().get("home_image"))
+
+    def refresh_hero(self) -> None:
+        path = self.hero_path()
+        self.hero.set_image(path)
+        # 브랜드에 홈 사진 자리가 있거나(Keeler) 사용자가 사진을 넣었을 때만 큰 사진 칸을 보인다
+        show = bool(path) or bool(app_brand.current().get("home_image"))
+        self.hero.setVisible(show)
+        self.spacer_top.setVisible(not show)
+
+    def set_home_image(self, src: str) -> bool:
+        """사진을 데이터 폴더(home/)에 복사해 홈 사진으로 쓴다. 열 수 없는 파일이면 False."""
+        if not src or QPixmap(src).isNull():
+            return False
+        folder = paths.ensure_dir(paths.get_appdata_dir() / "home")
+        dst = Path(folder) / f"home-{int(time.time() * 1000)}{Path(src).suffix.lower() or '.jpg'}"
+        shutil.copyfile(src, dst)
+        old = getattr(self.config, "home_image", "") or ""
+        self.config.home_image = str(dst)
+        self._save_config()
+        if old and Path(old).parent == Path(folder) and Path(old) != dst:
+            Path(old).unlink(missing_ok=True)
+        self.refresh_hero()
+        return True
+
+    def reset_home_image(self) -> None:
+        old = getattr(self.config, "home_image", "") or ""
+        self.config.home_image = ""
+        self._save_config()
+        folder = paths.get_appdata_dir() / "home"
+        if old and Path(old).parent == folder:
+            Path(old).unlink(missing_ok=True)
+        self.refresh_hero()
+
+    def _photo_menu(self) -> None:
+        m = QMenu(self)
+        a_pick = m.addAction("사진 고르기…")
+        a_reset = m.addAction("기본 사진으로 되돌리기")
+        a_reset.setEnabled(bool(getattr(self.config, "home_image", "")))
+        act = m.exec(self.btn_photo.mapToGlobal(QPoint(0, self.btn_photo.height())))
+        if act is a_pick:
+            path, _ = QFileDialog.getOpenFileName(self, "홈 화면 사진 고르기", "", PHOTO_FILTER)
+            if path and not self.set_home_image(path):
+                QMessageBox.warning(self, "홈 사진", "사진 파일을 열 수 없습니다.")
+        elif act is a_reset:
+            self.reset_home_image()
+
+    def _save_config(self) -> None:
+        try:
+            self.config.save()
+        except Exception:  # noqa: BLE001
+            pass
 
     def _on_skip(self, on: bool) -> None:
         self.config.start_screen = "capture" if on else "home"

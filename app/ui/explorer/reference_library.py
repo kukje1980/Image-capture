@@ -5,16 +5,21 @@
   (등록한 분류들)     메인 창에서 '참조 등록' 한 영상 (라이브러리 폴더 사본)
   ── 샘플 사진 ──     설정·파일 메뉴의 '샘플 사진 가져오기' 로 등록한 질환별 샘플 (원본 그대로, 읽기 전용)
 '현재 영상과 비교' 는 메인 창에서 고른 환자 영상과 참조 영상을 비교 창으로 연다.
+비교 창의 '화면 저장' 은 나란히 놓인 비교 화면을 한 장의 사진으로 환자 기록에 저장하고(on_save_screen),
+'파일로 저장…' 은 지금 보이는 참조 영상 · 비교 화면을 PNG/JPG 파일로 내보낸다.
 """
 from __future__ import annotations
 
 import html
 import os
+import re
 
+import cv2
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QDialog,
+    QFileDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -45,10 +50,12 @@ def _short(text: str, n: int = _GRID_TITLE_MAX) -> str:
 
 
 class ReferenceLibraryDialog(QDialog):
-    def __init__(self, db, parent=None, current=None, on_import_samples=None, on_register=None):
+    def __init__(self, db, parent=None, current=None, on_import_samples=None, on_register=None,
+                 on_save_screen=None):
         """current: (bgr, caption) — 비교할 환자 영상 (없으면 비교 버튼 비활성).
         on_import_samples(parent) — '샘플 사진 가져오기' 를 실행하고 가져왔으면 True (없으면 버튼 숨김).
-        on_register(parent) — 현재 환자 영상을 참조로 등록하고 등록했으면 True (없으면 버튼 숨김)."""
+        on_register(parent) — 현재 환자 영상을 참조로 등록하고 등록했으면 True (없으면 버튼 숨김).
+        on_save_screen(bgr, note) — 비교 화면을 환자 기록에 저장하고 결과 문자열 (없으면 비교 창의 '화면 저장' 숨김)."""
         super().__init__(parent)
         self.setWindowTitle("참조 영상 라이브러리")
         self.resize(1180, 740)
@@ -56,6 +63,8 @@ class ReferenceLibraryDialog(QDialog):
         self._current = current
         self._on_import_samples = on_import_samples
         self._on_register = on_register
+        self._on_save_screen = on_save_screen
+        self._compare_dlg = None
         self._refs = []
 
         self.cats = QListWidget()
@@ -99,6 +108,9 @@ class ReferenceLibraryDialog(QDialog):
         self.b_compare.setEnabled(False)
         self.b_edit = QPushButton("정보 수정")
         self.b_delete = QPushButton("삭제")
+        self.b_export = QPushButton("파일로 저장…")
+        self.b_export.setToolTip("지금 보이는 참조 영상(확대 · 표시 그대로)을 PNG / JPG 파일로 저장")
+        self.b_export.setEnabled(False)
         right = QWidget()
         rl = QVBoxLayout(right)
         rl.setContentsMargins(0, 0, 0, 0)
@@ -107,6 +119,7 @@ class ReferenceLibraryDialog(QDialog):
         br = QHBoxLayout()
         br.addWidget(self.b_edit)
         br.addWidget(self.b_delete)
+        br.addWidget(self.b_export)
         br.addStretch(1)
         br.addWidget(self.b_compare)
         rl.addLayout(br)
@@ -132,6 +145,7 @@ class ReferenceLibraryDialog(QDialog):
         self.b_compare.clicked.connect(self.compare)
         self.b_edit.clicked.connect(self.edit_current)
         self.b_delete.clicked.connect(self.delete_current)
+        self.b_export.clicked.connect(lambda: self.export_current())
         self.b_samples.clicked.connect(self.import_samples)
         self.b_register.clicked.connect(self.register_current)
         self.reload()
@@ -221,6 +235,7 @@ class ReferenceLibraryDialog(QDialog):
         r = self.current_ref()
         has = r is not None
         self.b_compare.setEnabled(has and self._current is not None)
+        self.b_export.setEnabled(has)
         editable = has and not r.is_sample          # 샘플 사진은 원본 그대로 (수정·삭제는 환자 화면에서)
         self.b_edit.setEnabled(editable)
         self.b_delete.setEnabled(editable)
@@ -261,9 +276,43 @@ class ReferenceLibraryDialog(QDialog):
             return None
         head = "샘플" if r.is_sample else "참조"
         cap = " · ".join(x for x in (head, r.category, _short(r.title or "", 48)) if x)
-        self._compare_dlg = CompareDialog([self._current, (img, cap)], self, title="환자 영상 ↔ 참조 영상")
+        note = f"{head} 비교 · {r.category}" if r.category else f"{head} 비교"
+        on_save = None
+        if self._on_save_screen is not None:
+            def on_save(img, note=note):
+                return self._on_save_screen(img, note)
+        self._compare_dlg = CompareDialog([self._current, (img, cap)], self, title="환자 영상 ↔ 참조 영상",
+                                          on_save=on_save)
         self._compare_dlg.show()
         return self._compare_dlg
+
+    def export_current(self, path: str | None = None) -> str | None:
+        """고른 참조 영상을 지금 보이는 그대로(밝기 · 표시 포함, 원본 해상도) 파일로 저장."""
+        r = self.current_ref()
+        if r is None:
+            return None
+        if path is None:
+            stem = re.sub(r'[\\/:*?"<>|\s]+', "_", r.title or r.category or "참조영상").strip("_")[:40]
+            path, _ = QFileDialog.getSaveFileName(self, "참조 영상 저장", f"{stem or '참조영상'}.png",
+                                                  "PNG (*.png);;JPEG (*.jpg *.jpeg)")
+            if not path:
+                return None
+        img = self.preview.render_to_bgr()
+        if img is None:
+            img = load_bgr(r.file_path)
+        ext = ".jpg" if path.lower().endswith((".jpg", ".jpeg")) else ".png"
+        if not path.lower().endswith((".png", ".jpg", ".jpeg")):
+            path += ext
+        ok, buf = (False, None) if img is None else cv2.imencode(ext, img)
+        try:
+            if not ok:
+                raise OSError("영상을 만들 수 없습니다")
+            os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+            buf.tofile(path)                        # 한글 경로도 저장되게
+        except OSError as e:
+            QMessageBox.warning(self, "참조 영상", f"저장하지 못했습니다.\n{e}")
+            return None
+        return path
 
     def import_samples(self) -> None:
         if self._on_import_samples is not None and self._on_import_samples(self):

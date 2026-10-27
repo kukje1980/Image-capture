@@ -8,4 +8,7 @@
 - `theme.css` 색 — keeler.co.uk · keelerusa.com · keelerglobal.com 스타일시트에서 가장 많이 쓰인 브랜드 색
   #052133(네이비) · #1981b7(파랑) · #6cbce8(하늘) · #ed6f1e(주황) · #cde1ef / #f1f8fd(옅은 파랑)
 
+- `home.jpg` (선택) — 홈 화면 큰 사진. 이 파일을 두면 Keeler 판 시작 화면에 기본으로 보이고, 없으면 Keeler 색으로 그린
+  슬릿 빛줄기 그림이 보입니다. 사용자는 앱의 '홈 사진 바꾸기' 로 언제든 바꿀 수 있습니다.
+
 로고·상표는 Keeler Ltd 소유이며, Keeler 측 사용 허락 범위에서 사용합니다.

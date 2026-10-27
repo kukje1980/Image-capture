@@ -40,7 +40,7 @@ ICON = "#98a2b3"
 ICON_ACCENT = _B.get("icon_accent", "#2fb5a5")
 ICON_RECORD = "#ef4f4c"
 ICON_ON_ACCENT = _B.get("icon_on_accent", "#06231f")
-EYE_COLORS = {"OD": "#5aa9ff", "OS": "#f5a524", "OU": "#b18cff"}
+EYE_COLORS = dict(_B.get("eye_colors") or {"OD": "#5aa9ff", "OS": "#f5a524", "OU": "#b18cff"})
 
 
 def palette(mode: str) -> dict:
@@ -167,6 +167,7 @@ def build_qss(mode: str = "dark") -> str:
     /* 하단 촬영 도크 */
     QFrame#Dock {{ background: {c['panel']}; border: 1px solid {c['rule']}; border-radius: 12px; }}
     QFrame#Dock QLabel {{ background: transparent; }}
+    QFrame#Dock QWidget#DockPart {{ background: transparent; }}
     QFrame#DockSep {{ background: {c['rule']}; }}
     QFrame#EyeSeg {{ background: {c['bg']}; border: 1px solid {c['rule']}; border-radius: 10px; }}
     QPushButton#EyeBtn {{
@@ -241,6 +242,7 @@ def build_qss(mode: str = "dark") -> str:
 
     /* 스크롤 영역/바 */
     QScrollArea {{ border: none; background: transparent; }}
+    QScrollArea#HScroll QScrollBar:horizontal {{ height: 8px; }}
     QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
     QScrollBar::handle:vertical {{ background: {c['rule_strong']}; border-radius: 4px; min-height: 30px; }}
     QScrollBar::handle:vertical:hover {{ background: {c['ink_muted']}; }}
@@ -403,20 +405,23 @@ def build_qss(mode: str = "dark") -> str:
     QStackedWidget#ExplorerView {{ background: #000000; border-radius: 10px; }}
     QGroupBox {{ border: 1px solid {c['rule']}; border-radius: 8px; margin-top: 14px; padding: 10px 8px 8px; font-weight: 700; }}
     QGroupBox::title {{ subcontrol-origin: margin; left: 10px; padding: 0 4px; color: {c['ink_muted']}; }}
-    """ + _brand_qss()
+    """ + _brand_qss(mode)
 
 
-def _brand_qss() -> str:
+def _brand_qss(mode: str = "dark") -> str:
     """브랜드 전용 덧칠 — 헤더(메뉴바·툴바)를 테마와 상관없이 브랜드 색으로, 셔터 링을 브랜드 포인트 색으로."""
     b = _brand.current()
     out = ""
     h = b.get("header")
+    k = b.get("k_colors")
+    stripe = bool(b.get("stripe") and k)
     if h:
+        line = "none" if stripe else f"3px solid {h['line']}"      # 줄무늬가 있으면 줄무늬가 아래 선 역할
         out += f"""
     QMenuBar {{ background: {h['bg']}; color: {h['ink']}; border-bottom: 1px solid {h['rule']}; }}
     QMenuBar::item {{ background: transparent; color: {h['ink']}; }}
     QMenuBar::item:selected, QMenuBar::item:pressed {{ background: {h['hover']}; color: {h['ink']}; }}
-    QToolBar#ExplorerTools {{ background: {h['bg']}; border: none; border-bottom: 3px solid {h['line']}; }}
+    QToolBar#ExplorerTools {{ background: {h['bg']}; border: none; border-bottom: {line}; }}
     QToolBar#ExplorerTools::separator {{ background: {h['rule']}; }}
     QToolBar#ExplorerTools QToolButton {{ color: {h['ink_soft']}; background: transparent; }}
     QToolBar#ExplorerTools QToolButton:hover {{ background: {h['hover']}; border-color: {h['rule']}; color: {h['ink']}; }}
@@ -424,7 +429,7 @@ def _brand_qss() -> str:
     QToolBar#ExplorerTools QToolButton:disabled {{ color: {h['disabled']}; }}
     QToolBar#ExplorerTools QLabel#BrandLogo, QToolBar#ExplorerTools QWidget {{ background: transparent; }}
 
-    QFrame#TopBar {{ background: {h['bg']}; border: none; border-bottom: 3px solid {h['line']}; }}
+    QFrame#TopBar {{ background: {h['bg']}; border: none; border-bottom: {line}; }}
     QFrame#TopBar QLabel#BrandLogo, QFrame#TopBar QFrame#PatientPick {{ background: transparent; }}
     QFrame#TopBar QFrame#NavSeg {{ background: {h['seg']}; border: 1px solid {h['rule']}; }}
     QFrame#TopBar QPushButton#NavBtn {{ background: transparent; border-color: transparent; }}
@@ -436,6 +441,23 @@ def _brand_qss() -> str:
     QFrame#TopBar QLabel#BtnText:disabled {{ color: {h['disabled']}; }}
     QFrame#TopBar QLabel#PatientName {{ color: {h['ink']}; background: transparent; }}
     QFrame#TopBar QLabel#ChartNo, QFrame#TopBar QLabel#PatientMeta {{ color: {h['ink_soft']}; background: transparent; }}
+    """
+    if stripe:
+        sky, blue, navy, orange = k
+        # 로고 K 처럼: 하늘 → 파랑(위 곡선) · 네이비(세로획) · 주황(아래 곡선)
+        grad = (f"qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {sky}, stop:0.6 {blue}, "
+                f"stop:0.601 {navy}, stop:0.62 {navy}, stop:0.621 {orange}, stop:1 #f4a462)")
+        out += f"""
+    QFrame#BrandStripe {{ border: none; min-height: 4px; max-height: 4px; background: {grad}; }}
+    QToolBar#ExplorerTools {{ border-bottom: 4px solid; border-bottom-color: {grad}; }}
+    QPushButton#HomeTile:hover {{ border: 1px solid {sky}; }}
+    QPushButton#HomeTile[kc="0"] {{ border-bottom: 3px solid {sky}; }}
+    QPushButton#HomeTile[kc="1"] {{ border-bottom: 3px solid {blue}; }}
+    QPushButton#HomeTile[kc="2"] {{ border-bottom: 3px solid {orange}; }}
+    QLabel#HomeKicker {{ color: {orange}; font-size: 12px; font-weight: 800; letter-spacing: 2px; }}
+    QLabel#HomeSub {{ color: {sky if mode == 'dark' else blue}; }}
+    QFrame#HomeRule {{ border: none; min-height: 3px; max-height: 3px; max-width: 72px;
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {sky}, stop:0.5 {blue}, stop:0.501 {orange}, stop:1 {orange}); }}
     """
     ring = b.get("shutter_ring")
     if ring:

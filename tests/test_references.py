@@ -110,7 +110,10 @@ def test_keeler_standard_header_colors(qapp, app_env, monkeypatch):
         for mode in ("dark", "light"):
             qss = build_qss(mode)
             assert "QFrame#TopBar { background: #052133;" in qss
-            assert "border-bottom: 3px solid #1981b7" in qss
+            # 아래 선 대신 로고 K 4색(하늘 · 파랑 · 네이비 · 주황) 줄무늬
+            assert "QFrame#TopBar { background: #052133; border: none; border-bottom: none; }" in qss
+            stripe = qss[qss.index("QFrame#BrandStripe"):].split("}", 1)[0]
+            assert all(c in stripe for c in ("#6cbce8", "#1981b7", "#052133", "#ed6f1e"))
             assert "rgba(237, 111, 30, 0.85)" in qss
     finally:
         w.close()
