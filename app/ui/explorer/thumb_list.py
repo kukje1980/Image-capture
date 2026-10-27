@@ -1,4 +1,6 @@
-"""썸네일 목록 (Explorer 판 아래쪽) — 여러 장 선택(Ctrl/Shift)해서 겹쳐보기·비교·보고서에 쓴다.
+"""썸네일 목록 (Explorer 판 아래쪽, 또는 오른쪽 세로) — 여러 장 선택(Ctrl/Shift)해서 겹쳐보기·비교·보고서에 쓴다.
+
+가로(아래 칸): 왼쪽 → 오른쪽으로 채우고 줄바꿈.  세로(오른쪽 칸): 위 → 아래 한 줄, 필터는 제목 아래 줄.
 
 각 썸네일에는 안구 배지(OD 파랑 / OS 주황 / OU 보라), 동영상 표시, 촬영 시각이 그려진다.
 """
@@ -16,6 +18,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QVBoxLayout,
+    QWidget,
 )
 
 from app.ui import icons
@@ -75,30 +78,38 @@ class ThumbList(QFrame):
         self._all: list = []
         self._caps: list = []
         self._filter = "all"
+        self._vertical = False
         lay = QVBoxLayout(self)
         lay.setContentsMargins(8, 6, 8, 6)
         lay.setSpacing(4)
-        head = QHBoxLayout()
+        self.head = QHBoxLayout()
         self.title = QLabel("영상")
         self.title.setObjectName("ThumbTitle")
-        head.addWidget(self.title)
+        self.head.addWidget(self.title)
         self.sel = QLabel("")
         self.sel.setObjectName("Muted")
-        head.addWidget(self.sel)
-        head.addStretch(1)
+        self.head.addWidget(self.sel)
+        self.head.addStretch(1)
+        self.chips = QWidget()                   # 필터 버튼 묶음 — 세로 배치에서는 제목 아래 줄로 내려간다
+        cl = QHBoxLayout(self.chips)
+        cl.setContentsMargins(0, 0, 0, 0)
+        cl.setSpacing(4)
         self.filter_group = QButtonGroup(self)
         self.filter_buttons = {}
         for key, label in FILTERS:
             b = QPushButton(label)
             b.setObjectName("FilterChip")
             b.setCheckable(True)
-            b.setMinimumWidth(52)
+            b.setMinimumWidth(44)
             b.clicked.connect(lambda _=False, k=key: self.set_filter(k))
             self.filter_group.addButton(b)
             self.filter_buttons[key] = b
-            head.addWidget(b)
+            cl.addWidget(b)
         self.filter_buttons["all"].setChecked(True)
-        lay.addLayout(head)
+        self.head.addWidget(self.chips)
+        lay.addLayout(self.head)
+        self.chips_row = QHBoxLayout()           # 세로 배치일 때 필터가 들어갈 줄
+        lay.addLayout(self.chips_row)
 
         self.list = QListWidget()
         self.list.setObjectName("ThumbList")
@@ -115,6 +126,30 @@ class ThumbList(QFrame):
         self.list.itemSelectionChanged.connect(self._on_sel)
         self.list.itemClicked.connect(lambda it: self.picked.emit(self._caps[self.list.row(it)]))
         self.list.itemDoubleClicked.connect(lambda it: self.activated.emit(self._caps[self.list.row(it)]))
+
+    # ---- 배치 ----
+    def is_vertical(self) -> bool:
+        return self._vertical
+
+    def set_vertical(self, on: bool) -> None:
+        """True = 오른쪽 세로 칸 (위→아래 한 줄), False = 아래 가로 칸 (왼→오른쪽, 줄바꿈)."""
+        self._vertical = bool(on)
+        if on:
+            self.head.removeWidget(self.chips)
+            self.chips_row.addWidget(self.chips)
+            self.chips_row.addStretch(1)
+            self.list.setFlow(QListWidget.Flow.TopToBottom)
+            self.list.setWrapping(False)
+            self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        else:
+            while self.chips_row.count():
+                self.chips_row.takeAt(0)
+            self.head.addWidget(self.chips)
+            self.list.setFlow(QListWidget.Flow.LeftToRight)
+            self.list.setWrapping(True)
+            self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.chips.show()
+        self.list.doItemsLayout()
 
     # ---- 데이터 ----
     def set_captures(self, caps: list, title: str = "영상", keep: bool = False) -> None:

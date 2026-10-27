@@ -13,6 +13,7 @@
 - 원문 진단·출처·라이선스는 영상 코멘트에, 질환 설명은 환자 메모에 남긴다. 등급은 붙이지 않는다.
 - 같은 폴더를 다시 가져와도 이미 등록된 사진(내용이 같은 파일)은 건너뛴다.
 - metadata.json 의 sha256 과 다른 파일은 손상·변조로 보고 등록하지 않는다.
+- 가져온 샘플 사진은 Explorer 판 참조 영상 라이브러리에 질환별로 바로 보인다 (sample_references — 복사하지 않음).
 """
 from __future__ import annotations
 
@@ -35,6 +36,7 @@ from app import paths
 from app.capture.frame_utils import make_thumbnail
 from app.models.capture import Capture
 from app.models.patient import Patient
+from app.models.ref_image import RefImage
 
 try:
     import cv2
@@ -156,6 +158,60 @@ def import_samples(db, config, source) -> SampleImportResult:
         result.photos_imported += 1
         log.info("sample imported id=%s patient=%s file=%s", cap.id, patient.chart_no, img_path.name)
     return result
+
+
+# ---- 참조 영상으로 보기 (Explorer 판 참조 영상 라이브러리) ----
+def is_sample_patient(patient) -> bool:
+    return bool(patient is not None and (patient.chart_no or "").startswith(CHART_PREFIX))
+
+
+def sample_patients(db) -> List[Patient]:
+    """샘플 환자 (차트번호 SAMPLE-NN) — 질환 폴더 번호 순."""
+    found = [p for p in db.patients.search(CHART_PREFIX, limit=1000) if is_sample_patient(p)]
+    return sorted(found, key=lambda p: p.chart_no or "")
+
+
+def disease_of(patient) -> str:
+    return patient.diagnosis or (patient.name or "").replace("샘플 · ", "", 1) or patient.chart_no or "샘플"
+
+
+def sample_reference(patient, cap) -> RefImage:
+    """샘플 사진 1장을 참조 영상 항목으로 (원본 파일을 그대로 가리킴). 코멘트 첫 줄 = 원문 진단, 나머지 = 출처·라이선스."""
+    lines = [ln.strip() for ln in (cap.note or "").splitlines() if ln.strip()]
+    title = lines[0] if lines else Path(cap.file_path).stem
+    if title.startswith("[샘플]"):
+        title = title[len("[샘플]"):].strip()
+    return RefImage(file_path=cap.file_path, thumbnail_path=cap.thumbnail_path, category=disease_of(patient),
+                    title=title, description="\n".join(lines[1:]) or None, source_capture_id=cap.id,
+                    created_at=cap.captured_at, source="sample")
+
+
+def sample_references(db, category: Optional[str] = None, q: str = "") -> List[RefImage]:
+    """가져온 샘플 사진을 참조 영상 목록으로. category = 질환 이름, q = 제목·설명·질환 검색."""
+    q = (q or "").strip().lower()
+    out = []
+    for p in sample_patients(db):
+        disease = disease_of(p)
+        if category and disease != category:
+            continue
+        for cap in db.captures.list_by_patient(p.id, order="asc"):
+            if cap.media_type != "photo":
+                continue
+            ref = sample_reference(p, cap)
+            if q and q not in " ".join(x for x in (ref.title, ref.description, disease) if x).lower():
+                continue
+            out.append(ref)
+    return out
+
+
+def sample_categories(db) -> List[tuple]:
+    """[(질환 이름, 사진 수), ...] — 사진이 있는 샘플 환자만."""
+    out = []
+    for p in sample_patients(db):
+        n = sum(1 for c in db.captures.list_by_patient(p.id) if c.media_type == "photo")
+        if n:
+            out.append((disease_of(p), n))
+    return out
 
 
 # ---- 내부 ----

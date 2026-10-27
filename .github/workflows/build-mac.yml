@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        brand: [default, keeler, explorer, agent]        # agent = AI 에이전트 에디션 (기본 브랜드)
+        brand: [default, keeler, explorer, keeler_explorer, agent]        # agent = AI 에이전트 에디션 (기본 브랜드)
         runner: [macos-15, macos-15-intel]      # Apple Silicon (M1/M2/M3…) / Intel
         include:
           - runner: macos-15
@@ -25,6 +25,8 @@ jobs:
             app: KeelerSlitLamp
           - brand: explorer
             app: SlitLampExplorer
+          - brand: keeler_explorer
+            app: KeelerExplorer
           - brand: agent
             app: SlitLampAgent
     runs-on: ${{ matrix.runner }}

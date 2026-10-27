@@ -2,6 +2,7 @@
 #   빌드:  pyinstaller build.spec                         → dist/SlitLampImaging/SlitLampImaging.exe
 #   Keeler: set SLITLAMP_BUILD_BRAND=keeler && pyinstaller build.spec → dist/KeelerSlitLamp/KeelerSlitLamp.exe
 #   Explorer 판: set SLITLAMP_BUILD_BRAND=explorer && pyinstaller build.spec → dist/SlitLampExplorer/SlitLampExplorer.exe
+#   Keeler Explorer 판: set SLITLAMP_BUILD_BRAND=keeler_explorer && pyinstaller build.spec → dist/KeelerExplorer/KeelerExplorer.exe
 #   AI 에이전트 에디션: set SLITLAMP_BUILD_EDITION=agent && pyinstaller build.spec → dist/SlitLampAgent/SlitLampAgent.exe
 #
 # imageio-ffmpeg 의 ffmpeg 바이너리와 PySide6 Qt 플러그인을 함께 수집한다.
@@ -17,6 +18,7 @@ BRANDS = {
     "default": ("SlitLampImaging", "assets/icons/app.ico", []),
     "keeler": ("KeelerSlitLamp", "assets/brand/keeler/app.ico", ["tools/rthooks/brand_keeler.py"]),
     "explorer": ("SlitLampExplorer", "assets/brand/explorer/app.ico", ["tools/rthooks/brand_explorer.py"]),
+    "keeler_explorer": ("KeelerExplorer", "assets/brand/keeler/app.ico", ["tools/rthooks/brand_keeler_explorer.py"]),
 }
 APP_NAME, APP_ICON, RTHOOKS = BRANDS.get(BRAND, BRANDS["default"])
 RTHOOKS = list(RTHOOKS)

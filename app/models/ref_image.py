@@ -14,3 +14,8 @@ class RefImage:
     description: Optional[str] = None
     source_capture_id: Optional[int] = None
     created_at: Optional[str] = None
+    source: str = "library"              # library = 등록한 참조 영상 · sample = 샘플 사진 (DB 컬럼 아님)
+
+    @property
+    def is_sample(self) -> bool:
+        return self.source == "sample"

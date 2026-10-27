@@ -1,4 +1,5 @@
-"""Explorer 판: 검사(내원) 묶음 · 검색 · 참조 영상 · 백업/복원 · 겹쳐보기 · Word 보고서 · 카메라 속성 · 창 전체 흐름."""
+"""Explorer 판: 검사(내원) 묶음 · 검색 · 참조 영상(샘플 사진 포함) · 백업/복원 · 겹쳐보기 · Word 보고서 · 카메라 속성 ·
+정지영상 · 분할 정지영상 · 영상 목록 세로 배치 · 창 전체 흐름."""
 from __future__ import annotations
 
 import sqlite3
@@ -213,8 +214,8 @@ def test_explorer_brand_and_build_files(monkeypatch):
     iss = (root / "installer" / "explorer.iss").read_text(encoding="utf-8-sig")
     assert "SlitLampExplorer.exe" in iss and "brand\\explorer\\app.ico" in iss
     ids = {f: (root / "installer" / f).read_text(encoding="utf-8-sig").split("AppId=")[1].split("\n")[0]
-           for f in ("slitlamp.iss", "keeler.iss", "explorer.iss")}
-    assert len(set(ids.values())) == 3                               # 세 판을 나란히 설치 가능
+           for f in ("slitlamp.iss", "keeler.iss", "explorer.iss", "keeler_explorer.iss", "agent.iss")}
+    assert len(set(ids.values())) == 5                               # 모든 판을 나란히 설치 가능
     assert "brand_explorer.py" in (root / "build.spec").read_text(encoding="utf-8")
     assert (root / "tools" / "rthooks" / "brand_explorer.py").is_file()
     for f in ("app.ico", "app.icns", "app.png"):
@@ -252,11 +253,12 @@ def test_window_capture_and_tools(qapp, win, tmp_path):
     assert w.thumbs.count() == 2 and w.exam.n_captures == 2
     assert "저장 대상" in w.lbl_target.text()
 
-    w.act_pause.setChecked(True)                                         # 정지 화면을 캡처
+    w.act_freeze.trigger()                                               # 정지영상 → 그 장면을 캡처
     frozen = w._freeze
-    assert frozen is not None
+    assert frozen is not None and w.btn_freeze.text() == "라이브"
     c = w.capture()
-    w.act_pause.setChecked(False)
+    w.act_freeze.trigger()                                               # 다시 누르면 라이브
+    assert not w._paused and w.btn_freeze.text() == "정지영상"
     from app.ui.pro.pro_workspace import load_bgr
     assert np.array_equal(load_bgr(c.file_path), frozen)
 
@@ -341,3 +343,187 @@ def test_window_record_and_exam_menu(qapp, win):
     w.thumbs.set_filter("all")
     w.delete_exam(confirm=False)
     assert w.exam is None and w.db.exams.list_by_patient(w.patient.id) == []
+
+
+
+# ---------------- 샘플 사진 → 참조 영상 ----------------
+def _sample_folder(root: Path) -> Path:
+    import hashlib
+    import json
+
+    import cv2
+    files = {
+        "01_건성안/리사민그린_1.jpg": {"description": "중증 건성각결막염; 리사민그린 염색.",
+                                    "author": "EyeRounds", "license": "CC BY-NC-ND 3.0",
+                                    "source": "https://example.org/kcs"},
+        "01_건성안/리사민그린_2.jpg": {"title": "건성안 2"},
+        "04_백내장/핵백내장_1.jpg": {"title": "핵경화 백내장"},
+    }
+    meta = []
+    for i, (rel, info) in enumerate(files.items()):
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = cv2.imencode(".jpg", _img(40 + i * 60, 90, 120))[1].tobytes()
+        path.write_bytes(data)
+        meta.append({"file": rel, "sha256": hashlib.sha256(data).hexdigest(), **info})
+    (root / "metadata.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+    return root
+
+
+def test_sample_photos_as_references(app_env, tmp_path):
+    from app.services import sample_import
+    config, db = app_env
+    assert sample_import.sample_references(db) == []
+    sample_import.import_samples(db, config, _sample_folder(tmp_path / "samples"))
+    db.patients.insert(Patient(chart_no="N1", name="일반 환자"))              # 샘플이 아닌 환자는 제외
+    assert sample_import.sample_categories(db) == [("건성안", 2), ("백내장", 1)]
+    refs = sample_import.sample_references(db)
+    assert len(refs) == 3 and all(r.is_sample and Path(r.file_path).is_file() for r in refs)
+    first = refs[0]
+    assert first.category == "건성안" and first.title.startswith("중증 건성각결막염")
+    assert "CC BY-NC-ND 3.0" in first.description and "https://example.org/kcs" in first.description
+    assert [r.title for r in sample_import.sample_references(db, category="백내장")] == ["핵경화 백내장 (저해상도 120×90)"]
+    assert len(sample_import.sample_references(db, q="리사민")) == 1
+    assert db.references.list() == []                                    # 복사하지 않고 원본을 가리킴
+
+
+def test_reference_library_shows_samples(qapp, app_env, tmp_path, monkeypatch):
+    from app.services import sample_import
+    from app.ui.explorer.reference_library import LIBRARY, SAMPLE, ReferenceLibraryDialog
+    config, db = app_env
+    svc = CaptureService(db, config)
+    p = Patient(chart_no="L1", name="라이브러리")
+    p.id = db.patients.insert(p)
+    svc.add_reference(svc.save_photo(_img(90), p), "각막", "등록한 참조")
+    sample_import.import_samples(db, config, _sample_folder(tmp_path / "samples"))
+
+    dlg = ReferenceLibraryDialog(db, current=(_img(10), "현재 환자"))
+    texts = [dlg.cats.item(i).text() for i in range(dlg.cats.count())]
+    assert texts[0].startswith("전체  (4)") and "샘플 사진" in texts and any(t.startswith("건성안") for t in texts)
+    assert len(dlg.refs()) == 4                                            # 전체 = 등록 1 + 샘플 3
+    assert dlg.select_category(SAMPLE, "건성안") and len(dlg.refs()) == 2
+    r = dlg.current_ref()
+    assert r.is_sample and not dlg.b_delete.isEnabled() and not dlg.b_edit.isEnabled()
+    assert "CC BY-NC-ND 3.0" in dlg.info.text()
+    cmp = dlg.compare()
+    assert len(cmp.canvases) == 2 and cmp.canvases[1]._caption.startswith("샘플 · 건성안")
+    dlg.delete_current(confirm=False)                                      # 샘플은 지워지지 않음
+    assert len(sample_import.sample_references(db)) == 3
+    assert dlg.select_category(LIBRARY, "각막") and dlg.b_delete.isEnabled()
+    dlg.search.setText("핵경화")
+    assert dlg.select_category(SAMPLE, "백내장") and [x.title for x in dlg.refs()] == ["핵경화 백내장 (저해상도 120×90)"]
+    assert not dlg.b_samples.isVisible() and dlg.b_samples.isHidden()      # 가져오기 콜백 없으면 버튼 숨김
+    dlg.close()
+
+
+def test_window_imports_samples_into_library(qapp, win, tmp_path):
+    w = win
+    assert w.import_samples(folder=str(_sample_folder(tmp_path / "s")))
+    names = [w.tree.tree.topLevelItem(i).text(0) for i in range(w.tree.tree.topLevelItemCount())]
+    assert any(n.startswith("샘플 · 건성안") for n in names)
+    lib = w.open_reference_library()
+    assert len(lib.refs()) == 3 and not lib.b_samples.isHidden()
+    lib.close()
+
+
+# ---------------- 분할 정지영상 ----------------
+def test_window_split_freeze(qapp, win):
+    w = win
+    w.start_split(4)
+    assert w._split and w.view.currentIndex() == 2 and w.act_split.isChecked()
+    assert _wait(qapp, lambda: w.quad.has_any())
+    for i in range(4):
+        w.set_eye("OD" if i % 2 == 0 else "OS")
+        w.freeze()
+        if i < 3:
+            assert _wait(qapp, lambda: w.quad.has_any() and w.quad._frames[w.quad._active] is not None)
+    assert w.quad.is_full() and w.btn_freeze.text() == "처음부터"
+    saved = w.save_split()
+    assert len(saved) == 5                                                 # 칸 4장 + 합성 1장
+    assert [c.note for c in saved] == ["4분할"] * 4 + ["4분할 합성"]
+    assert [c.eye for c in saved[:4]] == ["OD", "OS", "OD", "OS"]
+    assert len({c.exam_id for c in saved}) == 1 and w.thumbs.count() == 5
+    w.freeze()                                                             # 다 찬 뒤 누르면 처음부터
+    assert not w.quad.is_full() and not w.quad.has_any() and w.btn_freeze.text() == "정지영상"
+    w._on_split_cell_clicked(2)
+    assert w.quad._active == 2
+    w.stop_split()
+    assert not w._split and w.view.currentIndex() == 0 and not w.act_split.isChecked()
+
+    # 메뉴에서 칸 수 고르기 (고른 칸 수는 설정에 저장)
+    w._exec_menu = lambda menu, pos: next(a for a in menu.actions() if a.text() == "6분할")
+    w.act_split.setChecked(True)
+    assert w._split and w.quad.count() == 6 and w.config.split_count == 6
+    w.act_split.setChecked(False)
+    w._exec_menu = lambda menu, pos: None                                 # 메뉴를 닫으면 켜지 않음
+    w.act_split.setChecked(True)
+    qapp.processEvents()
+    assert not w._split and not w.act_split.isChecked() and not w.btn_split.isChecked()
+
+
+# ---------------- 영상 목록 세로 배치 ----------------
+def test_window_thumbs_vertical(qapp, win):
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QListWidget
+    w = win
+    assert w.dockWidgetArea(w.thumb_dock) == Qt.DockWidgetArea.BottomDockWidgetArea
+    w.act_thumbs_vertical.trigger()
+    assert w.dockWidgetArea(w.thumb_dock) == Qt.DockWidgetArea.RightDockWidgetArea
+    assert w.thumbs.is_vertical() and w.thumbs.list.flow() == QListWidget.Flow.TopToBottom
+    assert w.config.explorer_thumbs_vertical is True
+    w._on_thumb_dock_moved(Qt.DockWidgetArea.BottomDockWidgetArea)        # 끌어서 아래로 옮긴 경우
+    assert not w.thumbs.is_vertical() and not w.act_thumbs_vertical.isChecked()
+    assert w.config.explorer_thumbs_vertical is False
+
+
+
+# ---------------- Keeler Explorer 판 ----------------
+def test_keeler_explorer_brand_and_build_files(monkeypatch):
+    monkeypatch.delenv(brand.ENV_KEY, raising=False)
+    try:
+        b = brand.select("Keeler-Explorer")                            # 대소문자·'-' 섞여도 같은 판
+        assert b["key"] == "keeler_explorer" and brand.layout() == "explorer"
+        assert "Keeler" in b["app_name"] and "Explorer" in b["window_title"]
+        assert b["report_title"] == brand.BRANDS["keeler"]["report_title"]
+        for k in ("logo", "logo_dark", "icon"):
+            assert brand.asset(b[k]), k
+        from app.ui import theme
+        assert theme.palette("dark")["accent"] == "#6cbce8"             # Keeler 색
+        assert brand.key_from(["app", "--brand", "keeler explorer"]) == "keeler_explorer"
+    finally:
+        brand.select("default")
+    root = Path(__file__).resolve().parents[1]
+    iss = (root / "installer" / "keeler_explorer.iss").read_text(encoding="utf-8-sig")
+    assert "KeelerExplorer.exe" in iss and "brand\\keeler\\app.ico" in iss and "SlitLampExplorer" not in iss
+    for spec in ("build.spec", "build_mac.spec"):
+        text = (root / spec).read_text(encoding="utf-8")
+        assert "KeelerExplorer" in text and "brand_keeler_explorer.py" in text
+    assert (root / "tools" / "rthooks" / "brand_keeler_explorer.py").is_file()
+    assert "keeler_explorer" in (root / "build_mac.sh").read_text(encoding="utf-8")
+    assert "keeler_explorer" in (root / "build_installer.bat").read_text(encoding="utf-8")
+    for wf in ("build-windows.yml", "build-mac.yml"):
+        assert "KeelerExplorer" in (root / ".github" / "workflows" / wf).read_text(encoding="utf-8")
+
+
+def test_keeler_explorer_window_shows_logo(qapp, app_env, monkeypatch):
+    config, db = app_env
+    config.source_mode = "synthetic"
+    config.capture_width, config.capture_height = 160, 120
+    config.save = lambda: None
+    monkeypatch.setenv(brand.ENV_KEY, "keeler_explorer")
+    from app.ui.explorer.explorer_window import ExplorerWindow
+    w = ExplorerWindow(config, db)
+    try:
+        assert w.windowTitle() == "Keeler 슬릿램프 영상 시스템 Explorer"
+        assert w.brand_logo is not None and not w.brand_logo.pixmap().isNull()
+        dark = w.brand_logo.pixmap().toImage()
+        w.toggle_theme()                                                  # 밝은 테마여도 머리는 Keeler 네이비
+        assert w.brand_logo.pixmap().toImage() == dark                    # 네이비 헤더용 흰 글자 로고 그대로
+        from app.ui.theme import build_qss
+        for mode in ("dark", "light"):
+            qss = build_qss(mode)
+            assert "QToolBar#ExplorerTools { background: #052133;" in qss    # 홈페이지 헤더 네이비
+            assert "rgba(237, 111, 30, 0.85)" in qss                          # 셔터 링 = 로고 마크 주황
+    finally:
+        w.close()
+        brand.select("default")

@@ -40,6 +40,7 @@ class AppConfig:
     thumbnail_max_side: int = 120
     newest_on_top: bool = True
     split_count: int = 4                     # 분할 화면 칸 수 (2 · 4 · 6 · 8 · 16)
+    explorer_thumbs_vertical: bool = False   # Explorer 판 영상 목록: False = 아래 가로 · True = 오른쪽 세로
     # 촬영 모드 (자주 쓰는 카메라 · 촬영 설정 묶음) — app/capture/presets.py
     capture_presets: list = field(default_factory=list)   # 저장한 촬영 모드들
     active_preset: str = ""                                # 지금 쓰는 촬영 모드 이름

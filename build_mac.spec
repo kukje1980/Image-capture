@@ -1,7 +1,7 @@
 # PyInstaller 스펙 (macOS, .app 번들).
 #   빌드:  ./build_mac.sh   (또는 pyinstaller build_mac.spec)
 #   결과:  dist/SlitLampImaging.app  (SLITLAMP_BUILD_BRAND=keeler 이면 dist/KeelerSlitLamp.app,
-#                                     explorer 이면 dist/SlitLampExplorer.app,
+#                                     explorer 이면 dist/SlitLampExplorer.app, keeler_explorer 이면 dist/KeelerExplorer.app,
 #          SLITLAMP_BUILD_EDITION=agent 이면 dist/SlitLampAgent.app — AI 에이전트 에디션)
 #
 # Windows 용 build.spec 과 같은 구성에 macOS 번들 정보(카메라 권한 문구·아이콘)를 더한다.
@@ -9,7 +9,7 @@ import os
 
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
 
-APP_VERSION = "1.15.0"
+APP_VERSION = "1.15.1"
 BRAND = os.environ.get("SLITLAMP_BUILD_BRAND", "default").lower()
 AGENT = os.environ.get("SLITLAMP_BUILD_EDITION", "standard").lower() == "agent"
 # 판별 (앱 이름, 표시 이름, 아이콘, 번들 ID, 런타임 훅)
@@ -20,6 +20,8 @@ BRANDS = {
                "com.kukjemd.keelerslitlamp", ["tools/rthooks/brand_keeler.py"]),
     "explorer": ("SlitLampExplorer", "슬릿램프 영상 시스템 Explorer", "assets/brand/explorer/app.icns",
                  "com.kukjemd.slitlampexplorer", ["tools/rthooks/brand_explorer.py"]),
+    "keeler_explorer": ("KeelerExplorer", "Keeler 슬릿램프 영상 시스템 Explorer", "assets/brand/keeler/app.icns",
+                        "com.kukjemd.keelerexplorer", ["tools/rthooks/brand_keeler_explorer.py"]),
 }
 APP_NAME, DISPLAY_NAME, APP_ICON, BUNDLE_ID, RTHOOKS = BRANDS.get(BRAND, BRANDS["default"])
 RTHOOKS = list(RTHOOKS)
