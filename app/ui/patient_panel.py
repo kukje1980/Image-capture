@@ -175,21 +175,24 @@ class PatientPanel(QFrame):
 
     def new_patient(self) -> bool:
         """신규 환자 등록 (상단바 버튼·단축키 N). 저장되어 선택되면 True."""
-        dlg = PatientDialog(self.window())
+        dlg = PatientDialog(self.window(), db=self.db)
         if not dlg.exec():
             return False
-        p = dlg.get_patient()
-        try:
-            p.id = self.db.patients.insert(p)
-        except Exception as e:  # noqa: BLE001
-            QMessageBox.warning(self, "오류", f"저장 실패: {e}\n(차트번호 중복 여부를 확인하세요)")
-            return False
+        if dlg.existing is not None:                 # 같은 차트번호 → 기존 환자에 이어서
+            pid = dlg.existing.id
+        else:
+            p = dlg.get_patient()
+            try:
+                pid = p.id = self.db.patients.insert(p)
+            except Exception as e:  # noqa: BLE001
+                QMessageBox.warning(self, "오류", f"저장 실패: {e}\n(차트번호 중복 여부를 확인하세요)")
+                return False
         self.search.blockSignals(True)
         self.search.setText("")
         self.search.blockSignals(False)
         self._reload()
         for i, pp in enumerate(self._patients):
-            if pp.id == p.id:
+            if pp.id == pid:
                 self.combo.setCurrentIndex(i)
                 break
         return True
@@ -200,7 +203,7 @@ class PatientPanel(QFrame):
         if not p:
             QMessageBox.information(self, "확인", "수정할 환자를 선택하세요.")
             return
-        dlg = PatientDialog(self.window(), patient=p)
+        dlg = PatientDialog(self.window(), patient=p, db=self.db)
         if not dlg.exec():
             return
         try:

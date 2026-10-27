@@ -214,10 +214,12 @@ class AnalysisPanel(QWidget):
         self.b_run.setEnabled(has)
         valid = self.result is not None and self._result_canvas is cv
         self.b_clear.setEnabled(bool(self.result))
-        self.b_note.setEnabled(bool(valid and ws.mode() == "single"))
-        self.b_save.setEnabled(bool(valid and ws.mode() in ("single", "compare")))
+        own = ws.current_capture() is not None            # 환자 사진 (멀티의 참조 사진 칸은 아님)
+        self.b_note.setEnabled(bool(valid and own))
+        self.b_save.setEnabled(bool(valid and (ws.mode() == "compare" or own)))
         self.b_align.setEnabled(ws.mode() == "compare")
-        self.b_best.setEnabled(len(ws.captures()) >= 2)
+        n = ws.grid_view.count() if ws.mode() == "grid" else len(ws.captures())
+        self.b_best.setEnabled(n >= 2)
         self.b_tbut.setEnabled(ws._patient is not None)
         self.b_dicom.setEnabled(ws._patient is not None and bool(ws.captures()))
 
@@ -266,14 +268,15 @@ class AnalysisPanel(QWidget):
 
     def add_to_comment(self) -> None:
         ws = self.ws
-        if self.result is None or ws.mode() != "single" or not (0 <= ws._idx < len(ws._caps)):
+        cap = ws.current_capture()
+        if self.result is None or cap is None:
             return
-        cap = ws._caps[ws._idx]
         res = self.result
         text = f"{cap.note} / {res.summary}" if cap.note else res.summary
-        ws.set_comment(text)                    # 영상을 다시 읽으므로 결과·오버레이를 되살린다
-        ws.single_canvas.set_analysis_overlay(res.overlay)
-        self.result, self._result_canvas = res, ws.single_canvas
+        ws.set_comment(text)                    # 1화면은 영상을 다시 읽으므로 결과·오버레이를 되살린다
+        cv = ws.active_canvas()
+        cv.set_analysis_overlay(res.overlay)
+        self.result, self._result_canvas = res, cv
         self.lbl_result.setText(rows_html(res))
         self.lbl_warn.setText(res.warning)
         self.sync()
@@ -283,8 +286,11 @@ class AnalysisPanel(QWidget):
         cv = self._result_canvas
         if self.result is None or cv is None or cv.image() is None or not ws._require_patient():
             return None
-        if ws.mode() == "single" and 0 <= ws._idx < len(ws._caps):
-            eye = ws._caps[ws._idx].eye or "NA"
+        own = ws.current_capture()
+        if ws.mode() in ("single", "grid") and own is None:
+            return None                          # 참조 사진의 분석 결과는 환자 기록에 넣지 않는다
+        if own is not None:
+            eye = own.eye or "NA"
         elif ws.mode() == "compare":
             src = ws._pair[0] if cv is ws.cmp_left else ws._pair[1]
             eye = (src.eye if src else None) or "NA"
@@ -328,6 +334,8 @@ class AnalysisPanel(QWidget):
 
     def open_sharpest(self) -> Optional[int]:
         ws = self.ws
+        if ws.mode() == "grid":
+            return self._sharpest_cell()
         caps = ws.captures()
         sel = ws.multi.selection()
         if len(sel) >= 2:
@@ -403,6 +411,23 @@ class AnalysisPanel(QWidget):
         if dlg.exec() and res.ok:
             self.save_tbut(res, video)
 
+    def _sharpest_cell(self) -> Optional[int]:
+        """멀티: 칸 가운데 가장 선명한 사진을 편집 대상(노란 테두리)으로. 칸 번호(0부터)."""
+        gv = self.ws.grid_view
+        scores = [(clinical.sharpness_of(cv.image()), i) for i, cv in enumerate(gv.canvases())
+                  if cv.image() is not None]
+        if len(scores) < 2:
+            return None
+        scores.sort(reverse=True)
+        best = scores[0][1]
+        gv.set_active(gv.canvases()[best])
+        rank = "".join(f"<tr><td>{n + 1}.</td><td>{i + 1}번 칸</td><td align='right'><b>{s:.1f}</b></td></tr>"
+                       for n, (s, i) in enumerate(scores[:8]))
+        self.lbl_result.setText(f"<b>선명도 순위 ({len(scores)}장)</b><table cellpadding='2'>{rank}</table>")
+        self.lbl_warn.setText("")
+        self.sync()
+        return best
+
     # ---- DICOM ----
     def dicom_targets(self) -> list:
         """(이미지, capture, derived) — 1화면은 화면 그대로(보정·주석 반영 시 파생본), MULTI 는 선택 원본."""
@@ -417,6 +442,9 @@ class AnalysisPanel(QWidget):
             return [(img, ws._caps[ws._idx], derived)]
         if ws.mode() == "compare":
             return [(load_bgr(c.file_path), c, False) for c in ws._pair if c is not None]
+        if ws.mode() == "grid":                  # 멀티: 칸의 환자 사진 원본 (참조 사진은 뺌)
+            from app.ui.multi_view import is_reference
+            return [(load_bgr(c.file_path), c, False) for c in ws.grid_view.captures() if not is_reference(c)]
         sel = ws.multi.selection() or ws.multi.page_indices()
         return [(load_bgr(ws._caps[i].file_path), ws._caps[i], False) for i in sel]
 

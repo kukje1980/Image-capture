@@ -42,6 +42,15 @@ class PatientsDAO:
         with self._lock, self._c:
             self._c.execute("DELETE FROM patients WHERE id=?", (pid,))
 
+    def find_by_chart(self, chart_no: str) -> Optional[Patient]:
+        """차트번호가 같은 환자 (앞뒤 공백 무시, 없으면 None)."""
+        chart_no = (chart_no or "").strip()
+        if not chart_no:
+            return None
+        with self._lock:
+            r = self._c.execute("SELECT * FROM patients WHERE TRIM(chart_no)=? LIMIT 1", (chart_no,)).fetchone()
+        return self._row(r)
+
     def get(self, pid: int) -> Optional[Patient]:
         with self._lock:
             r = self._c.execute("SELECT * FROM patients WHERE id=?", (pid,)).fetchone()

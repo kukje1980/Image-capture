@@ -200,7 +200,7 @@ class AnalysisTab(QWidget):
         self.lbl_tag = _muted("1화면에서 영상을 열면 자동으로 추정합니다.")
         lay.addWidget(self.lbl_tag)
 
-        lay.addWidget(_sub("측정 (1화면 · '원' 주석 = 측정 영역)"))
+        lay.addWidget(_sub("측정 (1화면 · 멀티의 누른 칸 · '원' 주석 = 측정 영역)"))
         g = QGridLayout()
         g.setSpacing(4)
         self.b_fluo = QPushButton("형광 염색 면적")
@@ -318,12 +318,14 @@ class AnalysisTab(QWidget):
         self.lbl_ghost.setText("끄기" if v == 0 else f"{v}%")
         self.ghostChanged.emit(v)
 
-    def set_enabled_for(self, mode: str) -> None:
-        single = mode == "single"
+    def set_enabled_for(self, mode: str, can_record: bool = True) -> None:
+        """측정은 1화면 · 멀티(누른 칸), 기록(코멘트 · 측정 기록)은 환자 사진일 때만 (참조 사진 칸은 측정만)."""
+        single = mode in ("single", "grid")
         cmp = mode == "compare"
-        for b in (self.b_fluo, self.b_red, self.b_note, self.b_clear, self.b_nuclear, self.b_cortical,
-                  self.b_cat_record):
+        for b in (self.b_fluo, self.b_red, self.b_clear, self.b_nuclear, self.b_cortical):
             b.setEnabled(single)
+        for b in (self.b_note, self.b_cat_record):
+            b.setEnabled(single and can_record)
         for w in (self.s_ghost, self.b_align, self.b_blink):
             w.setEnabled(cmp)
         if not cmp and self.b_blink.isChecked():

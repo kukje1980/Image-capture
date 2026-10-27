@@ -5,6 +5,9 @@
   1화면    단일 영상. PREV/NEXT(←/→)로 이동, 확대·이동, 보정, 텍스트/화살표 주석
   MULTI    16장(4×4) / 36장(6×6) 그리드. 클릭=비교 선택(최대 2), 더블클릭=1화면
   비교     선택한 2장 좌우 비교. 확대·스크롤 동기화, 보정 동일 적용
+  grid     촬영 화면의 '멀티' (embedded=True) — 고른 사진 · 참조 사진 격자(app/ui/multi_view.py).
+           위 도구줄은 숨기고 오른쪽 메뉴(보정 · 필터 · 편집 · 스마트 · 분석 · 정밀 분석)가 누른 칸에 적용된다.
+           기본 도구는 돋보기, 참조 사진 칸은 편집본 저장 · 측정 기록 · 코멘트에서 빠진다.
 스마트 캡처 (사이드 '스마트' 탭 · LIVE)
   초점 판정(중앙 ROI 선명도) · Best Shot(최근 1초 중 가장 선명한 프레임) · Smart Freeze / Auto Save
   포커스 피킹 · 실시간 화질 점검(초점·노출·안정·반사)  — app/capture/pro_smart_capture.py
@@ -71,6 +74,7 @@ from app.capture.pro_smart_capture import SmartCaptureEngine, SmartSettings, pea
 from app.db.measurements_dao import Measurement
 from app.ui import icons
 from app.ui.fit import HScroll
+from app.ui.multi_view import MultiView, is_reference
 from app.ui.patient_dialog import PatientDialog
 from app.ui.pro import print_util
 from app.ui.pro.analysis_panel import AnalysisPanel
@@ -86,22 +90,22 @@ except ImportError:  # pragma: no cover
 
 log = logging.getLogger(__name__)
 
-MODES = ["live", "single", "multi", "compare"]
+MODES = ["live", "single", "multi", "compare", "grid"]
 _SMART_MODES = ["off", "freeze", "snapshot"]
 _EYE_KO = {"OD": "우안(OD)", "OS": "좌안(OS)", "OU": "양안(OU)"}
 _CHANNELS = ["rgb", "green", "red", "blue", "gray"]
 _DENOISE = ["none", "median", "average"]
 # (도구, 버튼 텍스트, 설명, 허용 모드)
 _TOOLS = [
-    ("pan", "이동", "이동 / 휠 확대", ("single", "compare")),
-    ("magnify", "돋보기", "누르고 있는 동안 확대 렌즈", ("single", "compare", "live")),
-    ("crop", "자르기", "드래그한 영역만 남김", ("single",)),
-    ("text", "텍스트", "클릭한 위치에 텍스트 주석", ("single", "compare")),
-    ("arrow", "화살표", "드래그해 화살표 주석", ("single", "compare")),
-    ("circle", "원", "드래그해 원·타원 표시", ("single", "compare")),
-    ("length", "길이", "드래그해 길이 측정 (눈금 보정 시 mm)", ("single", "compare")),
-    ("angle", "각도", "세 점 클릭 — 두 번째 점이 꼭짓점", ("single", "compare")),
-    ("calibrate", "눈금", "실제 길이를 아는 선을 그어 mm 단위 보정", ("single",)),
+    ("pan", "이동", "이동 / 휠 확대", ("single", "compare", "grid")),
+    ("magnify", "돋보기", "누르고 있는 동안 확대 렌즈", ("single", "compare", "live", "grid")),
+    ("crop", "자르기", "드래그한 영역만 남김", ("single", "grid")),
+    ("text", "텍스트", "클릭한 위치에 텍스트 주석", ("single", "compare", "grid")),
+    ("arrow", "화살표", "드래그해 화살표 주석", ("single", "compare", "grid")),
+    ("circle", "원", "드래그해 원·타원 표시", ("single", "compare", "grid")),
+    ("length", "길이", "드래그해 길이 측정 (눈금 보정 시 mm)", ("single", "compare", "grid")),
+    ("angle", "각도", "세 점 클릭 — 두 번째 점이 꼭짓점", ("single", "compare", "grid")),
+    ("calibrate", "눈금", "실제 길이를 아는 선을 그어 mm 단위 보정", ("single", "grid")),
 ]
 _TOOL_ICONS = {"pan": "hand", "magnify": "lens", "crop": "crop", "text": "type", "arrow": "arrow",
                "circle": "circle", "length": "ruler", "angle": "angle", "calibrate": "calib"}
@@ -149,23 +153,25 @@ class ProWorkspace(QWidget):
     patientUpdated = Signal(object)
     smartModeChanged = Signal(str)          # LIVE 의 Smart 자동 촬영 모드 (off | freeze | snapshot)
 
-    def __init__(self, db, service, config, get_eye, parent=None):
+    def __init__(self, db, service, config, get_eye, parent=None, embedded: bool = False):
+        """embedded=True: 촬영 화면의 '멀티' — 위 도구줄 없이 사진 격자(grid 모드) + 오른쪽 메뉴만."""
         super().__init__(parent)
         self.setObjectName("ProWorkspace")
         self.db = db
         self.service = service
         self.config = config
         self.get_eye = get_eye
+        self.embedded = bool(embedded)
         self._patient = None
         self._caps: list = []
         self._idx = -1
-        self._mode = "multi"
+        self._mode = "grid" if self.embedded else "multi"
         self._live = None
         self._frozen = False
         self._frozen_frame = None
         self._pair = (None, None)
         self._adj = Adjust()
-        self._tool = "pan"
+        self._tool = "magnify" if self.embedded else "pan"
         # 스마트 캡처 · 분석 상태
         self.engine = SmartCaptureEngine(SmartSettings(
             roi_frac=float(getattr(config, "smart_roi_frac", 0.5) or 0.5),
@@ -187,9 +193,12 @@ class ProWorkspace(QWidget):
             cv.edited.connect(lambda cv=cv: self._on_canvas_edited(cv))
             cv.activated.connect(lambda cv=cv: self._on_canvas_activated(cv))
             cv.calibrated.connect(self.set_px_per_mm)
+        self.grid_view.activeChanged.connect(lambda _cv: self._on_grid_active())
+        self.grid_view.edited.connect(self._on_canvas_edited)
+        self.grid_view.calibrated.connect(self.set_px_per_mm)
         self._shortcuts()
         self.set_px_per_mm(getattr(config, "px_per_mm", 0.0) or 0.0)
-        self.set_mode("multi")
+        self.set_mode(self._mode)
         self._update_info()
 
     # ================= UI =================
@@ -308,7 +317,9 @@ class ProWorkspace(QWidget):
         self.b_pdf = self._btn("PDF", "PDF 보고서로 저장", icon="download")
         tl.addWidget(self.b_print)
         tl.addWidget(self.b_pdf)
-        root.addWidget(HScroll(bar))                # 좁은 창: 버튼이 겹치지 않고 옆으로 밀어 보기
+        self.toolbar_scroll = HScroll(bar)          # 좁은 창: 버튼이 겹치지 않고 옆으로 밀어 보기
+        self.toolbar_scroll.setVisible(not self.embedded)
+        root.addWidget(self.toolbar_scroll)
 
         body = QHBoxLayout()
         body.setSpacing(8)
@@ -327,8 +338,11 @@ class ProWorkspace(QWidget):
         self.cmp_left.link(self.cmp_right)
         cl.addWidget(self.cmp_left)
         cl.addWidget(self.cmp_right)
-        for w in (self.live_canvas, self.single_canvas, self.multi, cmp):
+        self.grid_view = MultiView()                # grid 모드 (촬영 화면의 멀티)
+        for w in (self.live_canvas, self.single_canvas, self.multi, cmp, self.grid_view):
             self.stack.addWidget(w)
+        if self.embedded:                           # 쓰지 않는 비교 화면(캔버스 2개)이 창 최소 폭을 키우지 않게
+            self.stack.setMinimumSize(self.grid_view.minimumSize())
         body.addWidget(self.stack, 1)
         body.addWidget(self._build_side())
         root.addLayout(body, 1)
@@ -429,6 +443,7 @@ class ProWorkspace(QWidget):
         self.lbl_sel = QLabel("MULTI에서 영상 2장을 클릭해 선택한 뒤 '비교'를 누르세요.")
         self.lbl_sel.setWordWrap(True)
         self.lbl_sel.setObjectName("Muted")
+        self.lbl_sel.setVisible(not self.embedded)
         lay.addWidget(self.lbl_sel)
         return side
 
@@ -501,6 +516,11 @@ class ProWorkspace(QWidget):
         form4.addRow("", self.chk_neg)
         lay.addLayout(form4)
 
+        self.chk_adj_all = QCheckBox("모든 칸에 같이 적용")
+        self.chk_adj_all.setToolTip("멀티 화면: 보정 · 필터를 누른 칸만이 아니라 모든 칸에 같이 적용")
+        self.chk_adj_all.setVisible(self.embedded)
+        lay.addWidget(self.chk_adj_all)
+
         r1 = QHBoxLayout()
         self.b_auto = self._btn("자동 대비", "", icon="wand")
         self.b_auto.setToolTip("히스토그램 양끝 0.5%를 잘라 흑·백점 자동 설정")
@@ -515,6 +535,7 @@ class ProWorkspace(QWidget):
             sl.valueChanged.connect(self._on_adjust)
         self.c_channel.currentIndexChanged.connect(self._on_adjust)
         self.chk_neg.toggled.connect(self._on_adjust)
+        self.chk_adj_all.toggled.connect(lambda on: self._on_adjust() if on else None)
         self.b_auto.clicked.connect(self.auto_contrast)
         self.b_reset.clicked.connect(self.reset_adjust)
         self._update_value_labels()
@@ -632,13 +653,15 @@ class ProWorkspace(QWidget):
         return s
 
     def _shortcuts(self) -> None:
-        for key, fn in ((QKeySequence(Qt.Key.Key_Left), lambda: self.step(-1)),
-                        (QKeySequence(Qt.Key.Key_Right), lambda: self.step(1)),
-                        (QKeySequence(Qt.Key.Key_Space), self._space),
-                        (QKeySequence.StandardKey.Undo, self.undo),
-                        (QKeySequence.StandardKey.Redo, self.redo),
-                        (QKeySequence("Ctrl+Y"), self.redo),
-                        (QKeySequence(Qt.Key.Key_Escape), lambda: self.set_tool("pan"))):
+        keys = [(QKeySequence.StandardKey.Undo, self.undo),
+                (QKeySequence.StandardKey.Redo, self.redo),
+                (QKeySequence("Ctrl+Y"), self.redo)]
+        if not self.embedded:                    # 촬영 화면 안에서는 ←/→/Space 가 촬영 단축키, Esc 는 전체 화면 해제
+            keys += [(QKeySequence(Qt.Key.Key_Escape), lambda: self.set_tool(self._default_tool())),
+                     (QKeySequence(Qt.Key.Key_Left), lambda: self.step(-1)),
+                     (QKeySequence(Qt.Key.Key_Right), lambda: self.step(1)),
+                     (QKeySequence(Qt.Key.Key_Space), self._space)]
+        for key, fn in keys:
             sc = QShortcut(key, self)
             sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
             sc.activated.connect(fn)
@@ -646,6 +669,9 @@ class ProWorkspace(QWidget):
     def _space(self) -> None:
         if self._mode == "live":
             self.b_capture.toggle()
+
+    def _default_tool(self) -> str:
+        return "magnify" if self._mode == "grid" else "pan"
 
     # ================= 데이터 =================
     def set_patient(self, patient) -> None:
@@ -661,6 +687,10 @@ class ProWorkspace(QWidget):
         else:
             self._caps = [c for c in self.db.captures.list_by_patient(self._patient.id, order="asc")
                           if c.media_type == "photo"]
+        if self.embedded:                        # 멀티 격자는 촬영 화면이 고른 사진으로 채운다
+            self._update_info()
+            self._update_side()
+            return
         self.multi.set_captures(self._caps)
         if select_last or not (0 <= self._idx < len(self._caps)):
             self._idx = len(self._caps) - 1
@@ -675,6 +705,20 @@ class ProWorkspace(QWidget):
 
     def mode(self) -> str:
         return self._mode
+
+    def current_capture(self):
+        """지금 보고 있는 환자 사진 (1화면 · 멀티의 누른 칸). 참조 사진 · 그 밖의 화면은 None."""
+        if self._mode == "single" and 0 <= self._idx < len(self._caps):
+            return self._caps[self._idx]
+        if self._mode == "grid":
+            cap = self.grid_view.active_capture()
+            return None if cap is None or is_reference(cap) else cap
+        return None
+
+    def set_grid(self, caps: list) -> None:
+        """멀티 격자에 놓을 사진 (환자 사진 · RefCapture)."""
+        self.grid_view.set_captures(caps)
+        self._on_grid_active()
 
     def _update_info(self) -> None:
         p = self._patient
@@ -698,14 +742,16 @@ class ProWorkspace(QWidget):
             mode = self._mode if self._mode != "compare" else "multi"
         self._mode = mode
         self.stack.setCurrentIndex(MODES.index(mode))
-        {"live": self.b_live, "single": self.b_single, "multi": self.b_multi,
-         "compare": self.b_cmp}[mode].setChecked(True)
+        seg = {"live": self.b_live, "single": self.b_single, "multi": self.b_multi,
+               "compare": self.b_cmp}.get(mode)
+        if seg is not None:
+            seg.setChecked(True)
         live = mode == "live"
         self.b_capture.setEnabled(live)
         self.b_save.setEnabled(live)
         self.c_smart.setEnabled(live)
         self.c_per.setEnabled(mode == "multi")
-        ann = mode in ("single", "compare")
+        ann = mode in ("single", "compare", "grid")
         for t, *_x, modes in _TOOLS:
             self.tool_buttons[t].setEnabled(mode in modes)
         for b in (self.b_clear, self.b_edit_save):
@@ -719,7 +765,7 @@ class ProWorkspace(QWidget):
             self.live_canvas.set_adjust(self._adj)
             if self._live is not None and not self._frozen:
                 self.live_canvas.set_image(self._live, keep_view=True)
-        if getattr(self, "_tool", "pan") != "pan":
+        if getattr(self, "_tool", "pan") != "pan" or mode == "grid":
             self.set_tool(self._tool)            # 이 모드에서 못 쓰는 도구면 이동으로
         if not live:
             self.live_canvas.set_hud([], None)
@@ -768,11 +814,44 @@ class ProWorkspace(QWidget):
             rows = [f"{'좌' if i == 0 else '우'}: {c.captured_at} {_EYE_KO.get(c.eye or '', '')}"
                     for i, c in enumerate(self._pair) if c]
             self.lbl_img.setText("2장 비교 (확대·이동 동기화)\n" + "\n".join(rows))
+        elif self._mode == "grid":
+            self.lbl_img.setText(self._grid_info())
         elif self._mode == "live":
             auto = {"freeze": " · Smart Freeze", "save": " · Auto Save"}.get(self.engine.s.auto_mode, "")
             self.lbl_img.setText("LIVE — " + ("정지됨 · SAVE로 저장" if self._frozen else "실시간" + auto))
         else:
             self.lbl_img.setText("영상이 없습니다")
+
+    def _grid_info(self) -> str:
+        n = self.grid_view.count()
+        cap = self.grid_view.active_capture()
+        if cap is None:
+            return "멀티 — 오른쪽 목록에서 사진을 고르거나 아래 '참조' 줄에서 참조 사진을 고르세요"
+        head = f"멀티 {n}장  ·  {self.grid_view.index_of(self.grid_view.active_canvas()) + 1}번 칸 (노란 테두리)"
+        if is_reference(cap):
+            r = cap.ref
+            kind = "샘플 사진" if getattr(r, "is_sample", False) else "등록한 참조 영상"
+            return (f"{head}\n참조 · {kind}\n분류: {r.category or '-'}\n제목: {r.title or '-'}\n"
+                    "(참조 사진은 편집본 저장 · 측정 기록에서 빠집니다)")
+        return (f"{head}\n촬영: {cap.captured_at}\n안구: {_EYE_KO.get(cap.eye or '', '미지정')}\n"
+                f"코멘트: {cap.note or '-'}")
+
+    def _on_grid_active(self) -> None:
+        """멀티에서 누른 칸이 바뀜 → 보정 값 · 분석 · 편집 상태를 그 칸 기준으로."""
+        if self._mode != "grid":
+            return
+        cv = self.grid_view.active_canvas()
+        if cv is not None:
+            self._sync_controls(cv.adjust())
+        self.clear_analysis()
+        self._cat = None
+        self.analysis.lbl_cat.setText("-")
+        self.analysis.set_enabled_for("grid", can_record=self.current_capture() is not None)
+        self._update_tag()
+        self._update_trend()
+        self._update_side()
+        self._refresh_edit_state()
+        self._analysis_view_changed()
 
     # ================= 탐색 =================
     def step(self, delta: int) -> None:
@@ -827,9 +906,14 @@ class ProWorkspace(QWidget):
 
     # ================= 보정 · 편집 대상 =================
     def _canvases(self) -> list:
-        return [self.live_canvas, self.single_canvas, self.cmp_left, self.cmp_right]
+        return [self.live_canvas, self.single_canvas, self.cmp_left, self.cmp_right] + self.grid_view.canvases()
 
     def _target_canvases(self) -> list:
+        if self._mode == "grid":
+            if self.chk_adj_all.isChecked():
+                return self.grid_view.canvases()
+            cv = self.grid_view.active_canvas()
+            return [cv] if cv is not None else []
         return {"single": [self.single_canvas], "compare": [self.cmp_left, self.cmp_right],
                 "live": [self.live_canvas]}.get(self._mode, [])
 
@@ -841,6 +925,8 @@ class ProWorkspace(QWidget):
             return self._cmp_active
         if self._mode == "live":
             return self.live_canvas
+        if self._mode == "grid":
+            return self.grid_view.active_canvas()
         return None
 
     def _on_canvas_activated(self, cv) -> None:
@@ -946,15 +1032,19 @@ class ProWorkspace(QWidget):
             self.single_canvas.apply_zoom(f)
         elif self._mode == "live":
             self.live_canvas.apply_zoom(f)
+        elif self._mode == "grid" and self.active_canvas() is not None:
+            self.active_canvas().apply_zoom(f)
 
     # ================= 편집 (기하 · 이력) =================
     def rotate(self, k: int) -> None:
-        if self._mode == "single":
-            self.single_canvas.rotate(k)
+        cv = self.active_canvas()
+        if self._mode in ("single", "grid") and cv is not None:
+            cv.rotate(k)
 
     def flip(self, horizontal: bool) -> None:
-        if self._mode == "single":
-            self.single_canvas.flip(horizontal)
+        cv = self.active_canvas()
+        if self._mode in ("single", "grid") and cv is not None:
+            cv.flip(horizontal)
 
     def undo(self) -> bool:
         cv = self.active_canvas()
@@ -984,12 +1074,15 @@ class ProWorkspace(QWidget):
     def _refresh_edit_state(self) -> None:
         cv = self.active_canvas()
         has = cv is not None and cv.image() is not None
-        edit_mode = self._mode in ("single", "compare")
+        edit_mode = self._mode in ("single", "compare", "grid")
         self.b_undo.setEnabled(bool(has and edit_mode and cv.can_undo()))
         self.b_redo.setEnabled(bool(has and edit_mode and cv.can_redo()))
         self.b_orig.setEnabled(bool(has and edit_mode and cv.is_modified()))
         for b in (self.b_rot_l, self.b_rot_r, self.b_flip_h, self.b_flip_v):
-            b.setEnabled(bool(has and self._mode == "single"))
+            b.setEnabled(bool(has and self._mode in ("single", "grid")))
+        if self._mode == "grid":
+            self.b_clear.setEnabled(bool(has and cv.has_annotations()))
+            self.b_edit_save.setEnabled(any(not is_reference(c) for c, _cv in self.grid_view.modified()))
         self.b_auto.setEnabled(bool(has))
         self._update_hist(cv.image() if has else None)
 
@@ -1021,15 +1114,22 @@ class ProWorkspace(QWidget):
     # ================= 주석 · 도구 =================
     def set_tool(self, tool: str) -> None:
         allowed = {t: modes for t, *_x, modes in _TOOLS}
-        if tool not in allowed or (self._mode in ("single", "compare", "live")
+        if tool not in allowed or (self._mode in ("single", "compare", "live", "grid")
                                    and self._mode not in allowed[tool] and tool != "pan"):
             tool = "pan"
         for cv in (self.single_canvas, self.cmp_left, self.cmp_right, self.live_canvas):
             cv.set_tool(tool if cv is not self.live_canvas or tool == "magnify" else "pan")
+        self.grid_view.set_tool(tool)
         self.tool_buttons[tool].setChecked(True)
         self._tool = tool
 
     def clear_annotations(self) -> None:
+        if self._mode == "grid":                 # 멀티: 누른 칸만 (다른 칸의 주석은 그대로)
+            cv = self.grid_view.active_canvas()
+            if cv is not None:
+                cv.clear_annotations()
+            self._refresh_edit_state()
+            return
         for cv in (self.single_canvas, self.cmp_left, self.cmp_right):
             cv.clear_annotations()
 
@@ -1210,11 +1310,23 @@ class ProWorkspace(QWidget):
         return cap
 
     # ================= 분석 (측정 보조) =================
+    def _an_canvas(self):
+        """분석 탭(측정 보조)이 다루는 캔버스: 1화면 · 멀티의 누른 칸."""
+        if self._mode == "single":
+            return self.single_canvas
+        if self._mode == "grid":
+            return self.grid_view.active_canvas()
+        return None
+
+    def _an_image(self):
+        cv = self._an_canvas()
+        return cv.image() if cv is not None else None
+
     def _update_tag(self) -> None:
-        img = self.single_canvas.image()
+        img = self._an_image() if self._mode == "grid" else self.single_canvas.image()
         if img is None:
             self._tag = ""
-            self.analysis.lbl_tag.setText("1화면에서 영상을 열면 자동으로 추정합니다.")
+            self.analysis.lbl_tag.setText("1화면 · 멀티에서 영상을 열면 자동으로 추정합니다.")
             return
         try:
             self._tag = analysis.classify_illumination(img)
@@ -1225,15 +1337,16 @@ class ProWorkspace(QWidget):
 
     def _measure_roi(self):
         """'원' 주석의 마지막 것을 측정 영역으로 (없으면 전체)."""
-        circles = [a for a in self.single_canvas.annotations() if a.get("kind") == "circle"]
+        cv = self._an_canvas()
+        circles = [a for a in (cv.annotations() if cv is not None else []) if a.get("kind") == "circle"]
         if not circles:
             return None
         a = circles[-1]
         return (a["x1"], a["y1"], a["x2"], a["y2"])
 
     def measure_fluorescein(self) -> dict | None:
-        img = self.single_canvas.image()
-        if self._mode != "single" or img is None:
+        img = self._an_image()
+        if img is None:
             return None
         r = analysis.fluorescein_area(img, self._measure_roi(), self.config.px_per_mm or 0.0)
         mm = f", {r['area_mm2']:.2f} mm²" if r["area_mm2"] is not None else " (눈금 보정 시 mm²)"
@@ -1243,8 +1356,8 @@ class ProWorkspace(QWidget):
         return r
 
     def measure_redness(self) -> dict | None:
-        img = self.single_canvas.image()
-        if self._mode != "single" or img is None:
+        img = self._an_image()
+        if img is None:
             return None
         r = analysis.redness_index(img, self._measure_roi())
         area = "측정 영역" if self._measure_roi() else "전체"
@@ -1254,18 +1367,21 @@ class ProWorkspace(QWidget):
 
     def _show_result(self, mask, rgb) -> None:
         self._analysis_mask = mask
-        self.single_canvas.set_overlay(_mask_qimage(mask, rgb, 150), 1.0)
+        cv = self._an_canvas()
+        if cv is not None:
+            cv.set_overlay(_mask_qimage(mask, rgb, 150), 1.0)
         self.analysis.lbl_result.setText(self._analysis_text + "\n(표시 레이어는 저장본에 들어가지 않습니다)")
 
     def clear_analysis(self) -> None:
         self._analysis_mask, self._analysis_text = None, ""
-        self.single_canvas.set_overlay(None)
+        for cv in [self.single_canvas] + self.grid_view.canvases():
+            cv.set_overlay(None)
         self.analysis.lbl_result.setText("-")
 
     def record_measurement(self) -> None:
-        if not (self._mode == "single" and 0 <= self._idx < len(self._caps)) or not self._analysis_text:
+        cap = self.current_capture()
+        if cap is None or not self._analysis_text:
             return
-        cap = self._caps[self._idx]
         tag = analysis.ILLUMINATION_LABELS.get(self._tag)
         entry = f"[{tag}] {self._analysis_text}" if tag else self._analysis_text
         note = f"{cap.note} | {entry}" if cap.note else entry
@@ -1284,8 +1400,8 @@ class ProWorkspace(QWidget):
         return ""
 
     def measure_nuclear(self) -> dict | None:
-        img = self.single_canvas.image()
-        if self._mode != "single" or img is None:
+        img = self._an_image()
+        if img is None:
             return None
         r = cataract.nuclear_opacity(img, self._measure_roi())
         self._cat = ("nuclear", r)
@@ -1300,8 +1416,8 @@ class ProWorkspace(QWidget):
         return r
 
     def measure_cortical(self) -> dict | None:
-        img = self.single_canvas.image()
-        if self._mode != "single" or img is None:
+        img = self._an_image()
+        if img is None:
             return None
         pupil = self._measure_roi()
         if pupil is None:
@@ -1320,7 +1436,7 @@ class ProWorkspace(QWidget):
     def _trend_delta(self, kind: str, value: float) -> str:
         if self._patient is None:
             return ""
-        cap = self._caps[self._idx] if 0 <= self._idx < len(self._caps) else None
+        cap = self.current_capture()
         eye = (cap.eye if cap and cap.eye and cap.eye != "NA" else None)
         prev = [m for m in self.db.measurements.list_by_patient(self._patient.id, kind, eye)
                 if not (cap and m.capture_id == cap.id)]
@@ -1330,11 +1446,12 @@ class ProWorkspace(QWidget):
         return f"\n지난 검사({prev[-1].measured_at[:10]}) 대비 {d:+.0f}"
 
     def record_cataract(self):
-        if self._cat is None or not (self._mode == "single" and 0 <= self._idx < len(self._caps)):
-            QMessageBox.information(self, "측정 기록", "먼저 '핵 혼탁' 또는 '피질 혼탁'을 측정하세요.")
+        cap = self.current_capture()
+        if self._cat is None or cap is None:
+            QMessageBox.information(self, "측정 기록", "먼저 '핵 혼탁' 또는 '피질 혼탁'을 측정하세요."
+                                    + ("\n(참조 사진은 기록하지 않습니다)" if self._cat is not None else ""))
             return None
         kind, r = self._cat
-        cap = self._caps[self._idx]
         detail = {k: (round(v, 4) if isinstance(v, float) else v) for k, v in r.items()
                   if k != "mask" and v is not None and not isinstance(v, (tuple, list))}
         m = Measurement(patient_id=self._patient.id, capture_id=cap.id, eye=cap.eye or "NA", kind=kind,
@@ -1362,7 +1479,7 @@ class ProWorkspace(QWidget):
         pm.fill(QColor("#0b1220"))
         text = ""
         if self._patient is not None:
-            cap = self._caps[self._idx] if 0 <= self._idx < len(self._caps) else None
+            cap = self.current_capture()
             eye = cap.eye if cap and cap.eye and cap.eye != "NA" else None
             series = {k: self.db.measurements.list_by_patient(self._patient.id, k, eye)
                       for k in ("nuclear", "cortical")}
@@ -1450,6 +1567,8 @@ class ProWorkspace(QWidget):
             targets = [(self.single_canvas, self._caps[self._idx])]
         elif self._mode == "compare":
             targets = [(self.cmp_left, self._pair[0]), (self.cmp_right, self._pair[1])]
+        elif self._mode == "grid":               # 멀티: 편집한 칸마다 (참조 사진은 환자 기록이 아니라 뺌)
+            targets = [(cv, cap) for cap, cv in self.grid_view.modified() if not is_reference(cap)]
         else:
             targets = []
         saved = []
@@ -1478,6 +1597,14 @@ class ProWorkspace(QWidget):
             if not any(cv.is_modified() for cv, _ in targets if cv.image() is not None):
                 QMessageBox.information(self, "편집본 저장", "보정·편집·주석이 없어 저장할 내용이 없습니다.")
             return []
+        if self._mode == "grid":                 # 같은 편집을 두 번 저장하지 않게 저장한 칸만 원본으로
+            self.grid_view.reset_edits([src.id for _cv, src in targets[:len(saved)]])
+            cv = self.grid_view.active_canvas()
+            self._sync_controls(cv.adjust() if cv is not None else Adjust())
+            self._refresh_edit_state()
+            self.reload(select_last=False)
+            self.savedCapture.emit()
+            return saved
         self.clear_annotations()
         self.reset_adjust()                       # 저장본엔 보정이 이미 반영됨 → 이중 적용 방지
         self.reload(select_last=(self._mode == "single"))
@@ -1485,28 +1612,33 @@ class ProWorkspace(QWidget):
         return saved
 
     def edit_comment(self) -> None:
-        if not (self._mode == "single" and 0 <= self._idx < len(self._caps)):
+        cap = self.current_capture()
+        if cap is None:
             return
-        cap = self._caps[self._idx]
         text, ok = QInputDialog.getText(self, "코멘트", "이 영상의 코멘트:", text=cap.note or "")
         if ok:
             self.set_comment(text)
 
     def set_comment(self, text: str) -> None:
-        if not (0 <= self._idx < len(self._caps)):
+        cap = self.current_capture()
+        if cap is None and self._mode != "grid" and 0 <= self._idx < len(self._caps):
+            cap = self._caps[self._idx]
+        if cap is None:
             return
-        cap = self._caps[self._idx]
         note = (text or "").strip() or None
         self.db.captures.update_note(cap.id, note)
         cap.note = note
-        self.multi.set_captures(self._caps, keep_page=True)
-        self._show_current()
+        if self._mode == "grid":
+            self._update_side()
+        else:
+            self.multi.set_captures(self._caps, keep_page=True)
+            self._show_current()
         self.savedCapture.emit()
 
     def edit_patient(self) -> None:
         if not self._require_patient():
             return
-        dlg = PatientDialog(self, patient=self._patient)
+        dlg = PatientDialog(self, patient=self._patient, db=self.db)
         if not dlg.exec():
             return
         p = dlg.get_patient()
