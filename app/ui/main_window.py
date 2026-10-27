@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QStackedWidget,
     QStatusBar,
     QVBoxLayout,
@@ -52,7 +53,7 @@ from app.ui.exam_screen import ExamScreen
 from app.ui import split_menu
 from app.ui.fit import HScroll
 from app.ui.home_screen import HomeScreen
-from app.ui.multi_view import MultiView
+from app.ui.multi_view import is_reference, ref_capture
 from app.ui.patient_list_screen import PatientListScreen
 from app.ui.image_viewer import ImageViewerDialog
 from app.ui.patient_panel import PatientPanel
@@ -61,6 +62,7 @@ from app.ui.pro.pro_workspace import ProWorkspace
 from app.ui.quad_view import QuadView
 from app.ui.settings_dialog import SettingsDialog
 from app.ui.shortcuts_dialog import ShortcutsDialog
+from app.ui.ref_bar import RefBar
 from app.ui.smart_bar import SmartBar, mode_text
 from app.ui import icons
 from app.ui.theme import ICON, ICON_ACCENT, build_qss, make_app_icon
@@ -185,12 +187,17 @@ class MainWindow(QMainWindow):
         self.view_stack = QStackedWidget()
         self.view_stack.addWidget(self.video_view)   # index 0 = 단일
         self.view_stack.addWidget(self.quad_view)     # index 1 = 분할 (2 · 4 · 6 · 8 · 16칸)
-        self.multi_view = MultiView()
-        self.view_stack.addWidget(self.multi_view)    # index 2 = 멀티 (선택한 사진 모아 보기)
+        # index 2 = 멀티 (고른 사진 + 참조 사진 모아 보기) — Pro 검토의 보정 · 필터 · 편집 · 스마트 · 분석 · 정밀 분석 메뉴와 함께
+        self.multi_pro = ProWorkspace(self.db, self.service, self.config,
+                                      get_eye=lambda: self.control_bar.current_eye(), embedded=True)
+        self.multi_view = self.multi_pro.grid_view
+        self.view_stack.addWidget(self.multi_pro)
         self.control_bar = ControlBar()
+        self.ref_bar = RefBar(self.db)
         self.smart_bar = SmartBar()
         self.agent_bar = AgentBar()
         left.addWidget(self.view_stack, 1)
+        left.addWidget(self.ref_bar)
         # 긴 줄은 좁은 창에서 눌려 겹치지 않게 옆으로 밀어 보는 칸에 (app/ui/fit.py)
         left.addWidget(HScroll(self.smart_bar, on_compact=self.smart_bar.set_compact))
         left.addWidget(HScroll(self.agent_bar))
@@ -249,9 +256,14 @@ class MainWindow(QMainWindow):
         self.control_bar.sendClicked.connect(self._safe("전송", lambda: self._on_send()))
         self.control_bar.presetClicked.connect(self._safe("촬영 모드", lambda: self._on_preset_menu()))
         self.control_bar.set_preset_name(self.config.active_preset or capture_presets.DEFAULT_NAME)
-        self.multi_view.cellActivated.connect(self._on_thumbnail_clicked)
-        self.multi_view.saveEditedRequested.connect(self._safe("멀티 편집본 저장", lambda: self._on_save_multi_edited()))
-        self.multi_view.set_px_per_mm(float(getattr(self.config, "px_per_mm", 0.0) or 0.0))
+        self.multi_view.cellActivated.connect(self._on_multi_cell_activated)
+        self.multi_pro.savedCapture.connect(self._on_pro_saved)          # 편집본 · 분석 결과 · 코멘트
+        self.multi_pro.patientUpdated.connect(self._on_pro_patient_updated)
+        self.multi_pro.smart.settingsChanged.connect(self._on_multi_smart_settings)
+        self.ref_bar.selectionChanged.connect(self._safe("참조", lambda: self._on_refs_changed(self.ref_bar.selected_refs())))
+        self.ref_bar.libraryRequested.connect(self._safe("참조 라이브러리", lambda: self.open_references()))
+        self.ref_bar.hideRequested.connect(lambda: self._set_ref_bar_visible(False))
+        self.control_bar.refsToggled.connect(lambda on: self._set_ref_bar_visible(on))
         # '멀티' 버튼은 오른쪽 촬영 이미지 칸(OD · OS 위) — 촬영 도크의 숨은 버튼과 상태를 함께 쓴다
         tb_multi = self.thumbnail_panel.btn_multi
         self.control_bar.multi_mirrors.append(tb_multi)
@@ -291,6 +303,7 @@ class MainWindow(QMainWindow):
         self._on_patient_changed(self.patient_panel.current_patient())
         self._fullscreen = False
         self._set_smart_bar_visible(bool(getattr(cfg, "smart_bar_visible", True)), save=False)
+        self._set_ref_bar_visible(bool(getattr(cfg, "ref_bar_visible", False)), save=False)
         self._install_shortcuts()
         self.set_mode("capture" if getattr(self.config, "start_screen", "home") == "capture" else "home")
 
@@ -298,6 +311,8 @@ class MainWindow(QMainWindow):
         """브랜드 + 아이콘 메뉴: [촬영 | Pro 검토] [신규 환자 | 정보 수정] … [카메라 | 단축키 | 설정 | 테마]."""
         bar = QFrame()
         bar.setObjectName("TopBar")
+        # 아래 화면(멀티의 Pro 메뉴 등)이 커도 상단바 높이는 그대로 — 눌리면 메뉴 글자가 아이콘 위로 겹친다
+        bar.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         lay = QHBoxLayout(bar)
         lay.setContentsMargins(16, 6, 12, 6)
         lay.setSpacing(10)
@@ -384,10 +399,8 @@ class MainWindow(QMainWindow):
         lay.addStretch(1)
 
         # 카메라 재연결 · 단축키 · 샘플 · 테마는 모두 설정 창 안으로 (오른쪽에는 설정 하나)
+        # 참조(질환별 참조 영상 · 샘플 사진)는 아래 촬영 도크의 '참조' 줄로 옮겼다
         tw, tl = seg()
-        self.btn_refs = nav("참조 영상", "image", "질환별 참조 영상 · 샘플 사진을 보고 지금 환자 사진과 나란히 비교")
-        self.btn_refs.clicked.connect(self._safe("참조 영상", lambda: self.open_references()))
-        tl.addWidget(self.btn_refs)
         self.btn_settings = nav("설정", "gear", "설정 — 카메라 다시 연결 · 단축키 · 샘플 사진 · 화면 테마 · Smart 도구줄 · 저장 위치")
         self.btn_settings.clicked.connect(self._safe("설정", lambda: self._open_settings()))
         self.act_theme = QAction(self)
@@ -591,6 +604,7 @@ class MainWindow(QMainWindow):
             if w is not None:
                 w.setVisible(not on)
         self.smart_bar.setVisible(not on and bool(self.config.smart_bar_visible))
+        self.ref_bar.setVisible(not on and bool(self.config.ref_bar_visible))
         if on:
             self._was_maximized = self.isMaximized()
             self.showFullScreen()
@@ -780,6 +794,7 @@ class MainWindow(QMainWindow):
                                          else (patient.name if patient else "환자 미선택")))
         self.thumbnail_panel.set_patient(patient.id if patient else None)
         self.pro.set_patient(patient)
+        self.multi_pro.set_patient(patient)
         if self._mode == "exam":
             self.exam_screen.set_patient(patient)
         self.agent.new_session()
@@ -789,6 +804,14 @@ class MainWindow(QMainWindow):
         self.events.log("patient_changed", has_patient=patient is not None)
 
     # ---- Pro 모드 ----
+    def _set_ref_bar_visible(self, on: bool, save: bool = True) -> None:
+        """참조 줄 보이기/숨기기 — 숨겨도 고른 참조 사진은 멀티 화면에 그대로 있다."""
+        self.config.ref_bar_visible = bool(on)
+        self.ref_bar.setVisible(bool(on) and not self._fullscreen)
+        self.control_bar.set_refs_visible(bool(on))
+        if save:
+            self._save_config_quietly()
+
     def _set_smart_bar_visible(self, on: bool, save: bool = True) -> None:
         """Smart 도구줄 보이기/숨기기 — 숨겨도 자동 촬영·피킹 설정은 그대로 동작한다."""
         self.config.smart_bar_visible = bool(on)
@@ -988,30 +1011,53 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("분할 버튼을 누를 때마다 칸 수를 묻습니다", 4000)
         return n
 
-    # ---- 멀티 (선택한 사진 한 번에 보기) ----
+    # ---- 멀티 (고른 사진 + 참조 사진 한 번에 보기 · Pro 메뉴로 편집 · 분석) ----
+    def _multi_items(self) -> list:
+        """멀티 칸에 놓을 것: 오른쪽 목록에서 고른 사진(고른 순서) → 참조 줄에서 고른 참조 사진."""
+        return self.thumbnail_panel.selected_captures() + [ref_capture(r) for r in self.ref_bar.selected_refs()]
+
     def _on_selection_changed(self, caps: list) -> None:
         if self._multi:
-            if caps:
-                self.multi_view.set_captures(caps)
+            items = self._multi_items()
+            if items:
+                self.multi_pro.set_grid(items)
             else:
                 self._exit_multi(clear=False)
         if caps:
             self.statusBar().showMessage(f"{len(caps)}장 선택 · '멀티'를 누르면 한 화면에 모아 봅니다", 4000)
+
+    def _on_refs_changed(self, refs: list) -> None:
+        """참조 줄에서 고르면 바로 멀티 화면에 같이 (지금 환자 사진은 오른쪽 목록에서 고른 것)."""
+        items = self._multi_items()
+        if self._multi:
+            if items:
+                self.multi_pro.set_grid(items)
+            else:
+                self._exit_multi(clear=False)
+        elif refs:
+            self._enter_multi(items)
+        if refs and not self.thumbnail_panel.selected_captures():
+            self.statusBar().showMessage("오른쪽 목록에서 지금 환자 사진을 눌러 고르면 참조 사진과 나란히 봅니다", 5000)
 
     def _on_multi_toggled(self, on: bool) -> None:
         if not on:
             self._exit_multi(clear=True)              # 다시 누르면 선택까지 초기화
             self.statusBar().showMessage("멀티 초기화", 2500)
             return
-        caps = self.thumbnail_panel.selected_captures()
-        if not caps:
+        items = self._multi_items()
+        if not items:
             self.control_bar.set_multi_mode(False)
-            self.statusBar().showMessage("오른쪽 사진 목록에서 사진을 한 번씩 눌러 고른 뒤 '멀티'를 누르세요", 5000)
+            self.statusBar().showMessage("오른쪽 사진 목록에서 사진을 한 번씩 눌러 고르거나 아래 '참조' 줄에서 "
+                                         "참조 사진을 고른 뒤 '멀티'를 누르세요", 5000)
             return
+        self._enter_multi(items)
+
+    def _enter_multi(self, items: list) -> None:
         if self._quad:
             self.control_bar.btn_quad.setChecked(False)
         self._multi = True
-        self.multi_view.set_captures(caps)
+        self.multi_pro.set_px_per_mm(float(getattr(self.config, "px_per_mm", 0.0) or 0.0))
+        self.multi_pro.set_grid(items)
         self.view_stack.setCurrentIndex(2)
         self.control_bar.set_multi_mode(True)
 
@@ -1019,9 +1065,25 @@ class MainWindow(QMainWindow):
         self._multi = False
         self.view_stack.setCurrentIndex(1 if self._quad else 0)
         self.control_bar.set_multi_mode(False)
-        self.multi_view.clear()
+        self.multi_pro.set_grid([])
         if clear:
             self.thumbnail_panel.clear_selection()
+            self.ref_bar.clear_selection()
+
+    def _on_multi_cell_activated(self, cap) -> None:
+        """멀티 칸을 두 번 누름 → 큰 화면으로 (참조 사진은 분류 · 제목을 창 제목에)."""
+        if is_reference(cap):
+            dlg = ImageViewerDialog(cap, self)
+            dlg.setWindowTitle(f"참조 - {cap.label}")
+            dlg.exec()
+            return
+        self._on_thumbnail_clicked(cap)
+
+    def _on_multi_smart_settings(self) -> None:
+        """멀티 화면 '스마트' 탭에서 바꾼 피킹 · Best Shot 을 촬영 화면 Smart 줄에도."""
+        cfg = self.config
+        self.smart_bar.set_state(cfg.smart_mode, cfg.smart_peaking, cfg.smart_peaking_sensitivity, cfg.smart_best_shot)
+        self._apply_smart(save=False)
 
     def _on_save_multi(self) -> None:
         if self._current_patient is None:
@@ -1036,35 +1098,6 @@ class MainWindow(QMainWindow):
         sounds.play("shutter")
         self.thumbnail_panel.add_capture(cap)
         self.statusBar().showMessage(f"멀티 화면({n}장)을 한 장의 사진으로 저장했습니다", 4000)
-
-    def _on_save_multi_edited(self) -> list:
-        """멀티 화면에서 편집 · 보정 · 주석한 사진을 각각 새 사진으로 저장 (원본은 그대로)."""
-        if self._current_patient is None:
-            QMessageBox.information(self, "확인", "환자를 먼저 선택하세요.")
-            return []
-        items = self.multi_view.modified()
-        if not items:
-            QMessageBox.information(self, "편집본 저장", "보정 · 편집 · 주석이 없어 저장할 내용이 없습니다.")
-            return []
-        saved = []
-        for cap, cv in items:
-            kinds = cv.annotation_kinds()
-            if any(k in ("length", "angle") for k in kinds):
-                note = "측정"
-            elif kinds:
-                note = "주석"
-            elif cv.geometry_changed():
-                note = "편집본"
-            else:
-                note = "보정본"
-            saved.append(self.service.save_photo(cv.render_to_bgr(), self._current_patient,
-                                                 eye=cap.eye or "NA", note=note))
-        sounds.play("shutter")
-        for c in saved:
-            self.thumbnail_panel.add_capture(c)
-        self.multi_view.reset_edits([cap.id for cap, _cv in items])   # 같은 편집을 두 번 저장하지 않게
-        self.statusBar().showMessage(f"편집본 {len(saved)}장을 새 사진으로 저장했습니다 (원본은 그대로)", 5000)
-        return saved
 
     # ---- 촬영 모드 (자주 쓰는 카메라 · 촬영 설정) ----
     def _on_preset_menu(self) -> None:
@@ -1763,11 +1796,13 @@ class MainWindow(QMainWindow):
 
     # ---- 참조 영상 (질환별 대표 영상 · 샘플 사진) ----
     def _reference_capture(self):
-        """비교·등록할 지금 환자 사진: Pro 1화면 영상 → 사진 목록에서 고른 사진(마지막) → 가장 최근 사진."""
+        """비교·등록할 지금 환자 사진: Pro 1화면 영상 → 멀티에서 누른 칸 → 사진 목록에서 고른 사진(마지막) → 가장 최근 사진."""
         if self.mode_stack.currentIndex() == MODES.index("pro") and self.pro.mode() == "single":
             caps, i = self.pro.captures(), self.pro.current_index()
             if 0 <= i < len(caps):
                 return caps[i]
+        if self._multi and self.multi_pro.current_capture() is not None:
+            return self.multi_pro.current_capture()
         photos = [c for c in self.thumbnail_panel.selected_captures() if c.media_type == "photo"]
         if photos:
             return photos[-1]
@@ -1792,6 +1827,7 @@ class MainWindow(QMainWindow):
                                      on_register=lambda parent: self._register_reference(cap, parent),
                                      on_save_screen=lambda img, note: self._save_reference_screen(img, note, cap))
         dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        dlg.finished.connect(lambda *_: self.ref_bar.refresh())   # 등록 · 삭제 · 가져온 샘플을 참조 줄에도
         dlg.show()
         self._refs_dialog = dlg
         return dlg
@@ -1831,6 +1867,7 @@ class MainWindow(QMainWindow):
         except Exception as e:  # noqa: BLE001
             QMessageBox.warning(parent or self, "참조 영상", f"등록하지 못했습니다.\n{e}")
             return False
+        self.ref_bar.refresh()
         self.statusBar().showMessage(f"참조 영상으로 등록했습니다 ({ref.category})", 4000)
         return True
 
@@ -1855,10 +1892,11 @@ class MainWindow(QMainWindow):
             return False
         QApplication.restoreOverrideCursor()
         self.patient_panel._reload()
+        self.ref_bar.refresh()
         QMessageBox.information(
             parent, "샘플 사진",
-            result.summary() + "\n\n환자 목록에서 '샘플 · 질환명' 환자를 고르거나, 위쪽 '참조 영상' 의 "
-            "'샘플 사진' 에서 질환별로 보고 지금 환자 사진과 비교할 수 있습니다.")
+            result.summary() + "\n\n환자 목록에서 '샘플 · 질환명' 환자를 고르거나, 아래 촬영 도크의 '참조' 줄에서 "
+            "질환별로 골라 멀티 화면에서 지금 환자 사진과 같이 볼 수 있습니다.")
         return True
 
     # ---- 종료 ----

@@ -1,4 +1,4 @@
-"""하단 촬영 도크 — 아이콘 메뉴: OD/OS 안구 스위치 + 분할(2·4·6·8·16)/Smart/멀티 + 정지영상·셔터(사진)·녹화.
+"""하단 촬영 도크 — 아이콘 메뉴: OD/OS 안구 스위치 + Smart · 참조(줄 열고 닫기) + 분할(2·4·6·8·16) · 정지영상 · 셔터(사진) · 녹화.
 
 버튼 폭은 고정이라 글자가 바뀌어도(정지영상↔라이브, 녹화↔녹화 중지) 버튼 위치가 움직이지 않는다."""
 from __future__ import annotations
@@ -52,6 +52,7 @@ class ControlBar(QFrame):
     clearQuadClicked = Signal()
     eyeChanged = Signal(str)
     smartToggled = Signal(bool)          # Smart 도구줄 보이기 / 숨기기
+    refsToggled = Signal(bool)           # 참조 줄 보이기 / 숨기기
     multiToggled = Signal(bool)          # 멀티: 선택한 사진 한 번에 보기 (다시 누르면 초기화)
     saveMultiClicked = Signal()          # 멀티 화면 저장
     sendClicked = Signal()               # 전송: 고른 사진을 폴더 · 클라우드 · PACS 로
@@ -125,6 +126,9 @@ class ControlBar(QFrame):
         self.btn_smart = tool_button("Smart", "aperture", "Pause", checkable=True, on_color=ICON_ACCENT,
                                      tip="Smart 도구줄 보이기 / 숨기기 (자동 촬영 설정은 그대로 유지)")
         self.btn_smart.setChecked(True)
+        self.btn_refs = tool_button("참조", "image", "Pause", checkable=True, on_color=ICON_ACCENT,
+                                    tip="참조 줄 보이기 / 숨기기 — 질환별 참조 영상 · 샘플 사진을 골라 "
+                                        "멀티 화면에서 지금 환자 사진과 같이 보기")
         self.btn_multi = tool_button("멀티", "review", "Pause", checkable=True, on_color=ICON_ACCENT,
                                      tip="오른쪽 목록에서 한 번 눌러 고른 사진들을 한 화면에 모아 보기 · 다시 누르면 선택 초기화")
         self.btn_preset = tool_button("모드", "sliders", "ToolBtn",
@@ -137,6 +141,7 @@ class ControlBar(QFrame):
         # 일시정지는 정지영상(누르면 멈춤 · 다시 누르면 라이브)과 같은 기능이라 화면에 두지 않는다
         self.btn_pause.setVisible(False)
         ll.addWidget(self.btn_smart)
+        ll.addWidget(self.btn_refs)
         # '멀티' 는 오른쪽 '촬영 이미지' 칸(OD · OS 위)의 버튼, '모드'(촬영 모드)는 설정 창으로 옮겼다 —
         # 여기 버튼은 상태 · 신호만 들고 화면엔 안 보임
         for hidden in (self.btn_multi, self.btn_preset):
@@ -186,7 +191,8 @@ class ControlBar(QFrame):
         self.status_dot.setVisible(False)
         self.status.setVisible(False)
         self._compact = False
-        self._sized_buttons = (self.btn_preset, self.btn_quad, self.btn_pause, self.btn_smart, self.btn_multi,
+        self._sized_buttons = (self.btn_preset, self.btn_quad, self.btn_pause, self.btn_smart, self.btn_refs,
+                               self.btn_multi,
                                self.btn_send, self.btn_freeze, self.btn_record, self.btn_save_quad,
                                self.btn_clear_quad, self.btn_save_multi)
         self._apply_widths()
@@ -203,6 +209,7 @@ class ControlBar(QFrame):
         self.btn_save_quad.clicked.connect(self.saveQuadClicked.emit)
         self.btn_clear_quad.clicked.connect(self.clearQuadClicked.emit)
         self.btn_smart.toggled.connect(self.smartToggled.emit)
+        self.btn_refs.toggled.connect(self.refsToggled.emit)
         self.btn_multi.toggled.connect(self.multiToggled.emit)
         self.btn_save_multi.clicked.connect(lambda: self.saveMultiClicked.emit())
         self.btn_send.clicked.connect(lambda: self.sendClicked.emit())
@@ -354,6 +361,11 @@ class ControlBar(QFrame):
         self.btn_smart.blockSignals(True)
         self.btn_smart.setChecked(on)
         self.btn_smart.blockSignals(False)
+
+    def set_refs_visible(self, on: bool) -> None:
+        self.btn_refs.blockSignals(True)
+        self.btn_refs.setChecked(on)
+        self.btn_refs.blockSignals(False)
 
     def current_eye(self) -> str:
         return _EYE_CODES[self.eye_combo.currentIndex()]

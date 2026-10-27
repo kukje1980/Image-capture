@@ -71,7 +71,8 @@ def win(qapp, app_env, monkeypatch):
 
 def test_standard_window_reference_library(qapp, win, tmp_path):
     w = win
-    assert w.btn_refs.text() == "참조 영상" and w.btn_refs.isEnabled()
+    assert not hasattr(w, "btn_refs")                          # 상단바 '참조 영상' → 아래 도크 '참조' 줄
+    assert w.control_bar.btn_refs.text() == "참조" and w.control_bar.btn_refs.isEnabled()
     dlg = w.open_references()                                  # 사진·샘플이 없어도 열림
     assert dlg.refs() == [] and not dlg.b_compare.isEnabled() and dlg.b_register.isHidden()
     dlg.close()

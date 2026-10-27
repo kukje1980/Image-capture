@@ -367,8 +367,10 @@ def build_qss(mode: str = "dark") -> str:
     QLabel#MultiEmpty {{ color: #8a94a6; background: transparent; }}
     QFrame#MultiCell {{ background: #000000; border: 2px solid transparent; border-radius: 6px; }}
     QFrame#MultiCell[active="true"] {{ border: 2px solid #facc15; }}
-    QFrame#MultiAdjust {{ background: {c['panel']}; border: 1px solid {c['rule_strong']}; border-radius: 10px; }}
-    QFrame#MultiAdjust QLabel, QFrame#MultiAdjust QCheckBox {{ background: transparent; }}
+    QListWidget#RefStrip {{ background: transparent; border: none; }}
+    QListWidget#RefStrip::item {{ border: 2px solid transparent; border-radius: 6px; padding: 1px; margin: 1px; }}
+    QListWidget#RefStrip::item:hover {{ border: 2px solid {c['rule_strong']}; }}
+    QListWidget#RefStrip::item:selected {{ border: 2px solid #facc15; background: transparent; }}
     QPushButton#MultiBtn {{
         background: transparent; border: 1px solid {c['rule']}; border-radius: 7px; padding: 3px 10px;
         min-height: 0px; color: {c['ink_soft']}; font-weight: 700;

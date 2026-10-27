@@ -471,61 +471,73 @@ def test_multi_button_above_od_os(qapp, win):
     assert not win._multi and not panel.btn_multi.isChecked()
 
 
-def test_multi_magnifier_default_and_active_cell(qapp, win):
+def test_multi_has_pro_side_menus_and_magnifier_default(qapp, win):
     _enter_multi(qapp, win, 3)
-    mv = win.multi_view
+    mp, mv = win.multi_pro, win.multi_view
+    assert win.view_stack.currentWidget() is mp and mp.mode() == "grid" and mp.embedded
+    assert not mp.toolbar_scroll.isVisible()                             # Pro 위 도구줄은 없음
+    assert [b.text() for b in mp.tab_buttons] == ["보정", "필터", "편집", "스마트", "분석", "정밀 분석"]
+    assert all(b.isVisible() for b in mp.tab_buttons)
     assert mv.tool() == "magnify" and all(cv.tool() == "magnify" for cv in mv.canvases())
-    assert mv.tool_buttons["magnify"].isChecked()
+    assert mp.tool_buttons["magnify"].isChecked()
     cv1 = mv.canvases()[1]
     vp = cv1.viewport()
     QTest.mousePress(vp, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, vp.rect().center())
     assert cv1._lens is not None                                          # 누르는 동안 확대 렌즈
-    assert mv.active_canvas() is cv1                                      # 누른 칸이 편집 대상
+    assert mv.active_canvas() is cv1 and mp.active_canvas() is cv1        # 누른 칸이 편집 대상
     assert mv._cells[1].property("active") and not mv._cells[0].property("active")
     QTest.mouseRelease(vp, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, vp.rect().center())
     assert cv1._lens is None
+    assert "2번 칸" in mp.lbl_img.text()
 
 
-def test_multi_pro_edit_tools(qapp, win):
+def test_multi_pro_edit_adjust_and_tools(qapp, win):
     caps = _enter_multi(qapp, win, 3)
-    mv = win.multi_view
+    mp, mv = win.multi_pro, win.multi_view
     cv0, cv1 = mv.canvases()[:2]
     mv.set_active(cv1)
     h, w = cv1.image().shape[:2]
-    mv.b_rot_r.click()                                                    # 회전은 고른 칸만
+    mp.b_rot_r.click()                                                    # 편집 탭 회전은 누른 칸만
     assert cv1.image().shape[:2] == (w, h) and cv0.image().shape[:2] == (h, w)
-    assert mv.b_undo.isEnabled() and mv.b_save.isEnabled()
-    mv.b_undo.click()
+    assert mp.b_undo.isEnabled() and mp.b_edit_save.isEnabled()
+    mp.b_undo.click()
     assert cv1.image().shape[:2] == (h, w)
-    mv.b_redo.click()
+    mp.b_redo.click()
     assert cv1.geometry_changed()
-    mv.b_orig.click()
+    mp.b_orig.click()
     assert not cv1.is_modified()
-    # 주석: 화살표 도구로 끌기
-    mv.set_tool("arrow")
+    # 주석: 편집 탭 화살표 도구로 끌기 → 주석 지우기는 누른 칸만
+    mp.tool_buttons["arrow"].click()
     assert all(cv.tool() == "arrow" for cv in mv.canvases())
     vp = cv1.viewport()
     r = vp.rect()
     QTest.mousePress(vp, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, r.center())
-    QTest.mouseMove(vp, r.center() + r.topLeft() / 1 + QPoint_(30, 20))
+    QTest.mouseMove(vp, r.center() + QPoint_(30, 20))
     QTest.mouseRelease(vp, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, r.center() + QPoint_(30, 20))
-    assert cv1.annotation_kinds() == ["arrow"] and mv.b_clear.isEnabled()
-    mv.b_clear.click()
+    assert cv1.annotation_kinds() == ["arrow"] and mp.b_clear.isEnabled()
+    mp.b_clear.click()
     assert not cv1.has_annotations()
-    # 보정 (고른 칸 → 모든 칸)
-    mv.show_adjust()
-    pop = mv.adjust_popup
-    pop.s_bright.setValue(40)
+    mp.set_tool("crop")                                                   # 자르기 · 눈금도 멀티에서
+    assert mv.tool() == "crop"
+    mp.set_tool("magnify")
+    # 보정 탭: 누른 칸만 → '모든 칸에 같이 적용'
+    mp.s_bright.setValue(40)
     assert cv1.adjust().brightness == 40 and cv0.adjust().brightness == 0
-    pop.chk_all.setChecked(True)
-    pop.s_contrast.setValue(150)
+    mv.set_active(cv0)                                                    # 칸을 바꾸면 슬라이더도 그 칸 값
+    assert mp.s_bright.value() == 0
+    mv.set_active(cv1)
+    assert mp.s_bright.value() == 40
+    mp.c_sharpen.setCurrentIndex(2)                                       # 필터 탭도 같은 칸에
+    assert cv1.adjust().sharpen == 2 and cv0.adjust().sharpen == 0
+    assert mp.chk_adj_all.isVisible() or mp.tabs.currentIndex() != 0
+    mp.chk_adj_all.setChecked(True)
+    mp.s_contrast.setValue(150)
     assert all(cv.adjust().contrast == 1.5 for cv in mv.canvases())
-    pop.hide()
+    mp.chk_adj_all.setChecked(False)
     # 고른 사진이 바뀌어도 남은 사진의 편집은 그대로
     QTest.mouseClick(win.thumbnail_panel._widgets[caps[2].id], Qt.MouseButton.LeftButton)   # 3번째 선택 해제
     assert mv.count() == 2 and mv.canvas_for(caps[1].id) is cv1 and cv1.adjust().brightness == 40
-    # 멀티 화면 저장(합성)에 보정이 들어간다
-    comp = mv.composite()
+    comp = mv.composite()                                                 # 멀티 화면 저장(합성)에 보정이 들어간다
     assert comp is not None and comp.mean() > 0
 
 
@@ -534,21 +546,95 @@ def QPoint_(x, y):
     return QPoint(x, y)
 
 
+def test_multi_analysis_tabs_work_on_active_cell(qapp, win):
+    caps = _enter_multi(qapp, win, 2)
+    mp, mv = win.multi_pro, win.multi_view
+    mv.set_active(mv.canvases()[1])
+    assert mp.analysis.b_red.isEnabled() and mp.analysis.b_note.isEnabled()
+    r = mp.measure_redness()                                              # 분석 탭: 누른 칸에서 측정
+    assert r is not None and mp._analysis_text.startswith("충혈 지수")
+    assert mv.canvases()[1].has_overlay()
+    mp.record_measurement()                                               # 그 칸 사진의 코멘트에 기록
+    note = win.db.captures.get(caps[1].id).note
+    assert note and "충혈 지수" in note
+    mp.advanced_analysis.run()                                            # 정밀 분석 탭도 누른 칸에
+    assert mp.advanced_analysis._result_canvas is mv.canvases()[1]
+    best = mp.advanced_analysis.open_sharpest()                           # 가장 선명한 칸을 편집 대상으로
+    assert best in (0, 1) and mv.active_canvas() is mv.canvases()[best]
+
+
 def test_multi_save_edited_and_double_click(qapp, win, monkeypatch):
     caps = _enter_multi(qapp, win, 2)
-    mv = win.multi_view
+    mp, mv = win.multi_pro, win.multi_view
     panel = win.thumbnail_panel
     cv0 = mv.canvases()[0]
     mv.set_active(cv0)
-    mv.b_flip_h.click()
+    mp.b_flip_h.click()
     n0 = panel.count()
-    saved = win._on_save_multi_edited()
-    assert len(saved) == 1 and saved[0].note == "편집본" and panel.count() == n0 + 1
-    assert not cv0.is_modified() and not mv.b_save.isEnabled()           # 같은 편집을 두 번 저장하지 않게
-    assert [c.id for c in panel.selected_captures()] == [c.id for c in caps]   # 고른 사진은 그대로
+    mp.b_edit_save.click()                                                # 편집 탭 '편집본 저장'
+    assert _wait(qapp, lambda: panel.count() == n0 + 1)
+    newest = win.db.captures.list_by_patient(win._current_patient.id)[0]
+    assert newest.note == "편집본" and newest.eye == caps[0].eye
+    assert not cv0.is_modified() and not mp.b_edit_save.isEnabled()       # 같은 편집을 두 번 저장하지 않게
+    assert win._multi and [c.id for c in panel.selected_captures()] == [c.id for c in caps]   # 고른 사진은 그대로
     opened = []
     mv.cellActivated.disconnect()                                         # 실제 큰 화면 창은 띄우지 않음
     mv.cellActivated.connect(lambda cap: opened.append(cap.id))
     vp = mv.canvases()[1].viewport()
     QTest.mouseDClick(vp, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, vp.rect().center())
     assert opened == [caps[1].id]                                         # 두 번 누르면 큰 화면으로
+
+
+# ---------------- 참조 줄: 도크 '참조' 로 열고 닫기 · 고르면 멀티에 같이 ----------------
+def _add_reference(win, tmp_path, title="참조 백내장"):
+    import numpy as np
+    from app.services.capture_service import CaptureService
+    svc = CaptureService(win.db, win.config)
+    cap = svc.save_photo(np.full((90, 120, 3), 200, np.uint8), win._current_patient, eye="OD")
+    assert win._register_reference(cap, values=("수정체 · 백내장", title, ""))
+    return win.db.references.list()[0]
+
+
+def test_reference_bar_toggle_and_top_button_removed(qapp, win):
+    cb = win.control_bar
+    assert not hasattr(win, "btn_refs")                                   # 상단바 '참조 영상' 은 없앰
+    assert cb.btn_refs.text() == "참조" and cb.btn_refs.isVisible()
+    x_smart = cb.btn_smart.mapTo(cb, cb.btn_smart.rect().topLeft()).x()
+    x_refs = cb.btn_refs.mapTo(cb, cb.btn_refs.rect().topLeft()).x()
+    assert x_refs > x_smart and x_refs < cb.btn_freeze.mapTo(cb, cb.btn_freeze.rect().topLeft()).x()
+    assert not win.ref_bar.isVisible() and not cb.btn_refs.isChecked()   # 처음엔 닫힘
+    QTest.mouseClick(cb.btn_refs, Qt.MouseButton.LeftButton)
+    assert win.ref_bar.isVisible() and win.config.ref_bar_visible
+    QTest.mouseClick(win.ref_bar.btn_hide, Qt.MouseButton.LeftButton)     # 줄의 ▼ 로 숨기기
+    assert not win.ref_bar.isVisible() and not cb.btn_refs.isChecked() and not win.config.ref_bar_visible
+
+
+def test_reference_bar_pick_shows_in_multi(qapp, win, tmp_path):
+    ref = _add_reference(win, tmp_path)
+    caps = _photos(win, 1)
+    panel = win.thumbnail_panel
+    QTest.mouseClick(win.control_bar.btn_refs, Qt.MouseButton.LeftButton)
+    rb = win.ref_bar
+    assert _wait(qapp, lambda: len(rb.refs()) == 1)
+    assert any("수정체" in rb.c_cat.itemText(i) for i in range(rb.c_cat.count()))
+    rb.toggle(0)                                                          # 참조 사진을 고르면 바로 멀티로
+    assert win._multi and win.multi_view.count() == 1
+    ref_cell = win.multi_view.captures()[0]
+    assert ref_cell.is_reference and ref_cell.ref.id == ref.id
+    QTest.mouseClick(panel._widgets[caps[0].id], Qt.MouseButton.LeftButton)   # 지금 환자 사진도 고르면 나란히
+    got = win.multi_view.captures()
+    assert [getattr(c, "is_reference", False) for c in got] == [False, True]  # 환자 사진 → 참조 순
+    assert "참조" in win.multi_view.canvases()[1]._caption
+    mp = win.multi_pro
+    win.multi_view.set_active(win.multi_view.canvases()[1])               # 참조 칸: 측정은 되고 기록은 안 됨
+    assert mp.current_capture() is None and "참조" in mp.lbl_img.text()
+    assert mp.analysis.b_red.isEnabled() and not mp.analysis.b_note.isEnabled()
+    mp.b_flip_h.click()                                                   # 참조 칸 편집은 편집본 저장에서 빠짐
+    assert not mp.b_edit_save.isEnabled()
+    comp = win.multi_view.composite()
+    assert comp is not None and comp.shape[1] > comp.shape[0]
+    rb.toggle(0)                                                          # 참조를 빼면 환자 사진만
+    assert win._multi and win.multi_view.count() == 1
+    rb.toggle(0)
+    QTest.mouseClick(panel.btn_multi, Qt.MouseButton.LeftButton)          # 멀티를 다시 누르면 참조 선택도 초기화
+    assert not win._multi and rb.selected_refs() == [] and panel.selected_captures() == []
