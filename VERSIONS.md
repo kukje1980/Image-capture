@@ -96,3 +96,9 @@ v1.8.0 이후 `main` 에 들어온 변경을 모두 합친 최종판입니다 (`
 - **Keeler Explorer 판(KeelerExplorer)** 추가: Explorer 화면 + Keeler 로고·색·아이콘. 설치파일 `KeelerExplorer-Setup-1.15.1.exe`,
   `KeelerExplorer-1.15.1-mac-arm64/x86_64.dmg`.
 - 다른 판·웹은 v1.15.0 과 같음.
+
+## v1.16.0 — 2026-10-27
+- 기본판 · Keeler 판 · AI 에이전트 판(윈도우·맥 앱): 위쪽 **참조 영상** 버튼 — 질환별 샘플 사진 · 등록한 참조 영상 보기,
+  지금 환자 사진과 비교, 현재 영상 참조 등록, 샘플 사진 가져오기.
+- Keeler 판 상단바: 테마와 상관없이 Keeler 네이비 + 흰 글자 로고 + 파랑 선, 셔터 주황 링.
+- Explorer · Keeler Explorer 판: 참조 영상 창에 '현재 영상 참조 등록' 버튼. 웹은 v1.15.0 과 같음.

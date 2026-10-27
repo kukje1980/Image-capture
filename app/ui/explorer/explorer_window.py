@@ -947,8 +947,10 @@ class ExplorerWindow(QMainWindow):
             if img is not None:
                 who = self.patient.name if self.patient else ""
                 current = (img, f"{who} · {caption_of(cur)}")
-        return self._show(ReferenceLibraryDialog(self.db, self, current=current,
-                                                 on_import_samples=lambda parent: self.import_samples(parent=parent)))
+        return self._show(ReferenceLibraryDialog(
+            self.db, self, current=current,
+            on_import_samples=lambda parent: self.import_samples(parent=parent),
+            on_register=lambda parent: self.add_reference() is not None))
 
     def import_samples(self, folder=None, parent=None) -> bool:
         """받아 둔 샘플 사진 폴더(질환별 하위 폴더 + metadata.json, zip 도 가능)를 질환별 샘플 환자로 등록.

@@ -423,6 +423,19 @@ def _brand_qss() -> str:
     QToolBar#ExplorerTools QToolButton:checked {{ background: {h['active']}; border-color: {h['accent']}; color: {h['ink']}; }}
     QToolBar#ExplorerTools QToolButton:disabled {{ color: {h['disabled']}; }}
     QToolBar#ExplorerTools QLabel#BrandLogo, QToolBar#ExplorerTools QWidget {{ background: transparent; }}
+
+    QFrame#TopBar {{ background: {h['bg']}; border: none; border-bottom: 3px solid {h['line']}; }}
+    QFrame#TopBar QLabel#BrandLogo, QFrame#TopBar QFrame#PatientPick {{ background: transparent; }}
+    QFrame#TopBar QFrame#NavSeg {{ background: {h['seg']}; border: 1px solid {h['rule']}; }}
+    QFrame#TopBar QPushButton#NavBtn {{ background: transparent; border-color: transparent; }}
+    QFrame#TopBar QPushButton#NavBtn:hover {{ background: {h['hover']}; border-color: {h['rule']}; }}
+    QFrame#TopBar QPushButton#NavBtn:pressed {{ background: {h['hover']}; }}
+    QFrame#TopBar QPushButton#NavBtn:checked {{ background: {h['active']}; border: 1px solid {h['accent']}; }}
+    QFrame#TopBar QLabel#BtnText {{ color: {h['ink_soft']}; }}
+    QFrame#TopBar QLabel#BtnText[on="true"] {{ color: {h['ink']}; }}
+    QFrame#TopBar QLabel#BtnText:disabled {{ color: {h['disabled']}; }}
+    QFrame#TopBar QLabel#PatientName {{ color: {h['ink']}; background: transparent; }}
+    QFrame#TopBar QLabel#ChartNo, QFrame#TopBar QLabel#PatientMeta {{ color: {h['ink_soft']}; background: transparent; }}
     """
     ring = b.get("shutter_ring")
     if ring:
