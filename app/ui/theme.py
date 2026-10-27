@@ -403,7 +403,34 @@ def build_qss(mode: str = "dark") -> str:
     QStackedWidget#ExplorerView {{ background: #000000; border-radius: 10px; }}
     QGroupBox {{ border: 1px solid {c['rule']}; border-radius: 8px; margin-top: 14px; padding: 10px 8px 8px; font-weight: 700; }}
     QGroupBox::title {{ subcontrol-origin: margin; left: 10px; padding: 0 4px; color: {c['ink_muted']}; }}
+    """ + _brand_qss()
+
+
+def _brand_qss() -> str:
+    """브랜드 전용 덧칠 — 헤더(메뉴바·툴바)를 테마와 상관없이 브랜드 색으로, 셔터 링을 브랜드 포인트 색으로."""
+    b = _brand.current()
+    out = ""
+    h = b.get("header")
+    if h:
+        out += f"""
+    QMenuBar {{ background: {h['bg']}; color: {h['ink']}; border-bottom: 1px solid {h['rule']}; }}
+    QMenuBar::item {{ background: transparent; color: {h['ink']}; }}
+    QMenuBar::item:selected, QMenuBar::item:pressed {{ background: {h['hover']}; color: {h['ink']}; }}
+    QToolBar#ExplorerTools {{ background: {h['bg']}; border: none; border-bottom: 3px solid {h['line']}; }}
+    QToolBar#ExplorerTools::separator {{ background: {h['rule']}; }}
+    QToolBar#ExplorerTools QToolButton {{ color: {h['ink_soft']}; background: transparent; }}
+    QToolBar#ExplorerTools QToolButton:hover {{ background: {h['hover']}; border-color: {h['rule']}; color: {h['ink']}; }}
+    QToolBar#ExplorerTools QToolButton:checked {{ background: {h['active']}; border-color: {h['accent']}; color: {h['ink']}; }}
+    QToolBar#ExplorerTools QToolButton:disabled {{ color: {h['disabled']}; }}
+    QToolBar#ExplorerTools QLabel#BrandLogo, QToolBar#ExplorerTools QWidget {{ background: transparent; }}
     """
+    ring = b.get("shutter_ring")
+    if ring:
+        out += f"""
+    QPushButton#Shutter {{ border: 3px solid {ring}; }}
+    QPushButton#Shutter:hover {{ border-color: {ring}; }}
+    """
+    return out
 
 
 def make_app_icon() -> QIcon:

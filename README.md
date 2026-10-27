@@ -236,7 +236,8 @@ python tools/agent_train/train_scene.py --data <공개 데이터> --data <병원
 기존 설치본을 Explorer 화면으로 쓰기: 실행 옵션 `--brand explorer` 또는 `config.json` 에 `"brand": "explorer"`
 
 ### Keeler Explorer 판 (윈도우 · 맥)
-Explorer 판의 화면·기능 그대로에 **Keeler 로고·브랜드 색**(네이비 · 파랑)을 입힌 판입니다. 툴바 오른쪽 끝에 Keeler 로고(밝은/어두운 테마에 맞춰),
+Explorer 판의 화면·기능 그대로에 **Keeler 로고·브랜드 색**(네이비 · 파랑)을 입힌 판입니다. 홈페이지처럼 머리(메뉴바·툴바)는 테마와 상관없이
+Keeler 네이비 + 흰 글자 로고(툴바 오른쪽 끝) + 아래 Keeler 파랑 선, 셔터는 로고 마크의 주황 링,
 창 제목은 "Keeler 슬릿램프 영상 시스템 Explorer", 인쇄·Word 보고서 제목은 "Keeler 슬릿램프 영상 보고서", 아이콘은 Keeler 로고 마크입니다.
 다른 판과 이름·설치 위치·AppId 가 달라 **한 PC에 나란히 설치**되고, 환자 DB·영상은 같은 데이터 폴더를 함께 씁니다.
 

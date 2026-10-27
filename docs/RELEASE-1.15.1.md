@@ -16,6 +16,8 @@ Explorer 판(SlitLampExplorer)을 고치고, Keeler 로고·색으로 만든 **K
 - **Keeler Explorer 판(새로)**: Explorer 판의 화면·기능 그대로에 Keeler 로고(툴바 오른쪽 끝, 밝은/어두운 테마별)와
   Keeler 네이비·파랑 색, Keeler 아이콘, "Keeler 슬릿램프 영상 보고서" 제목을 입혔습니다. 다른 판과 나란히 설치되고
   환자 DB·영상은 같은 데이터 폴더를 함께 씁니다.
+  Keeler 홈페이지 색 역할에 맞춰 머리(메뉴바·툴바)는 밝은/어두운 테마와 상관없이 Keeler 네이비에 흰 글자 로고,
+  그 아래 Keeler 파랑 선, 사진 캡처 셔터에는 로고 마크의 주황 링을 둘렀습니다 (Keeler 판 셔터도 같은 주황 링).
 
 다운로드
 - Windows: SlitLampImaging-Setup-1.15.1.exe (기본), KeelerSlitLamp-Setup-1.15.1.exe (Keeler),

@@ -247,7 +247,9 @@ class ExplorerWindow(QMainWindow):
         from PySide6.QtGui import QPainter, QPixmap
         from PySide6.QtSvg import QSvgRenderer
         key = "logo_dark" if self.config.theme == "dark" else "logo"
-        path = app_brand.asset(self.brand.get(key)) or app_brand.asset(self.brand.get("logo"))
+        # 브랜드 색 헤더(네이비)면 테마와 상관없이 헤더용 로고(흰 글자)
+        path = (app_brand.asset(self.brand.get("header_logo")) or app_brand.asset(self.brand.get(key))
+                or app_brand.asset(self.brand.get("logo")))
         r = QSvgRenderer(path)
         size = r.defaultSize()
         h = 30

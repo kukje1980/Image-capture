@@ -517,8 +517,13 @@ def test_keeler_explorer_window_shows_logo(qapp, app_env, monkeypatch):
         assert w.windowTitle() == "Keeler 슬릿램프 영상 시스템 Explorer"
         assert w.brand_logo is not None and not w.brand_logo.pixmap().isNull()
         dark = w.brand_logo.pixmap().toImage()
-        w.toggle_theme()                                                  # 밝은 화면용 로고로 다시 그림
-        assert w.brand_logo.pixmap().toImage() != dark
+        w.toggle_theme()                                                  # 밝은 테마여도 머리는 Keeler 네이비
+        assert w.brand_logo.pixmap().toImage() == dark                    # 네이비 헤더용 흰 글자 로고 그대로
+        from app.ui.theme import build_qss
+        for mode in ("dark", "light"):
+            qss = build_qss(mode)
+            assert "QToolBar#ExplorerTools { background: #052133;" in qss    # 홈페이지 헤더 네이비
+            assert "rgba(237, 111, 30, 0.85)" in qss                          # 셔터 링 = 로고 마크 주황
     finally:
         w.close()
         brand.select("default")
