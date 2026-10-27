@@ -2,6 +2,7 @@
 
 위쪽 '바로 실행' 줄: 카메라 다시 연결 · 단축키 설정 · 샘플 사진 가져오기 (main_window 가 actions 로 넘겨 줌).
 그 아래: 화면 테마 · 시작 화면 · Smart 도구줄 · 소스 모드 · 카메라 · 해상도 · 사진 형식 · 저장 폴더 · 효과음 · AI 에이전트.
+'USB 버튼' 탭: 슬릿램프 USB 버튼의 키 조합 · 기능 (app/ui/usb_buttons_tab.py).
 """
 from __future__ import annotations
 
@@ -19,6 +20,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QPushButton,
     QSpinBox,
     QTabWidget,
@@ -29,6 +31,7 @@ from PySide6.QtWidgets import (
 from app.capture.frame_utils import device_names, enumerate_devices, is_sony
 from app.ui import icons
 from app.ui.theme import ICON_ACCENT
+from app.ui.usb_buttons_tab import UsbButtonsTab
 
 
 _THEMES = [("dark", "어두운 화면"), ("light", "밝은 화면")]
@@ -203,6 +206,8 @@ class SettingsDialog(QDialog):
         self.tabs.addTab(camera, "카메라 · 저장")
         self.tabs.addTab(send, "전송")
         self.tabs.addTab(self._build_preset_tab(), "촬영 모드")
+        self.usb_tab = UsbButtonsTab(config)
+        self.tabs.addTab(self.usb_tab, "USB 버튼")
 
         btns = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -216,6 +221,14 @@ class SettingsDialog(QDialog):
         lay.addWidget(self.tabs, 1)
         lay.addWidget(btns)
         self.adjustSize()
+
+    def accept(self) -> None:
+        bad = self.usb_tab.problem()
+        if bad:
+            self.show_tab("USB 버튼")
+            QMessageBox.warning(self, "USB 버튼", bad)
+            return
+        super().accept()
 
     def show_tab(self, name: str) -> None:
         for i in range(self.tabs.count()):
@@ -668,6 +681,7 @@ class SettingsDialog(QDialog):
         c.split_count_saved = not self.split_ask.isChecked()
         for k, v in self._send_values().items():
             setattr(c, k, v)
+        c.usb_buttons = self.usb_tab.values()
         c.capture_presets = [dict(p, camera_props=dict(p["camera_props"])) for p in self._presets]
         if any(p["name"] == self._active for p in self._presets):
             c.active_preset = self._active

@@ -63,6 +63,7 @@ class AppConfig:
     px_per_mm: float = 0.0                   # 측정 눈금 보정 (0 = 미보정, px 단위)
     brand: str = ""                          # 화면 브랜드 (비면 기본, "keeler" = Keeler 전용)
     shortcuts: dict = field(default_factory=dict)   # 사용자 지정 단축키 {동작 id: "키"} (app/shortcuts.py)
+    usb_buttons: dict = field(default_factory=dict)  # 슬릿램프 USB 버튼 {"1": {"key", "action"}} (app/usb_buttons.py, 비면 기본값)
     # 스마트 캡처 (Pro LIVE) — app/capture/smart_capture.py
     smart_auto_mode: str = "off"             # off | freeze(초점 맞으면 자동 정지) | save(자동 저장)
     smart_roi_frac: float = 0.5              # 초점 판정 관심 영역 (화면 중앙 비율 0.2~1.0)

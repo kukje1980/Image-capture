@@ -368,6 +368,8 @@ def build_qss(mode: str = "dark") -> str:
     QFrame#MultiCell {{ background: #000000; border: 2px solid transparent; border-radius: 6px; }}
     QFrame#MultiCell[active="true"] {{ border: 2px solid #facc15; }}
     QListWidget#RefStrip {{ background: transparent; border: none; }}
+    QLabel#KeyProbe {{ border: 1px dashed {c['rule_strong']}; border-radius: 8px; padding: 8px; }}
+    QLabel#KeyProbe:focus {{ border: 1px solid {c['accent']}; }}
     QListWidget#RefStrip::item {{ border: 2px solid transparent; border-radius: 6px; padding: 1px; margin: 1px; }}
     QListWidget#RefStrip::item:hover {{ border: 2px solid {c['rule_strong']}; }}
     QListWidget#RefStrip::item:selected {{ border: 2px solid #facc15; background: transparent; }}

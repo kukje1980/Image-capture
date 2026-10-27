@@ -15,12 +15,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app import shortcuts
+from app import shortcuts, usb_buttons
 
 
 class ShortcutsDialog(QDialog):
-    def __init__(self, keys: dict[str, str], parent=None):
+    def __init__(self, keys: dict[str, str], parent=None, taken: dict[str, str] | None = None):
+        """taken: {키: 쓰는 곳} — 슬릿램프 USB 버튼처럼 이미 쓰는 키 (같은 키는 지정할 수 없음)."""
         super().__init__(parent)
+        self._taken = dict(taken or {})
         self.setWindowTitle("단축키 설정")
         self.resize(520, 560)
         self.edits: dict[str, QKeySequenceEdit] = {}
@@ -73,6 +75,12 @@ class ShortcutsDialog(QDialog):
         if bad:
             QMessageBox.warning(self, "단축키", "이 키는 화면에서 이미 쓰고 있어 지정할 수 없습니다:\n" + ", ".join(bad))
             return
+        for aid, k in vals.items():
+            used = next((who for tk, who in self._taken.items() if usb_buttons.same_key(k, tk)), None)
+            if used:
+                QMessageBox.warning(self, "단축키", f"'{k}' 키는 {used} 이(가) 쓰고 있어 "
+                                                     f"'{shortcuts.label(aid)}'에 지정할 수 없습니다 (설정 → USB 버튼).")
+                return
         seen: dict[str, str] = {}
         for aid, k in vals.items():
             if k and k in seen:
