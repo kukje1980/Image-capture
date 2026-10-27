@@ -362,7 +362,7 @@ def build_qss(mode: str = "dark") -> str:
         background: {c['panel2']}; color: {c['ink_soft']}; border: none; border-bottom: 1px solid {c['rule']};
         padding: 8px 10px; font-weight: 700; font-size: 12px;
     }}
-    QWidget#ExamGrid {{ background: transparent; }}
+    QWidget#ExamGrid, QWidget#ExamButtons {{ background: transparent; }}
     QFrame#Panel QScrollArea, QFrame#Panel QWidget#qt_scrollarea_viewport {{ background: transparent; }}
 
     QMenuBar {{ background: {c['panel']}; }}

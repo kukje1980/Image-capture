@@ -497,24 +497,27 @@ class ExplorerWindow(QMainWindow):
             self.reload_thumbs()
 
     def new_patient(self) -> None:
-        dlg = PatientDialog(self)
+        dlg = PatientDialog(self, db=self.db)
         if not dlg.exec():
             return
-        p = dlg.get_patient()
-        try:
-            p.id = self.db.patients.insert(p)
-        except Exception as e:  # noqa: BLE001
-            QMessageBox.warning(self, "오류", f"저장 실패: {e}\n(차트번호 중복 여부를 확인하세요)")
-            return
+        if dlg.existing is not None:                 # 같은 차트번호 → 기존 환자에 이어서
+            pid = dlg.existing.id
+        else:
+            p = dlg.get_patient()
+            try:
+                pid = p.id = self.db.patients.insert(p)
+            except Exception as e:  # noqa: BLE001
+                QMessageBox.warning(self, "오류", f"저장 실패: {e}\n(차트번호 중복 여부를 확인하세요)")
+                return
         self.tree.search.blockSignals(True)
         self.tree.search.clear()
         self.tree.search.blockSignals(False)
-        self.tree.reload(p.id)
+        self.tree.reload(pid)
 
     def edit_patient(self) -> None:
         if self.patient is None:
             return
-        dlg = PatientDialog(self, patient=self.patient)
+        dlg = PatientDialog(self, patient=self.patient, db=self.db)
         if not dlg.exec():
             return
         try:

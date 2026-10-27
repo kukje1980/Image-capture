@@ -1506,7 +1506,7 @@ class ProWorkspace(QWidget):
     def edit_patient(self) -> None:
         if not self._require_patient():
             return
-        dlg = PatientDialog(self, patient=self._patient)
+        dlg = PatientDialog(self, patient=self._patient, db=self.db)
         if not dlg.exec():
             return
         p = dlg.get_patient()

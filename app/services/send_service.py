@@ -104,6 +104,21 @@ def _base_name(patient, cap) -> str:
     return f"{_safe(patient.chart_no or 'patient')}_{_stamp(cap)}_{eye}_{cap.id}"
 
 
+def save_to_folder(captures: list, patient, folder) -> list[Path]:
+    """고른 사진·동영상 원본을 폴더에 복사 (이름: 차트번호_촬영시각_안구_번호, 같은 이름이 있으면 _2 …)."""
+    out_dir = Path(folder)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    saved = []
+    for cap in captures:
+        src = Path(cap.file_path or "")
+        if not src.is_file():
+            continue
+        dst = _unique(out_dir / f"{_base_name(patient, cap)}{src.suffix.lower()}")
+        shutil.copy2(src, dst)
+        saved.append(dst)
+    return saved
+
+
 def load_bgr(path):
     if not path or cv2 is None or not os.path.exists(path):
         return None
