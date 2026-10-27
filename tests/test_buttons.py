@@ -183,11 +183,11 @@ def test_thumbnail_click_selects_double_click_opens(qapp, win, monkeypatch):
 def test_multi_view_select_save_and_reset(qapp, win):
     caps = _photos(win, 3)
     cb, panel = win.control_bar, win.thumbnail_panel
-    QTest.mouseClick(cb.btn_multi, Qt.MouseButton.LeftButton)           # 고른 사진이 없으면 켜지지 않음
-    assert not win._multi and not cb.btn_multi.isChecked()
+    QTest.mouseClick(win.thumbnail_panel.btn_multi, Qt.MouseButton.LeftButton)           # 고른 사진이 없으면 켜지지 않음
+    assert not win._multi and not cb.btn_multi.isChecked() and not win.thumbnail_panel.btn_multi.isChecked()
     for c in caps:
         QTest.mouseClick(panel._widgets[c.id], Qt.MouseButton.LeftButton)
-    QTest.mouseClick(cb.btn_multi, Qt.MouseButton.LeftButton)
+    QTest.mouseClick(win.thumbnail_panel.btn_multi, Qt.MouseButton.LeftButton)
     assert win._multi and win.view_stack.currentIndex() == 2 and win.multi_view.count() == 3
     assert cb.btn_save_multi.isVisible() and cb.btn_freeze.isVisible() and not cb.btn_freeze.isEnabled()
     comp = win.multi_view.composite()
@@ -198,7 +198,7 @@ def test_multi_view_select_save_and_reset(qapp, win):
     saved = win.db.captures.list_by_patient(win._current_patient.id)[0]
     assert saved.note == "멀티 3장"
     assert [c.id for c in panel.selected_captures()] == [c.id for c in caps]   # 저장 후에도 선택 유지
-    QTest.mouseClick(cb.btn_multi, Qt.MouseButton.LeftButton)           # 다시 누르면 초기화
+    QTest.mouseClick(win.thumbnail_panel.btn_multi, Qt.MouseButton.LeftButton)           # 다시 누르면 초기화
     assert not win._multi and win.view_stack.currentIndex() == 0
     assert panel.selected_captures() == [] and win.multi_view.count() == 0
 
@@ -377,13 +377,22 @@ def test_capture_presets_save_switch_and_live_props(qapp, win, monkeypatch):
     assert win.apply_preset(presets.DEFAULT_NAME)
     assert cfg.camera_props == {} and not cfg.smart_peaking and cfg.split_count == 4
     assert not win.smart_bar.btn_peaking.isChecked()
-    # 도크 '모드' 메뉴에서 '형광' 고르기 → 카메라 값이 촬영 중에 바로 적용
+    # 촬영 모드는 설정 → 일반의 '촬영 모드' 에서 고른다 (촬영 도크의 '모드' 버튼은 없어짐)
+    assert not win.control_bar.btn_preset.isVisible()
     names = [p["name"] for p in presets.all_presets(cfg)]
-    monkeypatch.setattr(win, "_exec_menu", lambda menu, pos: menu.actions()[names.index("형광")])
-    QTest.mouseClick(win.control_bar.btn_preset, Qt.MouseButton.LeftButton)
+    from app.ui.settings_dialog import SettingsDialog
+
+    def pick_in_settings(dlg):
+        assert [dlg.preset_combo.itemText(i) for i in range(dlg.preset_combo.count())] == names
+        dlg.preset_combo.setCurrentIndex(names.index("형광"))
+        return True
+    monkeypatch.setattr(SettingsDialog, "exec", pick_in_settings)
+    win._open_settings()
     assert cfg.active_preset == "형광" and cfg.smart_peaking and cfg.split_count == 6
     assert win.smart_bar.btn_peaking.isChecked() and win.control_bar.split_count == 6
-    assert _wait(qapp, lambda: win.worker._source.get_property("brightness") == 60)
+    # 설정을 닫으면 카메라를 다시 열고, 열 때 모드의 카메라 값이 적용된다
+    assert _wait(qapp, lambda: getattr(win.worker, "_source", None) is not None
+                 and win.worker._source.get_property("brightness") == 60, 8)
     # 해상도가 다른 모드는 카메라를 다시 연다
     w0 = cfg.capture_width
     nw, nh = (1280, 720) if w0 != 1280 else (1920, 1080)
@@ -431,5 +440,115 @@ def test_center_buttons_stay_put_in_every_mode(qapp, win):
     caps = _photos(win, 2)
     for c in caps:
         QTest.mouseClick(win.thumbnail_panel._widgets[c.id], Qt.MouseButton.LeftButton)
-    QTest.mouseClick(cb.btn_multi, Qt.MouseButton.LeftButton)            # 멀티: 저장 생김
+    QTest.mouseClick(win.thumbnail_panel.btn_multi, Qt.MouseButton.LeftButton)            # 멀티: 저장 생김
     assert centers() == base
+
+
+# ---------------- 멀티: 버튼 위치 · 돋보기 기본 · Pro 검토 편집 ----------------
+def _enter_multi(qapp, win, n=3):
+    caps = _photos(win, n)
+    panel = win.thumbnail_panel
+    for c in caps:
+        QTest.mouseClick(panel._widgets[c.id], Qt.MouseButton.LeftButton)
+    QTest.mouseClick(panel.btn_multi, Qt.MouseButton.LeftButton)
+    for _ in range(5):
+        qapp.processEvents()
+    assert win._multi and win.multi_view.count() == n
+    return caps
+
+
+def test_multi_button_above_od_os(qapp, win):
+    panel, cb = win.thumbnail_panel, win.control_bar
+    qapp.processEvents()
+    assert not cb.btn_multi.isVisible()                                  # 촬영 도크에서는 빠짐
+    assert panel.btn_multi.isVisible()
+    y_multi = panel.btn_multi.mapTo(panel, panel.btn_multi.rect().bottomLeft()).y()
+    y_od = panel.filter_buttons["OD"].mapTo(panel, panel.filter_buttons["OD"].rect().topLeft()).y()
+    assert y_multi <= y_od                                               # '촬영 이미지' 줄 = OD · OS 위
+    _enter_multi(qapp, win, 2)
+    assert panel.btn_multi.isChecked() and cb.btn_multi.isChecked()
+    QTest.mouseClick(panel.btn_multi, Qt.MouseButton.LeftButton)        # 다시 누르면 초기화
+    assert not win._multi and not panel.btn_multi.isChecked()
+
+
+def test_multi_magnifier_default_and_active_cell(qapp, win):
+    _enter_multi(qapp, win, 3)
+    mv = win.multi_view
+    assert mv.tool() == "magnify" and all(cv.tool() == "magnify" for cv in mv.canvases())
+    assert mv.tool_buttons["magnify"].isChecked()
+    cv1 = mv.canvases()[1]
+    vp = cv1.viewport()
+    QTest.mousePress(vp, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, vp.rect().center())
+    assert cv1._lens is not None                                          # 누르는 동안 확대 렌즈
+    assert mv.active_canvas() is cv1                                      # 누른 칸이 편집 대상
+    assert mv._cells[1].property("active") and not mv._cells[0].property("active")
+    QTest.mouseRelease(vp, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, vp.rect().center())
+    assert cv1._lens is None
+
+
+def test_multi_pro_edit_tools(qapp, win):
+    caps = _enter_multi(qapp, win, 3)
+    mv = win.multi_view
+    cv0, cv1 = mv.canvases()[:2]
+    mv.set_active(cv1)
+    h, w = cv1.image().shape[:2]
+    mv.b_rot_r.click()                                                    # 회전은 고른 칸만
+    assert cv1.image().shape[:2] == (w, h) and cv0.image().shape[:2] == (h, w)
+    assert mv.b_undo.isEnabled() and mv.b_save.isEnabled()
+    mv.b_undo.click()
+    assert cv1.image().shape[:2] == (h, w)
+    mv.b_redo.click()
+    assert cv1.geometry_changed()
+    mv.b_orig.click()
+    assert not cv1.is_modified()
+    # 주석: 화살표 도구로 끌기
+    mv.set_tool("arrow")
+    assert all(cv.tool() == "arrow" for cv in mv.canvases())
+    vp = cv1.viewport()
+    r = vp.rect()
+    QTest.mousePress(vp, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, r.center())
+    QTest.mouseMove(vp, r.center() + r.topLeft() / 1 + QPoint_(30, 20))
+    QTest.mouseRelease(vp, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, r.center() + QPoint_(30, 20))
+    assert cv1.annotation_kinds() == ["arrow"] and mv.b_clear.isEnabled()
+    mv.b_clear.click()
+    assert not cv1.has_annotations()
+    # 보정 (고른 칸 → 모든 칸)
+    mv.show_adjust()
+    pop = mv.adjust_popup
+    pop.s_bright.setValue(40)
+    assert cv1.adjust().brightness == 40 and cv0.adjust().brightness == 0
+    pop.chk_all.setChecked(True)
+    pop.s_contrast.setValue(150)
+    assert all(cv.adjust().contrast == 1.5 for cv in mv.canvases())
+    pop.hide()
+    # 고른 사진이 바뀌어도 남은 사진의 편집은 그대로
+    QTest.mouseClick(win.thumbnail_panel._widgets[caps[2].id], Qt.MouseButton.LeftButton)   # 3번째 선택 해제
+    assert mv.count() == 2 and mv.canvas_for(caps[1].id) is cv1 and cv1.adjust().brightness == 40
+    # 멀티 화면 저장(합성)에 보정이 들어간다
+    comp = mv.composite()
+    assert comp is not None and comp.mean() > 0
+
+
+def QPoint_(x, y):
+    from PySide6.QtCore import QPoint
+    return QPoint(x, y)
+
+
+def test_multi_save_edited_and_double_click(qapp, win, monkeypatch):
+    caps = _enter_multi(qapp, win, 2)
+    mv = win.multi_view
+    panel = win.thumbnail_panel
+    cv0 = mv.canvases()[0]
+    mv.set_active(cv0)
+    mv.b_flip_h.click()
+    n0 = panel.count()
+    saved = win._on_save_multi_edited()
+    assert len(saved) == 1 and saved[0].note == "편집본" and panel.count() == n0 + 1
+    assert not cv0.is_modified() and not mv.b_save.isEnabled()           # 같은 편집을 두 번 저장하지 않게
+    assert [c.id for c in panel.selected_captures()] == [c.id for c in caps]   # 고른 사진은 그대로
+    opened = []
+    mv.cellActivated.disconnect()                                         # 실제 큰 화면 창은 띄우지 않음
+    mv.cellActivated.connect(lambda cap: opened.append(cap.id))
+    vp = mv.canvases()[1].viewport()
+    QTest.mouseDClick(vp, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, vp.rect().center())
+    assert opened == [caps[1].id]                                         # 두 번 누르면 큰 화면으로

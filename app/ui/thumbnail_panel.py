@@ -1,13 +1,13 @@
 """우측 썸네일 패널: 헤더(개수) + 필터(전체/OD/OS/동영상) + 촬영일별 묶음 목록.
 
 한 번 클릭 = 선택(번호 표시, 다시 누르면 해제) · 두 번 클릭 = 큰 화면으로 보기(thumbnailClicked).
-선택한 사진은 촬영 도크의 '멀티' 로 한 번에 본다."""
+선택한 사진은 제목 줄 오른쪽(OD · OS 위)의 '멀티' 로 한 번에 모아 보고 편집한다."""
 from __future__ import annotations
 
 import time
 from datetime import date
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -20,6 +20,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.ui import icons
+from app.ui.theme import ICON_ACCENT
 from app.ui.thumbnail_widget import ThumbnailWidget
 
 _DOW = "월화수목금토일"
@@ -67,6 +69,15 @@ class ThumbnailPanel(QFrame):
         head.addWidget(title)
         head.addWidget(self._badge)
         head.addStretch(1)
+        self.btn_multi = QPushButton(icons.gap("멀티"))
+        self.btn_multi.setObjectName("MultiBtn")
+        self.btn_multi.setCheckable(True)
+        self.btn_multi.setIcon(icons.icon("review", ICON_ACCENT, 16))
+        self.btn_multi.setIconSize(QSize(15, 15))
+        self.btn_multi.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.btn_multi.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_multi.setToolTip("아래 목록에서 한 번씩 눌러 고른 사진들을 한 화면에 모아 보고 편집 · 다시 누르면 선택 초기화")
+        head.addWidget(self.btn_multi)
         outer.addLayout(head)
 
         chips = QHBoxLayout()

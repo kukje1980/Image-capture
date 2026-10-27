@@ -136,21 +136,34 @@ class ControlBar(QFrame):
 
         # 일시정지는 정지영상(누르면 멈춤 · 다시 누르면 라이브)과 같은 기능이라 화면에 두지 않는다
         self.btn_pause.setVisible(False)
-        for b in (self.btn_preset, self.btn_quad, self.btn_smart, self.btn_multi, self.btn_send):
-            ll.addWidget(b)
+        ll.addWidget(self.btn_smart)
+        # '멀티' 는 오른쪽 '촬영 이미지' 칸(OD · OS 위)의 버튼, '모드'(촬영 모드)는 설정 창으로 옮겼다 —
+        # 여기 버튼은 상태 · 신호만 들고 화면엔 안 보임
+        for hidden in (self.btn_multi, self.btn_preset):
+            hidden.setParent(self)
+            hidden.hide()
+        self.multi_mirrors: list = []        # 같은 멀티 상태를 보여 줄 다른 버튼들 (촬영 이미지 칸의 '멀티')
         ll.addStretch(1)
-        # 가운데: [저장] [정지영상] [셔터] [녹화] [비우기] — 저장은 정지영상 바로 옆.
-        # 저장 · 비우기 칸은 버튼이 숨어도 자리를 지켜 셔터가 항상 같은 곳에 있다
+        # 가운데: [분할 · 저장 · 정지영상] (한 묶음) [셔터] [녹화] [전송] [비우기]
+        # 저장 · 비우기 칸은 버튼이 숨거나 꺼져도 자리를 지켜 셔터가 항상 같은 곳에 있다
         center = QWidget()
         cl = QHBoxLayout(center)
         cl.setContentsMargins(0, 0, 0, 0)
         cl.setSpacing(6)
         self._save_slot = self._slot(self.btn_save_quad, self.btn_save_multi)
         self._clear_slot = self._slot(self.btn_clear_quad)
-        cl.addWidget(self._save_slot)
-        cl.addWidget(self.btn_freeze)
+        self.still_group = QFrame()
+        self.still_group.setObjectName("DockGroup")      # 분할 · 저장 · 정지영상 묶음
+        gl = QHBoxLayout(self.still_group)
+        gl.setContentsMargins(3, 3, 3, 3)
+        gl.setSpacing(2)
+        gl.addWidget(self.btn_quad)
+        gl.addWidget(self._save_slot)
+        gl.addWidget(self.btn_freeze)
+        cl.addWidget(self.still_group)
         cl.addWidget(self.btn_capture)
         cl.addWidget(self.btn_record)
+        cl.addWidget(self.btn_send)
         cl.addWidget(self._clear_slot)
         self._right = QWidget()
         rl = QHBoxLayout(self._right)
@@ -235,7 +248,7 @@ class ControlBar(QFrame):
                 b.setMinimumWidth(0)
                 b.setMaximumWidth(16777215)
         self._apply_widths()
-        for w in (self._left, self._save_slot, self._clear_slot, self._right, self):
+        for w in (self._left, self.still_group, self._save_slot, self._clear_slot, self._right, self):
             if w.layout() is not None:
                 w.layout().invalidate()
             w.updateGeometry()
@@ -323,7 +336,12 @@ class ControlBar(QFrame):
         self.btn_multi.blockSignals(True)
         self.btn_multi.setChecked(on)
         self.btn_multi.blockSignals(False)
-        self.btn_save_multi.setVisible(on)
+        for b in self.multi_mirrors:
+            b.blockSignals(True)
+            b.setChecked(on)
+            b.blockSignals(False)
+        self._multi_on = bool(on)
+        self._sync_save_slot()
         self.btn_freeze.setEnabled(not on and self.btn_capture.isEnabled())   # 숨기지 않고 끔 (자리 유지)
 
     def set_preset_name(self, name: str) -> None:
@@ -351,15 +369,23 @@ class ControlBar(QFrame):
         self.eyeChanged.emit(code)
 
     def set_capture_enabled(self, on: bool) -> None:
+        self._capture_on = bool(on)
         self.btn_capture.setEnabled(on)
         self.btn_record.setEnabled(on)
         self.btn_freeze.setEnabled(on)
-        self.btn_save_quad.setEnabled(on)
+        self._sync_save_slot()
 
     def set_quad_mode(self, on: bool) -> None:
-        # 4분할 모드에서만 보이는 버튼 / 단일 모드에서만 의미있는 버튼 토글
-        self.btn_save_quad.setVisible(on)
+        # 분할에서만 쓰는 '비우기' 는 그때만 보이고, '저장' 은 묶음 안에 늘 보이되 분할 · 멀티일 때만 눌린다
+        self._quad_on = bool(on)
         self.btn_clear_quad.setVisible(on)
+        self._sync_save_slot()
+
+    def _sync_save_slot(self) -> None:
+        multi = getattr(self, "_multi_on", False)
+        self.btn_save_multi.setVisible(multi)
+        self.btn_save_quad.setVisible(not multi)
+        self.btn_save_quad.setEnabled(getattr(self, "_quad_on", False) and getattr(self, "_capture_on", False))
 
     def set_status(self, text: str) -> None:
         self.status.setText(text)

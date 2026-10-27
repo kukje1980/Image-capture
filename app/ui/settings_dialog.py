@@ -149,7 +149,21 @@ class SettingsDialog(QDialog):
         gl.addLayout(quick)
         gl.addWidget(self.quick_status)
         gl.addWidget(self._rule())
+        # 촬영 모드 (예전 촬영 도크의 '모드' 버튼): 고르면 확인 때 바로 바뀜 · 만들기 · 고치기는 '촬영 모드' 탭
+        self.preset_combo = QComboBox()
+        self.preset_combo.setMinimumWidth(200)
+        self.preset_combo.setToolTip("자주 쓰는 카메라 · 촬영 설정 묶음 — 고르고 '확인' 을 누르면 바로 바뀝니다")
+        self.preset_combo.currentIndexChanged.connect(self._on_preset_combo)
+        self.btn_preset_edit = QPushButton("모드 만들기 · 편집…")
+        self.btn_preset_edit.clicked.connect(lambda: self.show_tab("촬영 모드"))
+        preset_row = QWidget()
+        prl = QHBoxLayout(preset_row)
+        prl.setContentsMargins(0, 0, 0, 0)
+        prl.addWidget(self.preset_combo, 1)
+        prl.addWidget(self.btn_preset_edit)
+
         gform = QFormLayout()
+        gform.addRow("촬영 모드", preset_row)
         gform.addRow("화면 테마", self.theme)
         gform.addRow("시작 화면", self.start_home)
         gform.addRow("Smart 도구줄", self.smart_visible)
@@ -220,7 +234,7 @@ class SettingsDialog(QDialog):
         root = QHBoxLayout(w)
         # 왼쪽: 목록
         left = QVBoxLayout()
-        intro = QLabel("자주 쓰는 촬영 설정을 모드로 저장해 두면 촬영 도크의 '모드' 버튼으로 바로 바꿉니다.  ★ = 지금 모드")
+        intro = QLabel("자주 쓰는 촬영 설정을 모드로 저장해 두면 설정 → 일반의 '촬영 모드' 에서 바로 바꿉니다.  ★ = 지금 모드")
         intro.setObjectName("Muted")
         intro.setWordWrap(True)
         left.addWidget(intro)
@@ -307,7 +321,24 @@ class SettingsDialog(QDialog):
                                                 if p["name"] == self._active), 0))
         return w
 
+    def _sync_preset_combo(self) -> None:
+        if not hasattr(self, "preset_combo"):
+            return
+        self.preset_combo.blockSignals(True)
+        self.preset_combo.clear()
+        for p in self._presets:
+            self.preset_combo.addItem(p["name"])
+        names = [p["name"] for p in self._presets]
+        self.preset_combo.setCurrentIndex(names.index(self._active) if self._active in names else 0)
+        self.preset_combo.blockSignals(False)
+
+    def _on_preset_combo(self, idx: int) -> None:
+        if 0 <= idx < len(getattr(self, "_presets", [])):
+            self._active = self._presets[idx]["name"]
+            self._refresh_preset_list(select=idx)
+
     def _refresh_preset_list(self, select: int = 0) -> None:
+        self._sync_preset_combo()
         self.preset_list.blockSignals(True)
         self.preset_list.clear()
         for p in self._presets:

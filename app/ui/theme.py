@@ -169,7 +169,7 @@ def build_qss(mode: str = "dark") -> str:
     QFrame#Dock QLabel {{ background: transparent; }}
     QFrame#Dock QWidget#DockPart {{ background: transparent; }}
     QFrame#DockSep {{ background: {c['rule']}; }}
-    QFrame#EyeSeg {{ background: {c['bg']}; border: 1px solid {c['rule']}; border-radius: 10px; }}
+    QFrame#EyeSeg, QFrame#DockGroup {{ background: {c['bg']}; border: 1px solid {c['rule']}; border-radius: 10px; }}
     QPushButton#EyeBtn {{
         background: transparent; border: 1px solid transparent; border-radius: 7px; padding: 2px 6px; min-width: 40px; min-height: 34px;
         color: {c['ink_soft']}; font-family: Menlo, Consolas, "JetBrains Mono", monospace; font-size: 13px; font-weight: 700;
@@ -363,6 +363,18 @@ def build_qss(mode: str = "dark") -> str:
         padding: 8px 10px; font-weight: 700; font-size: 12px;
     }}
     QWidget#ExamGrid, QWidget#ExamButtons {{ background: transparent; }}
+    QWidget#MultiGrid {{ background: #000000; border-radius: 10px; }}
+    QLabel#MultiEmpty {{ color: #8a94a6; background: transparent; }}
+    QFrame#MultiCell {{ background: #000000; border: 2px solid transparent; border-radius: 6px; }}
+    QFrame#MultiCell[active="true"] {{ border: 2px solid #facc15; }}
+    QFrame#MultiAdjust {{ background: {c['panel']}; border: 1px solid {c['rule_strong']}; border-radius: 10px; }}
+    QFrame#MultiAdjust QLabel, QFrame#MultiAdjust QCheckBox {{ background: transparent; }}
+    QPushButton#MultiBtn {{
+        background: transparent; border: 1px solid {c['rule']}; border-radius: 7px; padding: 3px 10px;
+        min-height: 0px; color: {c['ink_soft']}; font-weight: 700;
+    }}
+    QPushButton#MultiBtn:hover {{ color: {c['ink']}; border-color: {c['rule_strong']}; }}
+    QPushButton#MultiBtn:checked {{ background: {c['accent_soft']}; border-color: {c['accent']}; color: {c['ink']}; }}
     QFrame#Panel QScrollArea, QFrame#Panel QWidget#qt_scrollarea_viewport {{ background: transparent; }}
 
     QMenuBar {{ background: {c['panel']}; }}

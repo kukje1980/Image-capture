@@ -250,6 +250,12 @@ class MainWindow(QMainWindow):
         self.control_bar.presetClicked.connect(self._safe("촬영 모드", lambda: self._on_preset_menu()))
         self.control_bar.set_preset_name(self.config.active_preset or capture_presets.DEFAULT_NAME)
         self.multi_view.cellActivated.connect(self._on_thumbnail_clicked)
+        self.multi_view.saveEditedRequested.connect(self._safe("멀티 편집본 저장", lambda: self._on_save_multi_edited()))
+        self.multi_view.set_px_per_mm(float(getattr(self.config, "px_per_mm", 0.0) or 0.0))
+        # '멀티' 버튼은 오른쪽 촬영 이미지 칸(OD · OS 위) — 촬영 도크의 숨은 버튼과 상태를 함께 쓴다
+        tb_multi = self.thumbnail_panel.btn_multi
+        self.control_bar.multi_mirrors.append(tb_multi)
+        tb_multi.clicked.connect(self._safe("멀티", lambda: self.control_bar.btn_multi.toggle()))
         self.control_bar.eyeChanged.connect(lambda e: self.video_view.set_hud(eye=e))
         cfg = self.config
         self.smart_bar.set_state(cfg.smart_mode, cfg.smart_peaking, cfg.smart_peaking_sensitivity,
@@ -1031,6 +1037,35 @@ class MainWindow(QMainWindow):
         self.thumbnail_panel.add_capture(cap)
         self.statusBar().showMessage(f"멀티 화면({n}장)을 한 장의 사진으로 저장했습니다", 4000)
 
+    def _on_save_multi_edited(self) -> list:
+        """멀티 화면에서 편집 · 보정 · 주석한 사진을 각각 새 사진으로 저장 (원본은 그대로)."""
+        if self._current_patient is None:
+            QMessageBox.information(self, "확인", "환자를 먼저 선택하세요.")
+            return []
+        items = self.multi_view.modified()
+        if not items:
+            QMessageBox.information(self, "편집본 저장", "보정 · 편집 · 주석이 없어 저장할 내용이 없습니다.")
+            return []
+        saved = []
+        for cap, cv in items:
+            kinds = cv.annotation_kinds()
+            if any(k in ("length", "angle") for k in kinds):
+                note = "측정"
+            elif kinds:
+                note = "주석"
+            elif cv.geometry_changed():
+                note = "편집본"
+            else:
+                note = "보정본"
+            saved.append(self.service.save_photo(cv.render_to_bgr(), self._current_patient,
+                                                 eye=cap.eye or "NA", note=note))
+        sounds.play("shutter")
+        for c in saved:
+            self.thumbnail_panel.add_capture(c)
+        self.multi_view.reset_edits([cap.id for cap, _cv in items])   # 같은 편집을 두 번 저장하지 않게
+        self.statusBar().showMessage(f"편집본 {len(saved)}장을 새 사진으로 저장했습니다 (원본은 그대로)", 5000)
+        return saved
+
     # ---- 촬영 모드 (자주 쓰는 카메라 · 촬영 설정) ----
     def _on_preset_menu(self) -> None:
         from PySide6.QtWidgets import QMenu
@@ -1699,6 +1734,8 @@ class MainWindow(QMainWindow):
                                          cfg.smart_best_shot)
                 self._apply_smart(save=False)
             self.control_bar.set_preset_name(self.config.active_preset or capture_presets.DEFAULT_NAME)
+            if new_active is not None and (old_active is None or new_active["name"] != old_active["name"]):
+                self.statusBar().showMessage(f"촬영 모드: {new_active['name']}", 4000)
             if self.config.theme != old_theme:
                 self._apply_theme()
             self._set_smart_bar_visible(self.config.smart_bar_visible, save=False)
