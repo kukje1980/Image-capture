@@ -17,6 +17,7 @@ class IconTextButton(QPushButton):
         self.setProperty("iconText", True)
         self._qicon = QIcon(icon) if icon is not None else QIcon()
         self._isz = QSize(icon_size, icon_size)
+        self._text_on = True                    # False = 아이콘만 (좁은 창의 상단 메뉴)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(7, 5, 7, 4)
         lay.setSpacing(2)
@@ -39,8 +40,18 @@ class IconTextButton(QPushButton):
 
     def setText(self, text: str) -> None:  # noqa: N802
         self._tx.setText(text)
-        self._tx.setVisible(bool(text))
+        self._tx.setVisible(bool(text) and self._text_on)
         self.updateGeometry()
+
+    def set_text_visible(self, on: bool) -> None:
+        """글자 칸 보이기/숨기기 — 숨겨도 text() 는 그대로이고, 이름은 풍선 도움말로 보인다."""
+        self._text_on = bool(on)
+        self._tx.setVisible(bool(self._tx.text()) and self._text_on)
+        self.layout().invalidate()              # 바로 다음 크기 계산에 반영되게
+        self.updateGeometry()
+
+    def is_text_visible(self) -> bool:
+        return self._text_on
 
     def icon(self) -> QIcon:
         return self._qicon

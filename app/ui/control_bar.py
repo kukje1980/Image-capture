@@ -21,7 +21,8 @@ from app.ui.theme import ICON, ICON_ACCENT, ICON_ON_ACCENT, ICON_RECORD
 
 _EYE_CODES = ["NA", "OD", "OS"]
 _EYE_BUTTONS = [("OD", "OD", "우안"), ("OS", "OS", "좌안"), ("NA", "—", "미지정")]
-_BTN_W = 76          # 도크 버튼 고정 폭 (가장 긴 이름 '녹화 중지'·'정지영상' 기준)
+_BTN_W = 76            # 도크 버튼 고정 폭 (가장 긴 이름 '녹화 중지'·'정지영상' 기준)
+_BTN_W_COMPACT = 46    # 좁은 창(아이콘만)
 
 
 def tool_button(text: str, icon_name: str, obj: str, checkable: bool = False, color: str = ICON,
@@ -100,7 +101,11 @@ class ControlBar(QFrame):
                                     tip="분할 정지영상 — 누르면 2 · 4 · 6 · 8 · 16칸 중에서 고릅니다 (고른 칸 수는 저장)")
         self.split_count = 4                 # 지금 / 다음 분할 칸 수
         self.count_chooser = None            # 호출형(anchor) → 칸 수 | None — 없으면 split_count 그대로
+        self.count_saved = False             # True = 칸 수를 한 번 골라 저장함 → 누르면 묻지 않고 그 칸 수로
         self._quad_by_mouse = False          # 마우스로 누를 때만 칸 수를 묻는다 (코드로 켤 때는 묻지 않음)
+        # 오른쪽 클릭: 언제든 칸 수 바꾸기 (분할 중이면 새 칸 수로 다시 시작)
+        self.btn_quad.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.btn_quad.customContextMenuRequested.connect(lambda _pos: self.change_split_count())
         self.btn_pause = tool_button("일시정지", "pause", "Pause", checkable=True, tip="일시정지")
         self.btn_freeze = tool_button("정지영상", "freeze", "Freeze", color=ICON_ACCENT,
                                       tip="누르면 화면 멈춤 · 다시 누르면 라이브 (4분할에서는 칸 채우기)")
@@ -134,23 +139,28 @@ class ControlBar(QFrame):
         for b in (self.btn_preset, self.btn_quad, self.btn_smart, self.btn_multi, self.btn_send):
             ll.addWidget(b)
         ll.addStretch(1)
+        # 가운데: [저장] [정지영상] [셔터] [녹화] [비우기] — 저장은 정지영상 바로 옆.
+        # 저장 · 비우기 칸은 버튼이 숨어도 자리를 지켜 셔터가 항상 같은 곳에 있다
         center = QWidget()
         cl = QHBoxLayout(center)
         cl.setContentsMargins(0, 0, 0, 0)
         cl.setSpacing(6)
+        self._save_slot = self._slot(self.btn_save_quad, self.btn_save_multi)
+        self._clear_slot = self._slot(self.btn_clear_quad)
+        cl.addWidget(self._save_slot)
         cl.addWidget(self.btn_freeze)
         cl.addWidget(self.btn_capture)
         cl.addWidget(self.btn_record)
+        cl.addWidget(self._clear_slot)
         self._right = QWidget()
         rl = QHBoxLayout(self._right)
         rl.setContentsMargins(0, 0, 0, 0)
         rl.setSpacing(4)
         rl.addStretch(1)
-        rl.addWidget(self.btn_save_quad)
-        rl.addWidget(self.btn_clear_quad)
-        rl.addWidget(self.btn_save_multi)
         for side in (self._left, self._right):
             side.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        for part in (self._left, center, self._right, self._save_slot, self._clear_slot):
+            part.setObjectName("DockPart")          # 도크 바탕색이 그대로 보이게 (투명)
         lay.addWidget(self._left, 1)
         lay.addWidget(center, 0)
         lay.addWidget(self._right, 1)
@@ -162,9 +172,11 @@ class ControlBar(QFrame):
         # 녹화 오른쪽 실시간 안내(정지영상 · 사진 저장됨 …)는 화면에 띄우지 않는다 — 글자는 기록용으로만 유지
         self.status_dot.setVisible(False)
         self.status.setVisible(False)
-        for b in (self.btn_preset, self.btn_quad, self.btn_pause, self.btn_smart, self.btn_multi, self.btn_send, self.btn_freeze,
-                  self.btn_record, self.btn_save_quad, self.btn_clear_quad, self.btn_save_multi):
-            b.setFixedWidth(_BTN_W)
+        self._compact = False
+        self._sized_buttons = (self.btn_preset, self.btn_quad, self.btn_pause, self.btn_smart, self.btn_multi,
+                               self.btn_send, self.btn_freeze, self.btn_record, self.btn_save_quad,
+                               self.btn_clear_quad, self.btn_save_multi)
+        self._apply_widths()
         lay.addWidget(self.status_dot)
         lay.addWidget(self.status)
 
@@ -189,6 +201,46 @@ class ControlBar(QFrame):
         self.set_multi_mode(False)
 
     @staticmethod
+    def _slot(*buttons) -> QWidget:
+        w = QWidget()
+        sl = QHBoxLayout(w)
+        sl.setContentsMargins(0, 0, 0, 0)
+        sl.setSpacing(4)
+        for b in buttons:
+            sl.addWidget(b)
+        return w
+
+    def _apply_widths(self) -> None:
+        bw = _BTN_W_COMPACT if self._compact else _BTN_W
+        for b in self._sized_buttons:
+            b.setFixedWidth(bw)
+        for slot in (self._save_slot, self._clear_slot):
+            slot.setMinimumWidth(bw)
+
+    def is_compact(self) -> bool:
+        return self._compact
+
+    def set_compact(self, on: bool) -> None:
+        """좁은 창: 도크 버튼을 아이콘만 남겨(이름은 풍선 도움말) 셔터까지 한눈에 보이게."""
+        on = bool(on)
+        if on == self._compact:
+            return
+        self._compact = on
+        for b in self._sized_buttons:
+            b.set_text_visible(not on)
+        for b in self.eye_buttons.values():
+            if on:
+                b.setFixedWidth(46)
+            else:
+                b.setMinimumWidth(0)
+                b.setMaximumWidth(16777215)
+        self._apply_widths()
+        for w in (self._left, self._save_slot, self._clear_slot, self._right, self):
+            if w.layout() is not None:
+                w.layout().invalidate()
+            w.updateGeometry()
+
+    @staticmethod
     def _sep() -> QFrame:
         f = QFrame()
         f.setObjectName("DockSep")
@@ -197,7 +249,7 @@ class ControlBar(QFrame):
 
     def _on_quad(self, checked: bool) -> None:
         by_mouse, self._quad_by_mouse = self._quad_by_mouse, False
-        if checked and by_mouse and self.count_chooser is not None:
+        if checked and by_mouse and self.count_chooser is not None and not self.count_saved:
             n = self.count_chooser(self.btn_quad)       # 2 · 4 · 6 · 8 · 16 고르기 (취소하면 None)
             if not n:
                 self.btn_quad.blockSignals(True)
@@ -205,9 +257,30 @@ class ControlBar(QFrame):
                 self.btn_quad.blockSignals(False)
                 return
             self.split_count = int(n)
+            self.sync_quad_tip()
         self._apply_split_label(checked)
         self.set_quad_mode(checked)
         self.quadToggled.emit(checked)
+
+    def change_split_count(self) -> None:
+        """칸 수 고르기 메뉴를 (저장 여부와 상관없이) 띄운다. 분할 중이면 고른 칸 수로 다시 시작."""
+        if self.count_chooser is None:
+            return
+        n = self.count_chooser(self.btn_quad)
+        if not n:
+            return
+        self.split_count = int(n)
+        if self.btn_quad.isChecked():
+            self._apply_split_label(True)
+            self.quadToggled.emit(True)          # 새 칸 수로 모두 비우고 1번 칸부터
+        self.sync_quad_tip()
+
+    def sync_quad_tip(self) -> None:
+        if self.count_saved:
+            self.btn_quad.setToolTip(f"분할 정지영상 — 저장한 {self.split_count}분할로 바로 시작합니다 "
+                                     "(칸 수 바꾸기: 오른쪽 클릭 · 설정)")
+        else:
+            self.btn_quad.setToolTip("분할 정지영상 — 누르면 2 · 4 · 6 · 8 · 16칸 중에서 고릅니다 (고른 칸 수는 저장)")
 
     def start_split(self, n: int | None = None) -> None:
         """칸 수를 묻지 않고 바로 분할을 켠다 (단축키 Q · 저장된 칸 수)."""

@@ -40,6 +40,7 @@ class AppConfig:
     thumbnail_max_side: int = 120
     newest_on_top: bool = True
     split_count: int = 4                     # 분할 화면 칸 수 (2 · 4 · 6 · 8 · 16)
+    split_count_saved: bool = False          # True = 칸 수를 한 번 골라 저장함 → 분할 버튼은 묻지 않고 그 칸 수로
     explorer_thumbs_vertical: bool = False   # Explorer 판 영상 목록: False = 아래 가로 · True = 오른쪽 세로
     # 촬영 모드 (자주 쓰는 카메라 · 촬영 설정 묶음) — app/capture/presets.py
     capture_presets: list = field(default_factory=list)   # 저장한 촬영 모드들
@@ -56,6 +57,7 @@ class AppConfig:
     thumbs_split_eyes: bool = False          # 오른쪽 사진 목록을 OD(우안) · OS(좌안) 로 나눠 보기
     theme: str = "dark"                      # dark(기본, 영상 작업 공간) | light
     start_screen: str = "home"               # 시작 화면: home(홈 메뉴) | capture(바로 촬영)
+    home_image: str = ""                     # 홈 화면 큰 사진 (비면 브랜드 기본 사진 · 그림)
     sounds_enabled: bool = True              # 효과음 (캡처 찰칵 · 정지영상 · 녹화 시작/중지)
     clinic_name: str = ""                    # 인쇄 보고서 머리말 기관명
     px_per_mm: float = 0.0                   # 측정 눈금 보정 (0 = 미보정, px 단위)

@@ -70,6 +70,10 @@ class SettingsDialog(QDialog):
             self.split_count.addItem(f"{n}분할", n)
         i = self.split_count.findData(int(getattr(config, "split_count", 4) or 4))
         self.split_count.setCurrentIndex(i if i >= 0 else 1)
+        self.split_ask = QCheckBox("분할 버튼을 누를 때마다 칸 수 묻기 (끄면 위 칸 수로 바로 시작)")
+        self.split_ask.setChecked(not bool(getattr(config, "split_count_saved", False)))
+        # 여기서 칸 수를 바꾸면 그 칸 수를 저장한 것으로 — 분할 버튼은 묻지 않고 바로 시작
+        self.split_count.currentIndexChanged.connect(lambda _i: self.split_ask.setChecked(False))
         self.split_eyes = QCheckBox("오른쪽 사진 목록을 OD(우안) · OS(좌안)로 나눠 보기 (끄면 촬영일별)")
         self.split_eyes.setChecked(bool(getattr(config, "thumbs_split_eyes", False)))
 
@@ -151,6 +155,7 @@ class SettingsDialog(QDialog):
         gform.addRow("Smart 도구줄", self.smart_visible)
         gform.addRow("사진 목록", self.split_eyes)
         gform.addRow("분할 화면", self.split_count)
+        gform.addRow("", self.split_ask)
         gform.addRow("효과음", self.sounds)
         gform.addRow("AI 에이전트", self.agent)
         gform.addRow("", self.agent_clips)
@@ -629,6 +634,7 @@ class SettingsDialog(QDialog):
         c.smart_bar_visible = self.smart_visible.isChecked()
         c.thumbs_split_eyes = self.split_eyes.isChecked()
         c.split_count = int(self.split_count.currentData() or 4)
+        c.split_count_saved = not self.split_ask.isChecked()
         for k, v in self._send_values().items():
             setattr(c, k, v)
         c.capture_presets = [dict(p, camera_props=dict(p["camera_props"])) for p in self._presets]

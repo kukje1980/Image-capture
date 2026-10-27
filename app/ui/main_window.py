@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from collections import deque
 
-from PySide6.QtCore import QSize, Qt, QThread, QTimer, QUrl
+from PySide6.QtCore import QEvent, QSize, Qt, QThread, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
@@ -49,6 +49,8 @@ from app.ui import icons
 from app.ui.agent_bar import AgentBar
 from app.ui.control_bar import ControlBar, tool_button
 from app.ui.exam_screen import ExamScreen
+from app.ui import split_menu
+from app.ui.fit import HScroll
 from app.ui.home_screen import HomeScreen
 from app.ui.multi_view import MultiView
 from app.ui.patient_list_screen import PatientListScreen
@@ -160,6 +162,13 @@ class MainWindow(QMainWindow):
         self.patient_panel = PatientPanel(self.db)      # 환자 검색·선택 — 상단바 '정보 수정' 옆에 들어감
         self.topbar = self._build_topbar()
         outer.addWidget(self.topbar)
+        self.brand_stripe = None
+        if self.brand.get("stripe") and self.brand.get("k_colors"):
+            # Keeler: 로고 K 의 4색(하늘·파랑·네이비·주황) 줄무늬를 상단바 아래에
+            self.brand_stripe = QFrame()
+            self.brand_stripe.setObjectName("BrandStripe")
+            self.brand_stripe.setFixedHeight(4)
+            outer.addWidget(self.brand_stripe)
 
         body = QWidget()
         body_lay = QVBoxLayout(body)
@@ -182,9 +191,10 @@ class MainWindow(QMainWindow):
         self.smart_bar = SmartBar()
         self.agent_bar = AgentBar()
         left.addWidget(self.view_stack, 1)
-        left.addWidget(self.smart_bar)
-        left.addWidget(self.agent_bar)
-        left.addWidget(self.control_bar)
+        # 긴 줄은 좁은 창에서 눌려 겹치지 않게 옆으로 밀어 보는 칸에 (app/ui/fit.py)
+        left.addWidget(HScroll(self.smart_bar, on_compact=self.smart_bar.set_compact))
+        left.addWidget(HScroll(self.agent_bar))
+        left.addWidget(HScroll(self.control_bar, on_compact=self.control_bar.set_compact))
 
         self.thumbnail_panel = ThumbnailPanel(self.db, newest_on_top=self.config.newest_on_top,
                                               split_eyes=bool(getattr(self.config, "thumbs_split_eyes", False)))
@@ -225,6 +235,8 @@ class MainWindow(QMainWindow):
         self.control_bar.recordToggled.connect(self._on_record_toggle)
         self.control_bar.split_count = int(getattr(self.config, "split_count", 4) or 4)
         self.control_bar.count_chooser = self._choose_split_count
+        self.control_bar.count_saved = bool(getattr(self.config, "split_count_saved", False))
+        self.control_bar.sync_quad_tip()
         self.control_bar.quadToggled.connect(self._on_quad_toggled)
         self.control_bar.freezeClicked.connect(self._on_freeze)
         self.control_bar.saveQuadClicked.connect(self._on_save_quad)
@@ -308,10 +320,16 @@ class MainWindow(QMainWindow):
             lay.addLayout(brand)
         lay.addSpacing(10)
 
+        self.nav_buttons = []
+
         def nav(text, icon_name, tip, color=ICON, checkable=False):
             btn = tool_button(text, icon_name, "NavBtn", checkable=checkable, color=color, tip=tip,
                               icon_size=20, min_width=58)
-            btn.setFixedHeight(50)
+            # 높이를 50 으로 고정하면 글꼴이 큰 PC(Windows 맑은 고딕·배율)에서 글자가 아이콘 위로 겹쳐
+            # 보였다 → 최소 50 만 두고 글자 높이만큼 늘어나게
+            btn.setMinimumHeight(50)
+            btn.setToolTip(f"{text} — {tip}" if tip else text)
+            self.nav_buttons.append(btn)
             return btn
 
         def seg():
@@ -371,7 +389,48 @@ class MainWindow(QMainWindow):
         tl.addWidget(self.btn_settings)
         lay.addWidget(tw)
         self._sync_theme_button()
+        self._topbar_compact = False
+        self._topbar_full_w = 0
+        self._topbar_min_w = 0
+        self._brand_texts = [w for w in bar.findChildren(QLabel) if w.objectName() in ("BrandTitle", "BrandSub")]
+        bar.installEventFilter(self)
         return bar
+
+    def eventFilter(self, obj, ev):  # noqa: N802
+        if obj is getattr(self, "topbar", None) and ev.type() == QEvent.Type.Resize:
+            self._fit_topbar()
+        return super().eventFilter(obj, ev)
+
+    def _fit_topbar(self) -> None:
+        """창이 좁으면 상단 메뉴를 아이콘만 남겨(이름은 풍선 도움말) 글자와 아이콘이 서로 겹치지 않게 한다."""
+        bar = getattr(self, "topbar", None)
+        if bar is None:
+            return
+        if not self._topbar_compact:
+            self._topbar_full_w = bar.layout().sizeHint().width()
+        if not self._topbar_min_w:
+            # 아이콘만 남겼을 때의 폭을 상단바 최소 폭으로 — 그보다 좁게는 눌리지 않는다
+            self._set_topbar_compact(True)
+            self._topbar_min_w = bar.layout().minimumSize().width()
+            self._set_topbar_compact(False)
+            bar.setMinimumWidth(self._topbar_min_w)
+        compact = bar.width() < self._topbar_full_w
+        if compact != self._topbar_compact:
+            self._set_topbar_compact(compact)
+
+    def _set_topbar_compact(self, compact: bool) -> None:
+        self._topbar_compact = compact
+        for b in self.nav_buttons:
+            b.set_text_visible(not compact)
+            b.setMinimumWidth(44 if compact else 58)
+        for lb in self._brand_texts:
+            lb.setVisible(not compact)
+        # 묶음(NavSeg) 칸의 크기 기억을 지워야 바로 줄어든 폭으로 계산된다
+        for seg in {b.parentWidget() for b in self.nav_buttons}:
+            if seg is not None and seg.layout() is not None:
+                seg.layout().invalidate()
+                seg.updateGeometry()
+        self.topbar.layout().invalidate()
 
     def _render_brand_logo(self) -> None:
         if self.brand_logo is None:
@@ -522,8 +581,9 @@ class MainWindow(QMainWindow):
         if on == self._fullscreen:
             return
         self._fullscreen = on
-        for w in (self.topbar, self.thumbnail_panel, self.statusBar()):
-            w.setVisible(not on)
+        for w in (self.topbar, self.brand_stripe, self.thumbnail_panel, self.statusBar()):
+            if w is not None:
+                w.setVisible(not on)
         self.smart_bar.setVisible(not on and bool(self.config.smart_bar_visible))
         if on:
             self._was_maximized = self.isMaximized()
@@ -908,29 +968,18 @@ class MainWindow(QMainWindow):
         return menu.exec(pos)
 
     def _choose_split_count(self, anchor) -> int | None:
-        """분할 버튼을 누르면 2 · 4 · 6 · 8 · 16칸 중에서 고른다. 고른 칸 수는 다음에도 쓰도록 저장."""
-        from PySide6.QtWidgets import QMenu
-        from app.ui.quad_view import SPLIT_COUNTS
-        menu = QMenu(self)
-        current = int(getattr(self.config, "split_count", 4) or 4)
-        acts = {}
-        for n in SPLIT_COUNTS:
-            a = menu.addAction(f"{n}분할")
-            a.setCheckable(True)
-            a.setChecked(n == current)
-            acts[a] = n
-        pos = anchor.mapToGlobal(anchor.rect().topLeft())
-        pos.setY(pos.y() - menu.sizeHint().height() - 4)
-        chosen = self._exec_menu(menu, pos)
-        if chosen is None or chosen not in acts:
-            return None
-        n = acts[chosen]
-        if n != current:
-            self.config.split_count = n
-            try:
-                self.config.save()
-            except Exception:  # noqa: BLE001
-                log.warning("split count save failed", exc_info=True)
+        """2 · 4 · 6 · 8 · 16칸 중에서 고른다. 고른 칸 수는 저장되어 다음부터 분할 버튼은 묻지 않고 바로 시작."""
+        n = split_menu.choose(self.config, self, anchor, self._exec_menu)
+        saved = bool(getattr(self.config, "split_count_saved", False))
+        self.control_bar.count_saved = saved
+        if n:
+            self.control_bar.split_count = n
+        self.control_bar.sync_quad_tip()
+        if n:
+            self.statusBar().showMessage(f"{n}분할로 저장 — 다음부터 분할 버튼은 바로 {n}분할 "
+                                         "(칸 수 바꾸기: 분할 버튼 오른쪽 클릭 · 설정)", 6000)
+        elif not saved:
+            self.statusBar().showMessage("분할 버튼을 누를 때마다 칸 수를 묻습니다", 4000)
         return n
 
     # ---- 멀티 (선택한 사진 한 번에 보기) ----
@@ -1656,6 +1705,8 @@ class MainWindow(QMainWindow):
             self.thumbnail_panel.set_split_eyes(bool(self.config.thumbs_split_eyes))
             if not self._quad:
                 self.control_bar.split_count = int(self.config.split_count or 4)
+            self.control_bar.count_saved = bool(getattr(self.config, "split_count_saved", False))
+            self.control_bar.sync_quad_tip()
             self.home.chk_skip.blockSignals(True)
             self.home.chk_skip.setChecked(self.config.start_screen == "capture")
             self.home.chk_skip.blockSignals(False)
@@ -1701,11 +1752,30 @@ class MainWindow(QMainWindow):
                 current = (img, f"{who} · {caption_of(cap)}")
         dlg = ReferenceLibraryDialog(self.db, self, current=current,
                                      on_import_samples=lambda parent: self._import_samples(parent),
-                                     on_register=lambda parent: self._register_reference(cap, parent))
+                                     on_register=lambda parent: self._register_reference(cap, parent),
+                                     on_save_screen=lambda img, note: self._save_reference_screen(img, note, cap))
         dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         dlg.show()
         self._refs_dialog = dlg
         return dlg
+
+    def _save_reference_screen(self, img, note: str, cap=None) -> str | None:
+        """참조 비교 화면(환자 영상 ↔ 참조 영상)을 한 장의 사진으로 지금 환자 기록에 저장."""
+        p = self._current_patient
+        if p is None:
+            QMessageBox.information(self, "확인", "환자를 먼저 선택하세요.")
+            return None
+        eye = cap.eye if cap is not None and cap.eye in ("OD", "OS", "OU") else "NA"
+        try:
+            saved = self.service.save_photo(img, p, eye=eye, note=note)
+        except Exception as e:  # noqa: BLE001
+            log.exception("reference screen save failed")
+            QMessageBox.warning(self, "화면 저장", f"저장하지 못했습니다.\n{e}")
+            return None
+        sounds.play("shutter")
+        self.thumbnail_panel.add_capture(saved)
+        self.statusBar().showMessage(f"비교 화면을 {p.name} 님 사진으로 저장했습니다 ({note})", 4000)
+        return f"{p.name} 님 사진으로 저장했습니다 ({saved.captured_at})"
 
     def _register_reference(self, cap, parent=None, values=None) -> bool:
         """지금 환자 사진을 참조 영상으로 등록 (분류·제목·설명, 라이브러리 폴더에 사본)."""

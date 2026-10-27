@@ -50,6 +50,8 @@ class SmartBar(QFrame):
         name = QLabel("Smart")
         name.setObjectName("SmartTitle")
         lay.addWidget(name)
+        self._title = name
+        self._compact = False
 
         seg = QFrame()
         seg.setObjectName("EyeSeg")
@@ -125,6 +127,14 @@ class SmartBar(QFrame):
         f.setFixedSize(1, 24)
         return f
 
+    def set_compact(self, on: bool) -> None:
+        """좁은 창: 'Smart' 글자와 안내 문구를 접는다 (안내는 초점 칸 풍선 도움말로)."""
+        self._compact = bool(on)
+        self._title.setVisible(not self._compact)
+        self.hint.setVisible(not self._compact)
+        self.layout().invalidate()
+        self.updateGeometry()
+
     @staticmethod
     def _toggle(text: str, icon_name: str, tip: str) -> QPushButton:
         b = QPushButton(icons.gap(text))
@@ -194,6 +204,7 @@ class SmartBar(QFrame):
             lb.setText(f"{lb.property('label')} {v:3.0f}")
             lb.setStyleSheet(f"color:{score_color(v)};")
         self.hint.setText(q.hint)
+        self.meters["focus"].setToolTip(q.hint or "")
         self.hint.setStyleSheet(f"color:{_GOOD};" if q.in_focus else "")
 
 

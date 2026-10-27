@@ -70,6 +70,7 @@ from app.capture.image_process import Adjust, apply_adjust, auto_levels, histogr
 from app.capture.pro_smart_capture import SmartCaptureEngine, SmartSettings, peaking_mask, roi_rect
 from app.db.measurements_dao import Measurement
 from app.ui import icons
+from app.ui.fit import HScroll
 from app.ui.patient_dialog import PatientDialog
 from app.ui.pro import print_util
 from app.ui.pro.analysis_panel import AnalysisPanel
@@ -307,7 +308,7 @@ class ProWorkspace(QWidget):
         self.b_pdf = self._btn("PDF", "PDF 보고서로 저장", icon="download")
         tl.addWidget(self.b_print)
         tl.addWidget(self.b_pdf)
-        root.addWidget(bar)
+        root.addWidget(HScroll(bar))                # 좁은 창: 버튼이 겹치지 않고 옆으로 밀어 보기
 
         body = QHBoxLayout()
         body.setSpacing(8)
