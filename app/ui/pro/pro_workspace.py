@@ -388,6 +388,8 @@ class ProWorkspace(QWidget):
         self.lbl_img.setWordWrap(True)
         self.lbl_img.setObjectName("Muted")
         cl.addWidget(self.lbl_img)
+        self.info_card = card
+        card.setVisible(not self.embedded)          # 촬영 화면의 멀티에서는 '영상 정보' 칸을 두지 않음 (메뉴를 바로 위에)
         lay.addWidget(card)
 
         self.tabs = QTabWidget()
