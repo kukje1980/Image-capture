@@ -40,6 +40,8 @@ QToolButton::menu-button { border: 0; width: 12px; }
 QFrame#sliderPopup { background: #ffffff; border: 1px solid #8a9298; border-radius: 4px; }
 QWidget#bar3d { background: #ffffff; border-bottom: 1px solid #d8ddd8; }
 QLabel#hint3d { color: #667; padding-left: 8px; }
+QPushButton#detail3d { padding: 3px 12px; }
+QPushButton#detail3d:checked { background: #1f6f8b; border-color: #1f6f8b; color: #ffffff; }
 QLabel#imageInfo { color: #2a3138; padding: 0 8px; border-left: 1px solid #c8cec8; border-right: 1px solid #c8cec8; }
 QLabel#measure { background: #20262c; color: #ffd640; padding: 1px 8px; border-radius: 3px; }
 QTabWidget::pane { border: 0; background: #000000; }

@@ -23,6 +23,11 @@ The rest of the eye is an anatomical model (``eye_model.py``, 1 = 12 mm):
 * optic nerve in its dural sheath (cut end: central retinal artery and
   vein, fascicles), optional extraocular muscle stumps
 
+Looks (``detail``)
+  * 간단히 ("simple"): the original light-weight model — one sphere with the
+    photo inside, a flat iris, a glassy cornea and a plain nerve.
+  * 자세히 ("detailed"): the anatomical model above.
+
 Modes
   * 외부 (outside): the eyeball can be rotated; the front cut opens the eye
     so the retina is seen inside the eye cup.
@@ -525,6 +530,116 @@ void main() {
 }
 """
 
+# -- simple view: the original light-weight model ------------------------------
+# One sphere (outside: plain sclera, inside: the retina with the photo), a
+# flat iris, a glassy cornea and a plain nerve tube. Fast on any PC, also with
+# software OpenGL.
+SIMPLE_EYE_FRAG = """
+uniform sampler2D u_tex;
+uniform int   u_has_tex;
+uniform float u_tmax;     // half internal FOV (rad)
+uniform float u_gmax;     // g(u_tmax)
+uniform int   u_proj;     // 0 perspective, 1 stereographic, 2 equidistant, 3 orthographic, 4 radial
+uniform float u_d;        // viewpoint for perspective
+uniform float u_c;        // cubic share for radial
+uniform vec2  u_center;   // image centre (texture coords)
+uniform vec2  u_radius;   // image-circle radius (texture coords, x and y)
+uniform float u_roll;
+uniform float u_cut;      // discard object z above this (outside mode)
+uniform float u_limbus;   // corneal opening (outside mode)
+uniform int   u_inside;
+uniform vec3  u_light;
+uniform float u_grid;     // > 0: draw 10°/30° retinal angle rings
+varying vec3 v_obj;
+varying vec3 v_n;
+
+float cbrt_(float x) { return sign(x) * pow(abs(x), 1.0 / 3.0); }
+
+float gfun(float t) {
+    if (u_proj == 1) return tan(0.5 * t);
+    if (u_proj == 2) return t;
+    if (u_proj == 3) return sin(t);
+    if (u_proj == 4) {                       // invert s = (1-c) r + c r^3 (Cardano)
+        float s = t / u_tmax;
+        if (u_c < 1e-6) return s;
+        float p = (1.0 - u_c) / u_c, q = -s / u_c;
+        float dsc = sqrt(q * q * 0.25 + p * p * p / 27.0);
+        return cbrt_(-0.5 * q + dsc) + cbrt_(-0.5 * q - dsc);
+    }
+    float den = cos(t) + u_d;
+    return den <= 1e-4 ? 1e4 : sin(t) / den;
+}
+
+void main() {
+    if (u_inside == 0 && (v_obj.z > u_cut || v_obj.z > u_limbus)) discard;
+    vec3 n = normalize(v_n);
+    if (gl_FrontFacing && u_inside == 0) {           // outer sclera
+        float diff = max(dot(n, u_light), 0.0);
+        vec3 sclera = vec3(0.93, 0.91, 0.87);
+        // faint episcleral vessels toward the limbus
+        float ves = smoothstep(0.55, 0.85, v_obj.z) * (0.5 + 0.5 * sin(atan(v_obj.y, v_obj.x) * 23.0
+                    + v_obj.z * 18.0)) * 0.12;
+        sclera = mix(sclera, vec3(0.85, 0.45, 0.42), ves);
+        gl_FragColor = vec4(sclera * (0.32 + 0.68 * diff), 1.0);
+        return;
+    }
+    float theta = acos(clamp(-v_obj.z, -1.0, 1.0));
+    // ground colour beyond the photographed field: choroid-orange fading to
+    // the darker ora serrata
+    vec3 base = mix(vec3(0.70, 0.33, 0.20), vec3(0.36, 0.16, 0.10), smoothstep(1.6, 2.6, theta));
+    vec3 col = base;
+    if (u_has_tex == 1 && theta <= u_tmax) {
+        float r = gfun(theta) / u_gmax;
+        float phi = atan(v_obj.y, v_obj.x) + u_roll;
+        vec2 uv = u_center + vec2(cos(phi) * u_radius.x, -sin(phi) * u_radius.y) * r;
+        vec4 t = texture2D(u_tex, uv);
+        col = mix(base, t.rgb, t.a);
+    }
+    if (u_grid > 0.0) {
+        float deg = degrees(theta);
+        float ring10 = 1.0 - smoothstep(0.0, 0.35, abs(mod(deg + 5.0, 10.0) - 5.0));
+        float ring30 = 1.0 - smoothstep(0.0, 0.5, abs(mod(deg + 15.0, 30.0) - 15.0));
+        col = mix(col, vec3(0.3, 0.9, 1.0), max(ring10 * 0.35, ring30 * 0.8) * u_grid);
+    }
+    float diff = 0.62 + 0.38 * max(dot(-n, u_light), 0.0);
+    gl_FragColor = vec4(col * diff, 1.0);
+}
+"""
+
+SIMPLE_SOLID_FRAG = """
+uniform vec4 u_color;
+uniform vec3 u_light;
+uniform vec3 u_campos;
+uniform int  u_kind;      // 0 plain, 1 iris, 2 cornea (specular, translucent)
+varying vec3 v_obj;
+varying vec3 v_n;
+void main() {
+    vec3 n = normalize(v_n);
+    if (!gl_FrontFacing) n = -n;
+    vec3 v = normalize(u_campos - v_obj);
+    float diff = max(dot(n, u_light), 0.0);
+    vec3 h = normalize(u_light + v);
+    float spec = pow(max(dot(n, h), 0.0), 60.0);
+    vec3 c = u_color.rgb;
+    float a = u_color.a;
+    if (u_kind == 1) {
+        float rr = length(v_obj.xy);
+        float ang = atan(v_obj.y, v_obj.x);
+        if (rr < 0.16) { gl_FragColor = vec4(0.015, 0.015, 0.02, 1.0); return; }
+        float streak = 0.5 + 0.5 * sin(ang * 70.0 + sin(ang * 11.0) * 4.0 + rr * 30.0);
+        c = mix(vec3(0.20, 0.12, 0.06), vec3(0.47, 0.31, 0.15), streak * 0.7);
+        c = mix(c, vec3(0.55, 0.38, 0.18), (1.0 - smoothstep(0.16, 0.24, rr)) * 0.6);   // collarette
+        c = mix(c, vec3(0.08, 0.06, 0.05), smoothstep(0.42, 0.48, rr));                 // limbal ring
+    }
+    if (u_kind == 2) {
+        a = clamp(u_color.a + spec * 0.9, 0.0, 1.0);
+        gl_FragColor = vec4(vec3(0.85, 0.92, 1.0) * 0.4 + vec3(spec), a);
+        return;
+    }
+    gl_FragColor = vec4(c * (0.35 + 0.65 * diff) + vec3(spec * 0.15), a);
+}
+"""
+
 # texture units
 _UNITS = {"tex": 0, "iris": 1, "scl_a": 2, "scl_p": 3, "peri": 4}
 
@@ -628,6 +743,10 @@ class EyeView(QOpenGLWidget):
     """Interactive 3D eyeball with the fundus photo on its retina."""
 
     glError = Signal(str)
+    zoomChanged = Signal(float)        # magnification relative to the start view
+
+    DETAILS = ("simple", "detailed")
+    DIST0, FOV0 = 3.3, 85.0            # start distance (outside) / field of view (inside)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -652,15 +771,17 @@ class EyeView(QOpenGLWidget):
         self.disc_dir: np.ndarray | None = None
         self.laterality: str | None = None
         # view
+        self.detail = "simple"
         self.mode = "outside"
         self.cut = 0.25
         self.show_nerve = True
         self.show_muscles = False
         self.show_grid = False
-        self.yaw, self.pitch, self.dist = 38.0, 18.0, 3.3
-        self.in_yaw, self.in_pitch, self.in_fov, self.in_z = 0.0, 0.0, 85.0, 0.35
+        self.yaw, self.pitch, self.dist = 38.0, 18.0, self.DIST0
+        self.target = np.zeros(3)      # orbit pivot (outside): moves toward what is zoomed into
+        self.in_yaw, self.in_pitch, self.in_fov, self.in_z = 0.0, 0.0, self.FOV0, 0.35
         self._drag: QPointF | None = None
-        self._drag_zoom = False
+        self._drag_kind = ""
         self._ok = False
         self._meshes: dict = {}
         self._keys: dict = {}          # what the dynamic meshes were built for
@@ -722,13 +843,37 @@ class EyeView(QOpenGLWidget):
         self.disc_dir = np.asarray(p, np.float64)
         self.update()
 
+    def set_detail(self, detail: str) -> None:
+        """간단히 ("simple") or 자세히 ("detailed")."""
+        if detail in self.DETAILS and detail != self.detail:
+            self.detail = detail
+            self.update()
+
+    def set_mode(self, mode: str) -> None:
+        """외부 ("outside") or 내부 ("inside")."""
+        self.mode = mode
+        self._view_changed()
+
     def reset_view(self) -> None:
-        self.yaw, self.pitch, self.dist = 38.0, 18.0, 3.3
-        self.in_yaw, self.in_pitch, self.in_fov = 0.0, 0.0, 85.0
-        self.update()
+        self.yaw, self.pitch, self.dist = 38.0, 18.0, self.DIST0
+        self.target = np.zeros(3)
+        self.in_yaw, self.in_pitch, self.in_fov = 0.0, 0.0, self.FOV0
+        self._view_changed()
 
     def front_view(self) -> None:
-        self.yaw, self.pitch, self.dist = 0.0, 0.0, 3.3
+        self.yaw, self.pitch, self.dist = 0.0, 0.0, self.DIST0
+        self.target = np.zeros(3)
+        self._view_changed()
+
+    @property
+    def magnification(self) -> float:
+        """How much larger than in the start view things appear (outside: distance, inside: field)."""
+        if self.mode == "inside":
+            return math.tan(math.radians(self.FOV0) / 2) / math.tan(math.radians(self.in_fov) / 2)
+        return self.DIST0 / self.dist
+
+    def _view_changed(self) -> None:
+        self.zoomChanged.emit(self.magnification)
         self.update()
 
     @property
@@ -751,6 +896,8 @@ class EyeView(QOpenGLWidget):
                 "wall": self._program(_glsl(VERT), _glsl(COMMON, WALL_FRAG)),
                 "tissue": self._program(_glsl(VERT), _glsl(COMMON, IRIS_LIB, TISSUE_FRAG)),
                 "clear": self._program(_glsl(VERT), _glsl(COMMON, CLEAR_FRAG)),
+                "simple_eye": self._program(_glsl(VERT), _glsl(SIMPLE_EYE_FRAG)),
+                "simple_solid": self._program(_glsl(VERT), _glsl(SIMPLE_SOLID_FRAG)),
             }
             for p in self._prog.values():
                 gl.glUseProgram(p)
@@ -759,17 +906,14 @@ class EyeView(QOpenGLWidget):
                     if loc >= 0:
                         gl.glUniform1i(loc, unit)
             self._max_tex = int(gl.glGetIntegerv(gl.GL_MAX_TEXTURE_SIZE))
-            tex = model_textures()
-            self._model_tex = {"iris": self._make_texture(tex["iris"]),
-                               "scl_a": self._make_texture(tex["sclera_a"]),
-                               "scl_p": self._make_texture(tex["sclera_p"]),
-                               "peri": self._make_texture(tex["periphery"])}
+            self._model_tex = {}          # made on the first detailed frame
             quad = em.MeshData(np.array([[-1, -1, 0], [1, -1, 0], [1, 1, 0], [-1, 1, 0]], np.float32),
                                np.zeros((4, 3), np.float32), np.array([0, 1, 2, 0, 2, 3], np.uint32))
             for name, mesh in (("bg", quad), ("sclera", em.sphere_mesh()), ("cornea", em.cornea_mesh()),
                                ("wall", em.inner_wall_mesh()), ("iris", em.iris_mesh()),
                                ("angle", em.angle_mesh()), ("lens", em.lens_mesh()),
-                               ("zonules", em.zonule_lines())):
+                               ("zonules", em.zonule_lines()),
+                               ("simple_iris", em._annulus(0.0, 0.5, em.IRIS_Z, 160))):
                 self._meshes[name] = _Mesh(gl, mesh)
             try:                                  # fixed-function clip planes (compatibility profile)
                 gl.glMatrixMode(gl.GL_MODELVIEW)
@@ -830,6 +974,15 @@ class EyeView(QOpenGLWidget):
         gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, fmt, w, h, 0, fmt, gl.GL_UNSIGNED_BYTE, data)
         return tex
 
+    def _ensure_model_textures(self) -> None:
+        """Anatomical textures of the detailed look (waits for the warm-up thread once)."""
+        if not self._model_tex:
+            tex = model_textures()
+            self._model_tex = {"iris": self._make_texture(tex["iris"]),
+                               "scl_a": self._make_texture(tex["sclera_a"]),
+                               "scl_p": self._make_texture(tex["sclera_p"]),
+                               "peri": self._make_texture(tex["periphery"])}
+
     def _upload_texture(self) -> None:
         gl = self.gl
         if self._tex is not None:
@@ -856,6 +1009,8 @@ class EyeView(QOpenGLWidget):
                 a = np.asarray(v, np.float32)
                 if a.shape == (4, 4):
                     gl.glUniformMatrix4fv(loc, 1, gl.GL_TRUE, a)
+                elif a.size == 4:
+                    gl.glUniform4f(loc, *(float(x) for x in a))
                 elif a.size == 2:
                     gl.glUniform2f(loc, float(a[0]), float(a[1]))
                 else:
@@ -879,19 +1034,149 @@ class EyeView(QOpenGLWidget):
             self._rim_cache = (self.cut, em.rim_meshes(self.cut))
         return self._rim_cache[1].get(part)
 
-    def _camera(self, aspect: float):
+    # -- camera, picking, zoom ------------------------------------------------
+    def _view_basis(self):
+        """Camera position, forward / right / up unit vectors and vertical field of view (°)."""
         if self.mode == "inside":
             cy_, sy = math.cos(math.radians(self.in_yaw)), math.sin(math.radians(self.in_yaw))
             cp, sp = math.cos(math.radians(self.in_pitch)), math.sin(math.radians(self.in_pitch))
             eye = np.array([0.0, 0.0, self.in_z])
-            direction = np.array([sy * cp, sp, -cy_ * cp])
-            view = look_at(eye, eye + direction, (0, 1, 0))
-            return perspective(self.in_fov, aspect, 0.01, 10.0) @ view, eye
-        cy_, sy = math.cos(math.radians(self.yaw)), math.sin(math.radians(self.yaw))
-        cp, sp = math.cos(math.radians(self.pitch)), math.sin(math.radians(self.pitch))
-        eye = self.dist * np.array([sy * cp, sp, cy_ * cp])
-        up = (0, 1, 0) if abs(self.pitch) < 89 else (0, 0, -1)
-        return perspective(38.0, aspect, 0.05, 50.0) @ look_at(eye, (0, 0, 0), up), eye
+            f, up, fovy = np.array([sy * cp, sp, -cy_ * cp]), (0.0, 1.0, 0.0), self.in_fov
+        else:
+            cy_, sy = math.cos(math.radians(self.yaw)), math.sin(math.radians(self.yaw))
+            cp, sp = math.cos(math.radians(self.pitch)), math.sin(math.radians(self.pitch))
+            d = np.array([sy * cp, sp, cy_ * cp])
+            eye, f, fovy = self.target + self.dist * d, -d, 38.0
+            up = (0.0, 1.0, 0.0) if abs(self.pitch) < 89 else (0.0, 0.0, -1.0)
+        r = _unit(np.cross(f, up))
+        return eye, f, r, np.cross(r, f), fovy
+
+    def _camera(self, aspect: float):
+        eye, f, _, u, fovy = self._view_basis()
+        if self.mode == "inside":
+            near, far = 0.01, 10.0
+        else:
+            near, far = max(0.001, min(0.05, 0.02 * self.dist)), self.dist + 6.0
+        return perspective(fovy, aspect, near, far) @ look_at(eye, eye + f, u), eye
+
+    def _ray(self, pos: QPointF):
+        """Origin and direction of the view ray through widget position ``pos``."""
+        eye, f, r, u, fovy = self._view_basis()
+        w, h = max(self.width(), 1), max(self.height(), 1)
+        t = math.tan(math.radians(fovy) / 2)
+        x = (2.0 * pos.x() / w - 1.0) * t * w / h
+        y = (1.0 - 2.0 * pos.y() / h) * t
+        return eye, _unit(f + r * x + u * y)
+
+    def _pick(self, o: np.ndarray, d: np.ndarray) -> np.ndarray | None:
+        """First visible surface along the ray: outer coat, section face, retina (analytic)."""
+        r_in = 1.0 if self.detail == "simple" else em.R_RET
+
+        def hits(radius, c=(0.0, 0.0, 0.0)):
+            oc = o - np.asarray(c)
+            b = float(oc @ d)
+            disc = b * b - (float(oc @ oc) - radius * radius)
+            if disc < 0:
+                return None
+            q = math.sqrt(disc)
+            return -b - q, -b + q
+
+        if self.mode == "inside":
+            h = hits(r_in)
+            return None if h is None else o + d * h[1]
+        h = hits(1.0)
+        if h is None or h[1] <= 0:
+            return None
+        if self.cut >= 0.999:                           # closed: sclera or cornea
+            p = o + d * max(h[0], 0.0)
+            if p[2] > em.LIMBUS_Z:
+                hc = hits(em.CORNEA_R, (0.0, 0.0, em.CORNEA_CENTER_Z))
+                if hc is not None and hc[0] > 0:
+                    return o + d * hc[0]
+            return p
+        clip = self.cut if self.detail == "simple" else em.cut_plane_z(self.cut)
+        if h[0] > 0:                                    # camera outside the globe
+            p = o + d * h[0]
+            if p[2] <= clip + 1e-6:
+                return p                                # outer coat
+        if o[2] > clip and d[2] < 0:                    # down through the cut plane: section face?
+            c = o + d * ((clip - o[2]) / d[2])
+            if r_in * r_in <= float(c @ c) <= 1.0:
+                return c
+        hi = hits(r_in)                                 # … or the retina beyond the opening
+        if hi is not None and hi[1] > 0 and (o + d * hi[1])[2] <= clip:
+            return o + d * hi[1]
+        return None
+
+    def zoom_at(self, steps: float, pos: QPointF | None = None) -> None:
+        """Zoom ``steps`` wheel notches toward what lies under ``pos`` (default: the centre)."""
+        if pos is None:
+            pos = QPointF(self.width() / 2, self.height() / 2)
+        if self.mode == "inside":
+            self._zoom_inside(steps, pos)
+        else:
+            self._zoom_outside(steps, pos)
+        self._view_changed()
+
+    def _zoom_outside(self, steps: float, pos: QPointF) -> None:
+        # scale the camera–pivot set about the point under the cursor: it stays put on screen
+        o, d = self._ray(pos)
+        hit = self._pick(o, d)
+        anchor = hit if hit is not None else o + d * self.dist
+        s = 0.88 ** steps
+        reach = float(np.linalg.norm(anchor - o))
+        if s < 1.0:                                     # stop short of the surface
+            s = max(s, min(1.0, 0.06 / max(reach, 1e-6)), 0.02 / self.dist)
+        s = min(s, 12.0 / self.dist)
+        if abs(s - 1.0) < 1e-9:
+            return
+        if s > 1.0 and self.dist * s >= self.DIST0:
+            target = self.target * 0.5  # past the start view: the pivot returns to the eye centre
+        else:
+            target = anchor + (self.target - anchor) * s
+            if s > 1.0:                 # zooming out: the pivot drifts back toward the centre
+                target = target * (1.0 - 0.5 * min(1.0, max(0.0, (self.dist * s - 1.6) / 1.7)))
+        self.target, self.dist = target, self.dist * s
+
+    def _zoom_inside(self, steps: float, pos: QPointF) -> None:
+        fov = min(140.0, max(4.0, self.in_fov * (0.88 ** steps)))
+        if fov == self.in_fov:
+            return
+        _, d0 = self._ray(pos)
+        self.in_fov = fov
+        for _ in range(3):              # turn the view so the same retina stays under the cursor
+            _, d1 = self._ray(pos)
+            axis = np.cross(d1, d0)
+            sa = float(np.linalg.norm(axis))
+            if sa < 1e-9:
+                break
+            k, a = axis / sa, math.atan2(sa, float(d1 @ d0))
+            _, f, _, _, _ = self._view_basis()
+            f = f * math.cos(a) + np.cross(k, f) * math.sin(a) + k * float(k @ f) * (1 - math.cos(a))
+            self.in_pitch = max(-85.0, min(85.0, math.degrees(math.asin(max(-1.0, min(1.0, f[1]))))))
+            self.in_yaw = max(-150.0, min(150.0, math.degrees(math.atan2(f[0], -f[2]))))
+
+    def pan(self, dx: float, dy: float) -> None:
+        """Move the view by (dx, dy) widget pixels (outside: shift the orbit pivot)."""
+        if self.mode == "inside":
+            self._look(dx, dy)
+            return
+        _, _, r, u, fovy = self._view_basis()
+        k = 2.0 * self.dist * math.tan(math.radians(fovy) / 2) / max(self.height(), 1)
+        t = self.target - r * dx * k + u * dy * k
+        n = float(np.linalg.norm(t))
+        self.target = t if n <= 1.5 else t * (1.5 / n)
+        self.update()
+
+    def _look(self, dx: float, dy: float) -> None:
+        if self.mode == "inside":
+            k = self.in_fov / max(self.height(), 1)
+            self.in_yaw = max(-150.0, min(150.0, self.in_yaw - dx * k))
+            self.in_pitch = max(-85.0, min(85.0, self.in_pitch + dy * k))
+        else:
+            self.yaw = (self.yaw - dx * 0.4) % 360.0
+            self.pitch = max(-89.0, min(89.0, self.pitch + dy * 0.4))
+        self.update()
 
     def paintGL(self) -> None:
         if not self._ok:
@@ -911,6 +1196,16 @@ class EyeView(QOpenGLWidget):
         inside = self.mode == "inside"
         closed = not inside and self.cut >= 0.999
         mvp, campos = self._camera(w / h)
+        if self.detail == "simple":
+            self._paint_simple(gl, mvp, campos, inside, closed)
+            return
+        try:
+            self._ensure_model_textures()
+        except Exception as exc:  # e.g. out of memory: keep showing the eye, the simple way
+            self.detail = "simple"
+            self.glError.emit(f"자세히 보기를 준비할 수 없어 간단히 보기로 바꿨습니다: {exc}")
+            self._paint_simple(gl, mvp, campos, inside, closed)
+            return
 
         for name, unit in _UNITS.items():
             gl.glActiveTexture(gl.GL_TEXTURE0 + unit)
@@ -1023,40 +1318,75 @@ class EyeView(QOpenGLWidget):
             if clip_plane:
                 gl.glDisable(gl.GL_CLIP_PLANE0)
 
+    def _paint_simple(self, gl, mvp, campos, inside: bool, closed: bool) -> None:
+        """The original light-weight model (``detail == "simple"``)."""
+        gl.glEnable(gl.GL_DEPTH_TEST)
+        gl.glActiveTexture(gl.GL_TEXTURE0)
+        gl.glBindTexture(gl.GL_TEXTURE_2D, self._tex or 0)
+        light = campos / (np.linalg.norm(campos) or 1.0) + np.array([-0.35, 0.55, 0.0])
+        light = _unit((0.0, 0.0, 1.0) if inside else light)
+        p = self._prog["simple_eye"]
+        gl.glUseProgram(p)
+        tmax = self.theta_max
+        self._set(p, mvp=mvp, tmax=tmax,
+                  gmax=proj.g(tmax, self.projection, self.viewpoint, tmax=tmax, c=self.radial_c),
+                  proj=proj.PROJECTION_INDEX.get(self.projection, 0), d=self.viewpoint, c=self.radial_c,
+                  center=self._center, radius=self._radius, roll=math.radians(self.roll_deg),
+                  cut=2.0 if closed else float(self.cut), limbus=em.LIMBUS_Z if closed else 2.0,
+                  inside=int(inside), light=light, grid=1.0 if self.show_grid else 0.0,
+                  has_tex=int(self._tex is not None))
+        self._meshes["sclera"].draw(gl)
+        if inside:
+            return
+        s = self._prog["simple_solid"]
+        gl.glUseProgram(s)
+        self._set(s, mvp=mvp, light=light, campos=campos)
+        if self.show_nerve and self.disc_dir is not None:
+            self._set(s, kind=0, color=(0.92, 0.86, 0.74, 1.0))
+            self._dynamic("simple_nerve", tuple(self.disc_dir), lambda: em.simple_nerve_mesh(self.disc_dir)).draw(gl)
+        if closed:
+            self._set(s, kind=1, color=(1.0, 1.0, 1.0, 1.0))
+            self._meshes["simple_iris"].draw(gl)
+            gl.glEnable(gl.GL_BLEND)
+            # Keep destination alpha at 1: QOpenGLWidget composites its FBO as
+            # premultiplied, so alpha < 1 here shows as colour artifacts.
+            gl.glBlendFuncSeparate(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA, gl.GL_ZERO, gl.GL_ONE)
+            gl.glDepthMask(gl.GL_FALSE)
+            self._set(s, kind=2, color=(1.0, 1.0, 1.0, 0.12))
+            self._meshes["cornea"].draw(gl)
+            gl.glDepthMask(gl.GL_TRUE)
+            gl.glDisable(gl.GL_BLEND)
+
     # -- interaction -----------------------------------------------------------
+    # left drag: rotate (inside: look around) · right drag up/down: zoom where the
+    # drag started · middle drag or Shift+left drag: move · wheel: zoom at the
+    # cursor · double click / 0: start view · + / -: zoom at the centre
     def mousePressEvent(self, e):
-        self._drag = e.position()
-        self._drag_zoom = e.button() == Qt.MouseButton.RightButton
+        self._drag = self._press = e.position()
+        if e.button() == Qt.MouseButton.RightButton:
+            self._drag_kind = "zoom"
+        elif e.button() == Qt.MouseButton.MiddleButton or e.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+            self._drag_kind = "pan"
+        else:
+            self._drag_kind = "rotate"
 
     def mouseReleaseEvent(self, e):
         self._drag = None
-
-    def _zoom_steps(self, steps: float) -> None:
-        if self.mode == "inside":
-            self.in_fov = max(20.0, min(140.0, self.in_fov * (0.92 ** steps)))
-        else:
-            self.dist = max(1.6, min(12.0, self.dist * (0.9 ** steps)))
-        self.update()
 
     def mouseMoveEvent(self, e):
         if self._drag is None:
             return
         d = e.position() - self._drag
         self._drag = e.position()
-        if self._drag_zoom:  # right-drag up/down: zoom
-            self._zoom_steps(-d.y() / 40.0)
-            return
-        if self.mode == "inside":
-            k = self.in_fov / max(self.height(), 1)
-            self.in_yaw = max(-150.0, min(150.0, self.in_yaw - d.x() * k))
-            self.in_pitch = max(-85.0, min(85.0, self.in_pitch + d.y() * k))
+        if self._drag_kind == "zoom":
+            self.zoom_at(-d.y() / 40.0, self._press)
+        elif self._drag_kind == "pan":
+            self.pan(d.x(), d.y())
         else:
-            self.yaw = (self.yaw - d.x() * 0.4) % 360.0
-            self.pitch = max(-89.0, min(89.0, self.pitch + d.y() * 0.4))
-        self.update()
+            self._look(d.x(), d.y())
 
     def wheelEvent(self, e):
-        self._zoom_steps(e.angleDelta().y() / 120.0)
+        self.zoom_at(e.angleDelta().y() / 120.0, e.position())
 
     def mouseDoubleClickEvent(self, e):
         self.reset_view()
@@ -1073,5 +1403,11 @@ class EyeView(QOpenGLWidget):
                 self.yaw = (self.yaw - dx) % 360
                 self.pitch = max(-89.0, min(89.0, self.pitch + dy))
             self.update()
+        elif k in (Qt.Key.Key_Plus, Qt.Key.Key_Equal):
+            self.zoom_at(2.0)
+        elif k in (Qt.Key.Key_Minus, Qt.Key.Key_Underscore):
+            self.zoom_at(-2.0)
+        elif k in (Qt.Key.Key_0, Qt.Key.Key_Home):
+            self.reset_view()
         else:
             super().keyPressEvent(e)

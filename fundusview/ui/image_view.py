@@ -10,6 +10,11 @@ Mouse
     글자 / 화살표+글자 annotations, 회색조 분석 (hold: grey-level profile of the
     row under the cursor).
 
+Zooming in shows a mini-map (미니맵) in the top-right corner: the whole photo
+with the visible part framed; click or drag in it to move there. Keys: + / −
+zoom at the cursor, 0 fit, 1 100%. ``zoom_to_rect`` zooms onto a region
+(e.g. the posterior pole or one periphery of an ultra-wide-field photo).
+
 Lengths are shown in pixels and — through the image's eye geometry
 (``measure.Geometry``) — in retinal degrees and millimetres. Flips and
 rotation are view transforms, so measurements and annotations stay attached
@@ -22,11 +27,12 @@ import math
 import numpy as np
 from PySide6.QtCore import QLineF, QPoint, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import (
-    QAction, QBrush, QColor, QFont, QImage, QPainter, QPainterPath, QPen, QPixmap, QPolygonF, QTransform,
+    QAction, QBrush, QColor, QCursor, QFont, QImage, QPainter, QPainterPath, QPen, QPixmap, QPolygonF, QTransform,
 )
 from PySide6.QtWidgets import (
     QGraphicsEllipseItem, QGraphicsItem, QGraphicsLineItem, QGraphicsPathItem, QGraphicsPixmapItem,
     QGraphicsPolygonItem, QGraphicsScene, QGraphicsSimpleTextItem, QGraphicsView, QInputDialog, QLabel, QMenu,
+    QWidget,
 )
 
 from .. import measure
@@ -57,6 +63,76 @@ def to_qimage(rgb: np.ndarray) -> QImage:
     h, w = rgb.shape[:2]
     img = QImage(rgb.data, w, h, 3 * w, QImage.Format.Format_RGB888)
     return img.copy()  # own the buffer
+
+
+class _Navigator(QWidget):
+    """Mini-map: the whole photo (as oriented on screen) with the visible part framed.
+
+    Click or drag in it to centre the view there. Shown only while zoomed in.
+    """
+
+    BORDER = 3
+
+    def __init__(self, view: "ImageView"):
+        super().__init__(view.viewport())
+        self.view = view
+        self._thumb = QPixmap()
+        self._key = None
+        self._k = 1.0
+        self._br = QRectF()
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip("미니맵: 전체 사진에서 지금 보는 곳 · 클릭·드래그: 그곳으로 이동")
+        self.hide()
+
+    def rebuild(self, side: int) -> None:
+        """New thumbnail when the photo, its orientation or the mini-map size changed."""
+        v = self.view
+        pm = v._pix.pixmap()
+        key = (pm.cacheKey(), v._rot, v._fh, v._fv, side)
+        if key == self._key:
+            return
+        self._key = key
+        t = v._orient()
+        self._br = t.mapRect(QRectF(pm.rect()))
+        self._k = side / max(self._br.width(), self._br.height(), 1.0)
+        small = pm.scaled(max(1, round(pm.width() * self._k)), max(1, round(pm.height() * self._k)),
+                          Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
+        self._thumb = small.transformed(t)
+        self.resize(self._thumb.width() + 2 * self.BORDER, self._thumb.height() + 2 * self.BORDER)
+
+    def to_nav(self, sp: QPointF) -> QPointF:
+        q = self.view._orient().map(sp) - self._br.topLeft()
+        return QPointF(q.x() * self._k + self.BORDER, q.y() * self._k + self.BORDER)
+
+    def from_nav(self, pos: QPointF) -> QPointF:
+        q = QPointF((pos.x() - self.BORDER) / self._k, (pos.y() - self.BORDER) / self._k) + self._br.topLeft()
+        return self.view._orient().inverted()[0].map(q)
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(QPen(QColor(255, 255, 255, 120), 1))
+        p.setBrush(QColor(10, 12, 14, 200))
+        p.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), 4, 4)
+        p.setOpacity(0.75)
+        p.drawPixmap(self.BORDER, self.BORDER, self._thumb)
+        p.setOpacity(1.0)
+        vis = self.view.mapToScene(self.view.viewport().rect())
+        poly = QPolygonF([self.to_nav(vis.at(i)) for i in range(vis.count())])
+        p.setPen(QPen(QColor(255, 214, 10), 1.6))
+        p.setBrush(QColor(255, 214, 10, 40))
+        p.drawPolygon(poly)
+        p.end()
+
+    def mousePressEvent(self, e):
+        self.view.centerOn(self.from_nav(e.position()))
+
+    def mouseMoveEvent(self, e):
+        if e.buttons() & Qt.MouseButton.LeftButton:
+            self.view.centerOn(self.from_nav(e.position()))
+
+    def wheelEvent(self, e):
+        e.ignore()          # the viewport zooms (with the position mapped to it)
 
 
 class ImageView(QGraphicsView):
@@ -116,6 +192,8 @@ class ImageView(QGraphicsView):
         self._loupe.setStyleSheet("background: transparent; border: none;")
         self._loupe.hide()
         self.loupe_mag, self.loupe_size = 3.0, 260
+        self.show_navigator = True
+        self._nav = _Navigator(self)
 
     # =====================================================================
     # image
@@ -132,11 +210,13 @@ class ImageView(QGraphicsView):
             self._pix.setPixmap(QPixmap())
             self._circle.setVisible(False)
             self._disc.setVisible(False)
+            self._update_navigator()
             return
         self._pix.setPixmap(QPixmap.fromImage(to_qimage(rgb)))
         self.scene().setSceneRect(QRectF(self._pix.pixmap().rect()))
         if not keep_view:
             self.fit()
+        self._update_navigator()
 
     def set_overlays(self, circle, disc) -> None:
         self._circle_px, self._disc_px = circle, disc
@@ -166,6 +246,7 @@ class ImageView(QGraphicsView):
     def toggle_captions(self, on: bool) -> None:
         self.show_captions = on
         self.viewport().update()
+        self._update_navigator()
 
     def paintEvent(self, e):
         super().paintEvent(e)
@@ -212,6 +293,49 @@ class ImageView(QGraphicsView):
         inv = self._orient().inverted()[0]
         for lab in self._labels:  # keep text upright and unmirrored
             lab.setTransform(inv)
+        self._update_navigator()
+
+    # -- mini-map -------------------------------------------------------------------
+    def zoomed_in(self) -> bool:
+        """True while part of the photo is outside the view."""
+        if not self.has_image():
+            return False
+        vis = self.mapToScene(self.viewport().rect()).boundingRect().adjusted(-1, -1, 1, 1)
+        return not vis.contains(QRectF(self._pix.pixmap().rect()))
+
+    def set_navigator(self, on: bool) -> None:
+        self.show_navigator = on
+        self._update_navigator()
+
+    def _update_navigator(self) -> None:
+        nav = getattr(self, "_nav", None)         # scrolling can start before __init__ ends
+        if nav is None:
+            return
+        vw, vh = self.viewport().width(), self.viewport().height()
+        side = int(min(170, 0.3 * min(vw, vh)))
+        if not (self.show_navigator and side >= 60 and self.zoomed_in()):
+            nav.hide()
+            return
+        nav.rebuild(side)
+        top = 44 if self.show_captions else 10            # below the top-right caption
+        nav.move(vw - nav.width() - 10, top)
+        nav.show()
+        nav.update()
+
+    def scrollContentsBy(self, dx: int, dy: int) -> None:
+        super().scrollContentsBy(dx, dy)
+        self._update_navigator()
+
+    def zoom_to_rect(self, rect: QRectF) -> None:
+        """Zoom so ``rect`` (image pixels) fills the view, centred on it."""
+        if not self.has_image() or rect.width() <= 0 or rect.height() <= 0:
+            return
+        br = self._orient().mapRect(rect)
+        vw, vh = max(self.viewport().width(), 1), max(self.viewport().height(), 1)
+        self._zoom, self._fit = max(0.02, min(40.0, min(vw / br.width(), vh / br.height()) * 0.97)), False
+        self._apply()
+        self.centerOn(rect.center())
+        self.zoomChanged.emit(self._zoom)
 
     @property
     def zoom(self) -> float:
@@ -270,6 +394,7 @@ class ImageView(QGraphicsView):
         super().resizeEvent(e)
         if self._fit:
             self.fit()
+        self._update_navigator()
 
     # =====================================================================
     # tools
@@ -550,6 +675,15 @@ class ImageView(QGraphicsView):
             self._close_polygon()
         elif k in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
             self.undo_annotation()
+        elif k in (Qt.Key.Key_Plus, Qt.Key.Key_Equal, Qt.Key.Key_Minus, Qt.Key.Key_Underscore):
+            at = self.viewport().mapFromGlobal(QCursor.pos())
+            if not self.viewport().rect().contains(at):
+                at = self.viewport().rect().center()
+            self._zoom_at(self._zoom * (1.25 if k in (Qt.Key.Key_Plus, Qt.Key.Key_Equal) else 0.8), at)
+        elif k == Qt.Key.Key_0:
+            self.fit()
+        elif k == Qt.Key.Key_1:
+            self.zoom_to(1.0)
         else:
             super().keyPressEvent(e)
 
@@ -682,6 +816,10 @@ class ImageView(QGraphicsView):
             a = QAction(label, menu)
             a.triggered.connect(fn)
             menu.addAction(a)
+        nav = QAction("미니맵 표시 (확대했을 때)", menu, checkable=True)
+        nav.setChecked(self.show_navigator)
+        nav.triggered.connect(self.set_navigator)
+        menu.addAction(nav)
         sub = menu.addMenu("돋보기 배율")
         for m in (2, 3, 4, 6, 8):
             a = QAction(f"{m}배", sub, checkable=True)

@@ -80,3 +80,47 @@ def describe_length(a, b, geo: Geometry | None) -> str:
     if rd is not None:
         txt += f" · {rd[0]:.1f}° · {rd[1]:.2f} mm"
     return txt
+
+
+REGIONS = ("posterior", "superior", "inferior", "nasal", "temporal")
+
+
+def fundus_region(name: str, circle, disc=None, laterality: str | None = None,
+                  size: tuple[int, int] | None = None) -> tuple[float, float, float, float] | None:
+    """Rectangle ``(x, y, w, h)`` in image pixels to zoom onto a part of the fundus.
+
+    * ``posterior`` — the fovea (centre of a fovea-centred photo) and the disc
+    * ``superior`` / ``inferior`` / ``nasal`` / ``temporal`` — the mid-to-far
+      periphery (0.35–0.9 of the image-circle radius) on that side; nasal is
+      the disc side (OD right, OS left), from the disc when it was found.
+
+    ``circle`` = (cx, cy, r). Wide-field image circles are often cut by the
+    frame, so with ``size`` = (width, height) the rectangle stays on the photo.
+    None when the side cannot be told (nasal/temporal without disc or eye).
+    """
+    cx, cy, r = circle
+    side = None
+    if disc is not None and abs(disc[0] - cx) > 0.05 * r:
+        side = 1.0 if disc[0] > cx else -1.0
+    elif laterality in ("OD", "OS"):
+        side = 1.0 if laterality == "OD" else -1.0
+    if name == "posterior":
+        if disc is not None:
+            mx, my = (cx + disc[0]) / 2, (cy + disc[1]) / 2
+            half = max(0.62 * math.hypot(disc[0] - cx, disc[1] - cy), 0.12 * r)
+            x, y, w, h = mx - 1.35 * half, my - half, 2.7 * half, 2 * half
+        else:
+            x, y, w, h = cx - 0.27 * r, cy - 0.2 * r, 0.54 * r, 0.4 * r
+    elif name in ("superior", "inferior"):
+        yc = cy - 0.62 * r if name == "superior" else cy + 0.62 * r
+        x, y, w, h = cx - 0.4 * r, yc - 0.25 * r, 0.8 * r, 0.5 * r
+    elif name in ("nasal", "temporal") and side is not None:
+        xc = cx + (side if name == "nasal" else -side) * 0.62 * r
+        x, y, w, h = xc - 0.28 * r, cy - 0.28 * r, 0.56 * r, 0.56 * r
+    else:
+        return None
+    if size is not None:
+        x0, y0 = max(x, 0.0), max(y, 0.0)
+        x1, y1 = min(x + w, float(size[0])), min(y + h, float(size[1]))
+        x, y, w, h = x0, y0, x1 - x0, y1 - y0
+    return (x, y, w, h) if w > 8 and h > 8 else None

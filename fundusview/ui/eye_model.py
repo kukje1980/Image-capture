@@ -399,6 +399,19 @@ def nerve_mesh(p, laterality: str | None, n_seg: int = 64, n_len: int = 48) -> M
     return merge(tube, _cap(c[-1], T[-1], U[-1], V[-1], rr[-1], rr[-1], n_seg, 4.0))
 
 
+def simple_nerve_mesh(p, radius: float = 0.14, length: float = 0.7, n: int = 48) -> MeshData:
+    """Optic nerve of the simple view: a slightly tapered tube leaving the globe at unit ``p``."""
+    p = _unit(p)
+    u = _perp(p)
+    v = np.cross(p, u)
+    t = np.linspace(0, 2 * math.pi, n + 1)
+    d = np.outer(np.cos(t), u) + np.outer(np.sin(t), v)
+    # the base ring sits just outside the globe (|0.995 p + 0.147 d| > 1): never shows through
+    rings = [p * s + d * rr for s, rr in ((0.995, radius * 1.05), (1.0 + length, radius * 0.9))]
+    tube = _mesh(np.concatenate(rings), np.concatenate([d, d]), _grid_indices(1, n))
+    return merge(tube, _cap(p * (1.0 + length), p, u, v, radius * 0.9, radius * 0.9, n, 4.0))
+
+
 def _ribbon(c, N, s, width, thick, conform, n_u: int, uv_x) -> MeshData:
     """Flattened tube along ``c`` lying on the globe: bottom on the surface, wrapped to it
     where ``conform`` = 1 (on the globe) and flat where 0 (free in the orbit)."""

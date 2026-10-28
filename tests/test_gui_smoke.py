@@ -39,6 +39,20 @@ def test_main_window_imports_and_lists(tmp_path, demo_dir):
         assert "김민수" in w.banner.text()
         w._on_action("chan:redfree")
         assert w._channel == "redfree"
+        # zooming: steps and wide-field regions from the 화면 맞춤 ▾ menu, the status-bar magnification
+        w._on_action("zoom4")
+        assert w.view2d.zoom == pytest.approx(4.0) and w.btn_zoom.text() == "배율 400%"
+        w._on_action("region:posterior")
+        assert w.view2d.zoomed_in() and w.view2d._nav.isVisible()
+        w._on_action("fit")
+        assert not w.view2d.zoomed_in() and w.btn_zoom.text().startswith("배율 맞춤")
+        # 3D look: 간단히 by default, 자세히 remembered in the settings
+        assert w.eye3d.detail == "simple" and not w.c_muscle.isEnabled()
+        w.b_detailed.click()
+        assert w.eye3d.detail == "detailed" and w.c_muscle.isEnabled()
+        assert Settings.load().view3d_detail == "detailed"
+        w.b_simple.click()
+        assert w.eye3d.detail == "simple" and Settings.load().view3d_detail == "simple"
         w._select_patient_ref(UNASSIGNED)
         assert w.thumbs.count() == 2
         w._set_compare(db.images_for_patient(ref)[0]["id"])

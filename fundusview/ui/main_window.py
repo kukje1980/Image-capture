@@ -11,7 +11,7 @@ from datetime import date
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QObject, QPoint, QRect, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QObject, QPoint, QRect, QRectF, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QActionGroup, QColor, QCursor, QDesktopServices, QFont, QIcon, QImage, \
     QKeySequence, QPainter, QPixmap
 from PySide6.QtWidgets import (
@@ -126,8 +126,11 @@ class MainWindow(QMainWindow):
         self.menus: dict[str, QMenu] = {}
         for key, items in MENUS.items():
             m = QMenu(self)
-            for sub, label in items:
-                m.addAction(self._act(sub, label))
+            for item in items:
+                if item is None:
+                    m.addSeparator()
+                else:
+                    m.addAction(self._act(*item))
             self.menus[key] = m
         self.acts["captions"] = self._act("captions", "화면 글자 표시", "사진 위에 환자·날짜를 녹색 글자로 (VK-2 방식)",
                                           checkable=True)
@@ -406,6 +409,15 @@ class MainWindow(QMainWindow):
         sb.addWidget(self.lbl_status, 1)
         sb.addPermanentWidget(self.lbl_measure)
         sb.addPermanentWidget(self.lbl_hover)
+        # current 2D magnification; its menu = 화면 맞춤 ▾ (zoom steps, wide-field regions)
+        self.btn_zoom = QToolButton()
+        self.btn_zoom.setText("배율 맞춤")
+        self.btn_zoom.setToolTip("2D 배율 — 눌러서 배율이나 확대 위치(후극부·주변부) 고르기 · +/−/0/1 키")
+        self.btn_zoom.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.btn_zoom.setAutoRaise(True)
+        self.btn_zoom.setMenu(self.menus["fit"])
+        self.view2d.zoomChanged.connect(self._show_zoom)
+        sb.addPermanentWidget(self.btn_zoom)
         self.setStatusBar(sb)
 
         a = QAction(self)
@@ -429,6 +441,18 @@ class MainWindow(QMainWindow):
         g.setContentsMargins(8, 4, 8, 4)
         g.setHorizontalSpacing(6)
         g.setVerticalSpacing(2)
+        # 간단히 (the light original) / 자세히 (anatomical model), remembered in the settings
+        self.b_simple = QPushButton("간단히")
+        self.b_detailed = QPushButton("자세히")
+        self.b_simple.setToolTip("가볍고 빠른 기본 안구 모형 — 사진을 보는 데 집중")
+        self.b_detailed.setToolTip("실제 해부 구조: 공막 혈관, 굴절하는 각막·홍채, 안구벽 단면, 섬모체·수정체, 외안근")
+        self._detail_group = QButtonGroup(self)
+        for b in (self.b_simple, self.b_detailed):
+            b.setCheckable(True)
+            b.setObjectName("detail3d")
+            self._detail_group.addButton(b)
+        self.b_simple.clicked.connect(lambda: self._set_3d_detail("simple"))
+        self.b_detailed.clicked.connect(lambda: self._set_3d_detail("detailed"))
         self.r_out = QRadioButton("외부 (안구 모형)")
         self.r_in = QRadioButton("내부 (망막 시점)")
         self.r_out.setChecked(True)
@@ -459,7 +483,8 @@ class MainWindow(QMainWindow):
         self.sp_roll.setSuffix("°")
         self.sp_roll.valueChanged.connect(self._on_mapping)
         row1 = QHBoxLayout()
-        for item in (self.r_out, self.r_in, QLabel("  앞쪽 절개"), self.s_cut, QLabel("  화각"), self.sp_fov,
+        for item in (self.b_simple, self.b_detailed, QLabel("  "), self.r_out, self.r_in, QLabel("  앞쪽 절개"),
+                     self.s_cut, QLabel("  화각"), self.sp_fov,
                      self.c_fovtype, QLabel("  투영"), self.c_proj, QLabel("  회전"), self.sp_roll):
             row1.addWidget(item)
         row1.addStretch()
@@ -478,7 +503,12 @@ class MainWindow(QMainWindow):
         for c in (self.c_nerve, self.c_muscle, self.c_grid, self.c_adj3d):
             row2.addWidget(c)
         self.eye3d = EyeView()
-        self.eye3d.setToolTip("드래그: 회전 · 휠/오른쪽 드래그: 확대 · 더블클릭: 초기화")
+        self.eye3d.setToolTip("드래그: 회전 · 휠: 커서 쪽으로 확대 · 오른쪽 드래그: 확대 · "
+                              "가운데/Shift+드래그: 이동 · +/−: 확대·축소 · 더블클릭·0: 처음 보기")
+        self.lbl_zoom3d = QLabel("배율 ×1.0")
+        self.lbl_zoom3d.setObjectName("hint3d")
+        self.lbl_zoom3d.setToolTip("처음 보기 대비 확대 배율 · 더블클릭 또는 0: 처음 보기")
+        self.eye3d.zoomChanged.connect(lambda m: self.lbl_zoom3d.setText(f"배율 ×{m:.1f}"))
         self.eye3d.glError.connect(lambda m: QMessageBox.warning(
             self, "3D", m + "\n\n설정 > 일반 > 3D 렌더링을 '소프트웨어 렌더링'으로 바꾸고 다시 시작해 보세요."))
         for label, fn in (("정면 보기", self.eye3d.front_view), ("시점 초기화", self.eye3d.reset_view),
@@ -488,7 +518,9 @@ class MainWindow(QMainWindow):
             row2.addWidget(b)
         self.lbl_3d = QLabel("")
         self.lbl_3d.setObjectName("hint3d")
+        row2.addWidget(self.lbl_zoom3d)
         row2.addWidget(self.lbl_3d, 1)
+        self._set_3d_detail(self.settings.view3d_detail, save=False)
         g.addLayout(row1, 0, 0)
         g.addLayout(row2, 1, 0)
         lay.addWidget(bar)
@@ -504,9 +536,15 @@ class MainWindow(QMainWindow):
     def _show_help(self) -> None:
         QMessageBox.information(self, "마우스·단축키", (
             "<b>사진 보기</b><br>"
-            "휠 · 오른쪽 버튼 위/아래 드래그: 확대·축소<br>"
+            "휠 · 오른쪽 버튼 위/아래 드래그: 확대·축소 · +/−: 확대·축소 · 0: 화면 맞춤 · 1: 100%<br>"
+            "확대하면 오른쪽 위 미니맵에 전체 사진과 보이는 곳이 나옵니다 — 눌러서 이동<br>"
+            "화면 맞춤 ▾ 또는 아래쪽 [배율]: 400·800%, 후극부·위/아래/코/귀쪽 주변부로 바로 확대<br>"
             "가운데 버튼 드래그(이동 도구는 왼쪽 드래그): 이동 · 더블클릭: 화면 맞춤<br>"
-            "오른쪽 클릭: 메뉴 (시신경 위치 지정, 돋보기 배율)<br><br>"
+            "오른쪽 클릭: 메뉴 (시신경 위치 지정, 돋보기 배율, 미니맵)<br><br>"
+            "<b>3D 안구</b><br>"
+            "간단히 / 자세히: 가벼운 기본 모형 / 실제 해부 구조<br>"
+            "드래그: 회전 · 휠: 커서가 가리키는 곳으로 확대 · 가운데 버튼 또는 Shift+드래그: 이동<br>"
+            "+/−: 확대·축소 · 더블클릭 또는 0: 처음 보기<br><br>"
             "<b>단축키</b><br>"
             "PageUp / PageDown: 이전 / 다음 사진 · Ctrl+1~4: 2D / 3D / 다중 / 비교<br>"
             "Ctrl+Z: 처리 실행 취소 · Delete: 마지막 측정 지우기 · Ctrl+C: 화면 복사<br>"
@@ -1019,13 +1057,14 @@ class MainWindow(QMainWindow):
         self.tb_proc.setToolTip("적용된 처리: " + (" → ".join(steps) if steps else "없음 (원본)"))
 
     # -- toolbar commands (toolbars.py: COMMANDS / PROCESSING / MENUS) -----------------------
-    TWO_D = ("fit", "actual", "zoom2", "rot_cw", "rot_ccw", "flip_h", "flip_v", "annot_undo", "annot_clear")
+    TWO_D = ("fit", "actual", "zoom2", "zoom4", "zoom8", "rot_cw", "rot_ccw", "flip_h", "flip_v",
+             "annot_undo", "annot_clear")
 
     def _on_action(self, key: str, checked: bool | None = None) -> None:
         """``checked`` is the new state when a checkable button was clicked, None
         when called from a menu entry or code."""
         v = self.view2d
-        if key.startswith("tool:") or key in self.TWO_D:
+        if key.startswith(("tool:", "region:")) or key in self.TWO_D:
             if self.tabs.currentIndex() != 0:   # 2D tools: go to the 2D view first
                 self.tabs.setCurrentIndex(0)
         if key.startswith("tool:"):
@@ -1064,8 +1103,10 @@ class MainWindow(QMainWindow):
             self._histogram()
         elif key == "fit":
             v.fit()
-        elif key in ("actual", "zoom2"):
-            v.zoom_to(1.0 if key == "actual" else 2.0)
+        elif key in ("actual", "zoom2", "zoom4", "zoom8"):
+            v.zoom_to({"actual": 1.0, "zoom2": 2.0, "zoom4": 4.0, "zoom8": 8.0}[key])
+        elif key.startswith("region:"):
+            self._zoom_region(key[7:])
         elif key in ("rot_cw", "rot_ccw"):
             v.rotate90(key == "rot_cw")
         elif key in ("flip_h", "flip_v"):
@@ -1331,10 +1372,50 @@ class MainWindow(QMainWindow):
         self.eye3d.cut = v / 100.0 if v < 100 else 1.0
         self.eye3d.update()
 
+    # -- 2D zoom ---------------------------------------------------------------------
+    def _show_zoom(self, z: float) -> None:
+        fit = self.view2d._fit
+        self.btn_zoom.setText(f"배율 맞춤 ({z * 100:.0f}%)" if fit else f"배율 {z * 100:.0f}%")
+
+    REGIONS = {"posterior": "후극부", "superior": "위쪽 주변부", "inferior": "아래쪽 주변부",
+               "nasal": "코쪽 주변부", "temporal": "귀쪽 주변부"}
+
+    def region_rect(self, name: str) -> QRectF | None:
+        """Part of the current photo to zoom onto (``measure.fundus_region``), or None."""
+        row = self.current
+        rgb = self._load(row) if row is not None else None
+        if rgb is None:
+            return None
+        circle = ((row["circle_cx"], row["circle_cy"], row["circle_r"]) if row["circle_r"]
+                  else imaging.detect_circle(rgb))
+        disc = (row["disc_x"], row["disc_y"]) if row["disc_x"] is not None else None
+        rect = measure.fundus_region(name, circle, disc, row["laterality"], (rgb.shape[1], rgb.shape[0]))
+        return QRectF(*rect) if rect else None
+
+    def _zoom_region(self, name: str) -> None:
+        rect = self.region_rect(name)
+        if rect is None:
+            self.lbl_status.setText("눈(OD/OS)과 시신경 위치를 알 수 없어 코쪽·귀쪽을 정할 수 없습니다"
+                                    if name in ("nasal", "temporal") else "사진이 없습니다")
+            return
+        self.view2d.zoom_to_rect(rect)
+        self.view2d.setFocus()
+        self.lbl_status.setText(f"{self.REGIONS[name]} 확대 — 0: 전체 보기 · 미니맵을 눌러 이동")
+
+    def _set_3d_detail(self, detail: str, save: bool = True) -> None:
+        detail = detail if detail in EyeView.DETAILS else "simple"
+        (self.b_detailed if detail == "detailed" else self.b_simple).setChecked(True)
+        self.eye3d.set_detail(detail)
+        self.c_muscle.setEnabled(detail == "detailed")     # the simple model has no muscles
+        self.c_muscle.setToolTip("네 곧은근과 두 빗근의 부착부(절단면)를 함께 표시"
+                                 + ("" if detail == "detailed" else " — 자세히 보기에서"))
+        if save and self.settings.view3d_detail != detail:
+            self.settings.view3d_detail = detail
+            self.settings.save()
+
     def _on_3d_mode(self, outside: bool) -> None:
-        self.eye3d.mode = "outside" if outside else "inside"
         self.s_cut.setEnabled(outside)
-        self.eye3d.update()
+        self.eye3d.set_mode("outside" if outside else "inside")
 
     def _mark_3d_dirty(self) -> None:
         self._3d_dirty = True

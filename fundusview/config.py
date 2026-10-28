@@ -68,6 +68,8 @@ class Settings:
     # "auto" | "desktop" | "software" — software = bundled Mesa llvmpipe
     # (opengl32sw.dll), for PCs whose GPU driver lacks OpenGL 2.1.
     opengl: str = "auto"
+    # 3D eye: "simple" (간단히, light-weight) or "detailed" (자세히, anatomical)
+    view3d_detail: str = "simple"
     # Extra user-defined filename regexes tried before the profile patterns.
     custom_filename_patterns: list[str] = field(default_factory=list)
     last_patient: str = ""
