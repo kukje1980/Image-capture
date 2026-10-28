@@ -50,7 +50,8 @@ class ControlBar(QFrame):
     quadToggled = Signal(bool)
     saveQuadClicked = Signal()
     clearQuadClicked = Signal()
-    eyeChanged = Signal(str)
+    eyeChanged = Signal(str)             # 검사눈이 바뀜 (직접 고름 · 단축키 · 슬릿램프 신호 모두)
+    eyeChosen = Signal(str)              # OD · OS · — 버튼을 직접 눌러 고름 (슬릿램프 좌우 신호와 구분)
     smartToggled = Signal(bool)          # Smart 도구줄 보이기 / 숨기기
     refsToggled = Signal(bool)           # 참조 줄 보이기 / 숨기기
     multiToggled = Signal(bool)          # 멀티: 선택한 사진 한 번에 보기 (다시 누르면 초기화)
@@ -86,14 +87,22 @@ class ControlBar(QFrame):
             self.eye_group.addButton(b)
             self.eye_buttons[code] = b
             sl.addWidget(b)
-            b.clicked.connect(lambda _=False, c=code: self.set_eye(c))
+            b.clicked.connect(lambda _=False, c=code: self._choose_eye(c))
         self.eye_buttons["NA"].setChecked(True)
+        # 좌우 자동 인식 상태 — 미확인 · 자동 · 수동 · 확인 필요 (메인 창이 set_eye_status 로 정함)
+        self.eye_status = QLabel("")
+        self.eye_status.setObjectName("EyeStatus")
+        self.eye_status.setProperty("level", "off")
+        self.eye_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.eye_status.setVisible(False)
         # 도크는 왼쪽 · 가운데 · 오른쪽 세 칸: 가운데(정지영상 · 셔터 · 녹화)는 어떤 모드에서도 제자리
         self._left = QWidget()
         ll = QHBoxLayout(self._left)
         ll.setContentsMargins(0, 0, 0, 0)
         ll.setSpacing(4)
         ll.addWidget(seg)
+        ll.addSpacing(4)
+        ll.addWidget(self.eye_status)
         ll.addSpacing(6)
         ll.addWidget(self._sep())
         ll.addSpacing(6)
@@ -375,9 +384,25 @@ class ControlBar(QFrame):
         return _EYE_CODES[self.eye_combo.currentIndex()]
 
     def set_eye(self, code: str) -> None:
+        """검사눈을 정한다 — 직접 고를 때 · 단축키 · 슬릿램프 좌우 신호 모두 이 하나를 거친다 (화면 표시 = 저장값)."""
         if code in _EYE_CODES:
             self.eye_combo.setCurrentIndex(_EYE_CODES.index(code))
             self._sync_eye_buttons()
+
+    def _choose_eye(self, code: str) -> None:
+        self.set_eye(code)
+        self.eyeChosen.emit(code)
+
+    def set_eye_status(self, level: str, text: str, tip: str = "") -> None:
+        """좌우 자동 인식 상태 칩: level = off(숨김) · unknown · device · manual · stale."""
+        lbl = self.eye_status
+        lbl.setText(text)
+        lbl.setToolTip(tip)
+        lbl.setVisible(level != "off" and bool(text))
+        if lbl.property("level") != level:
+            lbl.setProperty("level", level)
+            lbl.style().unpolish(lbl)
+            lbl.style().polish(lbl)
 
     def _sync_eye_buttons(self, *_):
         code = self.current_eye()

@@ -33,7 +33,7 @@ from app import edition as app_edition
 from app import paths
 from app import shortcuts
 from app import sounds
-from app import usb_buttons
+from app import usb_buttons, usb_raw_input
 from app.agent import dataset as agent_dataset
 from app.agent.core import AgentSettings
 from app.agent.events import EventLog
@@ -276,7 +276,8 @@ class MainWindow(QMainWindow):
         tb_multi = self.thumbnail_panel.btn_multi
         self.control_bar.multi_mirrors.append(tb_multi)
         tb_multi.clicked.connect(self._safe("멀티", lambda: self.control_bar.btn_multi.toggle()))
-        self.control_bar.eyeChanged.connect(lambda e: self.video_view.set_hud(eye=e))
+        self.control_bar.eyeChanged.connect(lambda _e: self._refresh_eye_status())   # HUD 눈 칩 + 자동 인식 상태
+        self.control_bar.eyeChosen.connect(self._note_manual_eye)                   # OD · OS 를 직접 고름
         cfg = self.config
         self.smart_bar.set_state(cfg.smart_mode, cfg.smart_peaking, cfg.smart_peaking_sensitivity,
                                  cfg.smart_best_shot)
@@ -313,11 +314,23 @@ class MainWindow(QMainWindow):
         self._set_smart_bar_visible(bool(getattr(cfg, "smart_bar_visible", True)), save=False)
         self._set_ref_bar_visible(bool(getattr(cfg, "ref_bar_visible", False)), save=False)
         self._install_shortcuts()
-        # 슬릿램프 USB 버튼(키 조합을 보내는 장치) — 앱 전체 키 이벤트에서 누름 · 뗌을 보고 촬영 동작을 부른다
+        # 슬릿램프 USB 버튼 · 좌우 신호(키 조합을 보내는 장치) — 앱 전체 키 이벤트에서 누름 · 뗌을 보고 촬영 동작을 부른다.
+        # 좌우 신호(F6 → OD · F7 → OS)는 Windows Raw Input 으로 그 장치(VID 04D9 / PID 1203)에서 온 키인지 확인한다.
+        self._eye_src = "unknown"              # 지금 검사눈이 정해진 경로: unknown(신호 없음) · device(슬릿램프) · manual(직접)
+        self._eye_stale = False                # 창이 비활성이었거나 장치가 빠져 신호를 놓쳤을 수 있음 → '확인 필요'
+        self._eye_pending = None               # 입력칸 · 다른 화면 · 다른 창에서 받은 좌우 신호 — 촬영 화면으로 오면 적용
+        self._eye_signal_at = None             # 마지막 슬릿램프 좌우 신호 시각
+        self._freeze_eye = None                # 정지 화면을 찍은 순간의 검사눈 (정지 중 좌우가 바뀌어도 그 사진은 이 눈)
+        self._video_switches = []              # 녹화 중 좌우 전환 [(경과 초, 눈)] — 영상은 시작 눈으로 저장, 코멘트에 기록
+        self.usb_raw = usb_raw_input.create(QApplication.instance(), on_device_change=self._on_usb_device_change)
+        self.usb_raw.watch(usb_buttons.key_of(b["key"]) for b in usb_buttons.load(self.config).values())
         self.usb_filter = usb_buttons.UsbButtonFilter(
             usb_buttons.load(self.config), run=self._on_usb_button, context=self._usb_context,
-            ignored=self._on_usb_ignored, parent=self)
+            ignored=self._on_usb_ignored, parent=self, device_gate=self._usb_device_gate,
+            activated=self._on_app_activated)
         QApplication.instance().installEventFilter(self.usb_filter)
+        QApplication.instance().focusChanged.connect(lambda _old, _new: self._usb_eye_resume())
+        self._refresh_eye_status()
         self.set_mode("capture" if getattr(self.config, "start_screen", "home") == "capture" else "home")
 
     def _build_topbar(self) -> QFrame:
@@ -590,6 +603,7 @@ class MainWindow(QMainWindow):
                 self.pro.c_eye.setCurrentIndex(["NA", "OD", "OS"].index(code))
             else:
                 cb.set_eye(code)
+                self._note_manual_eye(code)
             self.statusBar().showMessage(f"안구: {'미지정' if code == 'NA' else code}", 2000)
         elif aid == "capture" and cb.btn_capture.isEnabled():
             self._on_capture()
@@ -646,6 +660,18 @@ class MainWindow(QMainWindow):
 
     def _on_usb_ignored(self, bid: str, reason: str) -> None:
         name = usb_buttons.button_label(bid)
+        action = self.usb_filter.buttons.get(bid, {}).get("action", "none")
+        if usb_buttons.is_eye_action(action):
+            # 좌우 신호: 다른 키보드의 같은 키(device)는 버리고, 입력칸 · 다른 화면 · 다른 창에서 온 신호는 보류해 두었다가
+            # 촬영 화면으로 돌아오면 적용 (신호를 놓친 채 예전 눈으로 찍지 않게)
+            if reason == "device" or not self.config.usb_eye_auto:
+                return
+            code = usb_buttons.EYE_ACTIONS[action]
+            self._eye_pending = code
+            self._refresh_eye_status()
+            where = {"text": "입력칸에 글자를 쓰는 중", "screen": "촬영 화면이 아니라서", "window": "다른 창이 앞에 있어"}.get(reason, "")
+            self.statusBar().showMessage(f"슬릿램프 좌우 신호 {code} — {where} 보류했습니다 · 촬영 화면으로 돌아오면 적용", 5000)
+            return
         if reason == "text":
             self.statusBar().showMessage(f"USB {name}: 입력칸에 글자를 쓰는 중이라 실행하지 않았습니다 — "
                                          "영상 화면을 한 번 누른 뒤 다시 누르세요", 5000)
@@ -653,7 +679,18 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"USB {name}: 촬영 화면에서만 동작합니다", 3000)
 
     def _on_usb_button(self, bid: str, action: str) -> None:
-        """USB 버튼 → 촬영 도크 버튼과 같은 동작 (녹화 시작/정지 · 스틸 정지/해제 · 사진 캡처)."""
+        """USB 버튼 → 촬영 도크 버튼과 같은 동작 (녹화 시작/정지 · 스틸 정지/해제 · 사진 캡처), 좌우 신호 → 검사눈."""
+        if usb_buttons.is_eye_action(action):
+            code = usb_buttons.EYE_ACTIONS[action]
+            if not self.config.usb_eye_auto:
+                self.statusBar().showMessage(f"슬릿램프 좌우 신호 {code} 를 받았지만 자동 인식이 꺼져 있습니다 (설정 → USB 버튼)", 4000)
+                return
+            if self._usb_context() is not None:  # 누른 뒤 적용 전에 화면이 바뀐 경우 → 보류
+                self._eye_pending = code
+                self._refresh_eye_status()
+                return
+            self._apply_device_eye(code)
+            return
         if self._usb_context() is not None:      # 누른 뒤 실행 전에 화면이 바뀐 경우
             return
         cb = self.control_bar
@@ -675,6 +712,143 @@ class MainWindow(QMainWindow):
         else:
             text = "사진 캡처"
         self.statusBar().showMessage(f"USB {name}: {text}", 3000)
+
+    # ---- 슬릿램프 좌우 신호 → 검사눈 (F6 → OD · F7 → OS) ----
+    def _usb_device_gate(self, qt_key: int):
+        """좌우 신호가 슬릿램프 장치(Raw Input 확인)에서 왔는가 — True · False · None(확인 못 함 = 받음)."""
+        if not getattr(self.config, "usb_device_check", True):
+            return None
+        return self.usb_raw.classify(qt_key)
+
+    def _apply_device_eye(self, code: str) -> None:
+        """슬릿램프 신호로 검사눈을 정한다 — 직접 고를 때와 같은 set_eye 를 거쳐 화면 표시 = 저장값."""
+        self._eye_src = "device"
+        self._eye_stale = False
+        self._eye_pending = None
+        self._eye_signal_at = time.time()
+        self.control_bar.set_eye(code)                # 토글이 아니라 늘 그 눈으로 (OD 신호가 두 번 와도 OD)
+        self.events.log("usb_eye", eye=code, recording=self._recording, frozen=self._single_frozen)
+        msg = f"슬릿램프 좌우 신호: {code} ({'우안' if code == 'OD' else '좌안'})"
+        if self._recording and self._video_eye and code != self._video_eye:
+            s = int(time.time() - self._rec_started)
+            if not self._video_switches or self._video_switches[-1][1] != code:
+                self._video_switches.append((s, code))
+            msg += f" · 녹화 중 전환 — 영상은 시작 눈 {self._video_eye} 로 저장하고 전환 시각을 코멘트에 적습니다"
+        if self._single_frozen and self._freeze_eye is not None and self._freeze_eye != code:
+            msg += f" · 정지 화면은 찍은 순간의 눈 {self._freeze_eye} 로 저장됩니다"
+        self.statusBar().showMessage(msg, 5000)
+        self._refresh_eye_status()
+
+    def _note_manual_eye(self, code: str) -> None:
+        """OD · OS 를 직접 골랐을 때(버튼 · 단축키) — 정지 화면이면 그 사진의 눈도 고친 값으로 (사용자가 바로잡은 것)."""
+        self._eye_src = "manual"
+        self._eye_stale = False
+        self._eye_pending = None
+        if self._single_frozen:
+            self._freeze_eye = code
+        if self._recording and self._video_eye and code != self._video_eye:
+            s = int(time.time() - self._rec_started)
+            if not self._video_switches or self._video_switches[-1][1] != code:
+                self._video_switches.append((s, code))
+        self._refresh_eye_status()
+
+    def _on_app_activated(self) -> None:
+        """다른 프로그램에서 돌아옴 — 그 사이 슬릿램프가 움직였어도 신호를 못 받았으므로 '확인 필요'."""
+        if getattr(self, "_closing", False):
+            return
+        if self.config.usb_eye_auto and self._eye_src == "device" and self._eye_pending is None:
+            self._eye_stale = True
+            self._refresh_eye_status()
+        QTimer.singleShot(0, self._usb_eye_resume)
+
+    def changeEvent(self, e) -> None:  # noqa: N802
+        super().changeEvent(e)
+        if e.type() == QEvent.Type.ActivationChange and self.isActiveWindow():
+            QTimer.singleShot(0, self._usb_eye_resume)      # 설정 창 등을 닫고 돌아옴 → 보류한 좌우 신호 적용
+
+    def _usb_eye_resume(self) -> None:
+        """보류한 좌우 신호가 있고 지금 촬영 화면이면 적용한다 (입력칸 · 다른 화면 · 다른 창에서 돌아온 뒤)."""
+        if getattr(self, "_closing", False) or getattr(self, "_eye_pending", None) is None:
+            return
+        if not self.config.usb_eye_auto:
+            self._eye_pending = None
+            self._refresh_eye_status()
+            return
+        if self._usb_context() is not None:
+            return
+        code = self._eye_pending
+        self._apply_device_eye(code)
+        self.statusBar().showMessage(f"보류했던 슬릿램프 좌우 신호 적용: {code}", 4000)
+
+    def _on_usb_device_change(self, arrived: bool) -> None:
+        """슬릿램프 장치가 꽂힘 · 빠짐 (Windows Raw Input) — 다시 꽂히면 위치를 알 수 없으니 신호로 정한 눈은 미확인으로."""
+        if getattr(self, "_closing", False):
+            return
+        if arrived:
+            if self._eye_src == "device":
+                self.control_bar.set_eye("NA")
+            self._eye_src = "unknown"
+            self._eye_stale = False
+            self._eye_pending = None
+            self.statusBar().showMessage("슬릿램프 버튼 장치 연결됨 — 좌우 위치 미확인: 슬릿램프를 움직여 신호를 받거나 "
+                                         "OD · OS 를 직접 고르세요", 8000)
+        else:
+            if self._eye_src == "device":
+                self._eye_stale = True
+            self.statusBar().showMessage("슬릿램프 버튼 장치가 빠졌습니다 — 좌우 자동 인식이 멈춥니다 (OD · OS 를 직접 고르세요)", 8000)
+        self._refresh_eye_status()
+
+    def _capture_eye(self) -> str:
+        """사진에 적을 검사눈 — 정지 화면이면 찍은 순간의 눈, 아니면 지금 고른 눈."""
+        if self._single_frozen and self._freeze_eye is not None:
+            return self._freeze_eye
+        return self.control_bar.current_eye()
+
+    def _video_note(self) -> str:
+        if not self._video_switches:
+            return ""
+        steps = " → ".join(f"{code} {s // 60}:{s % 60:02d}" for s, code in self._video_switches)
+        return f"녹화 중 좌우 전환: {self._video_eye} 시작 → {steps} (영상 전체는 시작 눈 {self._video_eye} 로 저장)"
+
+    def eye_status(self) -> dict:
+        """좌우 자동 인식 상태 (시험 · 표시용)."""
+        return {"eye": self.control_bar.current_eye(), "source": self._eye_src, "stale": self._eye_stale,
+                "pending": self._eye_pending, "freeze_eye": self._freeze_eye}
+
+    def _refresh_eye_status(self) -> None:
+        """촬영 도크의 상태 칩과 영상 HUD 눈 칩 — 미확인 · 자동 · 수동 · 확인 필요 · 정지 화면."""
+        if not hasattr(self, "_eye_src"):
+            return
+        cb = self.control_bar
+        eye = cb.current_eye()
+        auto = bool(getattr(self.config, "usb_eye_auto", True))
+        if not auto:
+            level, text, note = "off", "", ""
+            tip = "슬릿램프 좌우 자동 인식 꺼짐 — OD · OS 를 직접 고릅니다 (설정 → USB 버튼)"
+        elif self._eye_pending is not None:
+            level, text, note = "stale", f"신호 {self._eye_pending} 보류", "확인 필요"
+            tip = "입력칸 · 다른 화면 · 다른 창에서 받은 슬릿램프 좌우 신호 — 촬영 화면으로 돌아오면 적용합니다"
+        elif self._eye_src == "unknown":
+            level, text = "unknown", "미확인"
+            note = "미확인" if eye == "NA" else "확인 필요"
+            tip = ("슬릿램프 좌우 신호를 아직 받지 못했습니다 — 슬릿램프를 환자 눈 쪽으로 움직여 신호를 받거나 "
+                   "OD · OS 를 직접 고르세요 (처음 위치를 OD 로 짐작하지 않습니다)")
+        elif self._eye_src == "device" and self._eye_stale:
+            level, text, note = "stale", "확인 필요", "확인 필요"
+            tip = ("창이 비활성 상태였거나 장치가 빠져 슬릿램프 좌우 신호를 놓쳤을 수 있습니다 — 눈 위치를 확인하세요 "
+                   "(다음 신호나 직접 고르면 풀립니다)")
+        elif self._eye_src == "device":
+            level, text, note = "device", "자동", "자동"
+            at = time.strftime("%H:%M:%S", time.localtime(self._eye_signal_at)) if self._eye_signal_at else ""
+            tip = f"슬릿램프 좌우 신호로 {eye} ({at})"
+        else:
+            level, text, note = "manual", "수동", ""
+            tip = "OD · OS 를 직접 골랐습니다 — 다음 슬릿램프 좌우 신호가 오면 자동으로 바뀝니다"
+        cb.set_eye_status(level, text, tip)
+        hud_eye = eye
+        if self._single_frozen and self._freeze_eye is not None and self._freeze_eye != eye:
+            hud_eye, note = self._freeze_eye, "정지 화면"       # 찍은 순간의 눈 — 이 사진은 이 눈으로 저장
+        self.video_view.set_hud(eye=hud_eye, eye_note=note)
 
     def _set_fullscreen(self, on: bool) -> None:
         """영상 전체 화면: 창을 화면 가득 채우고 상단바(환자 검색 포함)·썸네일·상태바를 숨김 (Esc 로 해제)."""
@@ -931,6 +1105,7 @@ class MainWindow(QMainWindow):
         elif name == "capture":
             self.thumbnail_panel.set_patient(p.id if p else None)
             self._focus_capture_view()
+            QTimer.singleShot(0, self._usb_eye_resume)      # 다른 화면에서 받아 둔 좌우 신호 적용
         elif name == "exam":
             self.exam_screen.set_patient(p)
         elif name == "patients":
@@ -1002,8 +1177,10 @@ class MainWindow(QMainWindow):
         # 모드 전환 시 단일-정지 상태/버튼 초기화
         self._single_frozen = False
         self._freeze_frame = None
+        self._freeze_eye = None
         self.control_bar.set_freeze_state(False)
         self._refresh_hud_state()
+        self._refresh_eye_status()
         self._sync_smart_view()
         self.control_bar.set_status(
             f"{self.quad_view.count()}분할 · '정지영상'으로 각 칸을 채우세요" if on else "단일 모드")
@@ -1038,14 +1215,17 @@ class MainWindow(QMainWindow):
             self.events.log("freeze", scene_label=self.agent.scene().label,
                             quality=self.smart.last_quality())
             self._freeze_frame = self._last_frame
+            self._freeze_eye = self.control_bar.current_eye()    # 찍은 순간의 눈 — 정지 중 슬릿램프가 움직여도 이 사진은 이 눈
             self.video_view.set_frame(self._freeze_frame)
             self.control_bar.set_freeze_state(True)
             self.control_bar.set_status("정지영상 (▶라이브로 복귀 · 사진 캡처로 저장)")
         else:
             self._freeze_frame = None
+            self._freeze_eye = None
             self.control_bar.set_freeze_state(False)
             self.control_bar.set_status("라이브")
         self._refresh_hud_state()
+        self._refresh_eye_status()
         self._sync_smart_view()
 
     def _on_save_quad(self) -> None:
@@ -1329,7 +1509,7 @@ class MainWindow(QMainWindow):
             best = self.smart.best_recent(0.6)
             if best is not None:
                 frame, note = best.frame, f"Best Shot (초점 {best.quality.focus_pct:.0f})"
-        eye = self.control_bar.current_eye()
+        eye = self._capture_eye()         # 찍은 순간의 눈을 여기서 고정 — 저장 중에 좌우가 바뀌어도 이 값
         sounds.play("shutter")            # 저장(인코딩) 전에 바로 — 누른 순간 '찰칵'
         try:
             cap = self.service.save_photo(frame, self._current_patient, eye=eye, note=note)
@@ -1743,7 +1923,8 @@ class MainWindow(QMainWindow):
         self.events.log("record_start", eye=eye, scene_label=self.agent.scene().label)
         self._video_path = path
         self._video_ts = ts
-        self._video_eye = eye
+        self._video_eye = eye                          # 영상 전체는 시작한 눈으로 저장 (녹화 중 전환은 코멘트에 기록)
+        self._video_switches = []
         self._video_patient = self._current_patient   # 녹화 중 환자를 바꿔도 시작한 환자에게 저장
         self._first_video_frame = None
         self._rec_started = time.time()
@@ -1771,7 +1952,7 @@ class MainWindow(QMainWindow):
             self.control_bar.reset_record_button()
             return
         self._pending_video = (self._video_path, self._video_patient, self._video_eye,
-                               self._video_ts, duration, self._first_video_frame)
+                               self._video_ts, duration, self._first_video_frame, self._video_note())
         if self.recorder.is_finalizing:
             # 인코더가 아직 파일을 닫는 중: 지금 복사하면 잘린 mp4 가 export 에 남는다 → 닫힌 뒤 기록
             self._finalize_waited = 0.0
@@ -1796,9 +1977,9 @@ class MainWindow(QMainWindow):
         self.control_bar.btn_record.setEnabled(self._current_patient is not None)
         if pending is None:
             return
-        path, patient, eye, ts, duration, thumb = pending
+        path, patient, eye, ts, duration, thumb, note = pending
         try:
-            cap = self.service.finish_video(path, patient, eye, ts, duration, thumb_frame=thumb)
+            cap = self.service.finish_video(path, patient, eye, ts, duration, thumb_frame=thumb, note=note)
             self.thumbnail_panel.add_capture(cap)
             self.control_bar.set_status(f"동영상 저장됨 ({duration // 1000}초)")
         except Exception as e:  # noqa: BLE001
@@ -1882,6 +2063,8 @@ class MainWindow(QMainWindow):
                 self.agent.stop()
             self._apply_agent(save=False)
             self.usb_filter.set_buttons(usb_buttons.load(self.config))
+            self.usb_raw.watch(usb_buttons.key_of(b["key"]) for b in usb_buttons.load(self.config).values())
+            self._refresh_eye_status()
             self._install_shortcuts()                  # USB 버튼 키와 겹치는 단축키는 쉬게
             self.events.log("settings", source="dialog")
             self._restart_camera()
@@ -1995,6 +2178,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:  # noqa: N802
         self._closing = True
         QApplication.instance().removeEventFilter(self.usb_filter)
+        self.usb_raw.uninstall(QApplication.instance())
         self._reconnect_timer.stop()
         try:
             if self._recording:

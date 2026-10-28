@@ -206,7 +206,7 @@ class SettingsDialog(QDialog):
         self.tabs.addTab(camera, "카메라 · 저장")
         self.tabs.addTab(send, "전송")
         self.tabs.addTab(self._build_preset_tab(), "촬영 모드")
-        self.usb_tab = UsbButtonsTab(config)
+        self.usb_tab = UsbButtonsTab(config, raw_input=getattr(parent, "usb_raw", None))
         self.tabs.addTab(self.usb_tab, "USB 버튼")
 
         btns = QDialogButtonBox(
@@ -682,6 +682,8 @@ class SettingsDialog(QDialog):
         for k, v in self._send_values().items():
             setattr(c, k, v)
         c.usb_buttons = self.usb_tab.values()
+        c.usb_eye_auto = self.usb_tab.eye_auto()
+        c.usb_device_check = self.usb_tab.device_check()
         c.capture_presets = [dict(p, camera_props=dict(p["camera_props"])) for p in self._presets]
         if any(p["name"] == self._active for p in self._presets):
             c.active_preset = self._active

@@ -179,6 +179,14 @@ def build_qss(mode: str = "dark") -> str:
     QPushButton#EyeBtn[eye="OD"]:checked {{ color: {c['od']}; border: 1px solid {c['od']}; }}
     QPushButton#EyeBtn[eye="OS"]:checked {{ color: {c['os']}; border: 1px solid {c['os']}; }}
     QPushButton#EyeBtn[eye="OU"]:checked {{ color: {c['ou']}; border: 1px solid {c['ou']}; }}
+    QLabel#EyeStatus {{
+        color: {c['ink_soft']}; background: {c['bg']}; border: 1px solid {c['rule']}; border-radius: 8px;
+        padding: 2px 7px; min-height: 18px; font-size: 11px; font-weight: 700;
+    }}
+    QLabel#EyeStatus[level="device"] {{ color: #3ccf7a; border-color: #3ccf7a; }}
+    QLabel#EyeStatus[level="unknown"] {{ color: #ffb454; border-color: #d99a2b; }}
+    QLabel#EyeStatus[level="stale"] {{ color: #ffb454; border-color: #d99a2b; }}
+    QLabel#EyeStatus[level="manual"] {{ color: {c['ink_soft']}; }}
     QPushButton#SmartBtn {{
         background: transparent; border: 1px solid transparent; border-radius: 7px; padding: 2px 10px; min-height: 28px;
         color: {c['ink_soft']}; font-weight: 600;

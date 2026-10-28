@@ -1,15 +1,18 @@
-"""설정 → 'USB 버튼' 탭: 슬릿램프 USB 버튼의 키 조합 · 기능을 보고 바꾸고, 버튼 신호를 직접 눌러 확인한다.
+"""설정 → 'USB 버튼' 탭: 슬릿램프 USB 버튼 · 좌우 신호의 키 조합 · 기능을 보고 바꾸고, 신호를 직접 눌러 확인한다.
 
-- 버튼마다 키 조합(칸을 누르고 USB 버튼을 누르면 그 신호가 들어감) · 기능(녹화 · 스틸 · 사진 캡처 · 사용 안 함).
-- '신호 확인' 칸: 눌러 둔 뒤 USB 버튼을 누르면 받은 키 조합과 어느 버튼 · 기능인지, 뗌까지 왔는지 보여 준다
-  (설정 창에서는 녹화 · 스틸을 실제로 실행하지 않는다).
-- 저장은 설정 창 '확인' 때 (config.usb_buttons). 같은 키를 두 버튼 · 단축키에 함께 쓰면 확인을 막고 알려 준다.
+- 버튼 · 신호마다 키 조합(칸을 누르고 USB 버튼을 누르면 그 신호가 들어감) · 기능(녹화 · 스틸 · 사진 캡처 · 검사눈 OD / OS · 사용 안 함).
+- 좌우 자동 인식 켜기 / 끄기 · 장치 확인(Windows Raw Input 으로 VID 04D9 / PID 1203 의 신호만) 설정.
+- '신호 확인' 칸: 눌러 둔 뒤 USB 버튼을 누르면 받은 키 조합과 어느 버튼 · 기능인지, 뗌까지 왔는지, 슬릿램프 장치에서
+  온 신호인지(Raw Input 이 될 때) 보여 준다 (설정 창에서는 녹화 · 스틸 · 눈 바꾸기를 실제로 실행하지 않는다).
+- 저장은 설정 창 '확인' 때 (config.usb_buttons · usb_eye_auto · usb_device_check). 같은 키를 두 버튼 · 단축키에 함께 쓰면
+  확인을 막고 알려 준다.
 """
 from __future__ import annotations
 
 from PySide6.QtCore import QKeyCombination, Qt
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFrame,
     QGridLayout,
@@ -28,7 +31,7 @@ _MOD_KEYS = {Qt.Key.Key_Control, Qt.Key.Key_Shift, Qt.Key.Key_Alt, Qt.Key.Key_Me
 class KeyProbe(QLabel):
     """눌러 둔 뒤 USB 버튼을 누르면 받은 신호를 보여 주는 칸 (동작은 실행하지 않음)."""
 
-    IDLE = "여기를 한 번 누른 뒤 슬릿램프 USB 버튼을 눌러 보세요"
+    IDLE = "여기를 한 번 누른 뒤 슬릿램프 USB 버튼을 누르거나 슬릿램프를 좌우로 움직여 보세요"
 
     def __init__(self, tab: "UsbButtonsTab"):
         super().__init__(self.IDLE)
@@ -49,7 +52,7 @@ class KeyProbe(QLabel):
 
     def focusInEvent(self, e) -> None:  # noqa: N802
         if not self._text:
-            self.setText("USB 버튼을 눌러 보세요 …")
+            self.setText("USB 버튼을 누르거나 슬릿램프를 움직여 보세요 …")
         super().focusInEvent(e)
 
     def keyPressEvent(self, e) -> None:  # noqa: N802
@@ -63,7 +66,7 @@ class KeyProbe(QLabel):
         bid = self.tab.button_for(e.key(), e.modifiers())
         who = (f"{usb_buttons.button_label(bid)} · {usb_buttons.action_label(self.tab.action_of(bid))}"
                if bid else "등록된 버튼이 아닙니다")
-        self._text = f"받은 신호: {usb_buttons.display(key)}  →  {who}"
+        self._text = f"받은 신호: {usb_buttons.display(key)}  →  {who}  ·  {self.tab.device_text(e.key())}"
         self.setText(self._text + "  (누름)")
         e.accept()
 
@@ -76,11 +79,12 @@ class KeyProbe(QLabel):
 
 
 class UsbButtonsTab(QWidget):
-    def __init__(self, config, parent=None):
+    def __init__(self, config, parent=None, raw_input=None):
         super().__init__(parent)
         self.config = config
+        self.raw_input = raw_input           # app/usb_raw_input.py 객체 (메인 창이 만든 것, 없으면 None)
         lay = QVBoxLayout(self)
-        intro = QLabel("슬릿램프 USB 버튼(키보드 신호를 보내는 버튼)을 촬영 화면 동작에 연결합니다. 버튼은 촬영 화면에서만 동작하고, "
+        intro = QLabel("슬릿램프 USB 버튼 · 좌우 신호(키보드 신호를 보내는 장치)를 촬영 화면 동작에 연결합니다. 촬영 화면에서만 동작하고, "
                        "글자 입력칸 · 설정 창 · 다른 프로그램에서는 실행하지 않습니다. 길게 눌러도 한 번만, 뗀 뒤 다시 눌러야 다음 동작입니다.\n"
                        "확인한 장치: VID 04D9 / PID 1203 (MI_00 키보드). 드라이버 · 보드 설정은 바꾸지 않습니다.")
         intro.setObjectName("Muted")
@@ -119,10 +123,31 @@ class UsbButtonsTab(QWidget):
         note = QLabel("· 녹화 시작 / 정지: 촬영 도크 '녹화' 버튼과 같습니다 (환자를 먼저 선택).\n"
                       "· 스틸 화면 정지 / 해제: 촬영 도크 '정지영상' 과 같고 사진 파일은 저장하지 않습니다 "
                       "(분할 화면에서는 칸 채우기, 녹화 중에 눌러도 녹화는 계속됩니다).\n"
-                      "· 사진 촬영 버튼은 신호를 확인한 뒤 따로 정합니다.")
+                      "· 사진 캡처: 촬영 도크 셔터와 같습니다 — 정지 화면이면 그 화면을, 아니면 라이브 영상을 찍은 순간의 눈으로 저장.\n"
+                      "· 좌우 신호 4 · 5: 슬릿램프가 환자 오른눈(OD) · 왼눈(OS) 쪽으로 갔을 때 보내는 신호 — 토글이 아니라 "
+                      "늘 그 눈으로 정합니다. OD · OS 를 직접 골라도 되고, 다음 신호가 오면 다시 자동으로 바뀝니다.\n"
+                      "· 처음 켰을 때 · 장치를 다시 꽂았을 때는 눈 위치를 짐작하지 않고 '미확인' 으로 두며, 다른 프로그램에서 "
+                      "돌아오면 신호를 놓쳤을 수 있어 '확인 필요' 로 표시합니다.\n"
+                      "· 사진은 찍은 순간의 눈으로 저장됩니다(정지 화면은 정지한 순간, 녹화는 시작한 순간 · 녹화 중 전환은 코멘트에 기록). "
+                      "이미 저장된 사진의 좌우는 바뀌지 않습니다.")
         note.setObjectName("Muted")
         note.setWordWrap(True)
         lay.addWidget(note)
+
+        self.chk_eye_auto = QCheckBox("슬릿램프 좌우 신호(4 · 5)로 검사눈 자동 인식 (끄면 OD · OS 를 직접 고름)")
+        self.chk_eye_auto.setChecked(bool(getattr(config, "usb_eye_auto", True)))
+        lay.addWidget(self.chk_eye_auto)
+        self.chk_device_check = QCheckBox("장치 확인 — Windows Raw Input 으로 VID 04D9 / PID 1203 (MI_00) 장치의 신호만 좌우 신호로 받기")
+        self.chk_device_check.setChecked(bool(getattr(config, "usb_device_check", True)))
+        self.chk_device_check.setToolTip("다른 키보드에서 같은 키 조합을 눌러도 좌우가 바뀌지 않게 합니다. 장치를 다시 꽂으면 경로를 다시 "
+                                         "확인합니다. 글자 입력은 수집 · 기록하지 않습니다. Raw Input 을 못 쓰는 환경(맥 · 등록 실패)에서는 "
+                                         "모든 키보드 신호를 받습니다. 녹화 · 스틸 · 캡처 버튼(1 · 2 · 3)은 장치 확인 없이 받습니다.")
+        lay.addWidget(self.chk_device_check)
+        self.lbl_device = QLabel(self.raw_input.status_text() if self.raw_input is not None else
+                                 "장치 확인(Raw Input): 촬영 창이 있을 때만 알 수 있습니다")
+        self.lbl_device.setObjectName("Muted")
+        self.lbl_device.setWordWrap(True)
+        lay.addWidget(self.lbl_device)
 
         head = QLabel("신호 확인")
         head.setObjectName("ThumbTitle")
@@ -142,6 +167,12 @@ class UsbButtonsTab(QWidget):
                       "action": self.action_combos[bid].currentData() or "none"}
                 for bid, _name in usb_buttons.BUTTONS}
 
+    def eye_auto(self) -> bool:
+        return self.chk_eye_auto.isChecked()
+
+    def device_check(self) -> bool:
+        return self.chk_device_check.isChecked()
+
     def action_of(self, bid: str) -> str:
         return self.action_combos[bid].currentData() or "none"
 
@@ -150,6 +181,15 @@ class UsbButtonsTab(QWidget):
             if v["key"] and usb_buttons.matches(v["key"], key, modifiers):
                 return bid
         return None
+
+    def device_text(self, qt_key) -> str:
+        """'신호 확인' 칸에 덧붙일 장치 판정 (Raw Input 이 될 때만 의미 있음)."""
+        if self.raw_input is None or not self.raw_input.available():
+            return "장치 확인 없음"
+        hit = self.raw_input.classify(int(qt_key))
+        if hit is None:
+            return "장치: 알 수 없음"
+        return "장치: 슬릿램프 확인" if hit else "장치: 다른 키보드"
 
     def problem(self) -> str | None:
         """확인을 막을 문제 (같은 키를 두 곳에) — 없으면 None."""
