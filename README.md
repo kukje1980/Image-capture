@@ -26,9 +26,14 @@ python run_viewer.py --demo
 `--demo`는 빈 라이브러리에 가상 환자 사진(RetiCam·APOLLO·VK-2·DICOM 형식)을 넣어 바로 써 볼
 수 있게 합니다. `--home D:\FundusViewer`를 주면 설정과 라이브러리를 그 폴더 하나에 둡니다(휴대용).
 
-**설치 파일(exe) 만들기:** `build_windows.bat` 실행 → `dist\FundusViewer\FundusViewer.exe`
-(폴더째 복사해 사용). GitHub Actions(`fundus-viewer` 워크플로)도 Windows exe를 빌드해
-아티팩트로 올립니다.
+**내려받기 (Windows 10 / 11):**
+https://github.com/kukje1980/ophthal-electrophysiology/releases/download/fundus-viewer-latest/FundusViewer-windows.zip
+— 로그인 없이 받아지며 항상 최신 빌드입니다. 압축을 풀고 `FundusViewer\FundusViewer.exe`를 실행합니다
+("Windows의 PC 보호" 창이 뜨면 **추가 정보 → 실행**).
+
+**직접 빌드:** `build_windows.bat` 실행 → `dist\FundusViewer\FundusViewer.exe` (폴더째 복사해 사용).
+GitHub Actions(`fundus-viewer` 워크플로)가 커밋마다 Windows exe를 빌드해 위 주소(릴리스
+`fundus-viewer-latest`)에 올립니다.
 
 ## 사용 흐름
 

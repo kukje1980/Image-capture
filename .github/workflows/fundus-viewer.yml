@@ -26,6 +26,8 @@ jobs:
 
   build-windows:
     runs-on: windows-latest
+    permissions:
+      contents: write   # publish the zip as a release (download without logging in)
     defaults:
       run:
         working-directory: fundus_viewer
@@ -43,3 +45,18 @@ jobs:
         with:
           name: FundusViewer-windows
           path: fundus_viewer/dist/FundusViewer
+      # Fixed download address for the newest build:
+      # https://github.com/<owner>/<repo>/releases/download/fundus-viewer-latest/FundusViewer-windows.zip
+      - name: Publish latest build
+        if: github.event_name != 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          (cd dist && 7z a -tzip ../FundusViewer-windows.zip FundusViewer > /dev/null)
+          gh release delete fundus-viewer-latest --yes --cleanup-tag || true
+          gh release create fundus-viewer-latest FundusViewer-windows.zip \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "FundusViewer - latest Windows build" \
+            --notes "Windows 10/11 build of commit $GITHUB_SHA ($GITHUB_REF_NAME). Unzip and run FundusViewer\\FundusViewer.exe."
