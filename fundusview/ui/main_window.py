@@ -466,13 +466,16 @@ class MainWindow(QMainWindow):
         self.c_nerve = QCheckBox("시신경")
         self.c_nerve.setChecked(True)
         self.c_nerve.toggled.connect(lambda on: (setattr(self.eye3d, "show_nerve", on), self.eye3d.update()))
+        self.c_muscle = QCheckBox("외안근")
+        self.c_muscle.setToolTip("네 곧은근과 두 빗근의 부착부(절단면)를 함께 표시")
+        self.c_muscle.toggled.connect(lambda on: (setattr(self.eye3d, "show_muscles", on), self.eye3d.update()))
         self.c_grid = QCheckBox("각도 격자(10°)")
         self.c_grid.toggled.connect(lambda on: (setattr(self.eye3d, "show_grid", on), self.eye3d.update()))
         self.c_adj3d = QCheckBox("영상 처리 적용")
         self.c_adj3d.setChecked(True)
         self.c_adj3d.toggled.connect(lambda _: self._mark_3d_dirty())
         row2 = QHBoxLayout()
-        for c in (self.c_nerve, self.c_grid, self.c_adj3d):
+        for c in (self.c_nerve, self.c_muscle, self.c_grid, self.c_adj3d):
             row2.addWidget(c)
         self.eye3d = EyeView()
         self.eye3d.setToolTip("드래그: 회전 · 휠/오른쪽 드래그: 확대 · 더블클릭: 초기화")
