@@ -3,7 +3,7 @@
 Cells show consecutive photos of the current patient starting at the selected
 one (down-scaled for speed). Click a cell to select it (the info panel and
 the other tabs follow), double-click to open it in the 2D tab. Each cell can
-be zoomed (wheel / right-drag) and panned on its own.
+be zoomed (drag up/down, wheel) and panned on its own.
 """
 from __future__ import annotations
 
@@ -51,7 +51,7 @@ class MultiView(QWidget):
         self.combo.setCurrentIndex(2)
         self.combo.currentIndexChanged.connect(lambda _: self.layoutChanged.emit(self.count))
         top.addWidget(self.combo)
-        hint = QLabel("클릭: 선택 · 더블클릭: 2D로 열기 · 휠/오른쪽 드래그: 확대")
+        hint = QLabel("위/아래 드래그: 확대·축소 · 클릭: 선택 · 더블클릭: 2D로 열기")
         hint.setStyleSheet("color:#889")
         top.addWidget(hint, 1)
         self.grid = QGridLayout()
