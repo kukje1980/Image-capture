@@ -20,6 +20,7 @@ FIELD_LABELS = {
 MODALITY_LABELS = {
     "color": "컬러", "redfree": "Red-free", "af": "자가형광(AF)", "fa": "형광조영(FA)",
     "icg": "ICG", "ir": "적외선(IR)", "anterior": "전안부", "montage": "몽타주",
+    "disc": "디스크 2장",   # optic disc pair sheet made by the viewer (discpair.py)
 }
 
 

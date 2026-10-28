@@ -11,8 +11,8 @@ from datetime import date
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QObject, QPoint, QRect, QRectF, QSize, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QActionGroup, QColor, QCursor, QDesktopServices, QFont, QIcon, QImage, \
+from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QAction, QActionGroup, QBrush, QColor, QCursor, QDesktopServices, QFont, QIcon, QImage, \
     QKeySequence, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox, QDockWidget, QDoubleSpinBox, QFileDialog,
@@ -21,23 +21,26 @@ from PySide6.QtWidgets import (
     QTabWidget, QToolBar, QToolButton, QVBoxLayout, QWidget,
 )
 
-from .. import APP_TITLE, __version__, autosetup, imaging, measure
+from .. import APP_TITLE, __version__, autosetup, discpair, imaging, measure
 from .. import projection as proj
 from ..config import Settings
 from ..db import Database
-from ..importer import ImportResult
+from ..importer import ImportResult, safe_component
 from ..models import MODALITY_LABELS
 from ..profiles import get_profile
 from ..watcher import ImportService
 from .dialogs import ImageDialog, PatientDialog, SettingsDialog, source_label
+from .disc_pair import DiscPairDialog
 from .eye3d import EyeView
 from .histogram import HistogramDialog
-from .image_view import TOOL_HINTS, TOOLS, ImageView
+from .image_view import TOOL_HINTS, TOOLS, ImageView, from_qimage
 from .multi_view import MultiView
 from .toolbars import CHECKABLE, COMMANDS, MENUS, PROCESSING, SliderPopup, icon_for
 
 UNASSIGNED = -1
 SEX_LABEL = {"M": "남", "F": "여", "O": "기타"}
+THUMB_TEXT = Qt.ItemDataRole.UserRole + 1    # thumbnail caption without the ② mark
+SECOND_PICK = QColor(168, 104, 28)           # background of the second picked photo (②)
 
 
 class Bridge(QObject):
@@ -173,6 +176,7 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         for a in self.menus["save"].actions():
             m.addAction(a)
+        m.addAction(A["discpair"])
         m.addAction(A["print"])
         m.addSeparator()
         m.addAction("원본 폴더 열기", self._open_folder)
@@ -301,8 +305,9 @@ class MainWindow(QMainWindow):
         self.thumbs.setFixedHeight(182)
         self.thumbs.setMovement(QListWidget.Movement.Static)
         self.thumbs.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.thumbs.setToolTip("Ctrl+클릭: 비교 대상 선택 · 오른쪽 클릭: 환자 지정·다시 분석")
-        self.thumbs.itemClicked.connect(self._on_thumb_clicked)
+        self.thumbs.setToolTip("Ctrl+클릭: 두 번째 사진(②) 선택/해제 — 비교 · 디스크 2장 · "
+                               "오른쪽 클릭: 환자 지정·다시 분석")
+        self.thumbs.viewport().installEventFilter(self)
         self.thumbs.currentItemChanged.connect(lambda cur, _: cur and self._show_image(cur.data(Qt.ItemDataRole.UserRole)))
         self.thumbs.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.thumbs.customContextMenuRequested.connect(self._thumb_menu)
@@ -338,7 +343,14 @@ class MainWindow(QMainWindow):
         cmp_l.addWidget(cmp_split, 1)
         self.cmp_sync = QCheckBox("확대·이동 동기화")
         self.cmp_sync.setChecked(True)
-        cmp_l.addWidget(self.cmp_sync)
+        cmp_row = QHBoxLayout()
+        cmp_row.addWidget(self.cmp_sync)
+        cmp_row.addStretch()
+        b_pair = QPushButton("디스크 2장 (보험 청구용)…")
+        b_pair.setToolTip("이 두 사진의 시신경 유두만 확대해 한 장으로 만듭니다")
+        b_pair.clicked.connect(lambda: self._on_action("discpair"))
+        cmp_row.addWidget(b_pair)
+        cmp_l.addLayout(cmp_row)
         a, b = self.cmp_views
         for src, dst in ((a, b), (b, a)):
             src.horizontalScrollBar().valueChanged.connect(
@@ -549,6 +561,9 @@ class MainWindow(QMainWindow):
             "PageUp / PageDown: 이전 / 다음 사진 · Ctrl+1~4: 2D / 3D / 다중 / 비교<br>"
             "Ctrl+Z: 처리 실행 취소 · Delete: 마지막 측정 지우기 · Ctrl+C: 화면 복사<br>"
             "Ctrl+F: 환자 검색 · Ctrl+P: 인쇄<br><br>"
+            "<b>두 사진 고르기 · 디스크 2장</b><br>"
+            "사진을 클릭하고 두 번째 사진을 Ctrl+클릭(②, 다시 Ctrl+클릭하면 해제) → 비교 탭<br>"
+            "[디스크 2장]: 두 사진의 시신경 유두만 확대해 한 장으로 (OD 왼쪽 · OS 오른쪽, 보험 청구용)<br><br>"
             "<b>사진 가져오기</b><br>"
             "자동입니다. 레티캠 등 장비 폴더와 [문서\\안저사진 가져오기] 폴더를 감시해 "
             "새 사진의 환자 ID·이름을 읽고 환자별로 정리합니다."))
@@ -731,6 +746,8 @@ class MainWindow(QMainWindow):
         if not rows:
             return
         ref = self._row_ref(rows[0].row())
+        if ref != self._patient_ref:
+            self.compare = None          # the second pick belongs to the previous patient
         self._patient_ref = ref
         if ref == UNASSIGNED:
             self.banner.setText("미분류 영상 — 사진을 선택하고 오른쪽 [정보 수정] 버튼으로 환자를 지정하세요")
@@ -815,6 +832,7 @@ class MainWindow(QMainWindow):
             text = f"{r['exam_date'] or '날짜 없음'}  {r['laterality'] or ''}\n{mod_label} {fov}".strip()
             it = QListWidgetItem(QIcon(QPixmap(r["thumb_path"] or "")), text)
             it.setData(Qt.ItemDataRole.UserRole, r["id"])
+            it.setData(THUMB_TEXT, text)
             it.setToolTip(f"{r['exam_date'] or ''} {r['exam_time'] or ''}\n{r['device'] or ''}\n"
                           f"{Path(r['original_path'] or r['file_path']).name}")
             self.thumbs.addItem(it)
@@ -828,10 +846,43 @@ class MainWindow(QMainWindow):
             self.thumbs.scrollToItem(pick)
         else:
             self._show_image(None)
+        self._mark_pair()
 
-    def _on_thumb_clicked(self, item: QListWidgetItem) -> None:
-        if QApplication.keyboardModifiers() & Qt.KeyboardModifier.ControlModifier and self.current:
-            self._set_compare(item.data(Qt.ItemDataRole.UserRole))
+    def eventFilter(self, obj, e):
+        # Ctrl+click on a thumbnail picks the second photo (②) and leaves the shown one alone
+        if (e.type() in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease,
+                         QEvent.Type.MouseButtonDblClick)
+                and obj is self.thumbs.viewport()
+                and e.button() == Qt.MouseButton.LeftButton
+                and e.modifiers() & Qt.KeyboardModifier.ControlModifier):
+            item = self.thumbs.itemAt(e.position().toPoint())
+            if e.type() == QEvent.Type.MouseButtonPress and item is not None:
+                self._pick_second(item.data(Qt.ItemDataRole.UserRole))
+            return True
+        return super().eventFilter(obj, e)
+
+    def _pick_second(self, image_id: int) -> None:
+        """Ctrl+click: toggle ``image_id`` as the second photo next to the shown one."""
+        if self.current is None or image_id == self.current["id"]:
+            return
+        if self.compare is not None and self.compare["id"] == image_id:
+            self.compare = None
+            self._mark_pair()
+            self.lbl_status.setText("두 번째 사진 선택을 해제했습니다")
+            if self.tabs.currentIndex() == 3:
+                self._fill_compare()
+            return
+        self._set_compare(image_id)
+
+    def _mark_pair(self) -> None:
+        """Show the second picked photo in the strip: ② and an amber background."""
+        cid = self.compare["id"] if self.compare is not None else None
+        for i in range(self.thumbs.count()):
+            it = self.thumbs.item(i)
+            second = cid is not None and it.data(Qt.ItemDataRole.UserRole) == cid
+            base = it.data(THUMB_TEXT) or it.text()
+            it.setText(f"② {base}" if second else base)
+            it.setData(Qt.ItemDataRole.BackgroundRole, QBrush(SECOND_PICK) if second else None)
 
     def _thumb_menu(self, pos) -> None:
         item = self.thumbs.itemAt(pos)
@@ -840,7 +891,13 @@ class MainWindow(QMainWindow):
         iid = item.data(Qt.ItemDataRole.UserRole)
         menu = QMenu(self)
         menu.addAction("환자 지정/정보 수정…", lambda: (self._show_image(iid), self._edit_image()))
-        menu.addAction("비교 대상으로 (오른쪽)", lambda: self._set_compare(iid))
+        cur = self.current["id"] if self.current else None
+        if iid != cur:
+            menu.addAction("비교 대상으로 (오른쪽)", lambda: self._set_compare(iid))
+            menu.addAction("디스크 2장 (보고 있는 사진과)…", lambda: self._disc_pair(iid))
+        elif self.compare is not None:
+            menu.addAction("디스크 2장 (② 사진과)…", lambda: self._disc_pair())
+            menu.addAction("두 번째 사진(②) 선택 해제", lambda: self._pick_second(self.compare["id"]))
         menu.addAction("원본 폴더 열기", lambda: (self._show_image(iid), self._open_folder()))
         menu.addSeparator()
         menu.addAction("다시 분석 (원·시신경 검출)", lambda: self._reanalyse(iid))
@@ -872,7 +929,11 @@ class MainWindow(QMainWindow):
 
     def _show_image(self, image_id: int | None) -> None:
         row = self.db.get_image(image_id) if image_id is not None else None
-        self.current = row
+        prev, self.current = self.current, row
+        if row is not None and self.compare is not None and self.compare["id"] == row["id"]:
+            # clicked the ② photo: it is shown now, the one shown before becomes ②
+            self.compare = prev if prev is not None and prev["id"] != row["id"] else None
+            self._mark_pair()
         if row is None:
             self.view2d.set_rgb(None)
             self.view2d.set_captions()
@@ -1128,6 +1189,8 @@ class MainWindow(QMainWindow):
             self._save_view_record()
         elif key == "print":
             self._print_view()
+        elif key == "discpair":
+            self._disc_pair()
         # -- command toolbar ---------------------------------------------------------
         elif key == "search":
             self.acts["list"].setChecked(True)
@@ -1250,10 +1313,7 @@ class MainWindow(QMainWindow):
         img = self._rendered()
         if img is None:
             return
-        img = img.convertToFormat(QImage.Format.Format_RGB888)
-        w, h, bpl = img.width(), img.height(), img.bytesPerLine()
-        arr = np.frombuffer(img.constBits(), np.uint8, count=bpl * h).reshape(h, bpl)[:, :w * 3]
-        rgb = np.ascontiguousarray(arr.reshape(h, w, 3))
+        rgb = from_qimage(img)
         steps = [imaging.OP_LABELS.get(o, o) for o in self._ops]
         note = "편집 영상" + (f" ({', '.join(steps)})" if steps else "")
         new_id = self.service.importer.add_derived(self.current, rgb, note)
@@ -1352,7 +1412,7 @@ class MainWindow(QMainWindow):
             self.view2d.geometry = measure.Geometry(
                 *circle, fov_deg=self.sp_fov.value(), fov_type=self.c_fovtype.currentData(),
                 projection=self.c_proj.currentData(), viewpoint=prof.viewpoint,
-                radial_c=prof.radial_c) if circle and row["modality"] != "montage" else None
+                radial_c=prof.radial_c) if circle and row["modality"] not in ("montage", "disc") else None
         tmax = math.degrees(self.eye3d.theta_max)
         self.lbl_3d.setText(f"망막 범위: 후극에서 {tmax:.0f}° (안구 중심각 {2 * tmax:.0f}°)")
 
@@ -1446,12 +1506,17 @@ class MainWindow(QMainWindow):
     def _on_disc_picked(self, x: float, y: float) -> None:
         if self.current is None:
             return
-        self.db.update_image(self.current["id"], disc_x=x, disc_y=y)
-        self.current = self.db.get_image(self.current["id"])
-        self.view2d.set_overlays((self.current["circle_cx"], self.current["circle_cy"], self.current["circle_r"]),
-                                 (x, y))
-        self._push_mapping()
+        self._set_disc(self.current["id"], x, y)
         self.lbl_status.setText("시신경 유두 위치를 저장했습니다 (3D 시신경에 반영)")
+
+    def _set_disc(self, image_id: int, x: float, y: float) -> None:
+        """Store a photo's optic disc position (2D right-click menu, disc pair clicks)."""
+        self.db.update_image(image_id, disc_x=x, disc_y=y)
+        if self.current is not None and self.current["id"] == image_id:
+            self.current = self.db.get_image(image_id)
+            self.view2d.set_overlays((self.current["circle_cx"], self.current["circle_cy"],
+                                      self.current["circle_r"]), (x, y))
+            self._push_mapping()
 
     def _on_tab(self, i: int) -> None:
         if i == 1 and self._3d_dirty:
@@ -1463,7 +1528,12 @@ class MainWindow(QMainWindow):
 
     # -- compare -------------------------------------------------------------------
     def _set_compare(self, image_id: int) -> None:
+        if self.current is not None and image_id == self.current["id"]:
+            return
         self.compare = self.db.get_image(image_id)
+        self._mark_pair()
+        self.lbl_status.setText("두 사진을 골랐습니다 (② = 두 번째) — [디스크 2장]으로 시신경 유두 2장 만들기 · "
+                                "Ctrl+클릭으로 해제")
         self.tabs.setCurrentIndex(3)
         self._fill_compare()
 
@@ -1477,6 +1547,92 @@ class MainWindow(QMainWindow):
             view.set_rgb(self._adjusted(self._processed(row, rgb)) if rgb is not None else None)
             mod = MODALITY_LABELS.get(row["modality"] or "", "")
             lab.setText(f"<b>{row['exam_date'] or ''}</b> {row['laterality'] or ''} {mod}")
+
+    # -- disc pair (디스크 2장 — discpair.py, disc_pair.py) ---------------------------------------
+    def _disc_source(self, row, rgb: np.ndarray) -> discpair.DiscSource:
+        prof = get_profile(row["profile"])
+        circle = ((row["circle_cx"], row["circle_cy"], row["circle_r"]) if row["circle_r"]
+                  else imaging.detect_circle(rgb))
+        geo = measure.Geometry(*circle, fov_deg=row["fov_deg"] or prof.fov_deg,
+                               fov_type=row["fov_type"] or prof.fov_type,
+                               projection=row["projection"] or prof.projection,
+                               viewpoint=prof.viewpoint, radial_c=prof.radial_c)
+        eye = row["laterality"] if row["laterality"] in ("OD", "OS") else None
+        if row["disc_x"] is not None:
+            disc, found = (row["disc_x"], row["disc_y"]), "saved"
+            eye = eye or imaging.laterality_from_disc(disc, circle)
+        else:
+            disc, found = discpair.expected_disc(geo, eye, (rgb.shape[1], rgb.shape[0])), "estimated"
+        when = f"{row['exam_date'] or ''} {row['exam_time'] or ''}".strip()
+        fov = f"{row['fov_deg']:g}°" if row["fov_deg"] else ""
+        caption = "  ·  ".join(x for x in (when or "검사일 미상", row["device"] or prof.name, fov,
+                                           MODALITY_LABELS.get(row["modality"] or "", "")) if x)
+        return discpair.DiscSource(row["id"], rgb, disc, geo, eye, when, caption, found)
+
+    def _build_disc_pair(self, second_id: int | None = None):
+        """``(dialog, "")`` for the shown photo and ``second_id`` (default: the ② photo),
+        or ``(None, why not)``."""
+        if self.current is None:
+            return None, "사진을 고르세요."
+        first = self.db.get_image(self.current["id"])
+        if second_id is None or second_id == first["id"]:
+            second_id = self.compare["id"] if self.compare is not None else None
+        second = self.db.get_image(second_id) if second_id is not None else None
+        if second is None or second["id"] == first["id"]:
+            return None, ("사진 두 장을 고르세요.\n\n썸네일에서 한 장을 클릭한 뒤 두 번째 사진을 Ctrl+클릭하면 "
+                          "② 표시가 붙습니다. 그다음 [디스크 2장]을 누르세요.")
+        if first["patient_ref"] is None or second["patient_ref"] is None:
+            return None, "미분류 사진은 쓸 수 없습니다.\n먼저 [정보 수정]으로 환자를 지정하세요."
+        if first["patient_ref"] != second["patient_ref"]:
+            return None, "서로 다른 환자의 사진입니다."
+        for row in (first, second):
+            if row["modality"] in ("anterior", "disc"):
+                return None, f"{MODALITY_LABELS[row['modality']]} 사진에서는 시신경 유두를 자를 수 없습니다."
+        sources = []
+        for row in (first, second):
+            rgb = self._load(row)
+            if rgb is None:
+                return None, f"영상을 열 수 없습니다: {Path(row['original_path'] or row['file_path']).name}"
+            sources.append(self._disc_source(row, rgb))
+        p = self.db.get_patient(first["patient_ref"])
+        dates = [r["exam_date"] for r in (first, second) if r["exam_date"]]
+        on = min(dates) if dates else None
+        age = age_on(p["birth_date"], on)
+        bits = [p["name"] or "(이름 없음)", f"ID {p['patient_id']}"]
+        if p["birth_date"]:
+            bits.append(p["birth_date"] + (f" ({age}세)" if age is not None else ""))
+        if p["sex"]:
+            bits.append(SEX_LABEL.get(p["sex"], p["sex"]))
+        stem = "_".join(x for x in (p["patient_id"], p["name"] or "", "디스크", on or "") if x)
+        dlg = DiscPairDialog(sources, patient_line="  ·  ".join(bits),
+                             footer=f"{APP_TITLE}  ·  작성 {date.today().isoformat()}",
+                             file_stem=safe_component(stem, "디스크"), save_record=self._save_disc_pair,
+                             adjust=self._adjusted, parent=self)
+        dlg.discPicked.connect(self._set_disc)
+        return dlg, ""
+
+    def _disc_pair(self, second_id: int | None = None) -> None:
+        dlg, why = self._build_disc_pair(second_id)
+        if dlg is None:
+            QMessageBox.information(self, "디스크 2장", why)
+            return
+        dlg.exec()
+
+    def _save_disc_pair(self, rgb: np.ndarray, sources) -> int:
+        """Store the sheet as a new photo of the patient (modality ``disc``)."""
+        rows = [self.db.get_image(s.image_id) for s in sources]
+        eyes = [s.eye for s in sources]
+        lat = "OU" if set(eyes) == {"OD", "OS"} else (eyes[0] if eyes[0] and eyes[0] == eyes[1] else None)
+        note = "디스크 2장 (" + " · ".join(e or "?" for e in eyes) + ")"
+        new_id = self.service.importer.add_derived(
+            rows[0], rgb, note, suffix="디스크2장", derived_from=[r["id"] for r in rows],
+            laterality=lat, modality="disc", fov_deg=None, fov_type=None, projection=None,
+            circle_cx=None, circle_cy=None, circle_r=None)
+        self.refresh_patients(keep=True)
+        self._fill_dates()
+        self._fill_thumbs(select_id=self.current["id"] if self.current else None)
+        self.lbl_status.setText("디스크 2장을 이 환자 기록에 저장했습니다")
+        return new_id
 
     # -- edit / misc -------------------------------------------------------------------
     def _edit_image(self) -> None:
@@ -1521,6 +1677,8 @@ class MainWindow(QMainWindow):
         if ok == QMessageBox.StandardButton.Yes:
             self.db.delete_image(image_id)
             self._cache.pop(image_id, None)
+            if self.compare is not None and self.compare["id"] == image_id:
+                self.compare = None
             self.refresh_patients(keep=True)
             self._fill_thumbs()
 

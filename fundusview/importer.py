@@ -220,9 +220,11 @@ class Importer:
                             f"· {profile.name}", spath)
         return ImportResult("imported", spath, who, image_id, patient_ref)
 
-    def add_derived(self, row, rgb, note: str = "편집 영상") -> int:
+    def add_derived(self, row, rgb, note: str = "편집 영상", *, suffix: str = "편집", derived_from=None,
+                    **fields) -> int:
         """Store an edited copy (VK-2 "Save Edited Image") next to ``row`` in the
-        same patient record; the original photo is untouched."""
+        same patient record; the original photo is untouched. ``fields`` override
+        the image row's values (e.g. ``modality`` of a composed sheet)."""
         import io
         import json
         from datetime import datetime
@@ -239,16 +241,16 @@ class Importer:
         dest_dir = self.library / "images" / pid_dir / (row["exam_date"] or "날짜없음")
         dest_dir.mkdir(parents=True, exist_ok=True)
         stem = Path(row["original_path"] or row["file_path"]).stem
-        stored = dest_dir / safe_component(f"{stem}_편집_{datetime.now():%H%M%S}.png", "edited.png")
+        stored = dest_dir / safe_component(f"{stem}_{suffix}_{datetime.now():%H%M%S}.png", "edited.png")
         stored.write_bytes(data)
         thumb = self.library / "thumbs" / f"{digest[:24]}.jpg"
         thumb.parent.mkdir(parents=True, exist_ok=True)
         imaging.thumbnail(rgb).save(thumb, quality=88)
         circle = imaging.detect_circle(rgb)
         meta = json.loads(row["meta_json"] or "{}")
-        meta["derived_from"] = row["id"]
+        meta["derived_from"] = row["id"] if derived_from is None else derived_from
         h, w = rgb.shape[:2]
-        image_id = self.db.insert_image(
+        values = dict(
             patient_ref=row["patient_ref"], exam_date=row["exam_date"], exam_time=row["exam_time"],
             laterality=row["laterality"], modality=row["modality"], device=row["device"], profile=row["profile"],
             fov_deg=row["fov_deg"], fov_type=row["fov_type"], projection=row["projection"],
@@ -256,5 +258,6 @@ class Importer:
             width=w, height=h, circle_cx=circle[0], circle_cy=circle[1], circle_r=circle[2],
             meta_json=meta, note=note,
         )
+        image_id = self.db.insert_image(**{**values, **fields})
         self.db.log("info", f"편집 영상 저장 — 원본 #{row['id']} → #{image_id}", str(stored))
         return image_id

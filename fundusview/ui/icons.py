@@ -338,6 +338,16 @@ def _draw(name: str, p: QPainter) -> None:
         p.setBrush(QBrush(QColor(196, 52, 44)))
         p.drawRoundedRect(QRectF(4, 16, 56, 32), 5, 5)
         _text(p, QRectF(4, 16, 56, 32), "EXIT", 18, QColor(255, 236, 230))
+    elif name == "discpair":   # two optic discs (rim + cup) side by side
+        for cx in (17.0, 47.0):
+            p.setPen(_pen(INK, 3))
+            p.setBrush(QBrush(QColor(178, 86, 52)))
+            p.drawEllipse(QPointF(cx, 32), 14, 14)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QBrush(QColor(244, 212, 156)))
+            p.drawEllipse(QPointF(cx, 32), 7, 7.5)
+            p.setBrush(QBrush(QColor(255, 250, 232)))
+            p.drawEllipse(QPointF(cx, 32), 3.2, 3.2)
     elif name == "eye3d":
         p.setPen(_pen())
         p.drawEllipse(r.adjusted(2, 2, -2, -2))

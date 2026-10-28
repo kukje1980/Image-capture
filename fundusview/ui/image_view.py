@@ -65,6 +65,14 @@ def to_qimage(rgb: np.ndarray) -> QImage:
     return img.copy()  # own the buffer
 
 
+def from_qimage(img: QImage) -> np.ndarray:
+    """``uint8`` RGB array of a QImage (any format)."""
+    img = img.convertToFormat(QImage.Format.Format_RGB888)
+    w, h, bpl = img.width(), img.height(), img.bytesPerLine()
+    arr = np.frombuffer(img.constBits(), np.uint8, count=bpl * h).reshape(h, bpl)[:, :w * 3]
+    return np.ascontiguousarray(arr.reshape(h, w, 3))
+
+
 class _Navigator(QWidget):
     """Mini-map: the whole photo (as oriented on screen) with the visible part framed.
 
