@@ -160,6 +160,11 @@ QT_QPA_PLATFORM=offscreen pytest
 ```
 DB CRUD/FK, 설정 저장, 프레임 변환/썸네일, 캡처 3중 저장(기본·export·DB), 짧은 동영상 녹화를 검증합니다.
 
+**극한 상황 테스트** (`tests/test_extreme.py`, `web/tests/test_extreme.py`) — 환자 영상이 사라지거나·덮어써지거나·다른 환자와 섞이지 않는지:
+같은 밀리초 연속 촬영 · 여러 스레드/진료실 동시 저장(400장) · 디스크 가득 참 · 내보내기(NAS) 끊김 · 한글/아주 긴/악의적인 환자 정보 ·
+이상한 프레임(1×1, 8K, 흑백, 16bit) · 녹화 중 시계 변경 · 인코더 멈춤 · 강제 종료(전원 차단) · 손상된 DB/설정 · 로그인 우회 시도.
+웹 화면을 실제 브라우저로 조작하는 시험(서버 오류 중 촬영, 녹화 중 카메라 끊김·새로고침·환자 전환)은 `web/tests/e2e_extreme.js` (실행 방법은 파일 첫머리).
+
 ## Windows 실행파일(.exe) 만들기
 ```bat
 pyinstaller --noconfirm build.spec

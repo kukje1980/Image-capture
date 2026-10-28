@@ -46,7 +46,8 @@ class AppConfig:
         p = cls.config_path()
         if p.exists():
             try:
-                data = json.loads(p.read_text(encoding="utf-8"))
+                # utf-8-sig: 메모장 등이 붙이는 BOM 이 있어도 읽는다 (못 읽으면 저장 폴더가 기본값으로 바뀜)
+                data = json.loads(p.read_text(encoding="utf-8-sig"))
                 defaults = cls()
                 for f in fields(cls):
                     if f.name not in data:
@@ -68,8 +69,26 @@ class AppConfig:
                     os.replace(p, p.with_name(p.name + ".broken"))
                 except OSError:
                     pass
+        cfg._fix_out_of_range()
         cfg._apply_defaults()
         return cfg
+
+    def _fix_out_of_range(self) -> None:
+        """형식은 맞지만 쓸 수 없는 값(예: photo_format "exe", 크기 0)은 기본값으로 — 촬영이 전부 실패하지 않게."""
+        d = type(self)()
+        ok = {
+            "photo_format": self.photo_format.lower() in ("png", "jpg", "jpeg"),
+            "thumbnail_max_side": self.thumbnail_max_side > 0,
+            "capture_width": self.capture_width > 0,
+            "capture_height": self.capture_height > 0,
+            "camera_index": self.camera_index >= 0,
+            "subfolder_template": _template_ok(self.subfolder_template),
+            "px_per_mm": self.px_per_mm >= 0,
+        }
+        for name, good in ok.items():
+            if not good:
+                log.warning("config %s 값을 쓸 수 없어 기본값으로: %r", name, getattr(self, name))
+                setattr(self, name, getattr(d, name))
 
     def _apply_defaults(self) -> None:
         base = paths.get_appdata_dir()
@@ -90,3 +109,13 @@ class AppConfig:
         tmp = p.with_name(p.name + ".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         os.replace(tmp, p)
+
+
+def _template_ok(tpl: str) -> bool:
+    if not tpl or not tpl.strip("/\\ ."):
+        return False
+    try:
+        tpl.format(chart_no="c", patient_id="p", name="n", date="d")
+    except (KeyError, IndexError, ValueError, AttributeError, TypeError):
+        return False
+    return True
