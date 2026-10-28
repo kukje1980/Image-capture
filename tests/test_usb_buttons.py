@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import sys
 import time
 from pathlib import Path
 
@@ -376,7 +377,8 @@ def test_settings_tab_change_actions_and_conflicts(qapp, win, monkeypatch):
                             "4": {"key": "Ctrl+Alt+Shift+F6", "action": "eye_od"},
                             "5": {"key": "Ctrl+Alt+Shift+F7", "action": "eye_os"}}
     assert tab.chk_eye_auto.isChecked() and tab.chk_device_check.isChecked()
-    assert "사용 안 함" in tab.lbl_device.text()                                   # 리눅스: Raw Input 없음
+    # Windows 는 Raw Input 이 등록돼 '사용 중', 리눅스 · 맥은 '사용 안 함' (모든 키보드 신호를 받음)
+    assert ("사용 중" if sys.platform == "win32" else "사용 안 함") in tab.lbl_device.text()
     tab.key_edits["2"].setKeySequence(tab.key_edits["1"].keySequence())     # 두 버튼에 같은 키 → 확인 막음
     dlg.accept()
     assert dlg.result() == 0 and warned and "같은 키" in warned[-1]
@@ -532,7 +534,9 @@ def test_eye_signal_held_in_text_input_other_screen_and_dialog(qapp, win):
     _click(probe, F7)
     _pump(qapp)
     assert cb.current_eye() == "OD" and win.eye_status()["pending"] == "OS"
-    assert "좌우 신호 5" in probe.text() and "장치 확인 없음" in probe.text() and "뗌 확인" in probe.text()
+    # 흉내 낸 키 이벤트에는 WM_INPUT 이 없어 Windows 는 '장치: 알 수 없음', 리눅스 · 맥은 '장치 확인 없음'
+    device = "장치: 알 수 없음" if sys.platform == "win32" else "장치 확인 없음"
+    assert "좌우 신호 5" in probe.text() and device in probe.text() and "뗌 확인" in probe.text()
     dlg.close()
     win.activateWindow()                                                            # (오프스크린은 창을 스스로 되살리지 않음)
     assert _wait(qapp, lambda: QApplication.activeWindow() is win, 3)
