@@ -6,7 +6,7 @@ import time
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog
+from PySide6.QtWidgets import QApplication, QDialog, QLabel
 
 from app.models.patient import Patient
 from app.ui.icon_button import IconTextButton
@@ -481,8 +481,9 @@ def test_multi_has_pro_side_menus_and_magnifier_default(qapp, win):
     mp, mv = win.multi_pro, win.multi_view
     assert win.view_stack.currentWidget() is mp and mp.mode() == "grid" and mp.embedded
     assert not mp.toolbar_scroll.isVisible()                             # Pro 위 도구줄은 없음
-    assert [b.text() for b in mp.tab_buttons] == ["보정", "필터", "편집", "스마트", "분석", "정밀 분석"]
+    assert [b.text() for b in mp.tab_buttons] == ["보정", "편집", "분석"]   # 필터는 편집에, 스마트는 없고, 분석은 하나
     assert all(b.isVisible() for b in mp.tab_buttons)
+    assert [b.text() for b in win.pro.tab_buttons] == ["보정", "필터", "편집", "스마트", "분석", "정밀 분석"]  # Pro 검토는 그대로
     assert mv.tool() == "magnify" and all(cv.tool() == "magnify" for cv in mv.canvases())
     assert mp.tool_buttons["magnify"].isChecked()
     cv1 = mv.canvases()[1]
@@ -551,20 +552,60 @@ def QPoint_(x, y):
     return QPoint(x, y)
 
 
-def test_multi_analysis_tabs_work_on_active_cell(qapp, win):
+def test_multi_edit_tab_order_and_always_visible_edit_bar(qapp, win):
+    """멀티 편집 탭: 보기 → 도구 → 필터 → 회전 · 반전. 실행 취소 · 다시 실행 · 원본 · 주석 지우기 · 편집본 저장은 어느 탭에서나."""
+    _enter_multi(qapp, win, 2)
+    mp = win.multi_pro
+    page = mp.tabs.widget(1).widget()                                     # 편집 (스크롤 안)
+    assert mp.tabs.tabText(1) == "편집" and page.isAncestorOf(mp.c_sharpen) and page.isAncestorOf(mp.b_rot_l)
+    mp.tabs.setCurrentIndex(1)
+    qapp.processEvents()
+    y = lambda w: w.mapTo(page, w.rect().topLeft()).y()  # noqa: E731
+    heads = sorted((lbl for lbl in page.findChildren(QLabel) if lbl.objectName() == "PanelHeader"), key=y)
+    assert [h.text() for h in heads] == ["보기", "도구 (주석 · 측정)", "필터", "회전 · 반전"]
+    assert y(mp.b_fit) < y(mp.tool_buttons["calibrate"]) < y(mp.c_sharpen) < y(mp.b_rot_l)
+    assert mp.edit_bar.isVisible() and not page.isAncestorOf(mp.b_undo)  # 편집 이력은 메뉴 아래 늘 보이는 줄
+    for i in range(mp.tabs.count()):
+        mp.tabs.setCurrentIndex(i)
+        qapp.processEvents()
+        assert mp.b_edit_save.isVisible() and mp.b_undo.isVisible() and mp.b_clear.isVisible()
+    assert win.pro.edit_bar is None                                       # Pro 검토는 편집 탭 안에 그대로
+
+
+def test_multi_analysis_one_flow_on_active_cell(qapp, win):
+    """멀티 분석 탭: 측정 종류 하나 고르고 '측정 실행' → 결과 → 기록 — 빠른 측정 · 정밀 분석 · 백내장이 한 흐름."""
+    from app.analysis import clinical
     caps = _enter_multi(qapp, win, 2)
     mp, mv = win.multi_pro, win.multi_view
+    an = mp.analysis
+    assert an is mp.advanced_analysis and mp.tabs.tabText(2) == "분석"
+    mp.tabs.setCurrentIndex(2)
+    qapp.processEvents()
+    kinds = [an.c_kind.itemData(i) for i in range(an.c_kind.count())]
+    assert kinds[:5] == list(clinical.KINDS) and kinds[5:] == ["fluo_quick", "redness", "nuclear", "cortical"]
     mv.set_active(mv.canvases()[1])
-    assert mp.analysis.b_red.isEnabled() and mp.analysis.b_note.isEnabled()
-    r = mp.measure_redness()                                              # 분석 탭: 누른 칸에서 측정
-    assert r is not None and mp._analysis_text.startswith("충혈 지수")
-    assert mv.canvases()[1].has_overlay()
-    mp.record_measurement()                                               # 그 칸 사진의 코멘트에 기록
+    an.set_kind("redness")
+    assert an.red.isVisibleTo(an) and not an.cat_box.isVisibleTo(an)      # 종류에 맞는 것만 보임
+    assert an.b_run.isEnabled() and not an.b_note.isEnabled() and not an.b_save.isEnabled()
+    an.b_run.click()                                                      # 누른 칸에서 측정
+    assert mp._analysis_text.startswith("충혈 지수") and mv.canvases()[1].has_overlay()
+    assert "충혈 지수" in an.lbl_result.text() and an.b_note.isEnabled() and not an.b_save.isEnabled()
+    an.s_red_sens.setValue(2)                                             # 민감도를 바꾸면 바로 다시 측정
+    assert "민감도 2" in mp._analysis_text and an.b_note.isEnabled()
+    an.b_note.click()                                                     # 코멘트에 기록 → 그 칸 사진에
     note = win.db.captures.get(caps[1].id).note
     assert note and "충혈 지수" in note
-    mp.advanced_analysis.run()                                            # 정밀 분석 탭도 누른 칸에
-    assert mp.advanced_analysis._result_canvas is mv.canvases()[1]
-    best = mp.advanced_analysis.open_sharpest()                           # 가장 선명한 칸을 편집 대상으로
+    an.set_kind("quality")                                                # 정밀 종류도 같은 버튼으로
+    assert not an.red.isVisibleTo(an) and not an.b_note.isEnabled()      # 다른 종류의 결과로는 기록 못 함
+    an.b_run.click()
+    assert an.result is not None and an.result.kind == "quality" and an._result_canvas is mv.canvases()[1]
+    assert not mv.canvases()[1].has_overlay()                             # 빠른 측정 표시는 지워짐
+    assert an.b_save.isEnabled() and an.b_note.isEnabled() and "영상 품질" in an.lbl_result.text()
+    an.b_clear.click()
+    assert an.result is None and an.lbl_result.text() == "-" and not an.b_clear.isEnabled()
+    an.set_kind("nuclear")
+    assert an.cat_box.isVisibleTo(an) and an.b_note.text() == "측정 기록"
+    best = an.open_sharpest()                                             # 가장 선명한 칸을 편집 대상으로
     assert best in (0, 1) and mv.active_canvas() is mv.canvases()[best]
 
 
@@ -633,7 +674,10 @@ def test_reference_bar_pick_shows_in_multi(qapp, win, tmp_path):
     mp = win.multi_pro
     win.multi_view.set_active(win.multi_view.canvases()[1])               # 참조 칸: 측정은 되고 기록은 안 됨
     assert mp.current_capture() is None
-    assert mp.analysis.b_red.isEnabled() and not mp.analysis.b_note.isEnabled()
+    mp.analysis.set_kind("redness")
+    assert mp.analysis.b_run.isEnabled()
+    mp.analysis.b_run.click()
+    assert mp._analysis_text.startswith("충혈 지수") and not mp.analysis.b_note.isEnabled()
     mp.b_flip_h.click()                                                   # 참조 칸 편집은 편집본 저장에서 빠짐
     assert not mp.b_edit_save.isEnabled()
     comp = win.multi_view.composite()
