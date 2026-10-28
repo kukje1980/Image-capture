@@ -164,11 +164,13 @@ class VideoView(QWidget):
         super().mouseDoubleClickEvent(event)
 
     def set_hud(self, patient: str | None = None, eye: str | None = None,
-                state: str | None = None, rec_text: str | None = None) -> None:
+                state: str | None = None, rec_text: str | None = None, eye_note: str | None = None) -> None:
         if patient is not None:
             self._patient = patient
         if eye is not None:
             self._eye = eye
+        if eye_note is not None:
+            self._eye_note = eye_note            # 좌우 자동 인식 상태 (자동 · 미확인 · 확인 필요 · 정지 화면), "" = 없음
         if state is not None:
             self._state = state
         if rec_text is not None:
@@ -258,8 +260,11 @@ class VideoView(QWidget):
         if self._patient:
             x = draw_chip(p, x, 12, self._patient)
         col = EYE_COLORS.get(self._eye)
-        draw_chip(p, x, 12, _EYE_TEXT.get(self._eye, self._eye), fg=col or "#a3acba",
-                  border=col)
+        note = getattr(self, "_eye_note", "")
+        text = _EYE_TEXT.get(self._eye, self._eye) + (f" · {note}" if note else "")
+        warn = note in ("미확인", "확인 필요")
+        draw_chip(p, x, 12, text, fg="#ffb454" if warn else (col or "#a3acba"),
+                  border="#d99a2b" if warn else col)
         right = self.width() - 12.0
         if self._state == "rec":
             draw_chip(p, right, 12, f"REC {self._rec_text}".strip(), dot="#ff6b6b", bg="#7a1414", align_right=True)
