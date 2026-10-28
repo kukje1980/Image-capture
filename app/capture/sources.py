@@ -18,6 +18,7 @@ try:
 except ImportError:  # 테스트 일부는 cv2 없이도 동작
     cv2 = None
 
+from app.capture import camera_props
 from app.capture.frame_utils import capture_api
 
 
@@ -38,6 +39,13 @@ class FrameSource(abc.ABC):
     @property
     @abc.abstractmethod
     def fps(self) -> float: ...
+
+    # 카메라 속성 (app/capture/camera_props.py) — 지원하지 않는 소스는 False / None
+    def set_property(self, key: str, value: float) -> bool:
+        return False
+
+    def get_property(self, key: str) -> Optional[float]:
+        return None
 
 
 class DeviceSource(FrameSource):
@@ -82,6 +90,27 @@ class DeviceSource(FrameSource):
         if self._cap is not None:
             self._cap.release()
             self._cap = None
+
+    def set_property(self, key: str, value: float) -> bool:
+        pid = camera_props.cv2_id(key)
+        if self._cap is None or pid is None:
+            return False
+        try:
+            return bool(self._cap.set(pid, camera_props.device_value(key, value)))
+        except Exception:  # noqa: BLE001
+            return False
+
+    def get_property(self, key: str) -> Optional[float]:
+        pid = camera_props.cv2_id(key)
+        if self._cap is None or pid is None:
+            return None
+        try:
+            v = float(self._cap.get(pid))
+        except Exception:  # noqa: BLE001
+            return None
+        if key == "auto_exposure":
+            return 1.0 if v > 0.5 else 0.0
+        return v
 
     @property
     def size(self):
@@ -155,10 +184,22 @@ class SyntheticSource(FrameSource):
         self._fps = float(fps)
         self._n = 0
         self._last = 0.0
+        self._props: dict[str, float] = {}
 
     def open(self) -> None:
         self._n = 0
         self._last = 0.0
+
+    _EMULATED = ("brightness", "gain", "contrast")
+
+    def set_property(self, key: str, value: float) -> bool:
+        if key not in self._EMULATED:
+            return False
+        self._props[key] = float(value)
+        return True
+
+    def get_property(self, key: str) -> Optional[float]:
+        return self._props.get(key, camera_props.BY_KEY[key].default) if key in self._EMULATED else None
 
     def read(self):
         target = 1.0 / self._fps
@@ -169,6 +210,12 @@ class SyntheticSource(FrameSource):
         self._last = time.time()
         frame = self._render(self._n)
         self._n += 1
+        if self._props:
+            gain = 1.0 + self._props.get("gain", 0.0) / 50.0
+            contrast = self._props.get("contrast", 50.0) / 50.0
+            bright = self._props.get("brightness", 0.0)
+            f = (frame.astype(np.float32) - 127.5) * contrast * gain + 127.5 + bright
+            frame = np.clip(f, 0, 255).astype(np.uint8)
         return True, frame
 
     def _render(self, n: int) -> np.ndarray:

@@ -69,9 +69,16 @@
   <symbol id="i-expand" viewBox="0 0 24 24"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></symbol>
   <symbol id="i-shrink" viewBox="0 0 24 24"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/></symbol>
   <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></symbol>
+  <symbol id="i-sound" viewBox="0 0 24 24"><path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5H4zM15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></symbol>
   <symbol id="i-keyboard" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2.5"/><path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 12.5h.01M10 12.5h.01M14 12.5h.01M18 12.5h.01M8 16h8"/></symbol>
   <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></symbol>
   <symbol id="i-meibo" viewBox="0 0 24 24"><path d="M2 12c3-5 7-7 10-7s7 2 10 7"/><path d="M5 9.5v4M8 7.6v6.4M12 7v7M16 7.6v6.4M19 9.5v4"/><path d="M3 17c3 2 6 3 9 3s6-1 9-3"/></symbol>
+  <symbol id="i-user-plus" viewBox="0 0 24 24"><circle cx="10" cy="8" r="4"/><path d="M2.5 21v-1a6 6 0 016-6h3a6 6 0 013.5 1.1"/><path d="M19 14v6M16 17h6"/></symbol>
+  <symbol id="i-user-edit" viewBox="0 0 24 24"><circle cx="10" cy="8" r="4"/><path d="M2.5 21v-1a6 6 0 016-6h3"/><path d="M20.2 12.3a1.6 1.6 0 012.3 2.3L16.5 20.6 13.5 21.3l.7-3z"/></symbol>
+  <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2.5"/><path d="M3 10h18M8 3v4M16 3v4"/><path d="M8 14h.01M12 14h.01M16 14h.01M8 17.5h.01M12 17.5h.01"/></symbol>
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 11.5L12 4l9 7.5"/><path d="M5.5 10v10h13V10"/><path d="M10 20v-6h4v6"/></symbol>
+  <symbol id="i-clipboard" viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 10h6M9 14h6M9 17.5h3.5"/></symbol>
+  <symbol id="i-check-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.7 2.7L16.5 9.5"/></symbol>
   <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M4 21h16"/></symbol>
 </svg>
 
@@ -96,8 +103,15 @@
       {% endif %}
     </div>
     <nav class="modeswitch" aria-label="화면 전환">
-      <button class="ms-btn" id="btn-mode-capture" title="촬영 화면"><svg class="ic"><use href="#i-camera"/></svg>촬영</button>
-      <button class="ms-btn" id="btn-pro" aria-pressed="false" title="전문가용 영상 검토 화면 (MULTI·비교·보정·편집·인쇄)"><svg class="ic"><use href="#i-review"/></svg>Pro 검토</button>
+      <button class="ms-btn" id="btn-home" title="시작 화면 (아이콘 메뉴)"><svg class="ic"><use href="#i-home"/></svg><span>홈</span></button>
+      <button class="ms-btn" id="btn-mode-capture" title="촬영 화면"><svg class="ic"><use href="#i-camera"/></svg><span>촬영</span></button>
+      <button class="ms-btn" id="btn-pro" aria-pressed="false" title="전문가용 영상 검토 화면 (MULTI·비교·보정·편집·인쇄)"><svg class="ic"><use href="#i-review"/></svg><span>Pro 검토</span></button>
+      <button class="ms-btn" id="btn-exam" title="촬영일별 영상 모음과 검사 소견"><svg class="ic"><use href="#i-clipboard"/></svg><span>검사 기록</span></button>
+    </nav>
+    <nav class="modeswitch" aria-label="환자">
+      <button class="ms-btn ms-accent" id="btn-new-patient" title="신규 환자 등록 (N)"><svg class="ic"><use href="#i-user-plus"/></svg><span>신규 환자</span></button>
+      <button class="ms-btn" id="btn-edit-top" disabled title="선택한 환자 정보 수정"><svg class="ic"><use href="#i-user-edit"/></svg><span>정보 수정</span></button>
+      <button class="ms-btn" id="btn-patients" title="환자 목록 (검색·선택·수정) (L)"><svg class="ic"><use href="#i-list"/></svg><span>환자 목록</span></button>
     </nav>
     <button class="pchip" id="pb-chip" title="환자 목록 열기">
       <span class="pb-avatar" id="pb-avatar"><svg class="ic"><use href="#i-user"/></svg></span>
@@ -106,8 +120,6 @@
         <span class="pb-meta" id="pb-meta"></span>
       </span>
     </button>
-    <button class="btn btn-sm" id="btn-patients" title="환자 목록 (검색·선택·수정)"><svg class="ic"><use href="#i-list"/></svg>환자 목록</button>
-    <button class="btn btn-sm btn-primary" id="btn-new-patient" title="신규 환자 등록"><svg class="ic"><use href="#i-plus"/></svg>신규 환자</button>
     <div class="top-actions">
       <span class="cam-chip" id="cam-chip" title="현재 카메라 · 해상도 (설정에서 변경)"><span class="status-dot" id="cam-chip-dot"></span><span id="cam-chip-text">카메라 꺼짐</span></span>
       <button class="btn btn-icon btn-quiet" id="btn-settings" title="설정 (카메라·해상도·저장·단축키·테마)" aria-label="설정"><svg class="ic"><use href="#i-gear"/></svg></button>
@@ -220,6 +232,7 @@
     <div class="pro-toolbar" role="toolbar" aria-label="Pro 명령">
       <div class="seg" id="pro-modes">
         <button class="pbtn" data-mode="live" title="실시간 영상"><svg class="ic"><use href="#i-live"/></svg>LIVE</button>
+        <button class="ptab" role="tab" data-tab="smart" aria-selected="false" title="스마트 캡처 패널 (초점 판정 · 자동 촬영)"><svg class="ic"><use href="#i-aperture"/></svg>스마트</button>
         <button class="pbtn" data-mode="single" title="단일 영상 (←/→ 이동)"><svg class="ic"><use href="#i-single"/></svg>1화면</button>
         <button class="pbtn" data-mode="multi" title="다중 영상 그리드"><svg class="ic"><use href="#i-review"/></svg>MULTI</button>
         <button class="pbtn" data-mode="compare" title="선택한 2장 비교"><svg class="ic"><use href="#i-compare"/></svg>비교</button>
@@ -240,6 +253,15 @@
       <span class="psep"></span>
       <button class="pbtn pghost" id="pro-comment" title="현재 영상 코멘트 편집"><svg class="ic"><use href="#i-comment"/></svg>코멘트</button>
       <button class="pbtn pghost" id="pro-patient" title="진단명·담당의 등 환자 정보"><svg class="ic"><use href="#i-user"/></svg>환자정보</button>
+      <span class="psep"></span>
+      <div class="ptabs" role="tablist" aria-label="편집·분석 패널">
+        <button class="ptab on" role="tab" data-tab="adj" aria-selected="true"><svg class="ic"><use href="#i-sliders"/></svg>보정</button>
+        <button class="ptab" role="tab" data-tab="flt" aria-selected="false"><svg class="ic"><use href="#i-wand"/></svg>필터</button>
+        <button class="ptab" role="tab" data-tab="edit" aria-selected="false"><svg class="ic"><use href="#i-edit"/></svg>편집</button>
+        <button class="ptab" role="tab" data-tab="meibo" aria-selected="false"><svg class="ic"><use href="#i-meibo"/></svg>마이봄</button>
+        <button class="ptab" role="tab" data-tab="anal" aria-selected="false"><svg class="ic"><use href="#i-ruler"/></svg>분석</button>
+        <button class="ptab" role="tab" data-tab="ref" aria-selected="false"><svg class="ic"><use href="#i-compare"/></svg>참조</button>
+      </div>
       <span class="pgrow"></span>
       <button class="pbtn pghost" id="pro-fullscreen" title="영상 영역 전체 화면 (F)"><svg class="ic"><use href="#i-expand"/></svg>전체 화면</button>
       <button class="pbtn pprint" id="pro-print" title="보고서 인쇄 / PDF 저장"><svg class="ic"><use href="#i-printer"/></svg>인쇄·PDF</button>
@@ -250,6 +272,7 @@
         <div class="pro-view" data-view="live">
           <video id="pro-video" autoplay muted playsinline></video>
           <canvas id="pro-freeze"></canvas>
+          <canvas id="pro-live-ov" aria-hidden="true"></canvas>
           <div class="pro-empty" id="pro-live-empty">
             <div class="ph-ring"><svg class="ic"><use href="#i-aperture"/></svg></div>
             <p>카메라가 꺼져 있습니다.</p>
@@ -269,12 +292,6 @@
           <div class="pside-info" id="pro-imginfo">-</div>
         </div>
 
-        <div class="ptabs" role="tablist">
-          <button class="ptab on" role="tab" data-tab="adj" aria-selected="true"><svg class="ic"><use href="#i-sliders"/></svg>보정</button>
-          <button class="ptab" role="tab" data-tab="flt" aria-selected="false"><svg class="ic"><use href="#i-wand"/></svg>필터</button>
-          <button class="ptab" role="tab" data-tab="edit" aria-selected="false"><svg class="ic"><use href="#i-edit"/></svg>편집</button>
-          <button class="ptab" role="tab" data-tab="meibo" aria-selected="false"><svg class="ic"><use href="#i-meibo"/></svg>마이봄</button>
-        </div>
 
         <div class="ppane on" data-pane="adj" role="tabpanel">
           <label class="prange">밝기 <input type="range" id="adj-bright" min="-100" max="100" value="0"><output id="o-bright">0</output></label>
@@ -376,12 +393,179 @@
 · 자동 분석은 영상 품질에 따라 달라지는 추정값입니다. 진단은 의사가 영상을 보고 판단하세요.</p>
         </div>
 
+        <div class="ppane" data-pane="smart" role="tabpanel">
+          <h4 class="psub">자동 촬영</h4>
+          <label class="prange wide">모드
+            <select class="select" id="sm-auto" title="초점이 흐렸다가 최고점 근처에서 안정되면 자동으로 정지(또는 저장). 깜빡임·반사광 과다·흔들림 중에는 찍지 않음">
+              <option value="off">끄기</option><option value="freeze">Smart Freeze (자동 정지)</option><option value="save">Auto Save (자동 저장)</option>
+            </select>
+          </label>
+          <label class="prange">영역 <input type="range" id="sm-roi" min="20" max="100" value="50" title="초점을 판정할 화면 중앙 영역 (점선)"><output id="o-sm-roi">50%</output></label>
+          <label class="pcheck" title="누르는 순간의 흔들림·셔터 지연을 피합니다 (풋스위치·Space 에도 적용)"><input type="checkbox" id="sm-best" checked> Best Shot (최근 1초 중 가장 선명)</label>
+          <button class="pbtn" id="sm-best-now" title="최근 1초 중 가장 선명한 프레임으로 정지"><svg class="ic"><use href="#i-freeze"/></svg>지금 Best Shot 정지</button>
+          <h4 class="psub">포커스 피킹</h4>
+          <label class="pcheck"><input type="checkbox" id="sm-peak"> 초점이 맞은 경계를 색으로 표시</label>
+          <div class="pside-row">
+            <select class="select" id="sm-sens" title="민감도"><option value="1">적게</option><option value="2" selected>보통</option><option value="3">많이</option></select>
+            <select class="select" id="sm-color" title="색상"><option value="red">빨강</option><option value="green">초록</option><option value="cyan">시안</option></select>
+          </div>
+          <h4 class="psub">실시간 화질 점검</h4>
+          <div class="sm-bars" id="sm-bars">
+            <span>초점</span><meter id="sm-q-focus" min="0" max="100" low="40" high="70" optimum="100" value="0"></meter><b id="sm-v-focus">-</b>
+            <span>노출</span><meter id="sm-q-exposure" min="0" max="100" low="40" high="70" optimum="100" value="0"></meter><b id="sm-v-exposure">-</b>
+            <span>안정</span><meter id="sm-q-stability" min="0" max="100" low="40" high="70" optimum="100" value="0"></meter><b id="sm-v-stability">-</b>
+            <span>반사</span><meter id="sm-q-reflection" min="0" max="100" low="40" high="70" optimum="100" value="0"></meter><b id="sm-v-reflection">-</b>
+          </div>
+          <div class="sm-advice" id="sm-advice">LIVE 화면에서 영상이 들어오면 점검을 시작합니다.</div>
+          <div class="sm-log" id="sm-log"></div>
+          <p class="pside-tip">· 점수는 같은 조명·배율 안에서 비교하는 상대값이며 진단 정보가 아닙니다
+· 계산은 이 브라우저 안에서만 하며 영상을 서버로 보내지 않습니다</p>
+        </div>
+
+        <div class="ppane" data-pane="anal" role="tabpanel">
+          <h4 class="psub">조명 모드 태그</h4>
+          <div class="sm-advice" id="an-tag">1화면에서 영상을 열면 자동으로 추정합니다.</div>
+          <h4 class="psub">측정 (1화면 · 편집 탭 '원' = 측정 영역)</h4>
+          <div class="pside-grid">
+            <button class="pbtn" id="an-fluo" title="코발트블루 + 플루오레세인 영상에서 녹색 형광 화소의 면적·비율 (눈금 보정 시 mm²)">형광 염색 면적</button>
+            <button class="pbtn" id="an-red" title="측정 영역의 붉은 기·혈관 화소 비율 — 같은 조건의 경과 영상끼리 비교하는 상대값">충혈 지수</button>
+            <button class="pbtn" id="an-note" title="마지막 측정 결과를 이 영상의 코멘트에 추가">코멘트에 기록</button>
+            <button class="pbtn" id="an-clear" title="측정 표시 지우기">표시 지우기</button>
+          </div>
+          <div class="sm-advice" id="an-result">-</div>
+          <h4 class="psub">경과 비교 (비교 화면)</h4>
+          <label class="prange w48">고스트 <input type="range" id="an-ghost" min="0" max="100" value="0" title="왼쪽(이전) 영상을 오른쪽(현재) 영상 위에 반투명으로 겹침 (0 = 끄기)"><output id="o-an-ghost">끄기</output></label>
+          <div class="pside-grid">
+            <button class="pbtn" id="an-align" title="이전 영상을 현재 영상에 맞춰 이동·회전 (촬영 위치 차이 보정)">위치 정렬</button>
+            <button class="pbtn" id="an-blink" title="두 영상을 0.5초마다 번갈아 표시 — 변화한 부위가 눈에 띕니다" aria-pressed="false">깜빡임 전환</button>
+          </div>
+          <div class="sm-log" id="an-cmp"></div>
+          <h4 class="psub">백내장 — 수정체 혼탁 지수</h4>
+          <div class="pside-grid">
+            <button class="pbtn" id="cat-nuclear" title="슬릿 단면 사진: 수정체 띠 밝기 ÷ 각막 띠 밝기 → 0~100 (각막을 기준자로 정규화)">핵 · 슬릿</button>
+            <button class="pbtn" id="cat-cortical" title="역조명 사진: 편집 탭 '원'으로 동공을 표시한 뒤 — 동공 안 어두운 얼룩 면적 %">피질 · 역조명</button>
+          </div>
+          <div class="sm-advice" id="cat-result">-</div>
+          <input class="input" id="cat-cond" maxlength="300" placeholder="촬영 조건 (예: 슬릿 0.2mm · 45° · 16× · 노출 고정)" title="지수는 같은 조건에서만 비교 의미가 있습니다. 다음 검사 때 LIVE 가이드에 표시됩니다.">
+          <div class="cat-locs" title="의사 입력 LOCS III 등급 (1~6, 비우면 미입력) — 등급 추정 모델 학습용 라벨로 쌓입니다">
+            <span>LOCS III</span>
+            <label>NO <input type="number" id="cat-locs-NO" min="0.1" max="6.9" step="0.1"></label>
+            <label>NC <input type="number" id="cat-locs-NC" min="0.1" max="6.9" step="0.1"></label>
+            <label>C <input type="number" id="cat-locs-C" min="0.1" max="5.9" step="0.1"></label>
+            <label>P <input type="number" id="cat-locs-P" min="0.1" max="5.9" step="0.1"></label>
+          </div>
+          <button class="pbtn pprimary" id="cat-record" title="지수 · 촬영 조건 · LOCS 입력을 측정 기록으로 저장하고 코멘트에 추가"><svg class="ic"><use href="#i-save"/></svg>측정 기록</button>
+          <canvas id="cat-trend" width="236" height="84" aria-label="혼탁 지수 경과 그래프"></canvas>
+          <div class="sm-log" id="cat-trend-info"></div>
+          <label class="pcheck" title="라이브 화면에 슬릿 위치 가이드와 지난 검사의 촬영 조건을 표시"><input type="checkbox" id="cat-guide"> LIVE 촬영 가이드 (백내장 모드)</label>
+          <p class="pside-tip">· 측정값은 기록 보조용이며 질환 판정(진단)을 하지 않습니다
+· 혼탁 지수는 LOCS 등급이 아닙니다
+· 조명·배율·각도가 다른 영상의 차이는 병변 변화로 해석하지 마세요</p>
+        </div>
+
+        <div class="ppane" data-pane="ref" role="tabpanel">
+          <h4 class="psub">참조 샘플 보기</h4>
+          <div class="pside-row">
+            <select class="select" id="ref-f-region" title="부위">
+              <option value="">전체 부위</option><option value="eyelid">안검</option><option value="conjunctiva">결막</option>
+              <option value="cornea">각막</option><option value="ac">전방</option><option value="iris">홍채</option>
+              <option value="lens">수정체</option><option value="meibo">마이봄샘</option><option value="other">기타</option>
+            </select>
+            <select class="select" id="ref-f-cond" title="정상 / 비정상"><option value="">정상·비정상</option><option value="normal">정상</option><option value="abnormal">비정상</option></select>
+          </div>
+          <div class="ref-list" id="ref-list"></div>
+          <div class="pside-grid">
+            <button class="pbtn pprimary" id="ref-cmp-cur" title="1화면의 현재 영상(왼쪽)과 선택한 참조 샘플(오른쪽)을 나란히"><svg class="ic"><use href="#i-compare"/></svg>현재 영상과 비교</button>
+            <button class="pbtn" id="ref-cmp-normal" title="같은 부위의 정상 샘플(왼쪽)과 현재 영상 또는 선택한 샘플(오른쪽)을 나란히">정상 샘플과 비교</button>
+            <button class="pbtn" id="ref-del" title="선택한 참조 샘플 삭제"><svg class="ic"><use href="#i-trash"/></svg>샘플 삭제</button>
+          </div>
+          <div class="sm-log" id="ref-msg"></div>
+          <h4 class="psub">참조 샘플로 등록</h4>
+          <div class="pside-row">
+            <select class="select" id="ref-region" title="부위">
+              <option value="cornea">각막</option><option value="conjunctiva">결막</option><option value="lens">수정체</option>
+              <option value="eyelid">안검</option><option value="ac">전방</option><option value="iris">홍채</option>
+              <option value="meibo">마이봄샘</option><option value="other">기타</option>
+            </select>
+            <select class="select" id="ref-cond" title="정상 / 비정상"><option value="normal">정상</option><option value="abnormal">비정상</option></select>
+          </div>
+          <input class="input" id="ref-disease" list="ref-disease-list" maxlength="80" placeholder="질환명 (비정상일 때 — 예: 각막염)">
+          <datalist id="ref-disease-list"></datalist>
+          <input class="input" id="ref-note" maxlength="300" placeholder="메모 (촬영 조건·출처 등, 선택)">
+          <div class="pside-grid">
+            <button class="pbtn" id="ref-add-cur" title="1화면에서 보고 있는 영상(회전·자르기 반영, 보정 전)을 참조 샘플로 저장"><svg class="ic"><use href="#i-save"/></svg>현재 영상 등록</button>
+            <button class="pbtn" id="ref-add-file" title="교과서·다른 장비 사진 등 PC 의 영상 파일을 참조 샘플로 저장"><svg class="ic"><use href="#i-folder"/></svg>파일에서 등록</button>
+          </div>
+          <input type="file" id="ref-file" accept="image/png,image/jpeg,image/webp" hidden>
+          <p class="pside-tip">· 참조 샘플은 환자 기록과 따로 보관하는 비교용 대표 영상입니다
+· 정상/비정상·질환명은 사용자가 붙이는 분류이며 프로그램이 판정하지 않습니다
+· 같은 조명·배율로 찍은 샘플끼리 비교해야 의미가 있습니다</p>
+        </div>
+
         <div class="pside-note" id="pro-selinfo">MULTI에서 영상 2장을 클릭해 선택한 뒤 '비교'를 누르세요.</div>
       </aside>
     </div>
 
     <div class="pro-info" id="pro-info">환자를 선택하세요</div>
   </section>
+
+<!-- 홈(시작) 화면: 아이콘 메뉴 -->
+<section class="home" id="home" aria-label="시작 화면">
+  <div class="home-left">
+    <h1 class="home-title">환영합니다</h1>
+    <div class="home-sub">{{ brand.app_name }}</div>
+    <p class="home-guide">환자를 등록하거나 선택한 뒤 촬영을 시작하세요.<br>촬영한 사진·동영상은 환자별로 저장되고, 검사 기록에서 소견과 함께 볼 수 있습니다.</p>
+    <div class="home-foot">
+      <button class="btn btn-sm btn-quiet" id="home-keys" title="단축키 설정"><svg class="ic"><use href="#i-keyboard"/></svg>단축키 안내</button>
+      <label class="home-skip"><input type="checkbox" id="home-skip"> 다음부터 촬영 화면으로 바로 시작</label>
+    </div>
+  </div>
+  <div class="home-tiles" role="list">
+    <button class="home-tile" data-go="newPatient" title="환자 정보를 등록하고 촬영을 시작합니다"><svg class="ic"><use href="#i-user-plus"/></svg><span>신규 환자</span></button>
+    <button class="home-tile" data-go="patients" title="등록된 환자를 검색·선택합니다"><svg class="ic"><use href="#i-list"/></svg><span>환자 목록</span></button>
+    <button class="home-tile" data-go="capture" title="슬릿램프 실시간 영상 · 사진 캡처 · 녹화"><svg class="ic"><use href="#i-camera"/></svg><span>촬영</span></button>
+    <button class="home-tile" data-go="pro" title="MULTI · 비교 · 보정 · 편집 · 인쇄"><svg class="ic"><use href="#i-review"/></svg><span>Pro 검토</span></button>
+    <button class="home-tile" data-go="exam" title="촬영일별 영상과 소견을 한눈에"><svg class="ic"><use href="#i-clipboard"/></svg><span>검사 기록</span></button>
+    <button class="home-tile" data-go="settings" title="카메라 · 저장 · 단축키 · 테마"><svg class="ic"><use href="#i-gear"/></svg><span>설정</span></button>
+  </div>
+  <div class="home-version">Version {{ app_version }}</div>
+</section>
+
+<!-- 검사 기록: 촬영일별 영상 모음 + 소견 -->
+<section class="exam" id="exam" aria-label="검사 기록">
+  <aside class="exam-days panel">
+    <div class="exam-head"><span class="th-title">검사 기록</span><span class="thumbs-count" id="exam-day-count">0</span><span class="spacer"></span>
+      <button class="btn btn-icon btn-quiet btn-sm" id="exam-refresh" title="다시 읽기"><svg class="ic"><use href="#i-history"/></svg></button></div>
+    <div class="exam-day-list" id="exam-day-list"></div>
+    <div class="thumbs-empty" id="exam-days-empty">촬영 기록이 없습니다</div>
+  </aside>
+  <div class="exam-center">
+    <div class="exam-gallery panel">
+      <div class="exam-head">
+        <span class="th-title" id="exam-day-title">촬영일을 선택하세요</span><span class="exam-meta" id="exam-day-meta"></span><span class="spacer"></span>
+        <button class="ms-btn" id="exam-open-pro" title="이 환자의 영상을 Pro 검토 화면에서 열기"><svg class="ic"><use href="#i-review"/></svg><span>Pro 검토</span></button>
+        <button class="ms-btn" id="exam-print" title="이 날의 사진 + 소견을 보고서로 인쇄"><svg class="ic"><use href="#i-printer"/></svg><span>인쇄</span></button>
+      </div>
+      <div class="exam-grid" id="exam-grid"></div>
+      <div class="thumbs-empty" id="exam-grid-empty" hidden>이 날의 촬영 영상이 없습니다</div>
+    </div>
+    <div class="exam-notes panel">
+      <div class="exam-head">
+        <span class="th-title">검사 소견</span>
+        <label class="exam-type">검사 종류 <select class="select" id="exam-type"></select></label>
+        <span class="spacer"></span>
+        <span class="exam-saved" id="exam-saved"></span>
+        <button class="btn btn-sm btn-primary" id="exam-save"><svg class="ic"><use href="#i-save"/></svg>저장</button>
+      </div>
+      <textarea id="exam-text" placeholder="검사 소견·진단·계획을 적으세요. 칸을 벗어나면 자동 저장됩니다."></textarea>
+    </div>
+  </div>
+  <aside class="exam-patient panel">
+    <div class="exam-head"><span class="th-title">환자 정보</span><span class="spacer"></span>
+      <button class="btn btn-icon btn-quiet btn-sm" id="exam-edit" title="정보 수정"><svg class="ic"><use href="#i-user-edit"/></svg></button></div>
+    <div class="exam-pinfo" id="exam-pinfo"></div>
+  </aside>
+</section>
 </div>
 
 <div id="print-area" aria-hidden="true"></div>
@@ -398,7 +582,14 @@
         <div class="form-row"><label for="p-name">이름 *</label><input required id="p-name" autocomplete="off"></div>
       </div>
       <div class="form-grid">
-        <div class="form-row"><label for="p-birth">생년월일</label><input id="p-birth" placeholder="YYYY-MM-DD" autocomplete="off"></div>
+        <div class="form-row"><label for="p-birth">생년월일</label>
+          <div class="date-field">
+            <input id="p-birth" placeholder="예) 19800315 · 800315" inputmode="numeric" autocomplete="off" maxlength="12">
+            <input type="date" id="p-birth-pick" tabindex="-1" aria-hidden="true" min="1880-01-01">
+            <button type="button" class="btn btn-icon date-btn" id="p-birth-cal" title="달력에서 선택" aria-label="달력에서 선택"><svg class="ic"><use href="#i-calendar"/></svg></button>
+          </div>
+          <small class="date-hint" id="p-birth-hint" hidden>생년월일을 알아볼 수 없습니다 (예: 19800315)</small>
+        </div>
         <div class="form-row"><label for="p-sex">성별</label>
           <select id="p-sex"><option value="">미지정</option><option value="M">남</option><option value="F">여</option><option value="O">기타</option></select>
         </div>
@@ -510,6 +701,10 @@
           <svg class="ic" id="theme-icon-light" style="display:block"><use href="#i-sun"/></svg>
           <svg class="ic" id="theme-icon-dark" style="display:none"><use href="#i-moon"/></svg><span id="theme-label">밝은 테마로</span>
         </button></div>
+      <div class="set-row"><span>효과음</span>
+        <button class="btn btn-sm" id="btn-sounds" title="사진 캡처 '찰칵' · 정지영상 · 녹화 시작/중지 소리" aria-pressed="true">
+          <svg class="ic"><use href="#i-sound"/></svg><span id="sounds-label">효과음 켜짐</span>
+        </button></div>
     </section>
   </div>
 </dialog>
@@ -553,7 +748,12 @@
 <div class="toast-wrap" id="toast-wrap" aria-live="polite"></div>
 
 <script src="/static/js/localstore.js"></script>
+<script src="/static/js/sounds.js"></script>
 <script src="/static/js/app.js"></script>
 <script src="/static/js/pro.js"></script>
+<script src="/static/js/smartcv.js"></script>
+<script src="/static/js/smart.js"></script>
+<script src="/static/js/refs.js"></script>
+<script src="/static/js/exam.js"></script>
 </body>
 </html>

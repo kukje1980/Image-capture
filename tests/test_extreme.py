@@ -23,6 +23,7 @@ import pytest
 from app import paths
 from app.config import AppConfig
 from app.db.database import Database
+from app.db.database import DatabaseError as AppDatabaseError
 from app.models.capture import Capture
 from app.models.patient import Patient
 from app.services import capture_service as cs_mod
@@ -391,12 +392,16 @@ def test_db_survives_hard_kill_mid_write(tmp_path):
     assert n >= last + 1, f"확정 보고된 {last + 1}건 중 {n}건만 남음"
 
 
+# 손상 DB 는 앱 고유 오류(복구 안내 포함)로 알린다 — 어느 쪽이든 파일은 그대로여야 한다
+_DB_ERRORS = (sqlite3.DatabaseError, AppDatabaseError)
+
+
 def test_corrupt_db_is_never_overwritten(tmp_path):
     """DB 파일이 손상돼 있으면 열기를 거부해야지, 새 DB 로 덮어쓰거나 지우면 안 된다 (복구 가능하게)."""
     dbp = tmp_path / "bad.db"
     junk = os.urandom(8192)
     dbp.write_bytes(junk)
-    with pytest.raises(sqlite3.DatabaseError):
+    with pytest.raises(_DB_ERRORS):
         Database(str(dbp)).init()
     assert dbp.read_bytes() == junk
 
@@ -408,7 +413,7 @@ def test_truncated_db_is_never_overwritten(app_env, tmp_path):
     raw = Path(config.db_path).read_bytes()
     bad = tmp_path / "trunc.db"
     bad.write_bytes(raw[:100])
-    with pytest.raises(sqlite3.DatabaseError):
+    with pytest.raises(_DB_ERRORS):
         Database(str(bad)).init()
     assert bad.read_bytes() == raw[:100]
 

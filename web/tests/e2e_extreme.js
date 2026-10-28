@@ -28,10 +28,15 @@ const check = (name, ok, info = '') => { results.push({ name, ok, info }); conso
   const ctx = await browser.newContext({ acceptDownloads: true, permissions: ['camera'] });
   const page = await ctx.newPage();
   page.on('pageerror', (e) => console.log('PAGEERROR', e.message));
+  // 촬영 화면으로 들어가 카메라 영상이 나올 때까지 (홈 화면 → '촬영', 필요하면 '카메라 시작')
+  const ready = async () => {
+    await page.waitForFunction(() => window.SlitApp, null, { timeout: 15000 });
+    if (await page.evaluate(() => document.body.classList.contains('home-on'))) await page.click('#btn-mode-capture');
+    const live = () => page.waitForFunction(() => document.getElementById('video').videoWidth > 0, null, { timeout: 8000 });
+    await live().catch(async () => { await page.click('#btn-start-camera').catch(() => {}); await live(); });
+  };
   await page.goto(BASE + '/');
-  await page.waitForFunction(() => window.SlitApp && document.getElementById('video').videoWidth > 0, null, { timeout: 15000 })
-    .catch(async () => { await page.click('#btn-start-camera').catch(() => {}); });
-  await page.waitForFunction(() => document.getElementById('video').videoWidth > 0, null, { timeout: 15000 });
+  await ready();
   const select = async (pid) => page.evaluate((id) => { const s = document.getElementById('patient-select'); s.value = String(id); s.dispatchEvent(new Event('change')); }, pid);
   await select(A.id); await sleep(300);
   
@@ -93,8 +98,7 @@ const check = (name, ok, info = '') => { results.push({ name, ok, info }); conso
   // 8) 업로드 중 새로고침 → 경고
   await page.click('#btn-record').catch(() => {}); await sleep(2500);   // 녹화 끝내고 저장까지 기다림
   await page.goto(BASE + '/').catch(() => {});
-  await page.click('#btn-start-camera', { timeout: 3000 }).catch(() => {});
-  await page.waitForFunction(() => window.SlitApp && document.getElementById('video').videoWidth > 0, null, { timeout: 15000 });
+  await ready();
   await select(A.id); await sleep(300);
   await page.route('**/api/v1/captures', async (r) => { if (r.request().method() === 'POST') { await sleep(3000); return r.continue(); } return r.continue(); });
   await page.click('#btn-capture'); await sleep(300);
@@ -107,8 +111,7 @@ const check = (name, ok, info = '') => { results.push({ name, ok, info }); conso
   await sleep(4000);
   // 9) 카메라 끊긴 뒤 촬영 버튼으로 멈춘 화면이 저장되지 않음
   await page.goto(BASE + '/').catch(() => {});
-  await page.waitForFunction(() => window.SlitApp && document.getElementById('video').videoWidth > 0, null, { timeout: 15000 })
-    .catch(async () => { await page.click('#btn-start-camera').catch(() => {}); });
+  await ready();
   await select(A.id); await sleep(300);
   const n0 = (await caps(A.id)).length;
   await page.evaluate(() => window.SlitApp.state.stream.getVideoTracks().forEach(t => { t.stop(); t.dispatchEvent(new Event('ended')); }));

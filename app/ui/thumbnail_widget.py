@@ -31,7 +31,9 @@ def _load_pixmap(capture: Capture) -> QPixmap | None:
 
 
 class ThumbnailWidget(QWidget):
-    clicked = Signal(object)  # Capture
+    clicked = Signal(object)        # Capture — 한 번 클릭 (촬영 화면: 선택)
+    doubleClicked = Signal(object)  # Capture — 두 번 클릭 (큰 화면으로 보기)
+    rightClicked = Signal(object)   # Capture — 오른쪽 클릭 (촬영 화면: 멀티로 모아 보기)
 
     def __init__(self, capture: Capture, parent=None):
         super().__init__(parent)
@@ -39,6 +41,7 @@ class ThumbnailWidget(QWidget):
         self.setObjectName("ThumbCard")
         self._pm = _load_pixmap(capture)
         self._hover = False
+        self._rank = 0                  # 선택 순서 (0 = 선택 안 됨)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setMinimumHeight(120)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -120,8 +123,35 @@ class ThumbnailWidget(QWidget):
             bx += w + 4
         p.restore()
         p.setBrush(Qt.BrushStyle.NoBrush)
-        p.setPen(QPen(QColor("#33c2b1"), 2) if self._hover else QPen(QColor(255, 255, 255, 18), 1))
-        p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 9, 9)
+        if self._rank:
+            p.setPen(QPen(QColor("#facc15"), 3))
+            p.drawRoundedRect(r.adjusted(1.5, 1.5, -1.5, -1.5), 9, 9)
+            # 오른쪽 위 선택 번호
+            p.setFont(scaled_font(self.font(), 0.95, True))
+            br = QRectF(self.width() - 32, 6, 26, 22)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor("#facc15"))
+            p.drawRoundedRect(br, 6, 6)
+            p.setPen(QColor("#111827"))
+            p.drawText(br, Qt.AlignmentFlag.AlignCenter, str(self._rank))
+        else:
+            p.setPen(QPen(QColor("#33c2b1"), 2) if self._hover else QPen(QColor(255, 255, 255, 18), 1))
+            p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 9, 9)
+
+    def set_rank(self, rank: int) -> None:
+        if rank != self._rank:
+            self._rank = rank
+            self.update()
+
+    def rank(self) -> int:
+        return self._rank
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
-        self.clicked.emit(self.capture)
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(self.capture)
+        elif event.button() == Qt.MouseButton.RightButton:
+            self.rightClicked.emit(self.capture)
+
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.doubleClicked.emit(self.capture)

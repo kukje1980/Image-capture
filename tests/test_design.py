@@ -11,6 +11,7 @@ from app.models.patient import Patient
 from app.services.capture_service import CaptureService
 from app.ui import icons
 from app.ui.control_bar import ControlBar
+from app.ui.date_field import DateField, normalize_date
 from app.ui.patient_panel import PatientPanel, age_of
 from app.ui.theme import build_qss
 from app.ui.thumbnail_panel import ThumbnailPanel, day_label
@@ -31,7 +32,7 @@ def test_icons_render_all(qapp):
 def test_qss_both_themes(qapp):
     for mode in ("dark", "light"):
         qss = build_qss(mode)
-        assert "QPushButton#Shutter" in qss and "QPushButton#EyeBtn" in qss
+        assert "QPushButton#Shutter" in qss and "QPushButton#EyeBtn" in qss and "QPushButton#NavBtn" in qss
         qapp.setStyleSheet(qss)                               # 파싱 오류 없이 적용
 
 
@@ -79,9 +80,69 @@ def test_thumbnail_filter_and_day_groups(qapp, app_env):
     assert panel.count() == 3 and len(panel.visible_captures()) == 3
     panel.set_filter("OD")
     assert [c.eye for c in panel.visible_captures()] == ["OD", "OD"]
-    panel.set_filter("video")
-    assert panel.visible_captures() == []
+    assert set(panel.filter_buttons) == {"all", "OD", "OS"}            # 동영상 분류는 없앰
+    panel.set_split_eyes(True)                                        # OD · OS 나눠 보기
+    heads = [panel._lay.itemAt(i).widget().text() for i in range(panel._lay.count())
+             if type(panel._lay.itemAt(i).widget()).__name__ == "QLabel"]
+    assert heads == ["OD · 우안   ·   2장"]
+    panel.set_split_eyes(False)
     panel.set_filter("all")
     cap = svc.save_photo(img, p, eye="OS")
     panel.add_capture(cap)
     assert panel.count() == 4 and panel.visible_captures()[0].id == cap.id   # 최신이 위
+
+
+def test_normalize_date_accepts_easy_inputs():
+    today = date(2026, 10, 26)
+    assert normalize_date("19800315", today) == "1980-03-15"
+    assert normalize_date("800315", today) == "1980-03-15"          # 주민번호 앞자리처럼
+    assert normalize_date("150315", today) == "2015-03-15"          # 올해 두 자리보다 작으면 20xx
+    assert normalize_date("1980.3.15", today) == "1980-03-15"
+    assert normalize_date("1980/03/15", today) == "1980-03-15"
+    assert normalize_date("  ", today) == ""
+    assert normalize_date("19801315", today) is None                # 13월
+    assert normalize_date("20991231", today) is None                # 미래
+    assert normalize_date("abc", today) is None
+
+
+def test_date_field_normalizes_and_flags(qapp):
+    f = DateField("800315")
+    assert f.value() == "1980-03-15" and f.edit.text() == "1980-03-15" and f.is_valid()
+    f.edit.setText("1980-13-40")
+    f.normalize()
+    assert not f.is_valid() and f.edit.property("invalid") is True and f.value() == ""
+    f.edit.setText("")
+    f.normalize()
+    assert f.is_valid() and f.value() == ""
+
+
+def test_patient_dialog_uses_date_field(qapp):
+    from app.models.patient import Patient
+    from app.ui.patient_dialog import PatientDialog
+    dlg = PatientDialog(patient=Patient(chart_no="C1", name="홍길동", birth_date="1970-01-01", sex="F"))
+    assert isinstance(dlg.birth, DateField) and dlg.birth.value() == "1970-01-01"
+    dlg.birth.edit.setText("19800315")
+    p = dlg.get_patient()
+    assert p.birth_date == "1980-03-15" and p.sex == "F"
+
+
+def test_topbar_has_patient_icon_buttons(qapp, app_env):
+    config, db = app_env
+    config.source_mode = "synthetic"
+    config.save = lambda: None
+    from app.ui.main_window import MainWindow
+    w = MainWindow(config, db)
+    try:
+        assert w.btn_new_patient.text() == "신규 환자" and w.btn_edit_patient.text() == "정보 수정"
+        assert not w.btn_edit_patient.isEnabled()                   # 환자 없음 → 수정 불가
+        from app.models.patient import Patient
+        pid = db.patients.insert(Patient(chart_no="T1", name="테스트"))
+        w.patient_panel._reload()
+        assert w.btn_edit_patient.isEnabled() and w._current_patient.id == pid
+        # 촬영 도크·상단 메뉴는 아이콘 위·글자 아래 버튼 (QPushButton 기반)
+        from app.ui.icon_button import IconTextButton
+        assert isinstance(w.control_bar.btn_record, IconTextButton) and isinstance(w.btn_mode_pro, IconTextButton)
+    finally:
+        w.close()
+        w.deleteLater()
+        qapp.processEvents()

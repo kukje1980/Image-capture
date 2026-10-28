@@ -191,3 +191,19 @@ def test_pro_multi_real_mouse_click_and_double_click(qapp, app_env):
     assert ws.mode() == "single" and ws.current_index() == 3
     assert ws.multi.selection() == [0, 2]                  # 열기 전 선택 복원
     ws.close()
+
+
+def test_pro_side_tabs_all_visible(qapp, app_env):
+    """사이드 탭 6개(보정·필터·편집·스마트·분석·정밀 분석)가 화살표 없이 모두 보이고, 누르면 그 탭으로 바뀐다."""
+    ws, _, _ = _workspace(app_env, n=1)
+    ws.show()
+    qapp.processEvents()
+    names = [b.text() for b in ws.tab_buttons]
+    assert names == ["보정", "필터", "편집", "스마트", "분석", "정밀 분석"]
+    assert all(b.isVisible() and b.width() > 40 for b in ws.tab_buttons)
+    assert not ws.tabs.tabBar().isVisible()
+    ws.tab_buttons[4].click()
+    assert ws.tabs.tabText(ws.tabs.currentIndex()) == "분석" and ws.tab_buttons[4].isChecked()
+    ws.tabs.setCurrentIndex(3)                                   # 코드에서 탭을 바꿔도 버튼이 따라감
+    assert ws.tab_buttons[3].isChecked()
+    ws.close()

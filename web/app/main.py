@@ -18,9 +18,9 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from app import brands, config
+from app import __version__, brands, config
 from app.db.database import Database
-from app.routers import captures, patients
+from app.routers import captures, exams, measurements, patients, refs
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
@@ -28,6 +28,7 @@ BRAND = brands.get_brand()            # SLITLAMP_BRAND 환경변수 (기본 / ke
 templates.env.globals["brand"] = BRAND
 templates.env.globals["brand_public"] = brands.public(BRAND)
 templates.env.globals["storage_policy"] = config.STORAGE_POLICY
+templates.env.globals["app_version"] = __version__
 
 
 def _ensure_db(app: FastAPI) -> None:
@@ -140,6 +141,9 @@ def logout():
 
 app.include_router(patients.router)
 app.include_router(captures.router)
+app.include_router(measurements.router)
+app.include_router(refs.router)
+app.include_router(exams.router)
 
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 # 저장된 미디어 제공 (서버에 남긴 원본/영상)

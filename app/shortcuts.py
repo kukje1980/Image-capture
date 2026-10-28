@@ -9,16 +9,16 @@ from __future__ import annotations
 ACTIONS: list[tuple[str, str, str, str]] = [
     ("capture", "사진 캡처", "C", "capture"),
     ("record", "녹화 시작 / 중지", "R", "capture"),
-    ("pause", "일시정지 / 재개", "Space", "capture"),
-    ("freeze", "정지영상 (4분할 칸 채우기)", "X", "capture"),
+    ("freeze", "정지영상 ↔ 라이브 (4분할 칸 채우기)", "X", "capture"),
     ("quad", "4분할 켜기 / 끄기", "Q", "capture"),
+    ("smart", "Smart 자동 촬영 모드 (끄기 → 자동 정지 → 자동 저장)", "S", "capture"),
+    ("peaking", "포커스 피킹 켜기 / 끄기", "P", "capture"),
     ("eyeOD", "안구 OD (우안)", "1", "all"),
     ("eyeOS", "안구 OS (좌안)", "2", "all"),
-    ("eyeOU", "안구 OU (양안)", "3", "all"),
     ("eyeNA", "안구 미지정", "0", "all"),
     ("fullscreen", "전체 화면", "F", "all"),
     ("mode", "촬영 ↔ Pro 검토 전환", "F2", "all"),
-    ("patients", "환자 검색", "L", "all"),
+    ("patients", "환자 목록", "L", "all"),
     ("newPatient", "신규 환자", "N", "all"),
 ]
 # 화면 안에서 이미 쓰는 키 (Pro: ←/→ 이동, Ctrl+Z/Y 실행 취소, Esc 도구 해제)

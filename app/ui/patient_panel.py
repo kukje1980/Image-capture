@@ -1,9 +1,13 @@
-"""상단 환자 배너: 검색·선택 + 환자 요약(이니셜·차트번호·성별/나이·진단명·담당의) + 신규/수정."""
+"""환자 검색 · 선택 칸 (상단바의 '정보 수정' 바로 옆에 들어간다).
+
+환자 요약(이름·차트번호·나이 등)은 실시간 화면 위에 이미 보이므로 화면에 따로 띄우지 않는다
+(요약 라벨은 다른 화면·테스트에서 쓰도록 만들어만 두고 숨김).
+신규 등록·정보 수정 버튼은 상단바에 있고 new_patient()/edit_patient() 를 부른다."""
 from __future__ import annotations
 
 from datetime import date
 
-from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
@@ -12,13 +16,12 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
-    QPushButton,
     QVBoxLayout,
 )
 
 from app.ui import icons
 from app.ui.patient_dialog import PatientDialog
-from app.ui.theme import ICON, ICON_ON_ACCENT
+from app.ui.theme import ICON
 
 _SEX = {"M": "남", "F": "여", "O": "기타"}
 
@@ -46,33 +49,22 @@ class PatientPanel(QFrame):
         super().__init__(parent)
         self.db = db
         self._patients = []
-        self.setObjectName("Banner")
+        self.setObjectName("PatientPick")
 
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(16, 10, 16, 10)
-        lay.setSpacing(10)
-        self.search = QLineEdit()
-        self.search.setPlaceholderText("이름 · 차트번호 검색")
-        self.search.setFixedWidth(190)
-        self.search.addAction(icons.icon("search", ICON, 16), QLineEdit.ActionPosition.LeadingPosition)
-        self.search.setClearButtonEnabled(True)
-        self.combo = QComboBox()
-        self.combo.setMinimumWidth(210)
-        lay.addWidget(self.search)
-        lay.addWidget(self.combo)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(6)
 
-        sep = QFrame()
-        sep.setObjectName("BannerSep")
-        sep.setFixedSize(1, 36)
-        lay.addSpacing(6)
-        lay.addWidget(sep)
-        lay.addSpacing(6)
+        self.summary = QFrame()                       # 숨김: 환자 요약 (실시간 화면 HUD 에 표시됨)
+        sum_lay = QHBoxLayout(self.summary)
+        sum_lay.setContentsMargins(0, 0, 0, 0)
+        self.summary.setVisible(False)
 
         self.avatar = QLabel()
         self.avatar.setObjectName("Avatar")
         self.avatar.setFixedSize(38, 38)
         self.avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lay.addWidget(self.avatar)
+        sum_lay.addWidget(self.avatar)
         box = QVBoxLayout()
         box.setSpacing(0)
         row = QHBoxLayout()
@@ -89,31 +81,32 @@ class PatientPanel(QFrame):
         self.lbl_meta.setTextFormat(Qt.TextFormat.RichText)
         box.addLayout(row)
         box.addWidget(self.lbl_meta)
-        lay.addLayout(box, 1)
+        sum_lay.addLayout(box, 1)
+        lay.addWidget(self.summary)
 
-        self.btn_edit = QPushButton(icons.gap("정보 수정"))
-        self.btn_edit.setIcon(icons.icon("edit", ICON, 16))
-        self.btn_new = QPushButton(icons.gap("신규 환자"))
-        self.btn_new.setObjectName("Primary")
-        self.btn_new.setIcon(icons.icon("plus", ICON_ON_ACCENT, 16))
-        for b in (self.btn_edit, self.btn_new):
-            b.setIconSize(QSize(15, 15))
-            lay.addWidget(b)
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("환자 검색")
+        self.search.setToolTip("이름 · 차트번호 · 연락처로 검색")
+        self.search.setFixedWidth(170)
+        self.search.addAction(icons.icon("search", ICON, 16), QLineEdit.ActionPosition.LeadingPosition)
+        self.search.setClearButtonEnabled(True)
+        self.combo = QComboBox()
+        self.combo.setMinimumWidth(200)
+        self.combo.setToolTip("환자 선택")
+        lay.addWidget(self.search)
+        lay.addWidget(self.combo)
 
         self.search.textChanged.connect(self._reload)
         self.combo.currentIndexChanged.connect(self._on_select)
-        self.btn_new.clicked.connect(self._new_patient)
-        self.btn_edit.clicked.connect(self._edit_patient)
 
         self._reload()
 
     def _render_banner(self, p) -> None:
-        self.btn_edit.setEnabled(p is not None)
         if p is None:
             self.avatar.setPixmap(icons.pixmap("user", ICON, 18))
             self.lbl_name.setText("환자를 선택하세요")
             self.lbl_chart.setText("")
-            self.lbl_meta.setText("검색하거나 신규 환자를 등록하세요")
+            self.lbl_meta.setText("오른쪽에서 검색하거나 상단의 '신규 환자' 를 누르세요")
             return
         self.avatar.setPixmap(QPixmap())
         self.avatar.setText((p.name or "?").strip()[:1])
@@ -130,6 +123,19 @@ class PatientPanel(QFrame):
         bits.append(f"<span style='{mute}'>진단명</span> <b>{_esc(getattr(p, 'diagnosis', None) or '-')}</b>")
         bits.append(f"<span style='{mute}'>담당의</span> {_esc(getattr(p, 'doctor', None) or '-')}")
         self.lbl_meta.setText("&nbsp;&nbsp;&nbsp;".join(bits))
+
+    def select_patient(self, pid: int) -> bool:
+        """환자 목록 화면 등에서 고른 환자로 바꾼다 (검색어는 비움)."""
+        self.search.blockSignals(True)
+        self.search.setText("")
+        self.search.blockSignals(False)
+        self._reload()
+        for i, p in enumerate(self._patients):
+            if p.id == pid:
+                if self.combo.currentIndex() != i:
+                    self.combo.setCurrentIndex(i)
+                return True
+        return False
 
     def current_patient(self):
         idx = self.combo.currentIndex()
@@ -167,31 +173,37 @@ class PatientPanel(QFrame):
         self._render_banner(p)
         self.patientChanged.emit(p)
 
-    def _new_patient(self):
-        dlg = PatientDialog(self)
+    def new_patient(self) -> bool:
+        """신규 환자 등록 (상단바 버튼·단축키 N). 저장되어 선택되면 True."""
+        dlg = PatientDialog(self.window(), db=self.db)
         if not dlg.exec():
-            return
-        p = dlg.get_patient()
-        try:
-            p.id = self.db.patients.insert(p)
-        except Exception as e:  # noqa: BLE001
-            QMessageBox.warning(self, "오류", f"저장 실패: {e}\n(차트번호 중복 여부를 확인하세요)")
-            return
+            return False
+        if dlg.existing is not None:                 # 같은 차트번호 → 기존 환자에 이어서
+            pid = dlg.existing.id
+        else:
+            p = dlg.get_patient()
+            try:
+                pid = p.id = self.db.patients.insert(p)
+            except Exception as e:  # noqa: BLE001
+                QMessageBox.warning(self, "오류", f"저장 실패: {e}\n(차트번호 중복 여부를 확인하세요)")
+                return False
         self.search.blockSignals(True)
         self.search.setText("")
         self.search.blockSignals(False)
         self._reload()
         for i, pp in enumerate(self._patients):
-            if pp.id == p.id:
+            if pp.id == pid:
                 self.combo.setCurrentIndex(i)
                 break
+        return True
 
-    def _edit_patient(self):
+    def edit_patient(self):
+        """현재 환자 정보 수정 (상단바 버튼)."""
         p = self.current_patient()
         if not p:
             QMessageBox.information(self, "확인", "수정할 환자를 선택하세요.")
             return
-        dlg = PatientDialog(self, patient=p)
+        dlg = PatientDialog(self.window(), patient=p, db=self.db)
         if not dlg.exec():
             return
         try:
@@ -200,3 +212,7 @@ class PatientPanel(QFrame):
             QMessageBox.warning(self, "오류", f"수정 실패: {e}")
             return
         self._reload()
+
+    # 이전 이름 호환
+    _new_patient = new_patient
+    _edit_patient = edit_patient

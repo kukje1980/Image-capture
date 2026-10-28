@@ -94,9 +94,26 @@
       if (state.isRecording || state.saving > 0) { e.preventDefault(); e.returnValue = ''; }
     });
     $('btn-new-patient').addEventListener('click', () => openPatientDialog(null));
-    $('btn-edit-patient').addEventListener('click', () => {
-      const p = currentPatient();
-      if (p) openPatientDialog(p);
+    for (const id of ['btn-edit-patient', 'btn-edit-top']) {
+      $(id).addEventListener('click', () => {
+        const p = currentPatient();
+        if (p) openPatientDialog(p);
+      });
+    }
+    // 생년월일: 입력이 끝나면 YYYY-MM-DD 로 정리, 달력 버튼은 브라우저 날짜 선택창을 연다
+    $('p-birth').addEventListener('blur', () => normalizeBirthField());
+    $('p-birth').addEventListener('input', () => { $('p-birth').classList.remove('invalid'); $('p-birth-hint').hidden = true; });
+    $('p-birth-cal').addEventListener('click', () => {
+      const pick = $('p-birth-pick');
+      pick.max = new Date().toISOString().slice(0, 10);
+      pick.value = normalizeDate($('p-birth').value) || '';
+      if (typeof pick.showPicker === 'function') { try { pick.showPicker(); return; } catch (_) { /* 아래로 */ } }
+      pick.style.cssText = 'position:static;width:auto;height:auto;opacity:1;pointer-events:auto';
+      pick.focus(); pick.click();
+    });
+    $('p-birth-pick').addEventListener('change', (e) => {
+      if (e.target.value) { $('p-birth').value = e.target.value; $('p-birth').classList.remove('invalid'); $('p-birth-hint').hidden = true; }
+      e.target.style.cssText = '';
     });
     $('patient-form').addEventListener('submit', savePatient);
     $('patient-cancel').addEventListener('click', () => $('patient-dialog').close());
@@ -104,6 +121,8 @@
     $('patient-delete').addEventListener('click', deletePatient);
 
     $('btn-theme').addEventListener('click', toggleTheme);
+    $('btn-sounds').addEventListener('click', () => setSounds(!soundsOn()));
+    syncSoundsButton();
     $('btn-storage').addEventListener('click', openStorageDialog);
     $('storage-x').addEventListener('click', () => $('storage-dialog').close());
     $('storage-cancel').addEventListener('click', () => $('storage-dialog').close());
@@ -416,6 +435,41 @@
 
   // ---- 환자 배너 · 영상 HUD ----
   const escHtml = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  // 사람이 친 생년월일 → 'YYYY-MM-DD'. 빈 값은 '', 해석 불가는 null.
+  //   19800315 · 800315(주민번호 앞자리, 올해 두 자리보다 크면 19xx) · 1980.3.15 · 1980/03/15
+  function normalizeDate(text, today) {
+    const t = (text || '').trim();
+    if (!t) return '';
+    today = today || new Date();
+    const century = (yy) => (yy > today.getFullYear() % 100 ? 1900 : 2000) + yy;
+    const digits = t.replace(/\D/g, '');
+    const parts = t.split(/[^\d]+/).filter(Boolean);
+    let y, m, d;
+    if (parts.length === 3 && (parts[0].length === 2 || parts[0].length === 4)) {
+      [y, m, d] = parts.map(Number);
+      if (parts[0].length === 2) y = century(y);
+    } else if (digits.length === 8) {
+      y = +digits.slice(0, 4); m = +digits.slice(4, 6); d = +digits.slice(6, 8);
+    } else if (digits.length === 6) {
+      y = century(+digits.slice(0, 2)); m = +digits.slice(2, 4); d = +digits.slice(4, 6);
+    } else return null;
+    const v = new Date(y, m - 1, d);
+    if (v.getFullYear() !== y || v.getMonth() !== m - 1 || v.getDate() !== d) return null;
+    if (y < 1880 || v > today) return null;
+    return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  }
+  window.normalizeDate = normalizeDate;
+
+  function normalizeBirthField() {
+    const el = $('p-birth');
+    const v = normalizeDate(el.value);
+    const ok = v !== null;
+    if (ok && v !== el.value) el.value = v;
+    el.classList.toggle('invalid', !ok);
+    $('p-birth-hint').hidden = ok;
+    return ok;
+  }
+
   function ageOf(birth) {
     const m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(birth || '');
     if (!m) return null;
@@ -427,6 +481,7 @@
   function renderBanner() {
     const p = currentPatient();
     $('btn-edit-patient').disabled = !p;
+    $('btn-edit-top').disabled = !p;
     if (!p) {
       $('pb-avatar').innerHTML = '<svg class="ic"><use href="#i-user"/></svg>';
       $('pb-name').textContent = '환자를 선택하세요';
@@ -481,10 +536,11 @@
 
   async function savePatient(e) {
     e.preventDefault();
+    if (!normalizeBirthField()) { $('p-birth').focus(); return; }
     const body = {
       chart_no: $('p-chart').value.trim(),
       name: $('p-name').value.trim(),
-      birth_date: $('p-birth').value.trim() || null,
+      birth_date: normalizeDate($('p-birth').value) || null,
       sex: $('p-sex').value || null,
       phone: $('p-phone').value.trim() || null,
       memo: $('p-memo').value.trim() || null,
@@ -706,6 +762,7 @@
       video.pause();
       frame.classList.add('paused');
       state.isPaused = true;
+      sfx('freeze');
       $('btn-pause').innerHTML = '<svg class="ic"><use href="#i-play"/></svg>재개';
     } else {
       video.play();
@@ -713,6 +770,22 @@
       state.isPaused = false;
       $('btn-pause').innerHTML = '<svg class="ic"><use href="#i-pause"/></svg>일시정지';
     }
+  }
+
+  // ---- 효과음 (sounds.js) ----
+  // 사진 캡처 = 필름 카메라 '찰칵', 정지영상(스틸) = '틱', 녹화 시작/중지 = '삐' / '삐삐'
+  function sfx(name) { try { if (window.SlitSounds) window.SlitSounds.play(name); } catch (_) { /* 소리는 촬영을 막지 않는다 */ } }
+  function soundsOn() { return !window.SlitSounds || window.SlitSounds.enabled(); }
+  function setSounds(on) {
+    if (window.SlitSounds) window.SlitSounds.setEnabled(on);
+    syncSoundsButton();
+    if (on) sfx('freeze');                                    // 켜면 바로 들려 준다
+    toast(on ? '효과음 켬' : '효과음 끔', 'success');
+  }
+  function syncSoundsButton() {
+    const on = soundsOn();
+    $('btn-sounds').setAttribute('aria-pressed', String(on));
+    $('sounds-label').textContent = on ? '효과음 켜짐' : '효과음 꺼짐';
   }
 
   // ---- capture ----
@@ -760,6 +833,7 @@
     const canvas = document.createElement('canvas');
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
+    sfx('shutter');
     const src = state.isPaused ? $('freeze') : video;
     const cx = canvas.getContext('2d');
     if (meibo.on) cx.filter = 'grayscale(1)';      // 마이봄: 흑백 원본 (대비 강화·반전은 화면 보기 전용)
@@ -805,6 +879,7 @@
     };
     recorder.start();
     state.saving++;                                 // 녹화분이 저장될 때까지
+    sfx('rec_start');
     state.recorder = recorder;
     state.isRecording = true;
     state.recordStart = start;
@@ -824,6 +899,7 @@
     if (!state.isRecording || !state.recorder) return;
     state.recorder.stoppedAt = Date.now();
     if (state.recorder.state !== 'inactive') state.recorder.stop();
+    sfx('rec_stop');
     endRecordingUi();
   }
 
@@ -1006,6 +1082,7 @@
     if (i == null || !state.quadHasImg[i]) { toast('라이브 영상이 준비되지 않았습니다.', 'error'); return; }
     state.quadFrozen[i] = true;
     state.quadEyes[i] = $('eye-select').value;
+    sfx('freeze');
     // 다음 빈 칸 찾기
     let nxt = null;
     for (let j = 1; j <= 4; j++) { const k = (i + j) % 4; if (!state.quadFrozen[k]) { nxt = k; break; } }
@@ -1046,6 +1123,7 @@
     const indices = [0, 1, 2, 3].filter(i => state.quadFrozen[i] || i === state.quadActive);
     const withImg = indices.filter(i => state.quadHasImg[i]);
     if (withImg.length === 0) { toast('저장할 정지영상이 없습니다.', 'error'); return; }
+    sfx('shutter');
     let saved = 0;
     // 개별 저장
     for (const i of withImg) {
@@ -1228,7 +1306,7 @@
   // Pro 모드(pro.js)에서 쓰는 공개 API
   window.SlitApp = {
     state, api, currentPatient, persistCapture, renderThumbs, toast, setStatus,
-    startCamera, openPatientDialog, parseTs, fmtDT,
+    startCamera, openPatientDialog, parseTs, fmtDT, openViewer, sfx,
   };
 
   init();
