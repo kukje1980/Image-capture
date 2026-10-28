@@ -75,6 +75,17 @@ const check = (name, ok, info = '') => { results.push({ name, ok, info }); conso
         `A=${(await caps(A.id)).filter(c => c.media_type === 'video').length} B=${(await caps(B.id)).filter(c => c.media_type === 'video').length} stillRecording=${recAfterSwitch}`);
   await select(A.id); await sleep(500);
 
+  // 5-1) 동영상 화질 일반 / 고화질 — 녹화기가 받은 비트레이트, 새로고침 뒤에도 기억
+  const brOf = async (mode) => {
+    await page.click('#btn-settings'); await page.selectOption('#vq-select', mode); await page.click('#settings-x');
+    await page.click('#btn-record'); await sleep(800);
+    const br = await page.evaluate(() => window.SlitApp.state.recorder.videoBitsPerSecond);
+    await page.click('#btn-record'); await sleep(2000);
+    return br;
+  };
+  const brN = await brOf('normal'), brH = await brOf('high');
+  check('동영상 화질: 고화질이 일반보다 높은 비트레이트로 녹화', brH > brN * 2 && brN > 1e6, `일반 ${(brN / 1e6).toFixed(1)}Mbps · 고화질 ${(brH / 1e6).toFixed(1)}Mbps`);
+
   // 6) 녹화 중 카메라 끊김 (USB 빠짐)
   const v0 = (await caps(A.id)).filter(c => c.media_type === 'video').length;
   await page.click('#btn-record'); await sleep(1200);
@@ -113,6 +124,7 @@ const check = (name, ok, info = '') => { results.push({ name, ok, info }); conso
   await page.goto(BASE + '/').catch(() => {});
   await ready();
   await select(A.id); await sleep(300);
+  check('동영상 화질 선택이 새로고침 뒤에도 유지', (await page.inputValue('#vq-select')) === 'high');
   const n0 = (await caps(A.id)).length;
   await page.evaluate(() => window.SlitApp.state.stream.getVideoTracks().forEach(t => { t.stop(); t.dispatchEvent(new Event('ended')); }));
   await sleep(300);

@@ -123,6 +123,13 @@ class SettingsDialog(QDialog):
         self.photo_format.addItems(["png", "jpg"])
         self.photo_format.setCurrentText(config.photo_format)
 
+        self.video_quality = QComboBox()
+        self.video_quality.addItem("일반 — 가볍고 파일 작음 (기본)", "normal")
+        self.video_quality.addItem("고화질 — 더 선명, 파일 약 2배", "high")
+        self.video_quality.setCurrentIndex(max(0, self.video_quality.findData(config.video_quality)))
+        self.video_quality.setToolTip("두 모드 모두 실시간(30fps)으로 녹화됩니다. 4K 는 보통 진료실 PC 에서도 끊기지 않게\n"
+                                      "가장 빠른 인코더 설정을 쓰고, 화질(압축 정도)만 다릅니다.")
+
         self.export = QLineEdit(config.export_root)
         btn_browse = QPushButton("폴더 선택")
         btn_browse.clicked.connect(self._browse)
@@ -188,6 +195,7 @@ class SettingsDialog(QDialog):
         form.addRow("가로 해상도", self.width)
         form.addRow("세로 해상도", self.height)
         form.addRow("사진 형식", self.photo_format)
+        form.addRow("동영상 화질", self.video_quality)
         form.addRow("저장 폴더(export)", exp_w)
         form.addRow("테스트 파일(file 모드)", self.test_file)
         cl.addLayout(form)
@@ -667,6 +675,7 @@ class SettingsDialog(QDialog):
         c.capture_width = self.width.value()
         c.capture_height = self.height.value()
         c.photo_format = self.photo_format.currentText()
+        c.video_quality = self.video_quality.currentData() or "normal"
         c.export_root = self.export.text().strip()
         c.test_file_path = self.test_file.text().strip()
         c.sounds_enabled = self.sounds.isChecked()

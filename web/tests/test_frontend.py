@@ -114,6 +114,15 @@ def test_tabs_in_toolbar_and_reference_tab_wired():
     assert "compareImages" in PRO_JS and "src.ref" in PRO_JS                # 참조 샘플은 환자 영상으로 저장하지 않음
 
 
+def test_video_quality_modes_wired():
+    """동영상 화질 일반 / 고화질 — 설정 칸, 저장, 녹화 비트레이트."""
+    app_js = (WEB / "static/js/app.js").read_text(encoding="utf-8")
+    sel = HTML[HTML.index('id="vq-select"'):HTML.index("</select>", HTML.index('id="vq-select"'))]
+    assert re.findall(r'<option value="(\w+)"', sel) == ["normal", "high"]
+    assert "prefSet('slitlamp-vq'" in app_js and "videoBitsPerSecond: recordBitrate()" in app_js
+    assert "VQ_BPP = { normal: 0.08, high: 0.2 }" in app_js
+
+
 def test_capture_safety_guards_wired():
     """촬영본 보호 장치 (실제 브라우저 검증은 tests/e2e_extreme.js)."""
     app_js = (WEB / "static/js/app.js").read_text(encoding="utf-8")

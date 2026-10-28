@@ -1919,7 +1919,7 @@ class MainWindow(QMainWindow):
         if self._last_frame is not None:
             size = (self._last_frame.shape[1], self._last_frame.shape[0])
         try:
-            self.recorder.start(path, self._estimate_fps(), size)
+            self.recorder.start(path, self._estimate_fps(), size, quality=self.config.video_quality)
         except Exception as e:  # noqa: BLE001
             log.exception("recorder start failed")
             QMessageBox.warning(self, "오류", f"녹화 시작 실패: {e}")
@@ -1937,7 +1937,8 @@ class MainWindow(QMainWindow):
         self._rec_started = time.monotonic()
         self._rec_timer.start()
         self._update_rec_hud()
-        self.control_bar.set_status("녹화 중...")
+        q = "고화질" if self.config.video_quality == "high" else "일반 화질"
+        self.control_bar.set_status(f"녹화 중... ({q})")
 
     def _stop_recording(self) -> None:
         if not self._recording:

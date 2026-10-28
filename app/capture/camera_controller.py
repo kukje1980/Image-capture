@@ -152,7 +152,7 @@ class CameraController(QObject):
             size = (self.last_frame.shape[1], self.last_frame.shape[0])
         self.first_rec_frame = None
         self._rec_frames = 0
-        self.recorder.start(path, self.estimate_fps(), size)
+        self.recorder.start(path, self.estimate_fps(), size, quality=self.config.video_quality)
         self.rec_started = time.monotonic()
 
     def stop_recording(self) -> tuple[int, int]:

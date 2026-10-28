@@ -153,6 +153,8 @@
 
     $('btn-start-camera').addEventListener('click', () => startCamera());
     $('camera-select').addEventListener('change', (e) => { prefSet('slitlamp-cam', e.target.value); startCamera(e.target.value); });
+    $('vq-select').value = prefGet('slitlamp-vq') === 'high' ? 'high' : 'normal';
+    $('vq-select').addEventListener('change', (e) => prefSet('slitlamp-vq', e.target.value));
     $('res-select').value = prefGet('slitlamp-res') || '1080';
     $('res-select').addEventListener('change', (e) => {
       prefSet('slitlamp-res', e.target.value);
@@ -857,7 +859,7 @@
     const mime = mimes.find(m => window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m));
     let recorder;
     try {
-      recorder = new MediaRecorder(state.stream, mime ? { mimeType: mime } : {});
+      recorder = new MediaRecorder(state.stream, { ...(mime ? { mimeType: mime } : {}), videoBitsPerSecond: recordBitrate() });
     } catch (err) { toast('녹화 시작 실패: ' + (err.message || err.name), 'error'); return; }
     const chunks = [];
     recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
@@ -893,6 +895,16 @@
       const s = Math.floor((Date.now() - state.recordStart) / 1000);
       $('rec-time').textContent = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
     }, 250);
+  }
+
+  // 동영상 화질 (설정 → 동영상 화질) — 지정하지 않으면 브라우저가 해상도와 관계없이 낮은 기본값으로 녹화한다
+  const VQ_BPP = { normal: 0.08, high: 0.2 };   // 픽셀·프레임당 비트: 1080p30 ≈ 5 / 12 Mbps, 4K30 ≈ 20 / 50 Mbps
+  function recordBitrate() {
+    const t = state.stream && state.stream.getVideoTracks()[0];
+    const s = (t && t.getSettings) ? t.getSettings() : {};
+    const w = s.width || $('video').videoWidth || 1920, h = s.height || $('video').videoHeight || 1080;
+    const fps = Math.min(60, s.frameRate || 30);
+    return Math.round(w * h * fps * VQ_BPP[$('vq-select').value === 'high' ? 'high' : 'normal']);
   }
 
   function stopRecording() {

@@ -35,6 +35,7 @@ class AppConfig:
     export_root: str = ""                    # 동시 저장 폴더 (비면 appdata/export)
     db_path: str = ""                        # SQLite 경로 (비면 appdata/slitlamp.db)
     photo_format: str = "png"                # png | jpg
+    video_quality: str = "normal"            # 동영상 화질: normal(일반 — 가볍고 파일 작음) | high(고화질) (app/capture/video_recorder.py)
     video_fallback_fourcc: str = "mp4v"      # ffmpeg 실패 시 cv2 폴백 코덱
     subfolder_template: str = "{chart_no}_{patient_id}/{date}"
     thumbnail_max_side: int = 120
@@ -146,6 +147,7 @@ class AppConfig:
         d = type(self)()
         ok = {
             "photo_format": self.photo_format.lower() in ("png", "jpg", "jpeg"),
+            "video_quality": self.video_quality in ("normal", "high"),
             "thumbnail_max_side": self.thumbnail_max_side > 0,
             "capture_width": self.capture_width > 0,
             "capture_height": self.capture_height > 0,
