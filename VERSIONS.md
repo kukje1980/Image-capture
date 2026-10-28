@@ -156,3 +156,11 @@ v1.8.0 이후 `main` 에 들어온 변경을 모두 합친 최종판입니다 (`
 - 분석 = `app/ui/pro/multi_analysis.py` MultiAnalysisPanel(AnalysisPanel 상속): 측정 종류 하나(정밀 5종 + 형광 염색 면적 ·
   충혈 지수 · 백내장 핵 · 피질) → 측정 실행 → 코멘트에 기록 / 결과 영상 저장. 종류별로 필요한 칸만 표시.
 - smart_panel: RednessSlider · locs_inputs 공용, 분석 탭 제목 줄 바꿈(폭 넘침 수정). Pro 검토 화면 탭은 그대로. 웹은 v1.18.3 과 같음.
+
+## v1.18.5 — 2026-10-28
+- 슬릿램프 좌우 신호(VID 04D9 / PID 1203 · MI_00): Ctrl+Shift+Alt+F6 → OD · F7 → OS (토글 아님, `ControlBar.set_eye` 공용), 버튼 3
+  Ctrl+Shift+Alt+F8 → 사진 캡처. F9 녹화 · F10 스틸은 그대로 (`app/usb_buttons.py`).
+- 눈 상태(미확인 · 자동 · 수동 · 확인 필요 · 정지 화면)를 촬영 도크 칩 · HUD 에 표시. 처음 · 재연결은 미확인, 비활성 복귀는 확인 필요,
+  입력칸 · 다른 화면 · 다른 창의 신호는 보류 후 적용. 사진은 찍은 순간의 눈(정지 화면은 정지 순간), 녹화는 시작 눈 + 전환은 코멘트.
+- `app/usb_raw_input.py`: Windows Raw Input 으로 감시 키의 장치 확인 · 재연결 알림 (실장비 미확인, 맥 · 실패 시 모두 받음).
+  설정 → USB 버튼: `usb_eye_auto` · `usb_device_check`. 웹은 v1.18.4 와 같음.
