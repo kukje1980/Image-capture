@@ -220,8 +220,10 @@ def _lut(brightness: float, contrast: float, gamma: float, lo: float = 0.0, hi: 
 
 
 def adjust(rgb: np.ndarray, *, brightness: float = 0.0, contrast: float = 1.0, gamma: float = 1.0,
-           channel: str = "rgb", invert: bool = False, auto: bool = False) -> np.ndarray:
-    """``brightness`` −1..1, ``contrast`` 0..3, ``gamma`` 0.2..5."""
+           channel: str = "rgb", invert: bool = False, auto: bool = False,
+           levels: tuple[int, int] = (0, 255)) -> np.ndarray:
+    """``brightness`` −1..1, ``contrast`` 0..3, ``gamma`` 0.2..5, ``levels`` =
+    black / white input points (histogram dialog)."""
     if channel == "rgb":
         src = rgb
     elif channel == "redfree":  # green channel, shown as green-tinted grey
@@ -231,20 +233,80 @@ def adjust(rgb: np.ndarray, *, brightness: float = 0.0, contrast: float = 1.0, g
     else:
         g = rgb[..., {"red": 0, "green": 1, "blue": 2}[channel]]
         src = np.stack([g, g, g], axis=-1)
-    identity = brightness == 0 and contrast == 1 and gamma == 1 and not invert and not auto
+    identity = brightness == 0 and contrast == 1 and gamma == 1 and not invert and not auto \
+        and tuple(levels) == (0, 255)
     if identity:
         return src
-    out = np.empty_like(src)
-    for c in range(3):
-        ch = src[..., c]
-        lo, hi = 0.0, 255.0
-        if auto:
-            sample = ch[::4, ::4]
-            sample = sample[sample > 8]
-            if sample.size > 100:
-                lo, hi = np.percentile(sample, 1.0), np.percentile(sample, 99.5)
-        lut = _lut(brightness, contrast, gamma, lo, hi)
-        if invert:
-            lut = 255 - lut
-        out[..., c] = lut[ch]
-    return out
+    lo, hi = float(levels[0]), float(levels[1])
+    if auto:
+        # One window for all channels (from luminance inside the fundus): a
+        # per-channel stretch would shift the retina's colour.
+        sample = luminance(src[::4, ::4].astype(np.float32))
+        sample = sample[sample > 8]
+        if sample.size > 100:
+            lo, hi = float(np.percentile(sample, 1.0)), float(np.percentile(sample, 99.5))
+    lut = _lut(brightness, contrast, gamma, lo, hi)
+    if invert:
+        lut = 255 - lut
+    return lut[src]
+
+
+# ---------------------------------------------------------------------------
+# processing operations (VK-2 "Image Processing" toolbar) — applied on a copy,
+# the stored photograph is never modified
+# ---------------------------------------------------------------------------
+OPS = ("sharpen_light", "sharpen", "sharpen_strong", "enhance", "equalize", "denoise", "denoise_avg")
+OP_LABELS = {
+    "sharpen_light": "선명하게(약)", "sharpen": "선명하게", "sharpen_strong": "선명하게(강)",
+    "enhance": "향상(국소 대비)", "equalize": "히스토그램 평활화", "denoise": "노이즈 감소(중간값)",
+    "denoise_avg": "노이즈 감소(평균)",
+}
+
+
+def _fundus_mask(rgb: np.ndarray) -> np.ndarray:
+    return luminance(rgb.astype(np.float32)) > 10
+
+
+def apply_op(rgb: np.ndarray, op: str) -> np.ndarray:
+    img = Image.fromarray(rgb)
+    side = max(rgb.shape[:2])
+    if op.startswith("sharpen"):
+        pct = {"sharpen_light": 60, "sharpen": 120, "sharpen_strong": 220}[op]
+        rad = max(1.0, side / 1400)
+        return np.asarray(img.filter(ImageFilter.UnsharpMask(radius=rad, percent=pct, threshold=2)))
+    if op == "enhance":
+        # Local contrast: a wide unsharp mask (≈ CLAHE look) followed by a stretch
+        # inside the fundus, so faint vessels and lesions stand out.
+        rad = max(4.0, side / 60)
+        out = np.asarray(img.filter(ImageFilter.UnsharpMask(radius=rad, percent=90, threshold=0)))
+        return adjust(out, auto=True)
+    if op == "equalize":
+        mask = Image.fromarray((_fundus_mask(rgb) * 255).astype(np.uint8))
+        return np.asarray(ImageOps.equalize(img, mask=mask))
+    if op == "denoise":
+        return np.asarray(img.filter(ImageFilter.MedianFilter(3 if side < 3000 else 5)))
+    if op == "denoise_avg":
+        return np.asarray(img.filter(ImageFilter.BoxBlur(1 if side < 3000 else 2)))
+    raise ValueError(op)
+
+
+def apply_ops(rgb: np.ndarray, ops) -> np.ndarray:
+    for op in ops:
+        rgb = apply_op(rgb, op)
+    return rgb
+
+
+def histogram(rgb: np.ndarray) -> np.ndarray:
+    """``(3, 256)`` per-channel counts inside the fundus (black surround excluded)."""
+    sample = rgb[::2, ::2].reshape(-1, 3)
+    sample = sample[luminance(sample.astype(np.float32)) > 10]
+    return np.stack([np.bincount(sample[:, c], minlength=256)[:256] for c in range(3)])
+
+
+def downscale(rgb: np.ndarray, max_side: int) -> np.ndarray:
+    h, w = rgb.shape[:2]
+    if max(h, w) <= max_side:
+        return rgb
+    img = Image.fromarray(rgb)
+    img.thumbnail((max_side, max_side), Image.Resampling.BILINEAR)
+    return np.asarray(img)

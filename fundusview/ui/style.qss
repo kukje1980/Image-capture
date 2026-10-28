@@ -22,3 +22,10 @@ QPushButton:hover { border-color: #1f6f8b; color: #1f6f8b; }
 QStatusBar { background: #e8ebe7; }
 QSlider::groove:horizontal { height: 4px; background: #d3d9d3; border-radius: 2px; }
 QSlider::handle:horizontal { width: 14px; margin: -6px 0; background: #1f6f8b; border-radius: 7px; }
+QWidget#palette { background: #ffffff; }
+QLabel#paletteHead { color: #1f6f8b; font-weight: 600; padding: 6px 2px 1px 2px; border-bottom: 1px solid #d8ddd8; }
+QLabel#paletteResult { background: #20262c; color: #ffd640; padding: 6px; border-radius: 4px; font-size: 11px; margin-top: 6px; }
+QWidget#palette QToolButton { background: #f4f5f3; border: 1px solid #cfd5cf; border-radius: 4px; padding: 2px 4px; }
+QWidget#palette QToolButton:hover { border-color: #1f6f8b; color: #1f6f8b; }
+QWidget#palette QToolButton:checked { background: #1f6f8b; color: white; border-color: #1f6f8b; }
+QWidget#palette QToolButton:disabled { color: #aab; background: #f0f1ef; }

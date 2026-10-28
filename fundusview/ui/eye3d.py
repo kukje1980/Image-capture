@@ -307,6 +307,7 @@ class EyeView(QOpenGLWidget):
         self.yaw, self.pitch, self.dist = 38.0, 18.0, 3.3
         self.in_yaw, self.in_pitch, self.in_fov, self.in_z = 0.0, 0.0, 85.0, 0.35
         self._drag: QPointF | None = None
+        self._drag_zoom = False
         self._ok = False
         self._meshes: dict = {}
 
@@ -535,15 +536,26 @@ class EyeView(QOpenGLWidget):
     # -- interaction -----------------------------------------------------------
     def mousePressEvent(self, e):
         self._drag = e.position()
+        self._drag_zoom = e.button() == Qt.MouseButton.RightButton
 
     def mouseReleaseEvent(self, e):
         self._drag = None
+
+    def _zoom_steps(self, steps: float) -> None:
+        if self.mode == "inside":
+            self.in_fov = max(20.0, min(140.0, self.in_fov * (0.92 ** steps)))
+        else:
+            self.dist = max(1.6, min(12.0, self.dist * (0.9 ** steps)))
+        self.update()
 
     def mouseMoveEvent(self, e):
         if self._drag is None:
             return
         d = e.position() - self._drag
         self._drag = e.position()
+        if self._drag_zoom:  # right-drag up/down: zoom
+            self._zoom_steps(-d.y() / 40.0)
+            return
         if self.mode == "inside":
             k = self.in_fov / max(self.height(), 1)
             self.in_yaw = max(-150.0, min(150.0, self.in_yaw - d.x() * k))
@@ -554,12 +566,7 @@ class EyeView(QOpenGLWidget):
         self.update()
 
     def wheelEvent(self, e):
-        steps = e.angleDelta().y() / 120.0
-        if self.mode == "inside":
-            self.in_fov = max(20.0, min(140.0, self.in_fov * (0.92 ** steps)))
-        else:
-            self.dist = max(1.6, min(12.0, self.dist * (0.9 ** steps)))
-        self.update()
+        self._zoom_steps(e.angleDelta().y() / 120.0)
 
     def mouseDoubleClickEvent(self, e):
         self.reset_view()
