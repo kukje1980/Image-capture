@@ -7,6 +7,11 @@ on:
     paths: ["fundus_viewer/**", ".github/workflows/fundus-viewer.yml"]
   workflow_dispatch:
 
+# a newer push replaces the build (and the published download) of an older one
+concurrency:
+  group: fundus-viewer-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test-linux:
     runs-on: ubuntu-latest
@@ -58,5 +63,5 @@ jobs:
           gh release delete fundus-viewer-latest --yes --cleanup-tag || true
           gh release create fundus-viewer-latest FundusViewer-windows.zip \
             --target "$GITHUB_SHA" --prerelease \
-            --title "FundusViewer - latest Windows build" \
-            --notes "Windows 10/11 build of commit $GITHUB_SHA ($GITHUB_REF_NAME). Unzip and run FundusViewer\\FundusViewer.exe."
+            --title "안저 사진 뷰어 (Windows 최신 빌드)" \
+            --notes-file docs/release_notes.md
