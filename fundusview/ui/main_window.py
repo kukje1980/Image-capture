@@ -121,9 +121,9 @@ class MainWindow(QMainWindow):
         self.patients.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.patients.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         hdr = self.patients.horizontalHeader()
-        for col in (0, 2, 3, 4, 5):
+        for col in range(6):  # long ids (RetiCam PID2026…-…) must not squeeze the name
             hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
-        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        hdr.setStretchLastSection(True)
         self.patients.itemSelectionChanged.connect(self._on_patient_selected)
         self.patients.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.patients.customContextMenuRequested.connect(self._patient_menu)
@@ -340,7 +340,7 @@ class MainWindow(QMainWindow):
         split.addWidget(left)
         split.addWidget(centre)
         split.addWidget(scroll)
-        split.setSizes([420, 790, 390])
+        split.setSizes([470, 740, 390])
         split.setStretchFactor(1, 1)
         self.setCentralWidget(split)
 
@@ -774,7 +774,7 @@ class MainWindow(QMainWindow):
         prof = get_profile(row["profile"]) if row else get_profile(None)
         self.eye3d.set_mapping(fov_deg=self.sp_fov.value(), fov_type=self.c_fovtype.currentData(),
                                projection=self.c_proj.currentData(), viewpoint=prof.viewpoint,
-                               roll_deg=self.sp_roll.value())
+                               roll_deg=self.sp_roll.value(), radial_c=prof.radial_c)
         if row is not None:
             circle = (row["circle_cx"], row["circle_cy"], row["circle_r"]) if row["circle_r"] else None
             disc = (row["disc_x"], row["disc_y"]) if row["disc_x"] is not None else None

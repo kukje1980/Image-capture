@@ -9,6 +9,9 @@ image maps back onto the sphere exactly.
 ``write_demo_folder`` produces files in the real devices' formats (all
 patients fictional):
 
+* SYSEYE RetiCam 3100 Plus: ``<이름>-od-color-YYYYMMDD-HHMMSS-mmm.jpg`` with the
+  APP15 JSON patient record (176°, plus a 220° montage and the device's
+  anonymous default patient)
 * Microclear APOLLO: ``PatientCapture/<ID>_<이름>/<YYYY_MM_DD>/COLOR/...MCOLOR.jpg``
   with the ``Description: {json}`` JPEG comment (WA 135° / UWA 165°)
 * Kowa Export Tool: ``ID_YYYYMMDD_HHMMSS_R_FUNDUS (COLOR)_1.jpg`` and JOIA
@@ -18,8 +21,10 @@ patients fictional):
 """
 from __future__ import annotations
 
+import io
 import json
 import math
+import struct
 from pathlib import Path
 
 import numpy as np
@@ -97,16 +102,18 @@ def _retina_map(eye: str = "OD", seed: int = 1, tint=(0.80, 0.40, 0.22)) -> Imag
 
 def synth_fundus(*, eye: str = "OD", fov_deg: float = 135.0, fov_type: str = "internal",
                  projection: str = "equidistant", size=(1088, 1148), seed: int = 1,
-                 tint=(0.80, 0.40, 0.22)) -> np.ndarray:
+                 tint=(0.80, 0.40, 0.22), circle: tuple[float, float, float] | None = None,
+                 radial_c: float = proj.DEFAULT_RADIAL_C) -> np.ndarray:
     """RGB image of a synthetic retina seen through the given camera geometry.
 
-    The image circle fills the frame width (APOLLO-like 2176×2296 aspect by
-    default, the extra rows at the bottom stay black like the device's text strip).
+    By default the image circle fills the frame width (APOLLO-like 2176×2296
+    aspect, the extra rows at the bottom stay black like the device's text
+    strip); ``circle`` = (cx, cy, r) places it explicitly.
     """
     w, h = size
     rmap = np.asarray(_retina_map(eye, seed, tint), dtype=np.uint8)
     n = rmap.shape[0]
-    cx, cy, R = w / 2.0, w / 2.0, w / 2.0 * 0.94
+    cx, cy, R = circle or (w / 2.0, w / 2.0, w / 2.0 * 0.94)
     tmax = proj.theta_max(fov_deg, fov_type)
     yy, xx = np.mgrid[0:h, 0:w].astype(np.float64)
     dx, dy = (xx - cx) / R, (cy - yy) / R
@@ -120,6 +127,8 @@ def synth_fundus(*, eye: str = "OD", fov_deg: float = 135.0, fov_type: str = "in
         theta = 2 * np.arctan(rho * math.tan(tmax / 2))
     elif projection == "orthographic":
         theta = np.arcsin(np.clip(rho * math.sin(tmax), -1, 1))
+    elif projection == "radial":
+        theta = tmax * ((1 - radial_c) * rho + radial_c * rho ** 3)
     else:
         a_max = math.atan(proj.g(tmax, "perspective"))
         a = np.arctan(rho * math.tan(a_max))
@@ -150,6 +159,42 @@ def _apollo_comment(when: str, eye: str, field_angle: int, dev_model: int, pid: 
     return "Description: " + json.dumps(d, ensure_ascii=False)
 
 
+def with_app15(jpeg: bytes, payload: bytes) -> bytes:
+    """Insert an APP15 (0xFFEF) segment after SOI / APP0, as RetiCam does."""
+    if jpeg[:2] != b"\xff\xd8" or len(payload) > 65533:
+        raise ValueError("not a JPEG / payload too large")
+    i = 2
+    if jpeg[2:4] == b"\xff\xe0":
+        i = 4 + struct.unpack(">H", jpeg[4:6])[0]
+    return jpeg[:i] + b"\xff\xef" + struct.pack(">H", len(payload) + 2) + payload + jpeg[i:]
+
+
+def reticam_record(*, pid: str, name: str, born: str, sex: str, eye: str, when: str,
+                   stitched: bool = False) -> dict:
+    """RetiCam 2025-software style APP15 JSON (``when`` = 'YYYY/MM/DD hh:mm:ss.mmm')."""
+    ext = ({"isStitchIm": True, "orgImHeight": 4304, "orgImWidth": 5736} if stitched else
+           {"flashBaseLv": 40, "pupilEstmSize": 4.6, "smallPupilOn": False})
+    return {
+        "dateTime": when, "elapsedCntr": "0", "extData": ext, "eyeLaterality": eye,
+        "fixatInnerCenter": [-1, -1] if stitched else [64, 48], "fixatInnerCoord": [-1, -1] if stitched else [64, 48],
+        "focusValue": -1 if stitched else 11000, "irisMaskEllipseLMaxis": -1, "irisMaskEllipseSMaxis": -1,
+        "irisMaskOffsetX": 0, "irisMaskOffsetY": 0, "irisMaskRadius": 0 if stitched else 0.97, "modeID": 1,
+        "multiSpectralData": "", "patientBornDate": born, "patientContact": "", "patientID": pid,
+        "patientMemo": "DEMO - synthetic image", "patientName": name, "patientRefPerson": "",
+        "patientSex": sex, "patientSrcCode": 0, "picFormat": "JPG", "typeCode": 0, "version": 256,
+    }
+
+
+def _burn_text(rgb: np.ndarray, lines: list[str]) -> np.ndarray:
+    img = Image.fromarray(rgb)
+    d = ImageDraw.Draw(img)
+    y = 6
+    for line in lines:
+        d.text((8, y), line, fill=(240, 150, 40))
+        y += 14
+    return np.asarray(img)
+
+
 def write_demo_folder(root: Path | str, *, small: bool = False) -> list[Path]:
     """Write the demo drop folder; returns the image paths written."""
     root = Path(root)
@@ -163,6 +208,31 @@ def write_demo_folder(root: Path | str, *, small: bool = False) -> list[Path]:
             kw["comment"] = comment.encode("utf-8")
         Image.fromarray(rgb).save(path, **kw)
         out.append(path)
+
+    # -- SYSEYE RetiCam 3100 Plus (frames 5736×4304, here 1/4 or 1/8 scale) ------------
+    rw, rh = (717, 538) if small else (1434, 1076)
+    circ = (rw / 2.0, rh / 2.0, rh / 2.0 * 0.97)
+    rc_dir = root / "RetiCam"
+    for name, pid, born, sex, eye, stamp, json_when, fov, stitched, seed in (
+            ("정하늘", "PID20260310-0A1B2C3D", "1975/05/05", "F", "OD", "20260310-101530-123",
+             "2026/03/10 17:15:30.123", 176.0, False, 21),   # JSON hour off, like the device
+            ("정하늘", "PID20260310-0A1B2C3D", "1975/05/05", "F", "OS", "20260310-101702-456",
+             "2026/03/10 17:17:02.456", 176.0, False, 22),
+            ("정하늘", "PID20260310-0A1B2C3D", "1975/05/05", "F", "OD", "20260310-102010-789",
+             "2026/03/10 17:20:10.789", 220.0, True, 23),
+            ("Anonymous", "#AnonymousID#", "1980/01/01", "O", "OS", "20260311-090000-001",
+             "2026/03/11 16:00:00.001", 176.0, False, 24)):
+        rgb = synth_fundus(eye=eye, fov_deg=fov, fov_type="internal", projection="radial",
+                           size=(rw, rh), seed=seed, circle=circ, tint=(0.82, 0.45, 0.24))
+        rgb = _burn_text(rgb, [f"{eye} ( Color )", pid, "DEMO", born.replace("/", "-"),
+                               f"Date: {stamp[:4]}-{stamp[4:6]}-{stamp[6:8]}"])
+        buf = io.BytesIO()
+        Image.fromarray(rgb).save(buf, "JPEG", quality=90)
+        rec = reticam_record(pid=pid, name=name, born=born, sex=sex, eye=eye, when=json_when, stitched=stitched)
+        p = rc_dir / f"{name}-{eye.lower()}-color-{stamp}.jpg"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(with_app15(buf.getvalue(), json.dumps(rec, ensure_ascii=False).encode("utf-8")))
+        out.append(p)
 
     # -- Microclear APOLLO -------------------------------------------------------
     for pid, name, when, eye, fa, model, seed in (

@@ -50,8 +50,9 @@ uniform sampler2D u_tex;
 uniform int   u_has_tex;
 uniform float u_tmax;     // half internal FOV (rad)
 uniform float u_gmax;     // g(u_tmax)
-uniform int   u_proj;     // 0 perspective, 1 stereographic, 2 equidistant, 3 orthographic
+uniform int   u_proj;     // 0 perspective, 1 stereographic, 2 equidistant, 3 orthographic, 4 radial
 uniform float u_d;        // viewpoint for perspective
+uniform float u_c;        // cubic share for radial
 uniform vec2  u_center;   // image centre (texture coords)
 uniform vec2  u_radius;   // image-circle radius (texture coords, x and y)
 uniform float u_roll;
@@ -63,10 +64,19 @@ uniform float u_grid;     // > 0: draw 10°/30° retinal angle rings
 varying vec3 v_obj;
 varying vec3 v_n;
 
+float cbrt_(float x) { return sign(x) * pow(abs(x), 1.0 / 3.0); }
+
 float gfun(float t) {
     if (u_proj == 1) return tan(0.5 * t);
     if (u_proj == 2) return t;
     if (u_proj == 3) return sin(t);
+    if (u_proj == 4) {                       // invert s = (1-c) r + c r^3 (Cardano)
+        float s = t / u_tmax;
+        if (u_c < 1e-6) return s;
+        float p = (1.0 - u_c) / u_c, q = -s / u_c;
+        float dsc = sqrt(q * q * 0.25 + p * p * p / 27.0);
+        return cbrt_(-0.5 * q + dsc) + cbrt_(-0.5 * q - dsc);
+    }
     float den = cos(t) + u_d;
     return den <= 1e-4 ? 1e4 : sin(t) / den;
 }
@@ -285,6 +295,7 @@ class EyeView(QOpenGLWidget):
         self._radius = (0.5, 0.5)
         self.fov_deg, self.fov_type = 135.0, "internal"
         self.projection, self.viewpoint = "equidistant", proj.DEFAULT_VIEWPOINT
+        self.radial_c = proj.DEFAULT_RADIAL_C
         self.roll_deg = 0.0
         self.disc_dir: np.ndarray | None = None
         self.laterality: str | None = None
@@ -318,7 +329,9 @@ class EyeView(QOpenGLWidget):
         self.update()
 
     def set_mapping(self, *, fov_deg=None, fov_type=None, projection=None, viewpoint=None,
-                    roll_deg=None) -> None:
+                    roll_deg=None, radial_c=None) -> None:
+        if radial_c is not None:
+            self.radial_c = float(radial_c)
         if fov_deg is not None:
             self.fov_deg = float(fov_deg)
         if fov_type is not None:
@@ -339,7 +352,8 @@ class EyeView(QOpenGLWidget):
         p = None
         if disc_px is not None and circle is not None:
             p = proj.image_to_sphere(disc_px[0], disc_px[1], circle[0], circle[1], circle[2], tmax,
-                                     self.projection, self.viewpoint, math.radians(self.roll_deg))
+                                     self.projection, self.viewpoint, math.radians(self.roll_deg),
+                                     c=self.radial_c)
         if p is None:
             # disc ≈ 4.5 mm nasal of the fovea ≈ 21.5° at the eye centre, slightly superior
             phi = 0.0 if laterality != "OS" else math.pi
@@ -470,9 +484,10 @@ class EyeView(QOpenGLWidget):
         gl.glUniformMatrix4fv(U("u_mvp"), 1, gl.GL_TRUE, mvp)
         tmax = self.theta_max
         gl.glUniform1f(U("u_tmax"), tmax)
-        gl.glUniform1f(U("u_gmax"), proj.g(tmax, self.projection, self.viewpoint))
+        gl.glUniform1f(U("u_gmax"), proj.g(tmax, self.projection, self.viewpoint, tmax=tmax, c=self.radial_c))
         gl.glUniform1i(U("u_proj"), proj.PROJECTION_INDEX.get(self.projection, 0))
         gl.glUniform1f(U("u_d"), self.viewpoint)
+        gl.glUniform1f(U("u_c"), self.radial_c)
         gl.glUniform2f(U("u_center"), *self._center)
         gl.glUniform2f(U("u_radius"), *self._radius)
         gl.glUniform1f(U("u_roll"), math.radians(self.roll_deg))

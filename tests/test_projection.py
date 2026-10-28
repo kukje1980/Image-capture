@@ -52,3 +52,14 @@ def test_disc_distance_on_apollo_uwa():
     tmax = proj.theta_max(165, "internal")
     theta = proj.theta_of_rho(250 / 1023, tmax, "equidistant")
     assert math.degrees(theta) == pytest.approx(20.2, abs=0.5)
+
+
+def test_radial_model():
+    tmax = math.radians(88)
+    for r in (0.0, 0.1, 0.324, 0.7, 1.0):
+        t = proj.theta_of_rho(r, tmax, "radial")
+        assert proj.rho(t, tmax, "radial") == pytest.approx(r, abs=1e-9)
+    # RetiCam calibration: the disc measured at 0.324 R lies ≈ 22° from the fovea (176° field)
+    assert math.degrees(proj.theta_of_rho(0.324, tmax, "radial")) == pytest.approx(22.0, abs=0.3)
+    # c = 0 is equidistant
+    assert proj.rho(0.5, tmax, "radial", c=0.0) == pytest.approx(proj.rho(0.5, tmax, "equidistant"))

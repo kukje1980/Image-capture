@@ -4,8 +4,9 @@ Windows 10 / 11용 안저카메라 전용 뷰어입니다. **감시 폴더에 �
 환자 ID·이름 등 환자 정보를 추출해 뷰어 데이터베이스로 가져오고, 2D로 보거나 **광각 사진을
 실제 안구처럼 입체(3D) 모델**로 돌려 볼 수 있습니다.
 
-우선 회사 광각 모델 **Microclear APOLLO (WA 135° / UWA 165°)** 에 맞춰 만들었고,
-**Kowa VK-2 / VK-2s** (nonmyd·VX 시리즈) 출력과 일반 안저카메라 파일도 읽습니다.
+우선 회사 초광각 모델 **SYSEYE RetiCam 3100 Plus (1회 176° · 몽타주 220°)** 에 맞춰
+만들었고, **Microclear APOLLO (WA 135° / UWA 165°)**, **Kowa VK-2 / VK-2s** (nonmyd·VX
+시리즈) 출력과 일반 안저카메라 파일도 읽습니다.
 
 | 2D 보기 | 3D 안구 — 절개 보기 |
 |---|---|
@@ -22,8 +23,8 @@ pip install -r requirements.txt
 python run_viewer.py --demo
 ```
 
-`--demo`는 빈 라이브러리에 가상 환자 사진(APOLLO·VK-2·DICOM 형식)을 넣어 바로 써 볼 수 있게
-합니다. `--home D:\FundusViewer`를 주면 설정과 라이브러리를 그 폴더 하나에 둡니다(휴대용).
+`--demo`는 빈 라이브러리에 가상 환자 사진(RetiCam·APOLLO·VK-2·DICOM 형식)을 넣어 바로 써 볼
+수 있게 합니다. `--home D:\FundusViewer`를 주면 설정과 라이브러리를 그 폴더 하나에 둡니다(휴대용).
 
 **설치 파일(exe) 만들기:** `build_windows.bat` 실행 → `dist\FundusViewer\FundusViewer.exe`
 (폴더째 복사해 사용). GitHub Actions(`fundus-viewer` 워크플로)도 Windows exe를 빌드해
@@ -44,10 +45,22 @@ python run_viewer.py --demo
 
 | 장비 | 감시할 폴더 | 읽는 정보 |
 |---|---|---|
+| **SYSEYE RetiCam 3100 Plus** | 장비 PC의 저장 폴더, 예: `D:\reticam`(장비 PC에 설치) 또는 네트워크 공유 `\\<장비 IP>\D\reticam`(**폴링** 체크) | JPEG 안 APP15 JSON(`patientID`, `patientName`/`patientLastName`+`patientFirstName`, `patientBornDate`, `patientSex`, `eyeLaterality`, `modeID`, 몽타주 여부), 파일 이름 `<이름>-od-color-YYYYMMDD-HHMMSS-mmm` |
 | **Microclear APOLLO** | 장비 공유 폴더 `…\PatientCapture` (SMB, **폴링** 체크) 또는 PC 뷰어 `MicroClearClient\ImageData` | 폴더 `<ID>_<이름>`, JPEG 주석 `Description:{JSON}`(검사 시각·Eye·FieldAngle·DevModel·ImgType), 케이스 내보내기 `<ID>.json`(생년월일·성별) |
 | **Kowa VK-2 / VK-2s** | Kowa Export Tool 출력 폴더, VK-2 DICOM 로컬 저장 폴더 | 파일명 `ID_YYYYMMDD_HHMMSS_R_FUNDUS (COLOR)_1` (VK EXPORT / MDR / JOIA 형식), JOIA `.xml`, DICOM 태그 |
 | VK-2 "폴더로 복사" | 그 폴더 (프로필: *파일명 = 환자 ID*) | 파일 이름 = 환자 ID |
 | 기타 카메라 | 저장 폴더 | DICOM, EXIF/XMP/JPEG 주석, 같은 이름의 `.txt/.ini/.xml/.json/.csv`, 일반 파일명 규칙 |
+
+**RetiCam 참고**
+* 장비의 기본 환자(`#AnonymousID#` / Anonymous / 1980-01-01)로 찍은 사진은 등록되지 않은
+  환자이므로 **미분류**로 들어옵니다.
+* 촬영 시각은 파일 이름의 시각을 씁니다. JSON의 `dateTime`은 시간대만큼 몇 시간 어긋난 경우가
+  있습니다.
+* 확장자가 `.jpg`인데 내용이 TIFF인 내보내기 파일도 읽습니다(TIFF 태그에서 JSON을 찾음).
+* VK-2와 연동해 "파일 이름 앞 6자리 = 환자 ID"로 내보내도록 설정한 병원은 **설정 → 파일명
+  규칙**에 `^(?P<pid>\d{6})`을 추가하세요.
+* 사진 왼쪽 위에 이름·ID가 글자로 찍혀 있습니다(장비가 넣는 것). 3D에서는 촬영 원 밖이라
+  보이지 않습니다.
 
 VK-2 원본 저장소(`vk_3x\-000512\vk000005.jpg`)의 파일은 이름에 환자 정보가 없어
 (환자 연결은 `vk3x.mde` DB에만 있음) **미분류**로 들어옵니다. VK-2 사진은 Export Tool 또는
@@ -60,7 +73,8 @@ DICOM 내보내기 폴더를 감시하세요.
 1. **DICOM 태그**: PatientID, PatientName(한글 이름 그룹 우선; `Specific Character Set`이 없는
    VK-2 파일은 CP949 / ISO 2022 이스케이프를 직접 해석), BirthDate, Sex, Acquisition/Content
    Date·Time, Image Laterality(0020,0062)→Laterality(0020,0060), Horizontal FOV(0022,000C)
-2. **장비 데이터**: APOLLO 폴더·JSON (`Eye` 1=OD 0=OS, `FieldAngle` 60/90/112 → 90/135/165°)
+2. **장비 데이터**: RetiCam APP15 JSON, APOLLO 폴더·JSON (`Eye` 1=OD 0=OS, `FieldAngle`
+   60/90/112 → 90/135/165°)
 3. **부속 파일**(sidecar): JOIA XML의 `ID / LastName / FirstName / DOB / Sex / ImageLaterality` 등
 4. **이미지 내장 텍스트**: EXIF(Make/Model, DateTimeOriginal, UserComment, Windows XP 태그),
    JPEG 주석, PNG 텍스트, XMP에서 `PatientID=…; Name: …` 형태의 키·값
@@ -81,9 +95,14 @@ DICOM 내보내기 폴더를 감시하세요.
   외부각으로 표시합니다. 변환은 동공(절점) 위치 `d = 0.58`(안구 반지름 단위)인 원근 모델로 하며,
   이 값은 "내부 200° ≈ 외부 135°" 관례와 맞습니다. Microclear 규칙(외부각 × 1.5 = 안구 중심각)과도
   일치합니다.
-* **투영**: APOLLO(SLO 스캔)는 스캔각이 영상 반경에 비례하므로 **등거리(각도 비례)**, 일반
-  카메라는 **카메라 원근(동공 시점)**, 즉 `tan α = sin θ / (cos θ + d)`를 씁니다. 스테레오그래픽과
-  정사영도 고를 수 있습니다.
+* **투영**: 카메라마다 다음을 기본으로 씁니다. 스테레오그래픽과 정사영도 고를 수 있습니다.
+  * **RetiCam 3100 Plus**: **광각 보정(중심 확대)**. 식은 `θ = θmax·((1−c)·ρ + c·ρ³)`,
+    `c = 0.2545`, `θmax = 88°`입니다. 같은 176°라도 등거리로 펴면 실제 사진에서 시신경 유두
+    (중심에서 영상 반경의 0.32)가 중심와에서 28°에 놓여, 해부학적 위치(약 22°)와 맞지 않습니다.
+    이 식은 유두가 22°에 오도록 중심부를 확대합니다. 몽타주는 220°로 둡니다. 2023년형 50°급
+    RetiCam 파일은 일반 카메라 원근으로 처리합니다.
+  * **APOLLO**(SLO 스캔): 스캔각이 영상 반경에 비례하므로 **등거리(각도 비례)**를 씁니다.
+  * **일반 카메라**: **카메라 원근(동공 시점)**, 즉 `tan α = sin θ / (cos θ + d)`를 씁니다.
   검증: 공급사 UWA 샘플에서 유두가 중심에서 약 250 px(반경 1023 px) 떨어져 있고, 등거리 165°로
   바꾸면 약 20°입니다. 이는 해부학적 중심와–유두 거리(약 4.5 mm / 12 mm)와 일치합니다.
 * **외부 모드**: 공막·각막·홍채와 시신경을 그립니다. 시신경은 검출된(또는 2D 화면에서 우클릭으로
@@ -105,8 +124,8 @@ fundusview/
   app.py            진입점 (OpenGL 모드, 스타일, --demo / --home)
   config.py         설정 JSON (%APPDATA%\FundusViewer\settings.json)
   db.py             SQLite: patients / images / seen_files / import_log
-  profiles.py       카메라 프로필 (APOLLO, VK-2, VK-2 ID 폴더, 일반)
-  extract/          메타데이터 추출 (dicom / apollo / embedded+sidecar / filename / normalize)
+  profiles.py       카메라 프로필 (RetiCam, APOLLO, VK-2, VK-2 ID 폴더, 일반)
+  extract/          메타데이터 추출 (dicom / reticam / apollo / embedded+sidecar / filename / normalize)
   importer.py       안정화 대기 → 중복 검사 → 추출 → 분석 → 라이브러리 저장 → DB
   watcher.py        watchdog 감시(또는 폴링) + 재검사 + 가져오기 작업 스레드
   imaging.py        영상 읽기(DICOM 포함), 촬영 원·시신경 검출, 표시 조정(LUT)
@@ -129,6 +148,12 @@ QT_QPA_PLATFORM=offscreen python -m pytest -q tests
 
 ## 알려진 한계와 다음 단계
 
+* **RetiCam 투영 보정은 잠정값**입니다. 근거는 몽타주 샘플 한 장의 측정과 해부학적 유두 위치뿐입니다.
+  보정을 확정하려면 둘 중 하나가 필요합니다.
+  * SYSEYE에서 투영·왜곡 자료나 DICOM 적합성 문서를 받기
+  * 격자 시험판을 찍은 사진으로 맞추기
+  그때까지 3D 화면에서 투영을 "등거리"로 바꿔 비교할 수 있고, 영상별 "화각·투영 저장"도 됩니다.
+  주변부 고정 촬영(fixation) 사진의 회전 정보는 아직 쓰지 않습니다.
 * **VK-2 원본 DB 연동**: `vk3x.mde`(Access) 스키마가 문서화되어 있지 않아, 원본 저장소
   사진의 환자 연결은 아직 하지 않습니다. 샘플 `.mde`로 테이블 구조를 확인한 뒤 읽기 전용
   커넥터를 추가할 수 있습니다. VK-2 전용 무손실 형식 `.dlt`는 읽지 못합니다.

@@ -75,6 +75,8 @@ def plausible_pid(pid: str | None) -> bool:
 
 def _apply_match(meta: ExtractedMeta, m: re.Match, source: str) -> None:
     g = {k: v for k, v in m.groupdict().items() if v}
+    if g.get("name", "").strip().lower() in ("anonymous", "unknown", "noname", "no name", "익명"):
+        g.pop("name")  # capture software placeholders (RetiCam default patient)
     if "pid" in g and not plausible_pid(g["pid"]):
         g.pop("pid")
         g.pop("name", None)  # the name next to a bogus id is just as unreliable

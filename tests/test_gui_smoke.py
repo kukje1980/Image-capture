@@ -24,14 +24,14 @@ def test_main_window_imports_and_lists(tmp_path, demo_dir):
         w.show()
         w.service.import_paths([str(demo_dir)])
         deadline = time.time() + 30
-        while (len(db.list_patients()) < 5 or db.count_unassigned() < 1) and time.time() < deadline:
+        while (len(db.list_patients()) < 6 or db.count_unassigned() < 2) and time.time() < deadline:
             app.processEvents()
             time.sleep(0.02)
         settle = time.time() + 1.0  # results are coalesced on a 300 ms timer
         while time.time() < settle:
             app.processEvents()
             time.sleep(0.02)
-        assert w.patients.rowCount() == 6  # 5 patients + 미분류
+        assert w.patients.rowCount() == 7  # 6 patients + 미분류
         ref = db.find_patient("20260115001")["id"]
         w._select_patient_ref(ref)
         assert w.thumbs.count() == 2 and w.current is not None
@@ -40,7 +40,7 @@ def test_main_window_imports_and_lists(tmp_path, demo_dir):
         w.c_channel.setCurrentIndex(1)  # red-free
         w._apply_adjust()
         w._select_patient_ref(UNASSIGNED)
-        assert w.thumbs.count() == 1
+        assert w.thumbs.count() == 2
         w._set_compare(db.images_for_patient(ref)[0]["id"])
         assert all(v.has_image() for v in w.cmp_views)
     finally:

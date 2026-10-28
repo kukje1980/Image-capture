@@ -148,3 +148,51 @@ def test_camera_file_names_are_not_patient_ids(tmp_path, name):
     m, _ = extract_metadata(_jpeg(tmp_path / name))
     assert m.patient_id is None
     assert m.exam_date == "2024-03-05"  # the date is still used
+
+
+# -- SYSEYE RetiCam ------------------------------------------------------------------
+def test_reticam_demo_files(demo_dir):
+    rc = demo_dir / "RetiCam"
+    m, prof = extract_metadata(rc / "정하늘-od-color-20260310-101530-123.jpg")
+    assert prof.key == "reticam"
+    assert (m.patient_id, m.name, m.birth_date, m.sex, m.laterality) == (
+        "PID20260310-0A1B2C3D", "정하늘", "1975-05-05", "F", "OD")
+    # the file name's local time wins over the JSON's (hour-shifted) dateTime
+    assert (m.exam_date, m.exam_time, m.sources["exam_time"]) == ("2026-03-10", "10:15:30", "filename")
+    assert (m.fov_deg, m.fov_type, m.projection, m.device) == (176.0, "internal", "radial",
+                                                               "SYSEYE RetiCam 3100 Plus")
+    mont, _ = extract_metadata(rc / "정하늘-od-color-20260310-102010-789.jpg")
+    assert (mont.modality, mont.fov_deg) == ("montage", 220.0)
+    anon, _ = extract_metadata(rc / "Anonymous-os-color-20260311-090000-001.jpg")
+    assert anon.patient_id is None and anon.name is None and anon.birth_date is None
+    assert anon.laterality == "OS"
+
+
+def test_reticam_json_without_filename_and_old_50deg(tmp_path):
+    """A renamed copy is still recognised by its APP15 record; a 2023-era
+    50°-class frame (no ellipse keys, ~2700 px) maps as an ordinary camera."""
+    import io
+    from fundusview.demo import with_app15
+    buf = io.BytesIO()
+    Image.fromarray(np.zeros((2048 // 8, 2730 // 8, 3), np.uint8)).save(buf, "JPEG")
+    rec = {"dateTime": "2023/06/13 07:31:08.441", "eyeLaterality": "OS", "irisMaskRadius": 0.95,
+           "modeID": 1, "patientBornDate": "1960/02/03", "patientFirstName": "길동", "patientLastName": "홍",
+           "patientID": "A-77", "patientSex": "M", "version": 256}
+    p = tmp_path / "copy.jpg"
+    p.write_bytes(with_app15(buf.getvalue(), json.dumps(rec, ensure_ascii=False).encode()))
+    m, prof = extract_metadata(p)
+    assert prof.key == "reticam"
+    assert (m.patient_id, m.name, m.sex, m.exam_time) == ("A-77", "홍길동", "M", "07:31:08")
+    assert (m.fov_deg, m.fov_type, m.projection) == (50.0, "external", "perspective")
+
+
+def test_reticam_tiff_with_jpg_extension(tmp_path):
+    """Some exports are TIFF data named .jpg; the record is then in a TIFF tag."""
+    rec = {"patientID": "T-1", "patientName": "김테스트", "eyeLaterality": "OD", "modeID": 1,
+           "irisMaskEllipseLMaxis": -1}
+    p = tmp_path / "김테스트-od-color-20240529-111213-000.jpg"
+    Image.fromarray(np.zeros((64, 64, 3), np.uint8)).save(
+        p, "TIFF", tiffinfo={270: json.dumps(rec, ensure_ascii=False).encode("utf-8")})
+    m, prof = extract_metadata(p)
+    assert prof.key == "reticam" and (m.patient_id, m.name, m.laterality) == ("T-1", "김테스트", "OD")
+    assert m.fov_deg == 176.0

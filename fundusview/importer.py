@@ -205,7 +205,7 @@ class Importer:
             patient_ref=patient_ref, exam_date=meta.exam_date, exam_time=meta.exam_time,
             laterality=meta.laterality, modality=meta.modality, device=meta.device,
             profile=profile.key, fov_deg=meta.fov_deg, fov_type=meta.fov_type,
-            projection=profile.projection, file_path=str(stored),
+            projection=meta.projection or profile.projection, file_path=str(stored),
             display_path=str(display) if display else None, thumb_path=str(thumb),
             original_path=spath, sha256=digest, width=w, height=h,
             circle_cx=circle[0], circle_cy=circle[1], circle_r=circle[2],

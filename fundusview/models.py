@@ -36,6 +36,7 @@ class ExtractedMeta:
     device: str | None = None
     fov_deg: float | None = None
     fov_type: str | None = None     # "external" (angle at the pupil) / "internal" (eye centre)
+    projection: str | None = None   # overrides the profile's projection for this file
     study_uid: str | None = None
     description: str | None = None
     # field name -> where the value came from ("dicom", "filename", "exif", ...)
@@ -49,8 +50,9 @@ class ExtractedMeta:
             if getattr(self, name) in (None, "") and getattr(other, name) not in (None, ""):
                 setattr(self, name, getattr(other, name))
                 self.sources[name] = source or other.sources.get(name, "?")
-                if name == "fov_deg":  # the angle and its reference travel together
+                if name == "fov_deg":  # the angle, its reference and projection travel together
                     self.fov_type = other.fov_type
+                    self.projection = self.projection or other.projection
         for k, v in other.raw.items():
             self.raw.setdefault(k, v)
         return self

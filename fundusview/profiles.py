@@ -1,6 +1,10 @@
 """Camera profiles: how to read a device's files and how to map its images
 onto the 3D eye.
 
+* ``reticam`` — SYSEYE RetiCam 3100 Plus, the company's ultra-wide-field
+  camera (176° single shot, 220° two-image montage, eye-centre angles):
+  APP15 JSON patient record + ``<이름>-<od|os>-color-YYYYMMDD-HHMMSS-mmm`` names;
+  ``radial`` projection (centre magnified, see ``projection.py``).
 * ``apollo``  — Microclear APOLLO (CSLO / CRO) wide-field SLO, the company's
   wide-angle model (WA 135° / UWA 165° eye-centre angle). Scan angle is
   proportional to image radius, so the projection is *equidistant* in the
@@ -17,7 +21,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .projection import DEFAULT_VIEWPOINT
+from .projection import DEFAULT_RADIAL_C, DEFAULT_VIEWPOINT
 
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".dcm", ".dicom")
 # Written-then-renamed temporaries and VK-2's proprietary lossless format.
@@ -32,6 +36,7 @@ class CameraProfile:
     fov_type: str                  # "external" (at the pupil) or "internal" (eye centre)
     projection: str                # see projection.PROJECTIONS
     viewpoint: float = DEFAULT_VIEWPOINT
+    radial_c: float = DEFAULT_RADIAL_C   # only for the "radial" projection
     filename_patterns: tuple[str, ...] = ()
     id_only_filenames: bool = False
     vendor: str = ""               # vendor-specific extractor ("apollo")
@@ -58,7 +63,22 @@ APOLLO_PATTERNS = (
     r"(?:_(?:Mosaic_)?(?P<mode>[A-Za-z]+(?:-[A-Za-z]+)?))?(?:_(?:R|G|B|IR))?(?:_(?P<eye>OD|OS))?(?:_\d+°?)?",
 )
 
+RETICAM_PATTERNS = (
+    # 홍길동-od-color-20260310-101530-123 (time = local wall clock)
+    r"^(?P<name>.+)-(?P<eye>od|os|na)-(?P<mode>[a-z]+)-(?P<date>\d{8})-(?P<time>\d{6})-\d{3}(?:\s*\(\d+\))?$",
+)
+
 PROFILES: dict[str, CameraProfile] = {
+    "reticam": CameraProfile(
+        key="reticam",
+        name="SYSEYE RetiCam 3100 Plus 초광각 (176°)",
+        fov_deg=176.0, fov_type="internal", projection="radial",
+        filename_patterns=RETICAM_PATTERNS, vendor="reticam", disc_search=0.5,
+        notes="JPEG 안의 APP15 JSON(patientID·이름·생년월일·성별·눈·촬영 시각)과 파일 이름 "
+              "<이름>-od-color-YYYYMMDD-HHMMSS-mmm 을 읽습니다. 기본 환자(#AnonymousID#)는 미분류. "
+              "화각 176°(안구 중심각), 2장 몽타주 220°. 투영은 '광각 보정(중심 확대)'.",
+        match_devices=("SYSEYE", "RETICAM", "BIO NEWVISION"),
+    ),
     "apollo": CameraProfile(
         key="apollo",
         name="Microclear APOLLO 광각 (WA 135° / UWA 165°)",

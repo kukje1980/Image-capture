@@ -22,11 +22,14 @@ from .apollo_meta import apollo_meta, looks_like_apollo
 from .dicom_meta import dicom_meta, is_dicom
 from .embedded_meta import embedded_meta, sidecar_meta
 from .filename_meta import filename_meta, match_patterns
+from .reticam_meta import looks_like_reticam, reticam_meta
 
 __all__ = ["extract_metadata", "detect_profile", "is_dicom"]
 
 
 def detect_profile(path: Path, meta: ExtractedMeta | None = None) -> CameraProfile:
+    if looks_like_reticam(path):
+        return PROFILES["reticam"]
     if looks_like_apollo(path):
         return PROFILES["apollo"]
     if meta is not None and meta.device:
@@ -37,10 +40,12 @@ def detect_profile(path: Path, meta: ExtractedMeta | None = None) -> CameraProfi
         tmp = ExtractedMeta()
         if match_patterns(path.stem, PROFILES[key].filename_patterns, tmp, "probe"):
             return PROFILES[key]
-    if path.suffix.lower() in (".jpg", ".jpeg", ".png"):
+    if path.suffix.lower() in (".jpg", ".jpeg", ".png", ".tif", ".tiff"):
         try:
             from PIL import Image
             with Image.open(path) as img:
+                if looks_like_reticam(path, img):
+                    return PROFILES["reticam"]
                 if looks_like_apollo(path, img):
                     return PROFILES["apollo"]
         except Exception:
@@ -63,6 +68,8 @@ def extract_metadata(path: Path, profile_key: str = AUTO, *, watch_root: Path | 
 
     if profile.vendor == "apollo" and not dicom:
         meta.merge(apollo_meta(path, watch_root))
+    elif profile.vendor == "reticam" and not dicom:
+        meta.merge(reticam_meta(path))
     meta.merge(sidecar_meta(path))
     if not dicom:
         meta.merge(embedded_meta(path))
@@ -74,6 +81,7 @@ def extract_metadata(path: Path, profile_key: str = AUTO, *, watch_root: Path | 
         meta.sources["fov_deg"] = "profile"
     elif not meta.fov_type:
         meta.fov_type = profile.fov_type
+    meta.projection = meta.projection or profile.projection
     if not meta.exam_date:
         try:
             ts = datetime.fromtimestamp(os.path.getmtime(path))

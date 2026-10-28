@@ -19,7 +19,7 @@ from ..models import FIELD_LABELS, META_FIELDS, MODALITY_LABELS
 from ..profiles import AUTO, PROFILES, get_profile
 
 SOURCE_LABELS = {
-    "dicom": "DICOM", "apollo": "APOLLO 데이터", "apollo-json": "APOLLO 환자 파일", "folder": "폴더 이름",
+    "dicom": "DICOM", "reticam": "RetiCam 데이터", "apollo": "APOLLO 데이터", "apollo-json": "APOLLO 환자 파일", "folder": "폴더 이름",
     "filename": "파일 이름", "exif": "EXIF", "jpeg-comment": "JPEG 주석", "png-text": "PNG 텍스트",
     "xmp": "XMP", "profile": "프로필 기본값", "file-time": "파일 시각", "disc-estimate": "시신경 위치로 추정",
     "manual": "직접 입력",
@@ -221,8 +221,8 @@ class SettingsDialog(QDialog):
         w1 = QWidget()
         l1 = QVBoxLayout(w1)
         l1.addWidget(QLabel("사진이 저장되는 폴더를 등록하면, 새 파일이 들어올 때 자동으로 가져옵니다.\n"
-                            "APOLLO: 장비 공유 폴더(PatientCapture) 또는 MicroClearClient\\ImageData,  "
-                            "VK-2: Export Tool 출력 폴더 / DICOM 저장 폴더."))
+                            "RetiCam: 장비 PC의 저장 폴더(예: \\\\장비IP\\D\\reticam, 네트워크면 '폴링' 체크),  "
+                            "APOLLO: PatientCapture,  VK-2: Export Tool / DICOM 폴더."))
         self.table = QTableWidget(0, len(self.COLS))
         self.table.setHorizontalHeaderLabels(self.COLS)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
@@ -336,7 +336,9 @@ class SettingsDialog(QDialog):
         d = QFileDialog.getExistingDirectory(self, "감시할 폴더 선택")
         if d:
             from ..watcher import is_network_path
-            profile = "apollo" if "PatientCapture" in d or "MicroClear" in d else AUTO
+            low = d.lower()
+            profile = ("reticam" if "reticam" in low or "레티캠" in d else
+                       "apollo" if "patientcapture" in low or "microclear" in low else AUTO)
             self._add_row(WatchFolder(path=d, profile=profile, polling=is_network_path(d)))
 
     def _pick_library(self) -> None:

@@ -29,11 +29,11 @@ def test_import_demo_folder(env):
     s, db, drop = env
     imp = Importer(db, s)
     results = [imp.import_file(p, s.watch_folders[0]) for p in _all_files(drop)]
-    assert [r.status for r in results].count("imported") == 7
+    assert [r.status for r in results].count("imported") == 11
     pats = {r["patient_id"]: r for r in db.list_patients()}
-    assert set(pats) == {"20260115001", "20260212003", "D0001234", "D0001235", "D0009876"}
+    assert set(pats) == {"PID20260310-0A1B2C3D", "20260115001", "20260212003", "D0001234", "D0001235", "D0009876"}
     assert pats["20260115001"]["n_images"] == 2 and pats["20260115001"]["name"] == "김민수"
-    assert db.count_unassigned() == 1
+    assert db.count_unassigned() == 2  # IMG_0001 + RetiCam anonymous
     imgs = db.images_for_patient(pats["20260212003"]["id"])
     row = imgs[0]
     assert (row["fov_deg"], row["fov_type"], row["projection"], row["laterality"]) == (165.0, "internal",
@@ -41,6 +41,10 @@ def test_import_demo_folder(env):
     assert Path(row["file_path"]).exists() and Path(row["thumb_path"]).exists()
     assert Path(row["file_path"]).parts[-3:-1] == ("20260212003", "2026-02-12")
     assert row["circle_r"] > 200
+    rc = db.images_for_patient(pats["PID20260310-0A1B2C3D"]["id"])
+    assert len(rc) == 3 and {r["projection"] for r in rc} == {"radial"}
+    assert sorted(r["fov_deg"] for r in rc) == [176.0, 176.0, 220.0]
+    assert pats["PID20260310-0A1B2C3D"]["name"] == "정하늘"
     dcm = db.images_for_patient(pats["D0009876"]["id"])[0]
     assert dcm["display_path"] and Path(dcm["display_path"]).exists()   # decoded PNG for DICOM
     # second pass: everything already seen
