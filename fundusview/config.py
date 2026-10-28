@@ -37,6 +37,14 @@ def default_library_dir() -> Path:
     return Path.home() / "Documents" / f"{APP_NAME}Library"
 
 
+def default_inbox_dir() -> Path:
+    """Folder anyone can drop photos into (USB copies, e-mail attachments ...)."""
+    env = os.getenv("FUNDUSVIEW_HOME")
+    if env:
+        return Path(env) / "Inbox"
+    return Path.home() / "Documents" / "안저사진 가져오기"
+
+
 @dataclass
 class WatchFolder:
     path: str
@@ -63,10 +71,19 @@ class Settings:
     # Extra user-defined filename regexes tried before the profile patterns.
     custom_filename_patterns: list[str] = field(default_factory=list)
     last_patient: str = ""
+    # Automatic import (autosetup.py): an always-watched inbox folder and
+    # detection of the capture software's folders at every start.
+    inbox_dir: str = ""
+    auto_detect: bool = True
+    ignored_auto_folders: list[str] = field(default_factory=list)  # removed by the user: never re-added
 
     @property
     def library(self) -> Path:
         return Path(self.library_dir) if self.library_dir else default_library_dir()
+
+    @property
+    def inbox(self) -> Path:
+        return Path(self.inbox_dir) if self.inbox_dir else default_inbox_dir()
 
     # -- persistence -------------------------------------------------------
     @classmethod

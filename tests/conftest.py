@@ -1,9 +1,14 @@
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+# Keep settings / inbox / library of every test out of the real home folder.
+os.environ["FUNDUSVIEW_HOME"] = tempfile.mkdtemp(prefix="fundusview-test-")
 
 
 @pytest.fixture(scope="session")

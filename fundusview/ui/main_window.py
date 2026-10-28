@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QStatusBar, QTableWidget, QTableWidgetItem, QTabWidget, QToolBar, QVBoxLayout, QWidget,
 )
 
-from .. import APP_TITLE, __version__, imaging, measure
+from .. import APP_TITLE, __version__, autosetup, imaging, measure
 from .. import projection as proj
 from ..config import Settings
 from ..db import Database
@@ -42,6 +42,7 @@ class Bridge(QObject):
     """Carries worker-thread callbacks into the GUI thread (queued signals)."""
     result = Signal(object)
     status = Signal(str)
+    detected = Signal(object)   # autosetup.detect() result
 
 
 def age_on(birth: str | None, on: str | None = None) -> int | None:
@@ -63,6 +64,7 @@ class MainWindow(QMainWindow):
                                      on_status=self.bridge.status.emit)
         self.bridge.result.connect(self._on_import_result)
         self.bridge.status.connect(self._on_status)
+        self.bridge.detected.connect(self._on_detected)
         self.current = None          # images row
         self.compare = None
         self._patient_ref: int | None = None  # UNASSIGNED / patient id / None
@@ -427,12 +429,30 @@ class MainWindow(QMainWindow):
     # startup / watching
     # =====================================================================
     def _startup(self) -> None:
-        if self.settings.watch_folders and self.settings.watch_on_startup:
-            self.act_watch.setChecked(True)
-        elif not self.settings.watch_folders:
-            self.lbl_status.setText("설정에서 감시 폴더를 등록하세요 (또는 사진 파일을 창에 끌어다 놓기)")
+        # Automatic import: the inbox + the capture software's folders. Drive
+        # probing can block on a disconnected network drive -> worker thread.
+        import threading
+        auto = self.settings.auto_detect
+        threading.Thread(target=lambda: self.bridge.detected.emit(autosetup.detect() if auto else []),
+                         name="fundus-autosetup", daemon=True).start()
         if self.settings.last_patient:
             self._select_patient_id(self.settings.last_patient)
+
+    def _on_detected(self, found) -> None:
+        added = autosetup.apply(self.settings, found)
+        if added:
+            try:
+                self.settings.save()
+            except OSError:
+                pass
+            names = ", ".join(f.path for f in added)
+            self.lbl_status.setText(f"자동으로 감시 폴더 추가: {names}")
+            self.db.log("info", f"감시 폴더 자동 추가: {names}")
+        if self.settings.watch_folders and self.settings.watch_on_startup:
+            if self.act_watch.isChecked():
+                self._toggle_watch(True)   # restart with the new folders
+            else:
+                self.act_watch.setChecked(True)
 
     def _toggle_watch(self, on: bool) -> None:
         if on:
@@ -480,12 +500,19 @@ class MainWindow(QMainWindow):
         dlg = SettingsDialog(self.settings, self)
         if dlg.exec():
             old_lib = str(self.settings.library)
+            before = list(self.settings.watch_folders)
             dlg.apply()
+            autosetup.remember_removed(self.settings, before)
+            if dlg.redetect:
+                autosetup.apply(self.settings, autosetup.detect())
             self.settings.save()
             if str(self.settings.library) != old_lib:
                 QMessageBox.information(self, "설정", "라이브러리 폴더 변경은 프로그램을 다시 시작하면 적용됩니다.")
-            if self.act_watch.isChecked():
-                self._toggle_watch(True)
+            if self.settings.watch_folders:   # importing is automatic: (re)start watching
+                if self.act_watch.isChecked():
+                    self._toggle_watch(True)
+                else:
+                    self.act_watch.setChecked(True)
 
     def _on_status(self, text: str) -> None:
         self.lbl_status.setText(text)

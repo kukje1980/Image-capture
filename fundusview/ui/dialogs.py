@@ -250,9 +250,23 @@ class SettingsDialog(QDialog):
         lib.addWidget(self.library)
         lib.addWidget(b)
         f2.addRow("라이브러리 폴더 (DB·사본)", lib)
-        self.watch_start = QCheckBox("프로그램 시작 시 폴더 감시 시작")
+        self.watch_start = QCheckBox("프로그램 시작 시 폴더 감시 시작 (자동 가져오기)")
         self.watch_start.setChecked(settings.watch_on_startup)
         f2.addRow("", self.watch_start)
+        self.auto_detect = QCheckBox("장비 폴더 자동 찾기 (RetiCam: reticam·레티캠, APOLLO: MicroClearClient)")
+        self.auto_detect.setChecked(settings.auto_detect)
+        f2.addRow("", self.auto_detect)
+        inbox = QHBoxLayout()
+        self.inbox = QLineEdit(str(settings.inbox))
+        b2 = QPushButton("찾아보기…")
+        b2.clicked.connect(lambda: self._pick_dir(self.inbox, "가져오기 폴더 선택"))
+        inbox.addWidget(self.inbox)
+        inbox.addWidget(b2)
+        f2.addRow("가져오기 폴더 (넣으면 자동으로 가져옴)", inbox)
+        self.redetect = False
+        b3 = QPushButton("지금 장비 폴더 다시 찾기")
+        b3.clicked.connect(self._redetect)
+        f2.addRow("", b3)
         self.stable = QDoubleSpinBox()
         self.stable.setRange(0.2, 30)
         self.stable.setSuffix(" 초")
@@ -341,6 +355,17 @@ class SettingsDialog(QDialog):
                        "apollo" if "patientcapture" in low or "microclear" in low else AUTO)
             self._add_row(WatchFolder(path=d, profile=profile, polling=is_network_path(d)))
 
+    def _pick_dir(self, edit: QLineEdit, title: str) -> None:
+        d = QFileDialog.getExistingDirectory(self, title, edit.text())
+        if d:
+            edit.setText(d)
+
+    def _redetect(self) -> None:
+        """Forget removed auto folders and look again when OK is pressed."""
+        self.settings.ignored_auto_folders = []
+        self.redetect = True
+        QMessageBox.information(self, "장비 폴더", "확인을 누르면 장비 폴더를 다시 찾아 감시 목록에 추가합니다.")
+
     def _pick_library(self) -> None:
         d = QFileDialog.getExistingDirectory(self, "라이브러리 폴더 선택", self.library.text())
         if d:
@@ -376,6 +401,8 @@ class SettingsDialog(QDialog):
         s.watch_folders = folders
         s.library_dir = self.library.text().strip()
         s.watch_on_startup = self.watch_start.isChecked()
+        s.auto_detect = self.auto_detect.isChecked()
+        s.inbox_dir = self.inbox.text().strip()
         s.stable_seconds = self.stable.value()
         s.rescan_seconds = self.rescan.value()
         s.opengl = self.opengl.currentData()
