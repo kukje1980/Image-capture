@@ -41,10 +41,12 @@ class Database:
     def list_patients(self, q: str = "") -> List[dict]:
         with self._lock:
             if q:
-                like = f"%{q}%"
+                # % _ 는 글자 그대로 찾는다 (차트번호 '1_2' 가 '102' 같은 다른 환자와 맞지 않게)
+                like = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
                 rows = self._conn.execute(
                     """SELECT * FROM patients
-                       WHERE name LIKE ? OR chart_no LIKE ? OR phone LIKE ? OR patient_id LIKE ?
+                       WHERE name LIKE ? ESCAPE '\\' OR chart_no LIKE ? ESCAPE '\\'
+                          OR phone LIKE ? ESCAPE '\\' OR patient_id LIKE ? ESCAPE '\\'
                        ORDER BY name LIMIT 500""",
                     (like, like, like, like),
                 ).fetchall()

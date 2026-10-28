@@ -21,6 +21,8 @@ from app.models.schemas import CaptureNoteIn, CaptureOut
 router = APIRouter(prefix="/api/v1/captures", tags=["captures"])
 
 _UNSAFE = re.compile(r"[^0-9A-Za-z._가-힣-]+")
+# 윈도우 장치 이름 (PC 폴더에 그대로 내려받거나 복사할 때 문제가 되지 않게)
+_RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(10)), *(f"LPT{i}" for i in range(10))}
 _EXT = {"photo": "png", "video": "mp4"}
 # 저장 파일은 /media 로 같은 출처에서 그대로 제공되므로, 영상 형식만 허용한다
 # (html·svg 등이 올라가면 같은 출처에서 스크립트가 실행될 수 있음)
@@ -32,8 +34,11 @@ def _db(request: Request):
 
 
 def _sanitize(s: str) -> str:
-    s = (s or "").strip()
-    s = _UNSAFE.sub("_", s)
+    """폴더 이름 한 칸 — '..'·앞뒤 점·장치 이름·지나치게 긴 이름(OS 가 거부해 저장 실패)을 막는다."""
+    s = _UNSAFE.sub("_", (s or "").strip())[:48]
+    s = s.encode("utf-8")[:90].decode("utf-8", "ignore").strip(".")   # 맥·리눅스 이름 255바이트 (한글 1자 = 3바이트)
+    if s.split(".")[0].upper() in _RESERVED:
+        s = "_" + s
     return s or "_"
 
 
@@ -131,7 +136,10 @@ def update_capture(request: Request, cid: int, body: CaptureNoteIn):
 def delete_capture(request: Request, cid: int):
     row = _db(request).delete_capture(cid)
     if row and row.get("file_path"):
-        try:
-            (config.MEDIA_DIR / row["file_path"]).unlink(missing_ok=True)
-        except Exception:
-            pass
+        media_root = config.MEDIA_DIR.resolve()
+        f = (config.MEDIA_DIR / row["file_path"]).resolve()
+        if media_root in f.parents:              # 미디어 폴더 밖은 건드리지 않음 (DB 가 손상·조작돼도)
+            try:
+                f.unlink(missing_ok=True)
+            except Exception:
+                pass

@@ -46,3 +46,16 @@ def test_meibo_mode_wired():
     assert "100 / 3" in PRO_JS and "200 / 3" in PRO_JS
     for cat in ("'0%'", "'<25%'", "'25–50%'", "'51–75%'", "'>75%'"):
         assert cat in PRO_JS
+
+
+def test_capture_safety_guards_wired():
+    """촬영본 보호 장치 (실제 브라우저 검증은 tests/e2e_extreme.js)."""
+    APP_JS = (WEB / "static/js/app.js").read_text(encoding="utf-8")
+    # 녹화 중·저장 중 창 닫기/새로고침 경고
+    assert "addEventListener('beforeunload'" in APP_JS and "state.saving > 0" in APP_JS
+    # 카메라 끊김 → 촬영 막기 + 녹화 화면 정리
+    assert "addEventListener('ended'" in APP_JS and "endRecordingUi()" in APP_JS
+    # 드롭다운으로 환자를 바꿔도 표와 같은 경로(녹화 종료) 를 탄다
+    assert "if (id) { selectPatient(id); return; }" in APP_JS
+    # 서버·폴더 모두 실패하면 내려받기로 보존
+    assert "a.download = filename" in APP_JS

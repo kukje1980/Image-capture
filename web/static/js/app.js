@@ -14,6 +14,7 @@
     isPaused: false,
     isRecording: false,
     recorder: null,
+    saving: 0,           // 저장(업로드·폴더 쓰기) 중인 촬영본 수 — 0 이 아니면 창 닫기/새로고침 전에 경고
     recordStart: 0,
     recordTimer: null,
     editingPatientId: null,
@@ -81,10 +82,16 @@
   function bindEvents() {
     $('patient-search').addEventListener('input', debounce(loadPatients, 250));
     $('patient-select').addEventListener('change', (e) => {
-      state.currentPatientId = parseInt(e.target.value, 10) || null;
+      const id = parseInt(e.target.value, 10) || null;
+      if (id) { selectPatient(id); return; }   // 표에서 고를 때와 같이 — 녹화 중이면 끝내 앞 환자에게 저장
+      state.currentPatientId = null;
       renderThumbs();
       updateCaptureButtons();
       emitPatient();
+    });
+    // 녹화 중이거나 아직 저장 중인 촬영본이 있으면 창 닫기·새로고침 전에 묻는다 (메모리에 있는 영상이 사라짐)
+    window.addEventListener('beforeunload', (e) => {
+      if (state.isRecording || state.saving > 0) { e.preventDefault(); e.returnValue = ''; }
     });
     $('btn-new-patient').addEventListener('click', () => openPatientDialog(null));
     $('btn-edit-patient').addEventListener('click', () => {
@@ -637,6 +644,17 @@
       state.stream = stream;
       video.srcObject = stream;
       const track = stream.getVideoTracks()[0];
+      // 케이블 빠짐·전원 꺼짐 — 멈춘 마지막 화면이 새 사진처럼 저장되지 않게 촬영을 막고 알린다
+      if (track) track.addEventListener('ended', () => {
+        if (state.stream !== stream) return;
+        state.stream = null;
+        if (state.isRecording) stopRecording();
+        video.srcObject = null;
+        $('video-placeholder').style.display = 'flex';
+        updateCaptureButtons();
+        setStatus('카메라 연결 끊김', 'idle');
+        toast('카메라 연결이 끊어졌습니다. 연결을 확인한 뒤 카메라를 다시 시작하세요.', 'error');
+      });
       const set = track && track.getSettings ? track.getSettings() : {};
       if (set.deviceId) prefSet('slitlamp-cam', set.deviceId);
       $('video-placeholder').style.display = 'none';
@@ -771,12 +789,22 @@
     recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
     const eye = $('eye-select').value, start = Date.now();   // 시작할 때의 안구·시각으로 저장
     recorder.onstop = async () => {
-      const blob = new Blob(chunks, { type: recorder.mimeType || 'video/webm' });
-      const durationMs = (recorder.stoppedAt || Date.now()) - start;
-      const ext = (blob.type && blob.type.includes('mp4')) ? 'mp4' : 'webm';
-      await persistCapture(patient, 'video', blob, ext, eye, durationMs);
+      if (state.recorder === recorder && state.isRecording) {
+        // 누르지 않았는데 멈춤 (카메라 끊김·브라우저 오류) — 계속 녹화 중인 것처럼 보이지 않게
+        endRecordingUi();
+        toast('녹화가 중단되었습니다 (카메라 연결 확인). 그때까지 녹화한 영상은 저장합니다.', 'error');
+      }
+      try {
+        const blob = new Blob(chunks, { type: recorder.mimeType || 'video/webm' });
+        const durationMs = (recorder.stoppedAt || Date.now()) - start;
+        const ext = (blob.type && blob.type.includes('mp4')) ? 'mp4' : 'webm';
+        await persistCapture(patient, 'video', blob, ext, eye, durationMs);
+      } finally {
+        state.saving--;
+      }
     };
     recorder.start();
+    state.saving++;                                 // 녹화분이 저장될 때까지
     state.recorder = recorder;
     state.isRecording = true;
     state.recordStart = start;
@@ -795,7 +823,11 @@
   function stopRecording() {
     if (!state.isRecording || !state.recorder) return;
     state.recorder.stoppedAt = Date.now();
-    state.recorder.stop();
+    if (state.recorder.state !== 'inactive') state.recorder.stop();
+    endRecordingUi();
+  }
+
+  function endRecordingUi() {
     state.isRecording = false;
     clearInterval(state.recordTimer);
     $('rec-badge').classList.remove('on');
@@ -838,7 +870,12 @@
     return { el, url };
   }
 
-  async function persistCapture(patient, mediaType, blob, ext, eye, durationMs, note, opts = {}) {
+  async function persistCapture(...args) {
+    state.saving++;
+    try { return await persistCaptureNow(...args); } finally { state.saving--; }
+  }
+
+  async function persistCaptureNow(patient, mediaType, blob, ext, eye, durationMs, note, opts = {}) {
     const ts = new Date();
     // 지정 폴더에는 원본(무손실 PNG), 인터넷 서버에는 고화질 JPEG(약 1/3 크기)로 올려 저장 시간을 줄인다
     const folderBlob = blob, folderExt = ext;
