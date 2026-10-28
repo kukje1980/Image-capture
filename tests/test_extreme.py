@@ -567,8 +567,8 @@ def test_wall_clock_change_during_recording(tmp_path, monkeypatch, jump):
             clock.offset = jump
         rec.feed(_frame(10, 120, 160))
         time.sleep(1 / 30)
+    real = (time.monotonic() - t0) * 1000        # 길이는 멈춘 순간 기준 (인코더 마무리 시간은 제외)
     _, count, duration = rec.stop()
-    real = (time.monotonic() - t0) * 1000
     assert abs(duration - real) < 400, (duration, real)
     assert 20 <= count <= 45, count
 
@@ -751,7 +751,7 @@ class _Src:
         self.released = True
 
 
-def _run_worker(src, timeout=5):
+def _run_worker(src, timeout=30):
     from PySide6.QtCore import Qt
 
     from app.capture.camera_worker import CameraWorker
@@ -770,7 +770,7 @@ def _run_worker(src, timeout=5):
 def test_camera_unplugged_is_reported_and_released():
     ok = (True, np.zeros((48, 64, 3), np.uint8))
     src = _Src([ok] * 5)                          # 5장 뒤 계속 실패 = 케이블 뽑힘
-    _, t, got = _run_worker(src)
+    _, t, got = _run_worker(src)                  # 연속 실패 50회 — 느린 CI(맥)에선 sleep 이 길어져 수 초 걸림
     assert not t.is_alive() and got["frames"] == 5 and got["errors"] and src.released and got["stopped"]
 
 
