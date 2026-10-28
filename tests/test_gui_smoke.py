@@ -37,8 +37,8 @@ def test_main_window_imports_and_lists(tmp_path, demo_dir):
         assert w.thumbs.count() == 2 and w.current is not None
         assert w.view2d.has_image()
         assert "김민수" in w.banner.text()
-        w.c_channel.setCurrentIndex(1)  # red-free
-        w._apply_adjust()
+        w._on_action("chan:redfree")
+        assert w._channel == "redfree"
         w._select_patient_ref(UNASSIGNED)
         assert w.thumbs.count() == 2
         w._set_compare(db.images_for_patient(ref)[0]["id"])

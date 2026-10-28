@@ -1,5 +1,6 @@
-"""Main window: patients · thumbnails · 2D / 3D / multi / compare views · VK-2 style tool
-palette · info panel."""
+"""Main window, laid out like the Kowa VK-2 capture screen: patients · thumbnails ·
+2D / 3D / multi / compare views, the Command toolbar on the right edge and the
+Image Processing toolbar along the bottom (see toolbars.py)."""
 from __future__ import annotations
 
 import json
@@ -10,13 +11,14 @@ from datetime import date
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QObject, QRect, QSize, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QColor, QDesktopServices, QFont, QIcon, QImage, QKeySequence, QPainter, QPixmap
+from PySide6.QtCore import QObject, QPoint, QRect, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QAction, QActionGroup, QColor, QCursor, QDesktopServices, QFont, QIcon, QImage, \
+    QKeySequence, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox, QDockWidget, QDoubleSpinBox, QFileDialog,
-    QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-    QMainWindow, QMenu, QMessageBox, QPushButton, QRadioButton, QScrollArea, QSizePolicy, QSlider, QSplitter,
-    QStatusBar, QTableWidget, QTableWidgetItem, QTabWidget, QToolBar, QVBoxLayout, QWidget,
+    QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMenu,
+    QMessageBox, QPushButton, QRadioButton, QSlider, QSplitter, QStatusBar, QTableWidget, QTableWidgetItem,
+    QTabWidget, QToolBar, QToolButton, QVBoxLayout, QWidget,
 )
 
 from .. import APP_TITLE, __version__, autosetup, imaging, measure
@@ -32,7 +34,7 @@ from .eye3d import EyeView
 from .histogram import HistogramDialog
 from .image_view import TOOL_HINTS, TOOLS, ImageView
 from .multi_view import MultiView
-from .tool_palette import ToolPalette
+from .toolbars import CHECKABLE, COMMANDS, MENUS, PROCESSING, SliderPopup, icon_for
 
 UNASSIGNED = -1
 SEX_LABEL = {"M": "남", "F": "여", "O": "기타"}
@@ -72,56 +74,177 @@ class MainWindow(QMainWindow):
         self._proc_cache: OrderedDict[tuple, np.ndarray] = OrderedDict()
         self._ops: list[str] = []            # processing stack (VK-2 image processing toolbar)
         self._levels: tuple[int, int] = (0, 255)
+        self._channel, self._auto, self._invert = "rgb", False, False
         self._history: list[dict] = []       # undo snapshots
         self._multi_lock = False
         self._3d_dirty = True
         self.setWindowTitle(f"{APP_TITLE}  v{__version__}")
-        self.resize(1500, 900)
+        self.resize(1600, 960)
         self.setAcceptDrops(True)
         self._build()
         self.refresh_patients()
         QTimer.singleShot(200, self._startup)
 
     # =====================================================================
-    # layout
+    # layout (VK-2: black image area, Command toolbar on the right edge,
+    # Image Processing toolbar along the bottom, green text on the image)
     # =====================================================================
+    def _act(self, key: str, label: str, tip: str = "", icon: str | None = None, vk: str = "",
+             checkable: bool = False) -> QAction:
+        a = QAction(label, self)
+        if icon:
+            a.setIcon(icon_for(icon))
+            a.setIconVisibleInMenu(False)
+        vk_txt = f"<br><span style='color:#889'>VK-2: {vk}</span>" if vk and vk != "—" else ""
+        a.setToolTip(f"<b>{label}</b><br>{tip}{vk_txt}" if tip else label)
+        a.setStatusTip(tip)
+        a.setCheckable(checkable)
+        a.triggered.connect(lambda checked=False, k=key: self._on_action(k, checked if a.isCheckable() else None))
+        return a
+
+    def _make_actions(self) -> None:
+        self.acts: dict[str, QAction] = {}
+        for key, label, tip, ic, vk in COMMANDS:
+            self.acts[key] = self._act(key, label, tip, ic, vk, checkable=key in CHECKABLE)
+        self._tool_group = QActionGroup(self)
+        self._chan_group = QActionGroup(self)
+        self._chan_group.setExclusionPolicy(QActionGroup.ExclusionPolicy.ExclusiveOptional)
+        for spec in PROCESSING:
+            if spec is None:
+                continue
+            key, label, tip, ic, vk = spec
+            checkable = (key in CHECKABLE or key.startswith(("tool:", "chan:", "adj:"))
+                         or key in ("op:sharpen", "op:enhance"))   # lit while applied
+            a = self._act(key, label, tip, ic, vk, checkable=checkable)
+            if key.startswith("tool:"):
+                self._tool_group.addAction(a)
+            elif key.startswith("chan:"):
+                self._chan_group.addAction(a)
+            self.acts[key] = a
+        self.acts["tool:pan"].setChecked(True)
+        # drop-down entries are plain actions (no check marks in the drop-downs)
+        self.menus: dict[str, QMenu] = {}
+        for key, items in MENUS.items():
+            m = QMenu(self)
+            for sub, label in items:
+                m.addAction(self._act(sub, label))
+            self.menus[key] = m
+        self.acts["captions"] = self._act("captions", "화면 글자 표시", "사진 위에 환자·날짜를 녹색 글자로 (VK-2 방식)",
+                                          checkable=True)
+        self.acts["captions"].setChecked(True)
+        self.acts["overlay"] = self._act("overlay", "원·시신경 표시", "검출한 영상 원과 시신경 유두 위치 표시",
+                                         checkable=True)
+        for key, seq in (("prev", "PgUp"), ("next", "PgDown"), ("undo", "Ctrl+Z"), ("search", "Ctrl+F"),
+                         ("print", "Ctrl+P")):
+            self.acts[key].setShortcut(QKeySequence(seq))
+
+    def _toolbar(self, name: str, title: str, area, specs, icon_px: int) -> QToolBar:
+        tb = QToolBar(title, self)
+        tb.setObjectName(name)
+        tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        tb.setIconSize(QSize(icon_px, icon_px))
+        tb.setFloatable(False)
+        self.addToolBar(area, tb)
+        for spec in specs:
+            if spec is None:
+                tb.addSeparator()
+                continue
+            a = self.acts[spec[0]]
+            tb.addAction(a)
+            if spec[0] in self.menus:
+                btn = tb.widgetForAction(a)
+                btn.setMenu(self.menus[spec[0]])
+                btn.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        return tb
+
+    def _build_menus(self) -> None:
+        mb = self.menuBar()
+        A = self.acts
+        m = mb.addMenu("파일(&F)")
+        for a in self.menus["import"].actions():
+            m.addAction(a)
+        m.addSeparator()
+        m.addAction(self.act_watch)
+        m.addAction(self.act_follow)
+        m.addAction(self.act_log)
+        m.addSeparator()
+        for a in self.menus["save"].actions():
+            m.addAction(a)
+        m.addAction(A["print"])
+        m.addSeparator()
+        m.addAction("원본 폴더 열기", self._open_folder)
+        m.addSeparator()
+        m.addAction(A["exit"])
+
+        m = mb.addMenu("보기(&V)")
+        for i, label in enumerate(("2D 보기", "3D 안구", "다중 보기", "비교")):
+            a = m.addAction(label, lambda i=i: self.tabs.setCurrentIndex(i))
+            a.setShortcut(QKeySequence(f"Ctrl+{i + 1}"))
+        sub = m.addMenu("다중 보기 장수")
+        for a in self.menus["multi"].actions():
+            sub.addAction(a)
+        m.addSeparator()
+        m.addAction(A["list"])
+        self.act_thumbs = m.addAction("사진 목록 (썸네일)")
+        self.act_thumbs.setCheckable(True)
+        self.act_thumbs.setChecked(True)
+        m.addAction(self.tb_cmd.toggleViewAction())
+        m.addAction(self.tb_proc.toggleViewAction())
+        m.addSeparator()
+        m.addAction(A["captions"])
+        m.addAction(A["overlay"])
+        m.addSeparator()
+        for a in self.menus["fit"].actions():
+            m.addAction(a)
+        m.addAction("툴바 기본 위치로", self._reset_toolbars)
+
+        m = mb.addMenu("영상 처리(&I)")
+        for spec in PROCESSING:
+            if spec is None:
+                m.addSeparator()
+                continue
+            key, label = spec[0], spec[1]
+            if key in self.menus:
+                sub = m.addMenu(label)
+                for a in self.menus[key].actions():
+                    sub.addAction(a)
+            else:
+                m.addAction(A[key])
+        m.addSeparator()
+        m.addAction(self._act("chan:rgb", "컬러 (필터 해제)"))
+        m.addAction(self._act("adj_reset", "감마·대비·밝기 초기화"))
+
+        m = mb.addMenu("환자(&P)")
+        m.addAction(A["search"])
+        m.addAction(A["edit"])
+        m.addAction("환자 정보 수정…", self._edit_patient)
+        m.addAction("환자 삭제 (영상은 미분류로)…", self._delete_patient)
+
+        m = mb.addMenu("설정(&S)")
+        m.addAction(A["settings"])
+
+        m = mb.addMenu("도움말(&H)")
+        m.addAction("마우스·단축키", self._show_help)
+        m.addAction("프로그램 정보", lambda: QMessageBox.about(
+            self, APP_TITLE, f"<b>{APP_TITLE}</b><br>버전 {__version__}<br><br>"
+            "SYSEYE RetiCam 3100 Plus 등 안저 카메라 사진을 자동으로 가져와 보는 뷰어입니다."))
+
     def _build(self) -> None:
-        tb = QToolBar("도구")
-        tb.setMovable(False)
-        tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
-        self.addToolBar(tb)
-        self.act_watch = QAction("▶ 폴더 감시 시작", self, checkable=True)
+        self.act_watch = QAction("폴더 감시 (자동 가져오기)", self, checkable=True)
         self.act_watch.toggled.connect(self._toggle_watch)
-        tb.addAction(self.act_watch)
-        act_scan = QAction("⟳ 지금 검사", self)
-        act_scan.setToolTip("감시 폴더에서 아직 가져오지 않은 파일을 찾습니다")
-        act_scan.triggered.connect(self._scan_now)
-        tb.addAction(act_scan)
-        tb.addSeparator()
-        act_files = QAction("파일 가져오기…", self)
-        act_files.triggered.connect(self._import_files)
-        tb.addAction(act_files)
-        act_dir = QAction("폴더 가져오기…", self)
-        act_dir.triggered.connect(self._import_dir)
-        tb.addAction(act_dir)
-        tb.addSeparator()
         self.act_follow = QAction("새 영상 자동 표시", self, checkable=True)
         self.act_follow.setChecked(True)
         self.act_follow.setToolTip("새 사진이 들어오면 그 환자와 사진을 바로 엽니다")
-        tb.addAction(self.act_follow)
-        tb.addSeparator()
-        act_settings = QAction("설정…", self)
-        act_settings.triggered.connect(self._open_settings)
-        tb.addAction(act_settings)
-        act_log = QAction("가져오기 기록", self, checkable=True)
-        tb.addAction(act_log)
+        self.act_log = QAction("가져오기 기록", self, checkable=True)
+        self._make_actions()
 
-        # -- left: patients ---------------------------------------------------
-        left = QWidget()
-        ll = QVBoxLayout(left)
+        # -- left: patients (VK-2 OPEN LIST) -----------------------------------
+        self.left = QWidget()
+        ll = QVBoxLayout(self.left)
         ll.setContentsMargins(6, 6, 0, 6)
         self.search = QLineEdit()
         self.search.setPlaceholderText("환자 ID · 이름 · 생년월일 검색")
+        self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(lambda: self._search_timer.start(200))
         self._search_timer = QTimer(self, singleShot=True, timeout=self.refresh_patients)
         ll.addWidget(self.search)
@@ -141,18 +264,20 @@ class MainWindow(QMainWindow):
         self.patients.doubleClicked.connect(lambda _: self._edit_patient())
         ll.addWidget(self.patients)
 
-        # -- centre ---------------------------------------------------------------
+        # -- centre: patient line + thumbnails + views ------------------------------
         centre = QWidget()
         cl = QVBoxLayout(centre)
-        cl.setContentsMargins(4, 6, 4, 6)
+        cl.setContentsMargins(4, 6, 4, 0)
+        cl.setSpacing(4)
+        top = QHBoxLayout()
         self.banner = QLabel("환자를 선택하세요")
         self.banner.setObjectName("banner")
-        cl.addWidget(self.banner)
-        filt = QHBoxLayout()
+        top.addWidget(self.banner, 1)
         self.f_date = QComboBox()
+        self.f_date.setMinimumWidth(110)
         self.f_date.currentIndexChanged.connect(self._fill_thumbs)
         self.f_eye = QComboBox()
-        for k, v in (("", "양안 전체"), ("OD", "OD (우안)"), ("OS", "OS (좌안)")):
+        for k, v in (("", "양안"), ("OD", "OD (우안)"), ("OS", "OS (좌안)")):
             self.f_eye.addItem(v, k)
         self.f_eye.currentIndexChanged.connect(self._fill_thumbs)
         self.f_mod = QComboBox()
@@ -160,41 +285,35 @@ class MainWindow(QMainWindow):
         for k, v in MODALITY_LABELS.items():
             self.f_mod.addItem(v, k)
         self.f_mod.currentIndexChanged.connect(self._fill_thumbs)
-        filt.addWidget(QLabel("검사일"))
-        filt.addWidget(self.f_date, 1)
-        filt.addWidget(QLabel("눈"))
-        filt.addWidget(self.f_eye)
-        filt.addWidget(self.f_mod)
-        filt.addStretch(2)
-        hint = QLabel("Ctrl+클릭: 비교 대상 선택")
-        hint.setStyleSheet("color:#889")
-        filt.addWidget(hint)
-        cl.addLayout(filt)
+        for w, tip in ((self.f_date, "검사일"), (self.f_eye, "눈"), (self.f_mod, "촬영 종류")):
+            w.setToolTip(tip)
+            top.addWidget(w)
+        cl.addLayout(top)
         self.thumbs = QListWidget()
         self.thumbs.setViewMode(QListWidget.ViewMode.IconMode)
         self.thumbs.setFlow(QListWidget.Flow.LeftToRight)
         self.thumbs.setWrapping(False)
-        self.thumbs.setIconSize(QSize(150, 150))
-        self.thumbs.setGridSize(QSize(172, 196))
-        self.thumbs.setFixedHeight(214)
+        self.thumbs.setIconSize(QSize(120, 120))
+        self.thumbs.setGridSize(QSize(140, 164))
+        self.thumbs.setFixedHeight(182)
         self.thumbs.setMovement(QListWidget.Movement.Static)
         self.thumbs.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.thumbs.setToolTip("Ctrl+클릭: 비교 대상 선택 · 오른쪽 클릭: 환자 지정·다시 분석")
         self.thumbs.itemClicked.connect(self._on_thumb_clicked)
         self.thumbs.currentItemChanged.connect(lambda cur, _: cur and self._show_image(cur.data(Qt.ItemDataRole.UserRole)))
         self.thumbs.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.thumbs.customContextMenuRequested.connect(self._thumb_menu)
         cl.addWidget(self.thumbs)
         self.tabs = QTabWidget()
+        self.tabs.setDocumentMode(True)
         self.view2d = ImageView()
+        self.view2d.toggle_captions(True)
         self.view2d.discPicked.connect(self._on_disc_picked)
         self.view2d.measured.connect(self._on_measured)
         self.view2d.hovered.connect(lambda t: self.lbl_hover.setText(t))
         self.view2d.clicked.connect(self._stop_slideshow)
         self.tabs.addTab(self.view2d, "2D 보기")
-        self.eye3d = EyeView()
-        self.eye3d.glError.connect(lambda m: QMessageBox.warning(
-            self, "3D", m + "\n\n설정 > 일반 > 3D 렌더링을 '소프트웨어 렌더링'으로 바꾸고 다시 시작해 보세요."))
-        self.tabs.addTab(self.eye3d, "3D 안구")
+        self.tabs.addTab(self._build_3d(), "3D 안구")
         self.multi = MultiView()
         self.multi.selected.connect(self._select_from_multi)
         self.multi.opened.connect(lambda iid: (self._select_from_multi(iid), self.tabs.setCurrentIndex(0)))
@@ -227,152 +346,33 @@ class MainWindow(QMainWindow):
                                     and abs(d.zoom - f) > 1e-9 and d.sync_from(s))
         self.tabs.addTab(cmp_w, "비교")
         self.tabs.currentChanged.connect(self._on_tab)
-        self.palette = ToolPalette()
-        self.palette.triggered.connect(self._on_palette)
-        pal_scroll = QScrollArea()
-        pal_scroll.setWidget(self.palette)
-        pal_scroll.setWidgetResizable(True)
-        pal_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        pal_scroll.setFixedWidth(self.palette.width() + 14)
-        view_row = QHBoxLayout()
-        view_row.setSpacing(4)
-        view_row.addWidget(self.tabs, 1)
-        view_row.addWidget(pal_scroll)
-        cl.addLayout(view_row, 1)
+        cl.addWidget(self.tabs, 1)
 
-        # -- right: info + controls --------------------------------------------
-        right = QWidget()
-        rl = QVBoxLayout(right)
-        rl.setContentsMargins(0, 6, 6, 6)
-        g_info = QGroupBox("영상 정보")
-        self.info = QFormLayout(g_info)
-        self.info_labels: dict[str, QLabel] = {}
-        for key in ("patient", "exam", "laterality", "modality", "device", "fov", "file"):
-            lab = QLabel("-")
-            lab.setWordWrap(True)
-            # long file names must wrap, not widen the panel
-            lab.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-            lab.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            self.info_labels[key] = lab
-            self.info.addRow({"patient": "환자", "exam": "검사일시", "laterality": "눈", "modality": "촬영 종류",
-                              "device": "장비", "fov": "화각", "file": "파일"}[key], lab)
-        btn_row = QHBoxLayout()
-        b_assign = QPushButton("환자 지정/수정…")
-        b_assign.clicked.connect(self._edit_image)
-        b_open = QPushButton("원본 폴더")
-        b_open.clicked.connect(self._open_folder)
-        btn_row.addWidget(b_assign)
-        btn_row.addWidget(b_open)
-        self.info.addRow(btn_row)
-        rl.addWidget(g_info)
+        self.split = QSplitter(Qt.Orientation.Horizontal)
+        self.split.addWidget(self.left)
+        self.split.addWidget(centre)
+        self.split.setSizes([400, 1000])
+        self.split.setStretchFactor(1, 1)
+        self.setCentralWidget(self.split)
 
-        g_adj = QGroupBox("보기 조정")
-        fa = QFormLayout(g_adj)
-        self.s_bright = self._slider(-100, 100, 0)
-        self.s_contrast = self._slider(10, 300, 100)
-        self.s_gamma = self._slider(20, 400, 100)
-        fa.addRow("밝기", self.s_bright)
-        fa.addRow("대비", self.s_contrast)
-        fa.addRow("감마", self.s_gamma)
-        self.c_channel = QComboBox()
-        for k in imaging.CHANNELS:
-            self.c_channel.addItem(imaging.CHANNEL_LABELS[k], k)
-        self.c_channel.currentIndexChanged.connect(self._schedule_adjust)
-        fa.addRow("채널", self.c_channel)
-        chk = QHBoxLayout()
-        self.c_auto = QCheckBox("자동 대비")
-        self.c_invert = QCheckBox("반전")
-        self.c_overlay = QCheckBox("원·시신경 표시")
-        for c in (self.c_auto, self.c_invert):
-            c.toggled.connect(self._schedule_adjust)
-        self.c_overlay.toggled.connect(self.view2d.toggle_overlays)
-        chk.addWidget(self.c_auto)
-        chk.addWidget(self.c_invert)
-        fa.addRow(chk)
-        b_reset = QPushButton("조정 초기화")
-        b_reset.clicked.connect(self._reset_adjust)
-        fa.addRow(self.c_overlay, b_reset)
-        rl.addWidget(g_adj)
-
-        g3 = QGroupBox("3D 안구")
-        f3 = QFormLayout(g3)
-        mode_row = QHBoxLayout()
-        self.r_out = QRadioButton("외부 (안구 모형)")
-        self.r_in = QRadioButton("내부 (망막 시점)")
-        self.r_out.setChecked(True)
-        grp = QButtonGroup(self)
-        grp.addButton(self.r_out)
-        grp.addButton(self.r_in)
-        self.r_out.toggled.connect(self._on_3d_mode)
-        mode_row.addWidget(self.r_out)
-        mode_row.addWidget(self.r_in)
-        f3.addRow(mode_row)
-        self.s_cut = self._slider(-30, 100, 25, self._on_cut)
-        f3.addRow("앞쪽 절개", self.s_cut)
-        fov_row = QHBoxLayout()
-        self.sp_fov = QDoubleSpinBox()
-        self.sp_fov.setRange(10, 240)
-        self.sp_fov.setDecimals(1)
-        self.sp_fov.setSuffix("°")
-        self.sp_fov.valueChanged.connect(self._on_mapping)
-        self.c_fovtype = QComboBox()
-        self.c_fovtype.addItem("안구 중심각", "internal")
-        self.c_fovtype.addItem("외부각(동공)", "external")
-        self.c_fovtype.currentIndexChanged.connect(self._on_mapping)
-        fov_row.addWidget(self.sp_fov)
-        fov_row.addWidget(self.c_fovtype)
-        f3.addRow("화각", fov_row)
-        self.c_proj = QComboBox()
-        for k in proj.PROJECTIONS:
-            self.c_proj.addItem(proj.PROJECTION_LABELS[k], k)
-        self.c_proj.currentIndexChanged.connect(self._on_mapping)
-        f3.addRow("투영", self.c_proj)
-        self.sp_roll = QDoubleSpinBox()
-        self.sp_roll.setRange(-180, 180)
-        self.sp_roll.setSuffix("°")
-        self.sp_roll.valueChanged.connect(self._on_mapping)
-        f3.addRow("회전", self.sp_roll)
-        chk3 = QHBoxLayout()
-        self.c_nerve = QCheckBox("시신경")
-        self.c_nerve.setChecked(True)
-        self.c_nerve.toggled.connect(lambda on: (setattr(self.eye3d, "show_nerve", on), self.eye3d.update()))
-        self.c_grid = QCheckBox("각도 격자(10°)")
-        self.c_grid.toggled.connect(lambda on: (setattr(self.eye3d, "show_grid", on), self.eye3d.update()))
-        self.c_adj3d = QCheckBox("보기 조정 적용")
-        self.c_adj3d.setChecked(True)
-        self.c_adj3d.toggled.connect(lambda _: self._mark_3d_dirty())
-        for c in (self.c_nerve, self.c_grid):
-            chk3.addWidget(c)
-        f3.addRow(chk3)
-        f3.addRow(self.c_adj3d)
-        for pair in ((("정면 보기", self.eye3d.front_view), ("시점 초기화", self.eye3d.reset_view)),
-                     (("화각·투영 저장", self._save_mapping), ("화면 저장…", self._save_3d))):
-            row3 = QHBoxLayout()
-            for label, fn in pair:
-                b = QPushButton(label)
-                b.clicked.connect(fn)
-                row3.addWidget(b)
-            f3.addRow(row3)
-        self.lbl_3d = QLabel("드래그: 회전 · 휠/오른쪽 드래그: 확대 · 더블클릭: 초기화")
-        self.lbl_3d.setStyleSheet("color:#889; font-size:11px")
-        self.lbl_3d.setWordWrap(True)
-        self.lbl_3d.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        f3.addRow(self.lbl_3d)
-        rl.addWidget(g3)
-        rl.addStretch()
-        scroll = QScrollArea()
-        scroll.setWidget(right)
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setMinimumWidth(350)
-
-        split = QSplitter(Qt.Orientation.Horizontal)
-        split.addWidget(left)
-        split.addWidget(centre)
-        split.addWidget(scroll)
-        split.setSizes([420, 800, 360])
-        split.setStretchFactor(1, 1)
-        self.setCentralWidget(split)
+        # -- VK-2 toolbars ---------------------------------------------------------------
+        self.tb_cmd = self._toolbar("cmdbar", "명령 툴바", Qt.ToolBarArea.RightToolBarArea, COMMANDS, 26)
+        self.tb_proc = self._toolbar("procbar", "영상 처리 툴바", Qt.ToolBarArea.BottomToolBarArea, PROCESSING, 28)
+        self.tb_proc.visibilityChanged.connect(lambda v: self.acts["tools"].setChecked(v))
+        self.acts["tools"].setChecked(True)
+        self.acts["list"].setChecked(True)
+        self.pop_gamma = SliderPopup("감마", 20, 400, 100, lambda v: f"{v / 100:.2f}", self)
+        self.pop_contrast = SliderPopup("대비", 10, 300, 100, lambda v: f"{v}%", self)
+        self.pop_bright = SliderPopup("밝기", -100, 100, 0, lambda v: f"{v:+d}", self)
+        self.s_gamma, self.s_contrast, self.s_bright = (
+            p.slider for p in (self.pop_gamma, self.pop_contrast, self.pop_bright))
+        for p in (self.pop_gamma, self.pop_contrast, self.pop_bright):
+            p.slider.valueChanged.connect(self._schedule_adjust)
+            p.pressed.connect(self._push_history)
+        self._build_menus()
+        self.act_thumbs.toggled.connect(self.thumbs.setVisible)
+        self.acts["captions"].toggled.connect(self.view2d.toggle_captions)
+        self.acts["overlay"].toggled.connect(self.view2d.toggle_overlays)
 
         # -- log dock -------------------------------------------------------------
         self.log = QTableWidget(0, 4)
@@ -386,44 +386,131 @@ class MainWindow(QMainWindow):
         dock.setObjectName("log")
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, dock)
         dock.hide()
-        act_log.toggled.connect(dock.setVisible)
-        dock.visibilityChanged.connect(lambda v: (act_log.setChecked(v), v and self._fill_log()))
+        self.act_log.toggled.connect(dock.setVisible)
+        dock.visibilityChanged.connect(lambda v: (self.act_log.setChecked(v), v and self._fill_log()))
 
+        # -- status bar (VK-2: Image Info | Patient ID | Name | messages) ---------------
         sb = QStatusBar()
         self.lbl_watch = QLabel("감시 꺼짐")
+        self.lbl_info = QLabel("")
+        self.lbl_info.setObjectName("imageInfo")
         self.lbl_status = QLabel("")
+        self.lbl_measure = QLabel("")
+        self.lbl_measure.setObjectName("measure")
+        self.lbl_measure.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.lbl_measure.hide()
         self.lbl_hover = QLabel("")
         self.lbl_hover.setStyleSheet("color:#556")
         sb.addWidget(self.lbl_watch)
+        sb.addWidget(self.lbl_info)
         sb.addWidget(self.lbl_status, 1)
+        sb.addPermanentWidget(self.lbl_measure)
         sb.addPermanentWidget(self.lbl_hover)
         self.setStatusBar(sb)
 
-        for i, key in enumerate(("Ctrl+1", "Ctrl+2", "Ctrl+3", "Ctrl+4")):
-            a = QAction(self)
-            a.setShortcut(QKeySequence(key))
-            a.triggered.connect(lambda _=False, i=i: self.tabs.setCurrentIndex(i))
-            self.addAction(a)
-        for key, fn in (("PgUp", lambda: self._step(-1)), ("PgDown", lambda: self._step(1)),
-                        ("Ctrl+Z", self._undo), ("Ctrl+C", lambda: self._on_palette("copy"))):
-            a = QAction(self)
-            a.setShortcut(QKeySequence(key))
-            a.triggered.connect(fn)
-            self.addAction(a)
+        a = QAction(self)
+        a.setShortcut(QKeySequence("Ctrl+C"))
+        a.triggered.connect(lambda: self._on_action("copy"))
+        self.addAction(a)
         self._slide_timer = QTimer(self, interval=2000, timeout=lambda: self._step(1, wrap=True))
-
         self._adjust_timer = QTimer(self, singleShot=True, timeout=self._apply_adjust)
         self._results: list[ImportResult] = []
         self._result_timer = QTimer(self, singleShot=True, timeout=self._flush_results)
 
-    def _slider(self, lo, hi, val, slot=None) -> QSlider:
-        s = QSlider(Qt.Orientation.Horizontal)
-        s.setRange(lo, hi)
-        s.setValue(val)
-        s.valueChanged.connect(slot or self._schedule_adjust)
-        if slot is None:  # display adjustment: undoable
-            s.sliderPressed.connect(self._push_history)
-        return s
+    def _build_3d(self) -> QWidget:
+        """3D tab: a compact control bar over the eye model (formerly the right panel)."""
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+        bar = QWidget()
+        bar.setObjectName("bar3d")
+        g = QGridLayout(bar)
+        g.setContentsMargins(8, 4, 8, 4)
+        g.setHorizontalSpacing(6)
+        g.setVerticalSpacing(2)
+        self.r_out = QRadioButton("외부 (안구 모형)")
+        self.r_in = QRadioButton("내부 (망막 시점)")
+        self.r_out.setChecked(True)
+        grp = QButtonGroup(self)
+        grp.addButton(self.r_out)
+        grp.addButton(self.r_in)
+        self.r_out.toggled.connect(self._on_3d_mode)
+        self.s_cut = QSlider(Qt.Orientation.Horizontal)
+        self.s_cut.setRange(-30, 100)
+        self.s_cut.setValue(25)
+        self.s_cut.setFixedWidth(120)
+        self.s_cut.valueChanged.connect(self._on_cut)
+        self.sp_fov = QDoubleSpinBox()
+        self.sp_fov.setRange(10, 240)
+        self.sp_fov.setDecimals(1)
+        self.sp_fov.setSuffix("°")
+        self.sp_fov.valueChanged.connect(self._on_mapping)
+        self.c_fovtype = QComboBox()
+        self.c_fovtype.addItem("안구 중심각", "internal")
+        self.c_fovtype.addItem("외부각(동공)", "external")
+        self.c_fovtype.currentIndexChanged.connect(self._on_mapping)
+        self.c_proj = QComboBox()
+        for k in proj.PROJECTIONS:
+            self.c_proj.addItem(proj.PROJECTION_LABELS[k], k)
+        self.c_proj.currentIndexChanged.connect(self._on_mapping)
+        self.sp_roll = QDoubleSpinBox()
+        self.sp_roll.setRange(-180, 180)
+        self.sp_roll.setSuffix("°")
+        self.sp_roll.valueChanged.connect(self._on_mapping)
+        row1 = QHBoxLayout()
+        for item in (self.r_out, self.r_in, QLabel("  앞쪽 절개"), self.s_cut, QLabel("  화각"), self.sp_fov,
+                     self.c_fovtype, QLabel("  투영"), self.c_proj, QLabel("  회전"), self.sp_roll):
+            row1.addWidget(item)
+        row1.addStretch()
+        self.c_nerve = QCheckBox("시신경")
+        self.c_nerve.setChecked(True)
+        self.c_nerve.toggled.connect(lambda on: (setattr(self.eye3d, "show_nerve", on), self.eye3d.update()))
+        self.c_grid = QCheckBox("각도 격자(10°)")
+        self.c_grid.toggled.connect(lambda on: (setattr(self.eye3d, "show_grid", on), self.eye3d.update()))
+        self.c_adj3d = QCheckBox("영상 처리 적용")
+        self.c_adj3d.setChecked(True)
+        self.c_adj3d.toggled.connect(lambda _: self._mark_3d_dirty())
+        row2 = QHBoxLayout()
+        for c in (self.c_nerve, self.c_grid, self.c_adj3d):
+            row2.addWidget(c)
+        self.eye3d = EyeView()
+        self.eye3d.setToolTip("드래그: 회전 · 휠/오른쪽 드래그: 확대 · 더블클릭: 초기화")
+        self.eye3d.glError.connect(lambda m: QMessageBox.warning(
+            self, "3D", m + "\n\n설정 > 일반 > 3D 렌더링을 '소프트웨어 렌더링'으로 바꾸고 다시 시작해 보세요."))
+        for label, fn in (("정면 보기", self.eye3d.front_view), ("시점 초기화", self.eye3d.reset_view),
+                          ("화각·투영 저장", self._save_mapping), ("화면 저장…", self._save_3d)):
+            b = QPushButton(label)
+            b.clicked.connect(fn)
+            row2.addWidget(b)
+        self.lbl_3d = QLabel("")
+        self.lbl_3d.setObjectName("hint3d")
+        row2.addWidget(self.lbl_3d, 1)
+        g.addLayout(row1, 0, 0)
+        g.addLayout(row2, 1, 0)
+        lay.addWidget(bar)
+        lay.addWidget(self.eye3d, 1)
+        return w
+
+    def _reset_toolbars(self) -> None:
+        for tb, area in ((self.tb_cmd, Qt.ToolBarArea.RightToolBarArea),
+                         (self.tb_proc, Qt.ToolBarArea.BottomToolBarArea)):
+            self.addToolBar(area, tb)
+            tb.show()
+
+    def _show_help(self) -> None:
+        QMessageBox.information(self, "마우스·단축키", (
+            "<b>사진 보기</b><br>"
+            "휠 · 오른쪽 버튼 위/아래 드래그: 확대·축소<br>"
+            "가운데 버튼 드래그(이동 도구는 왼쪽 드래그): 이동 · 더블클릭: 화면 맞춤<br>"
+            "오른쪽 클릭: 메뉴 (시신경 위치 지정, 돋보기 배율)<br><br>"
+            "<b>단축키</b><br>"
+            "PageUp / PageDown: 이전 / 다음 사진 · Ctrl+1~4: 2D / 3D / 다중 / 비교<br>"
+            "Ctrl+Z: 처리 실행 취소 · Delete: 마지막 측정 지우기 · Ctrl+C: 화면 복사<br>"
+            "Ctrl+F: 환자 검색 · Ctrl+P: 인쇄<br><br>"
+            "<b>사진 가져오기</b><br>"
+            "자동입니다. 레티캠 등 장비 폴더와 [문서\\안저사진 가져오기] 폴더를 감시해 "
+            "새 사진의 환자 ID·이름을 읽고 환자별로 정리합니다."))
 
     # =====================================================================
     # startup / watching
@@ -457,16 +544,16 @@ class MainWindow(QMainWindow):
     def _toggle_watch(self, on: bool) -> None:
         if on:
             errors = self.service.start_watching()
-            self.act_watch.setText("■ 폴더 감시 중지")
-            n = sum(1 for f in self.settings.watch_folders if f.enabled)
-            self.lbl_watch.setText(f"● 감시 중 ({n}개 폴더)")
+            folders = [f.path for f in self.settings.watch_folders if f.enabled]
+            self.lbl_watch.setText(f"● 자동 가져오기 ({len(folders)}개 폴더)")
+            self.lbl_watch.setToolTip("감시 중인 폴더:\n" + "\n".join(folders))
             self.lbl_watch.setStyleSheet("color:#1d7a46; font-weight:600")
             if errors:
                 QMessageBox.warning(self, "폴더 감시", "\n".join(errors))
         else:
             self.service.stop_watching()
-            self.act_watch.setText("▶ 폴더 감시 시작")
-            self.lbl_watch.setText("감시 꺼짐")
+            self.lbl_watch.setText("자동 가져오기 꺼짐")
+            self.lbl_watch.setToolTip("파일 > 폴더 감시 로 다시 켭니다")
             self.lbl_watch.setStyleSheet("color:#a33")
 
     def _scan_now(self) -> None:
@@ -605,7 +692,7 @@ class MainWindow(QMainWindow):
         ref = self._row_ref(rows[0].row())
         self._patient_ref = ref
         if ref == UNASSIGNED:
-            self.banner.setText("미분류 영상 — 사진을 선택하고 [환자 지정/수정…]으로 환자를 지정하세요")
+            self.banner.setText("미분류 영상 — 사진을 선택하고 오른쪽 [정보 수정] 버튼으로 환자를 지정하세요")
         else:
             p = self.db.get_patient(ref)
             if p is None:
@@ -747,17 +834,20 @@ class MainWindow(QMainWindow):
         self.current = row
         if row is None:
             self.view2d.set_rgb(None)
+            self.view2d.set_captions()
             self.eye3d.set_image(None)
-            for lab in self.info_labels.values():
-                lab.setText("-")
+            self.lbl_info.setText("")
+            self.lbl_info.setToolTip("")
             return
         if self._load(row) is None:
             self.view2d.set_rgb(None)
-            self.info_labels["file"].setText("<span style='color:#b33'>파일을 찾을 수 없음</span>")
+            self.view2d.set_captions()
+            self.lbl_info.setText("<span style='color:#b33'>파일을 찾을 수 없음</span>")
             return
         # processing steps (sharpen, enhance ...) belong to the photo on screen
         self._ops, self._levels, self._history = [], (0, 255), []
         self.view2d.set_rgb(self._display_rgb(row))
+        self._sync_palette()
         circle = (row["circle_cx"], row["circle_cy"], row["circle_r"]) if row["circle_r"] else None
         disc = (row["disc_x"], row["disc_y"]) if row["disc_x"] is not None else None
         self.view2d.set_overlays(circle, disc)
@@ -777,29 +867,38 @@ class MainWindow(QMainWindow):
 
         p = self.db.get_patient(row["patient_ref"]) if row["patient_ref"] else None
         if p:
-            self.info_labels["patient"].setText(with_src(f"{p['patient_id']} {p['name'] or ''}", "patient_id"))
+            who = with_src(f"{p['patient_id']} {p['name'] or ''}", "patient_id")
         else:
             guess = " ".join(x for x in (meta.get("patient_id"), meta.get("name")) if x)
-            self.info_labels["patient"].setText(
-                "<span style='color:#b33'>미분류</span>" + (f" — 추출값: {guess}" if guess else ""))
-        self.info_labels["exam"].setText(with_src(f"{row['exam_date'] or '-'} {row['exam_time'] or ''}", "exam_date"))
-        eye = {"OD": "OD (우안)", "OS": "OS (좌안)", "OU": "OU"}.get(row["laterality"] or "", "-")
-        self.info_labels["laterality"].setText(with_src(eye, "laterality"))
-        self.info_labels["modality"].setText(
-            with_src(MODALITY_LABELS.get(row["modality"] or "", row["modality"] or "-"), "modality"))
-        self.info_labels["device"].setText(with_src(row["device"] or get_profile(row["profile"]).name, "device"))
+            who = "<span style='color:#b33'>미분류</span>" + (f" — 추출값: {guess}" if guess else "")
+        eye = {"OD": "OD (우안)", "OS": "OS (좌안)", "OU": "OU"}.get(row["laterality"] or "", "")
+        mod = MODALITY_LABELS.get(row["modality"] or "", row["modality"] or "")
+        device = row["device"] or get_profile(row["profile"]).name
         ftype = "안구 중심각" if row["fov_type"] == "internal" else "외부각"
-        self.info_labels["fov"].setText(with_src(f"{row['fov_deg']:g}° ({ftype})" if row["fov_deg"] else "-",
-                                                 "fov_deg"))
+        fov = f"{row['fov_deg']:g}°" if row["fov_deg"] else ""
         name = Path(row["original_path"] or row["file_path"]).name
-        name = name.replace("_", "_​").replace(".", ".​")  # wrap points
-        self.info_labels["file"].setText(f"{name}<br><span style='color:#99a'>{row['width']}×{row['height']}</span>")
+        # VK-2: green text on the photo — counter, eye, name / ID, date / time
+        n, i = self.thumbs.count(), self.thumbs.currentRow()
+        self.view2d.set_captions(
+            f"{i + 1}/{n}" if n and i >= 0 else "",
+            {"OD": "OD (R)", "OS": "OS (L)", "OU": "OU"}.get(row["laterality"] or "", ""),
+            f"{p['name'] or ''}\n{p['patient_id']}" if p else "미분류",
+            f"{row['exam_date'] or ''}\n{row['exam_time'] or ''}".strip())
+        # status bar "Image Info"; the tooltip says where every value came from
+        self.lbl_info.setText("  ·  ".join(x for x in (eye or "눈 미상", mod, device, fov,
+                                                        f"{row['width']}×{row['height']}") if x))
+        rows = (("환자", who), ("검사일시", with_src(f"{row['exam_date'] or '-'} {row['exam_time'] or ''}", "exam_date")),
+                ("눈", with_src(eye or "-", "laterality")), ("촬영 종류", with_src(mod or "-", "modality")),
+                ("장비", with_src(device, "device")),
+                ("화각", with_src(f"{fov} ({ftype})" if fov else "-", "fov_deg")), ("파일", name))
+        self.lbl_info.setToolTip("<table>" + "".join(f"<tr><td><b>{k}</b>&nbsp;</td><td>{v}</td></tr>"
+                                                     for k, v in rows) + "</table>")
 
     # -- adjustments -----------------------------------------------------------
     def _adjust_params(self) -> dict:
         return dict(brightness=self.s_bright.value() / 200.0, contrast=self.s_contrast.value() / 100.0,
-                    gamma=self.s_gamma.value() / 100.0, channel=self.c_channel.currentData(),
-                    invert=self.c_invert.isChecked(), auto=self.c_auto.isChecked(), levels=self._levels)
+                    gamma=self.s_gamma.value() / 100.0, channel=self._channel,
+                    invert=self._invert, auto=self._auto, levels=self._levels)
 
     def _adjusted(self, rgb: np.ndarray) -> np.ndarray:
         return imaging.adjust(rgb, **self._adjust_params())
@@ -845,16 +944,11 @@ class MainWindow(QMainWindow):
         if self.tabs.currentIndex() == 3:
             self._fill_compare()
 
-    def _reset_adjust(self) -> None:
-        self._push_history()
-        self._set_adjust_state({})
-
     # -- undo / original (VK-2 [UNDO] / [ORIGINAL]) --------------------------------------
     def _snapshot(self) -> dict:
         return dict(ops=list(self._ops), levels=self._levels, bright=self.s_bright.value(),
                     contrast=self.s_contrast.value(), gamma=self.s_gamma.value(),
-                    channel=self.c_channel.currentData(), auto=self.c_auto.isChecked(),
-                    invert=self.c_invert.isChecked())
+                    channel=self._channel, auto=self._auto, invert=self._invert)
 
     def _push_history(self) -> None:
         snap = self._snapshot()
@@ -863,19 +957,21 @@ class MainWindow(QMainWindow):
             del self._history[:-30]
 
     def _set_adjust_state(self, st: dict) -> None:
-        widgets = (self.s_bright, self.s_contrast, self.s_gamma, self.c_channel, self.c_auto, self.c_invert)
-        for w in widgets:
+        sliders = (self.s_bright, self.s_contrast, self.s_gamma)
+        for w in sliders:
             w.blockSignals(True)
         self._ops = list(st.get("ops", []))
         self._levels = tuple(st.get("levels", (0, 255)))
         self.s_bright.setValue(st.get("bright", 0))
         self.s_contrast.setValue(st.get("contrast", 100))
         self.s_gamma.setValue(st.get("gamma", 100))
-        self.c_channel.setCurrentIndex(max(self.c_channel.findData(st.get("channel", "rgb")), 0))
-        self.c_auto.setChecked(st.get("auto", False))
-        self.c_invert.setChecked(st.get("invert", False))
-        for w in widgets:
+        self._channel = st.get("channel", "rgb")
+        self._auto = st.get("auto", False)
+        self._invert = st.get("invert", False)
+        for w in sliders:
             w.blockSignals(False)
+        for pop in (self.pop_gamma, self.pop_contrast, self.pop_bright):
+            pop._show(pop.slider.value())    # value label (signals were blocked)
         self._apply_adjust()
 
     def _undo(self) -> None:
@@ -890,47 +986,73 @@ class MainWindow(QMainWindow):
         self._set_adjust_state({})
         self.view2d.reset_orientation()
         self.view2d.clear_annotations()
+        self._on_measured("")
         self.lbl_status.setText("원본으로 되돌렸습니다")
 
     def _sync_palette(self) -> None:
-        pal = self.palette
-        pal.set_checked(f"chan:{self.c_channel.currentData()}", True)
-        pal.set_checked("auto", self.c_auto.isChecked())
-        pal.set_checked("negative", self.c_invert.isChecked())
-        pal.set_checked("slideshow", self._slide_timer.isActive())
-        ops = [imaging.OP_LABELS.get(o, o) for o in self._ops]
-        extra = [f"레벨 {self._levels[0]}–{self._levels[1]}"] if tuple(self._levels) != (0, 255) else []
-        pal.setToolTip("적용된 처리: " + (" → ".join(ops + extra) if ops or extra else "없음"))
+        """Light up the toolbar buttons whose effect is on the photo (VK-2 pushed state)."""
+        A = self.acts
+        for ch in ("red", "green", "blue", "redfree"):
+            A[f"chan:{ch}"].setChecked(self._channel == ch)
+        A["auto"].setChecked(self._auto)
+        A["negative"].setChecked(self._invert)
+        A["slideshow"].setChecked(self._slide_timer.isActive())
+        A["adj:gamma"].setChecked(self.s_gamma.value() != 100)
+        A["adj:contrast"].setChecked(self.s_contrast.value() != 100)
+        A["adj:bright"].setChecked(self.s_bright.value() != 0)
+        A["op:sharpen"].setChecked(any(o.startswith("sharpen") for o in self._ops))
+        A["op:enhance"].setChecked(any(not o.startswith("sharpen") for o in self._ops))
+        tool = self.view2d.tool
+        A["tool:" + {"cd_area": "cd_length", "arrow": "text"}.get(tool, tool)].setChecked(True)
+        steps = [imaging.OP_LABELS.get(o, o) for o in self._ops]
+        if self._channel != "rgb":
+            steps.append(imaging.CHANNEL_LABELS[self._channel])
+        steps += [label for on, label in ((self._auto, "자동 대비"), (self._invert, "네거티브"),
+                                          (self.s_gamma.value() != 100, f"감마 {self.s_gamma.value() / 100:.2f}"),
+                                          (self.s_contrast.value() != 100, f"대비 {self.s_contrast.value()}%"),
+                                          (self.s_bright.value() != 0, f"밝기 {self.s_bright.value():+d}"),
+                                          (tuple(self._levels) != (0, 255),
+                                           f"레벨 {self._levels[0]}–{self._levels[1]}")) if on]
+        self.tb_proc.setToolTip("적용된 처리: " + (" → ".join(steps) if steps else "없음 (원본)"))
 
-    # -- tool palette ------------------------------------------------------------------
-    def _on_palette(self, key: str) -> None:
+    # -- toolbar commands (toolbars.py: COMMANDS / PROCESSING / MENUS) -----------------------
+    TWO_D = ("fit", "actual", "zoom2", "rot_cw", "rot_ccw", "flip_h", "flip_v", "annot_undo", "annot_clear")
+
+    def _on_action(self, key: str, checked: bool | None = None) -> None:
+        """``checked`` is the new state when a checkable button was clicked, None
+        when called from a menu entry or code."""
         v = self.view2d
+        if key.startswith("tool:") or key in self.TWO_D:
+            if self.tabs.currentIndex() != 0:   # 2D tools: go to the 2D view first
+                self.tabs.setCurrentIndex(0)
         if key.startswith("tool:"):
             tool = key[5:]
             v.set_tool(tool)
-            if self.tabs.currentIndex() != 0:
-                self.tabs.setCurrentIndex(0)
             self.lbl_status.setText(f"{TOOLS[tool]} — {TOOL_HINTS[tool]}")
             v.setFocus()
-            return
-        if key.startswith("chan:"):
+        elif key.startswith("chan:"):
+            ch = key[5:]
+            if checked is False and ch == self._channel:   # clicked the lit filter again
+                ch = "rgb"
             self._push_history()
-            self.c_channel.setCurrentIndex(max(self.c_channel.findData(key[5:]), 0))
-            self._sync_palette()
-            return
-        if key.startswith("op:"):
+            self._channel = ch
+            self._apply_adjust()
+        elif key.startswith("op:"):
             self._push_history()
             op = key[3:]
             self._ops.append(op)
             self._apply_adjust()
             self.lbl_status.setText(f"{imaging.OP_LABELS.get(op, op)} 적용 (실행 취소: Ctrl+Z)")
-            return
-        if key == "auto":
+        elif key.startswith("adj:"):
+            self._show_slider(key)
+        elif key == "adj_reset":
             self._push_history()
-            self.c_auto.toggle()
-        elif key == "negative":
+            self._set_adjust_state({**self._snapshot(), "bright": 0, "contrast": 100, "gamma": 100})
+        elif key in ("auto", "negative"):
             self._push_history()
-            self.c_invert.toggle()
+            attr = "_auto" if key == "auto" else "_invert"
+            setattr(self, attr, (not getattr(self, attr)) if checked is None else checked)
+            self._apply_adjust()
         elif key == "undo":
             self._undo()
         elif key == "original":
@@ -939,8 +1061,8 @@ class MainWindow(QMainWindow):
             self._histogram()
         elif key == "fit":
             v.fit()
-        elif key == "actual":
-            v.zoom_to(1.0)
+        elif key in ("actual", "zoom2"):
+            v.zoom_to(1.0 if key == "actual" else 2.0)
         elif key in ("rot_cw", "rot_ccw"):
             v.rotate90(key == "rot_cw")
         elif key in ("flip_h", "flip_v"):
@@ -953,19 +1075,70 @@ class MainWindow(QMainWindow):
             v.undo_annotation()
         elif key == "annot_clear":
             v.clear_annotations()
+            self._on_measured("")
         elif key == "copy":
             self._copy_view()
         elif key == "save_file":
             self._save_view_file()
-        elif key == "save_record":
+        elif key in ("save", "save_record"):
             self._save_view_record()
         elif key == "print":
             self._print_view()
+        # -- command toolbar ---------------------------------------------------------
+        elif key == "search":
+            self.acts["list"].setChecked(True)
+            self.left.show()
+            self.search.setFocus()
+            self.search.selectAll()
+        elif key == "list":
+            self.left.setVisible(self.left.isHidden() if checked is None else checked)
+        elif key in ("multi", "view3d"):
+            tab = 2 if key == "multi" else 1
+            self.tabs.setCurrentIndex(0 if self.tabs.currentIndex() == tab else tab)
+        elif key.startswith("multi:"):
+            self.multi.set_count(int(key[6:]))
+            self.tabs.setCurrentIndex(2)
+        elif key == "tools":
+            self.tb_proc.setVisible(self.tb_proc.isHidden() if checked is None else checked)
+        elif key == "edit":
+            self._edit_image()
+        elif key in ("import", "import_files"):
+            self._import_files()
+        elif key == "import_dir":
+            self._import_dir()
+        elif key == "scan":
+            self._scan_now()
+        elif key == "settings":
+            self._open_settings()
+        elif key == "exit":
+            if QMessageBox.question(self, "종료", "프로그램을 종료할까요?\n(종료하면 자동 가져오기도 멈춥니다)") \
+                    == QMessageBox.StandardButton.Yes:
+                self.close()
         self._sync_palette()
+        self.acts["list"].setChecked(not self.left.isHidden())
+
+    def _show_slider(self, key: str) -> None:
+        """VK-2 GAMMA / CONTST / BRIGHT: a slider pops up next to the button."""
+        pop = {"adj:gamma": self.pop_gamma, "adj:contrast": self.pop_contrast, "adj:bright": self.pop_bright}[key]
+        btn = self.tb_proc.widgetForAction(self.acts[key])
+        if btn is not None and btn.isVisible():
+            pop.adjustSize()
+            area = self.toolBarArea(self.tb_proc)
+            if area == Qt.ToolBarArea.BottomToolBarArea:
+                pos = btn.mapToGlobal(QPoint(0, -pop.height() - 2))
+            elif area == Qt.ToolBarArea.RightToolBarArea:
+                pos = btn.mapToGlobal(QPoint(-pop.width() - 2, 0))
+            else:
+                pos = btn.mapToGlobal(QPoint(0, btn.height() + 2))
+        else:
+            pos = QCursor.pos()
+        pop.show_at(pos)
 
     def _on_measured(self, text: str) -> None:
-        self.palette.result.setText(text)
-        self.lbl_status.setText(text)
+        self.lbl_measure.setText(text)
+        self.lbl_measure.setVisible(bool(text))
+        if text:
+            self.lbl_status.setText(text)
 
     def _histogram(self) -> None:
         if self.current is None:
@@ -1137,8 +1310,7 @@ class MainWindow(QMainWindow):
                 projection=self.c_proj.currentData(), viewpoint=prof.viewpoint,
                 radial_c=prof.radial_c) if circle and row["modality"] != "montage" else None
         tmax = math.degrees(self.eye3d.theta_max)
-        self.lbl_3d.setText(f"망막 범위: 후극에서 {tmax:.0f}° (안구 중심각 {2 * tmax:.0f}°)\n"
-                            "드래그: 회전 · 휠/오른쪽 드래그: 확대 · 더블클릭: 초기화")
+        self.lbl_3d.setText(f"망막 범위: 후극에서 {tmax:.0f}° (안구 중심각 {2 * tmax:.0f}°)")
 
     def _on_mapping(self, *_):
         self._push_mapping()
@@ -1198,7 +1370,6 @@ class MainWindow(QMainWindow):
         self.lbl_status.setText("시신경 유두 위치를 저장했습니다 (3D 시신경에 반영)")
 
     def _on_tab(self, i: int) -> None:
-        self.palette.set_enabled_for_tab(i)
         if i == 1 and self._3d_dirty:
             self._update_3d()
         if i == 2:

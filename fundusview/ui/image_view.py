@@ -49,6 +49,7 @@ TOOL_HINTS = {
     "profile": "누르고 있는 동안 그 가로줄의 밝기 그래프",
 }
 YELLOW, CYAN = QColor(255, 214, 64), QColor(110, 215, 255)
+CAPTION = QColor(0, 255, 0)   # VK-2 text colour
 
 
 def to_qimage(rgb: np.ndarray) -> QImage:
@@ -91,6 +92,8 @@ class ImageView(QGraphicsView):
         self._disc.setZValue(5)
         self.scene().addItem(self._disc)
         self.show_overlays = False
+        self.show_captions = False
+        self._captions = ("", "", "", "")
         self._circle_px = None
         self._disc_px = None
         self._rgb: np.ndarray | None = None
@@ -153,6 +156,39 @@ class ImageView(QGraphicsView):
     def toggle_overlays(self, on: bool) -> None:
         self.show_overlays = on
         self._update_overlays()
+
+    # -- VK-2 style on-screen captions (green text in the corners) ------------
+    def set_captions(self, top_left: str = "", top_right: str = "", bottom_left: str = "",
+                     bottom_right: str = "") -> None:
+        self._captions = (top_left, top_right, bottom_left, bottom_right)
+        self.viewport().update()
+
+    def toggle_captions(self, on: bool) -> None:
+        self.show_captions = on
+        self.viewport().update()
+
+    def paintEvent(self, e):
+        super().paintEvent(e)
+        if not (self.show_captions and any(self._captions) and self.has_image()):
+            return
+        p = QPainter(self.viewport())
+        f = QFont(self.font())
+        f.setPixelSize(max(13, min(22, self.viewport().height() // 32)))
+        f.setBold(True)
+        p.setFont(f)
+        r = self.viewport().rect().adjusted(10, 6, -10, -6)
+        flags = (Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
+                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop,
+                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom,
+                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom)
+        for text, flag in zip(self._captions, flags):
+            if not text:
+                continue
+            p.setPen(QColor(0, 0, 0, 200))       # shadow keeps it legible on bright retina
+            p.drawText(r.translated(1, 1), int(flag), text)
+            p.setPen(CAPTION)
+            p.drawText(r, int(flag), text)
+        p.end()
 
     @property
     def _side(self) -> float:

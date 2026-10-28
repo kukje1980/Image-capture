@@ -167,25 +167,42 @@ def test_main_window_tools(app, tmp_path, demo_dir):
         w.f_mod.setCurrentIndex(w.f_mod.findData("color"))   # the two single shots (no montage)
         assert w.thumbs.count() == 2 and w.view2d.geometry is not None
         first = w.current["id"]
-        w._on_palette("op:sharpen")
-        w._on_palette("op:enhance")
-        w._on_palette("chan:redfree")
-        assert w._ops == ["sharpen", "enhance"] and w.c_channel.currentData() == "redfree"
-        assert w.palette.buttons["chan:redfree"].isChecked()
-        w._on_palette("undo")
-        assert w.c_channel.currentData() == "rgb" and w._ops == ["sharpen", "enhance"]
-        w._on_palette("original")
-        assert w._ops == [] and w.c_channel.currentData() == "rgb"
-        w._on_palette("next")
+        w._on_action("op:sharpen")
+        w._on_action("op:enhance")
+        w._on_action("chan:redfree")
+        assert w._ops == ["sharpen", "enhance"] and w._channel == "redfree"
+        assert w.acts["chan:redfree"].isChecked() and w.acts["op:sharpen"].isChecked()
+        w.acts["chan:redfree"].trigger()      # clicking the lit filter again -> colour
+        assert w._channel == "rgb" and not w.acts["chan:redfree"].isChecked()
+        w.acts["chan:redfree"].trigger()
+        assert w._channel == "redfree"
+        w._on_action("undo")
+        assert w._channel == "rgb" and w._ops == ["sharpen", "enhance"]
+        w._on_action("original")
+        assert w._ops == [] and w._channel == "rgb" and not w.acts["op:sharpen"].isChecked()
+        w._on_action("adj:gamma")                # VK-2 GAMMA: slider popup
+        assert w.pop_gamma.isVisible()
+        w.s_gamma.setValue(150)
+        w._apply_adjust()
+        assert w.acts["adj:gamma"].isChecked()
+        w.pop_gamma.hide()
+        w._on_action("adj_reset")
+        assert w.s_gamma.value() == 100 and not w.acts["adj:gamma"].isChecked()
+        assert w.view2d._captions[0] == "1/2" and w.view2d._captions[2].endswith("PID20260310-0A1B2C3D")
+        w._on_action("tools")                    # TOOLS hides / shows the processing toolbar
+        assert w.tb_proc.isHidden() and not w.acts["tools"].isChecked()
+        w._on_action("tools")
+        assert w.tb_proc.isVisible()
+        w._on_action("next")
         assert w.current["id"] != first
-        w._on_palette("prev")
+        w._on_action("prev")
         assert w.current["id"] == first
         w.tabs.setCurrentIndex(2)            # multi view
         w.multi.set_count(4)
         app.processEvents()
         assert sum(1 for c in w.multi.cells if c.image_id is not None and c.isVisible()) == 2
         w.tabs.setCurrentIndex(0)
-        w._on_palette("op:sharpen")
+        w._on_action("op:sharpen")
         new_id = w.service.importer.add_derived(w.current, w.view2d._rgb, "편집 영상 (테스트)")
         assert db.get_image(new_id)["patient_ref"] == w.current["patient_ref"]
         assert db.get_image(new_id)["note"].startswith("편집 영상")
