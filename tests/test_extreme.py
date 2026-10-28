@@ -668,6 +668,26 @@ def test_gui_waits_for_slow_encoder_before_saving(qapp, win, monkeypatch):
     assert exp.stat().st_size == Path(rows[0].file_path).stat().st_size, "반쯤 쓴 파일이 내보내기로 복사됨"
 
 
+def test_4k_recorder_queue_memory_is_bounded(tmp_path):
+    """4K 녹화에서 인코더가 밀려도 대기 큐가 수 GB 로 불어나 메모리 부족으로 꺼지지 않는다."""
+    from app.capture import video_recorder as vr
+    assert vr.queue_len((1920, 1080)) == vr._QUEUE_MAX                 # 1080p 는 그대로
+    for size in ((3840, 2160), (4096, 2160), (7680, 4320)):
+        assert vr.queue_len(size) * size[0] * size[1] * 3 <= vr._QUEUE_MAX_BYTES + size[0] * size[1] * 3 * 8
+    rec = _recorder(tmp_path, "4k.mp4", size=(3840, 2160))
+    gate = threading.Event()
+    real_write = rec._write
+    rec._write = lambda f: (gate.wait(10), real_write(f))[1]           # 인코더가 못 따라오는 PC
+    rec._start_ts -= 60
+    frame = np.zeros((2160, 3840, 3), np.uint8)
+    for _ in range(200):
+        rec.feed(frame.copy())                                           # 프레임마다 새 메모리 (실제 카메라처럼)
+    assert rec._queue.qsize() * frame.nbytes <= vr._QUEUE_MAX_BYTES + frame.nbytes
+    gate.set()
+    rec.stop()
+    assert rec.wait_finalized(60)
+
+
 def test_encoder_crash_mid_recording_keeps_written_part(tmp_path):
     import imageio.v2 as iio
     rec = _recorder(tmp_path)

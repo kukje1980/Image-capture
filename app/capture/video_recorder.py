@@ -37,9 +37,17 @@ except ImportError:
 log = logging.getLogger(__name__)
 
 _QUEUE_MAX = 120
+# 큐 메모리 상한 — 4K 프레임 하나가 약 25MB 라 120장이면 3GB (인코더가 밀리면 메모리 부족으로 꺼질 수 있음)
+_QUEUE_MAX_BYTES = 800 * 1024 * 1024
 _MAX_REPEAT = 8          # 한 번에 채워 넣을 최대 반복 프레임 수 (긴 멈춤 뒤 폭주 방지)
 _STOP_WAIT = 10.0        # stop() 이 인코더 마무리를 기다리는 최대 시간 (그 뒤엔 백그라운드에서 마무리)
 _SENTINEL = object()
+
+
+def queue_len(size: Tuple[int, int]) -> int:
+    """인코더 대기 큐 길이 — 1080p 는 120장(약 0.75GB), 4K 는 메모리 상한에 맞춰 약 32장."""
+    frame_bytes = max(1, int(size[0]) * int(size[1]) * 3)
+    return max(8, min(_QUEUE_MAX, _QUEUE_MAX_BYTES // frame_bytes))
 
 
 class VideoRecorder(QObject):
@@ -107,7 +115,7 @@ class VideoRecorder(QObject):
         self._failed = False
         self._stop_evt.clear()
         self._open_writer()
-        self._queue = queue.Queue(maxsize=_QUEUE_MAX)
+        self._queue = queue.Queue(maxsize=queue_len(self._size))
         self._recording = True
         self._start_ts = self._stop_ts = time.monotonic()
         self._thread = threading.Thread(target=self._worker, daemon=True)
