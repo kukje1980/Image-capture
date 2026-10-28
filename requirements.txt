@@ -1,0 +1,9 @@
+PySide6-Essentials>=6.6
+PyOpenGL>=3.1.7
+numpy>=1.26
+Pillow>=10.0
+pydicom>=3.0
+# DICOM decoders: VK-2 sends JPEG Baseline / JPEG Lossless (Process 14)
+pylibjpeg>=2.0
+pylibjpeg-libjpeg>=2.1
+watchdog>=4.0

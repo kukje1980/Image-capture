@@ -1,0 +1,24 @@
+/* Calm clinical light theme; images sit on dark canvases. */
+QMainWindow, QWidget { background: #f4f5f3; color: #1d2329; }
+QToolBar { background: #1f2a33; border: 0; padding: 4px; spacing: 4px; }
+QToolBar QToolButton { color: #e9eef2; background: transparent; padding: 5px 10px; border-radius: 4px; }
+QToolBar QToolButton:hover { background: #2f3d48; }
+QToolBar QToolButton:checked { background: #2e7d5b; color: white; }
+QLabel#banner { font-size: 14px; padding: 6px 8px; background: #ffffff; border: 1px solid #d8ddd8; border-radius: 6px; }
+QGroupBox { background: #ffffff; border: 1px solid #d8ddd8; border-radius: 6px; margin-top: 14px; padding: 8px 6px 6px 6px; }
+QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; color: #1f6f8b; font-weight: 600; }
+QTableWidget, QListWidget, QPlainTextEdit, QLineEdit, QComboBox, QDoubleSpinBox, QSpinBox {
+    background: #ffffff; border: 1px solid #cfd5cf; border-radius: 4px; selection-background-color: #1f6f8b; }
+QListWidget { background: #20262c; color: #e6ebef; border: 1px solid #20262c; }
+QListWidget::item { border-radius: 6px; padding: 4px; }
+QListWidget::item:selected { background: #1f6f8b; color: white; }
+QHeaderView::section { background: #e8ebe7; border: 0; border-right: 1px solid #d8ddd8; padding: 4px; font-weight: 600; }
+QTabWidget::pane { border: 1px solid #d8ddd8; background: #111316; }
+QTabBar::tab { padding: 6px 16px; background: #e8ebe7; border: 1px solid #d8ddd8; border-bottom: 0;
+               border-top-left-radius: 5px; border-top-right-radius: 5px; margin-right: 2px; }
+QTabBar::tab:selected { background: #ffffff; color: #1f6f8b; font-weight: 600; }
+QPushButton { background: #ffffff; border: 1px solid #c4ccc4; border-radius: 4px; padding: 4px 10px; }
+QPushButton:hover { border-color: #1f6f8b; color: #1f6f8b; }
+QStatusBar { background: #e8ebe7; }
+QSlider::groove:horizontal { height: 4px; background: #d3d9d3; border-radius: 2px; }
+QSlider::handle:horizontal { width: 14px; margin: -6px 0; background: #1f6f8b; border-radius: 7px; }

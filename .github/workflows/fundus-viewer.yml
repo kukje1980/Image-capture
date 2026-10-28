@@ -1,0 +1,45 @@
+name: fundus-viewer
+
+on:
+  push:
+    paths: ["fundus_viewer/**", ".github/workflows/fundus-viewer.yml"]
+  pull_request:
+    paths: ["fundus_viewer/**", ".github/workflows/fundus-viewer.yml"]
+  workflow_dispatch:
+
+jobs:
+  test-linux:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: fundus_viewer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libxkbcommon-x11-0
+      - run: pip install -r requirements.txt pytest
+      - run: python -m pytest -q tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+  build-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: fundus_viewer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt pyinstaller pytest
+      - run: python -m pytest -q tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+      - run: pyinstaller fundus_viewer.spec --noconfirm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FundusViewer-windows
+          path: fundus_viewer/dist/FundusViewer
