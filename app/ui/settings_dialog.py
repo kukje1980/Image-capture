@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 from app.capture.frame_utils import device_names, enumerate_devices, is_sony
 from app.ui import icons
 from app.ui.theme import ICON_ACCENT
+from app.ui.backup_tab import BackupTab
 from app.ui.usb_buttons_tab import UsbButtonsTab
 
 
@@ -208,6 +209,8 @@ class SettingsDialog(QDialog):
         self.tabs.addTab(self._build_preset_tab(), "촬영 모드")
         self.usb_tab = UsbButtonsTab(config, raw_input=getattr(parent, "usb_raw", None))
         self.tabs.addTab(self.usb_tab, "USB 버튼")
+        self.backup_tab = BackupTab(config, manager=getattr(parent, "backup", None))
+        self.tabs.addTab(self.backup_tab, "백업")
 
         btns = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -227,6 +230,11 @@ class SettingsDialog(QDialog):
         if bad:
             self.show_tab("USB 버튼")
             QMessageBox.warning(self, "USB 버튼", bad)
+            return
+        bad = self.backup_tab.problem()
+        if bad:
+            self.show_tab("백업")
+            QMessageBox.warning(self, "백업", bad)
             return
         super().accept()
 
@@ -684,6 +692,8 @@ class SettingsDialog(QDialog):
         c.usb_buttons = self.usb_tab.values()
         c.usb_eye_auto = self.usb_tab.eye_auto()
         c.usb_device_check = self.usb_tab.device_check()
+        for k, v in self.backup_tab.values().items():
+            setattr(c, k, v)
         c.capture_presets = [dict(p, camera_props=dict(p["camera_props"])) for p in self._presets]
         if any(p["name"] == self._active for p in self._presets):
             c.active_preset = self._active
