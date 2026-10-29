@@ -108,6 +108,7 @@ class MainWindow(QMainWindow):
         self.recorder.error.connect(self._on_recorder_error)
 
         sounds.set_enabled(config.sounds_enabled)
+        sounds.set_volume(config.sound_volume)
         # Smart Capture: 별도 스레드에서 프레임을 분석 (프리뷰가 끊기지 않게)
         self.smart = SmartCaptureWorker(self._smart_settings())
         self.smart.update(peaking=config.smart_peaking, peaking_color=config.smart_peaking_color)
@@ -1271,6 +1272,7 @@ class MainWindow(QMainWindow):
         if dlg.exec():
             dlg.apply_to_config()
             sounds.set_enabled(self.config.sounds_enabled)
+            sounds.set_volume(self.config.sound_volume)
             self.thumbnail_panel.newest_on_top = self.config.newest_on_top
             cfg = self.config
             self.agent_bar.set_state(cfg.agent_enabled, cfg.agent_auto_capture, cfg.agent_protocol,

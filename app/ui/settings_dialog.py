@@ -1,6 +1,7 @@
 """설정 다이얼로그: 소스 모드, 카메라, 해상도, 사진 형식, export 폴더, 효과음."""
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -12,11 +13,13 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QSlider,
     QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
+from app import sounds
 from app.capture.frame_utils import device_names, enumerate_devices, is_sony
 
 
@@ -72,6 +75,27 @@ class SettingsDialog(QDialog):
 
         self.sounds = QCheckBox("사진 캡처 찰칵 · 정지영상 · 녹화 시작/중지 소리")
         self.sounds.setChecked(bool(config.sounds_enabled))
+        self.volume = QSlider(Qt.Orientation.Horizontal)
+        self.volume.setRange(0, 100)
+        self.volume.setSingleStep(5)
+        self.volume.setPageStep(10)
+        self.volume.setValue(int(max(0, min(100, config.sound_volume))))
+        self.volume.setToolTip("효과음 크기 (0 = 무음)")
+        self.volume_label = QLabel(f"{self.volume.value()}%")
+        self.volume_label.setMinimumWidth(40)
+        self.btn_preview = QPushButton("들어보기")
+        self.btn_preview.setToolTip("지금 슬라이더 크기로 '찰칵' 소리를 재생")
+        vol_row = QHBoxLayout()
+        vol_row.setContentsMargins(0, 0, 0, 0)
+        vol_row.addWidget(self.volume, 1)
+        vol_row.addWidget(self.volume_label)
+        vol_row.addWidget(self.btn_preview)
+        vol_w = QWidget()
+        vol_w.setLayout(vol_row)
+        self.volume.valueChanged.connect(lambda v: self.volume_label.setText(f"{v}%"))
+        self.btn_preview.clicked.connect(self._preview_sound)
+        self.sounds.toggled.connect(vol_w.setEnabled)
+        vol_w.setEnabled(self.sounds.isChecked())
         self.agent = QCheckBox("AI 에이전트 (장면 인식 · 자동 촬영 · 전후 클립 · 추천 프레임)")
         self.agent.setChecked(bool(config.agent_enabled))
         self.agent_clips = QCheckBox("촬영 전후 클립(mp4) 도 환자 영상으로 저장")
@@ -87,6 +111,7 @@ class SettingsDialog(QDialog):
         form.addRow("저장 폴더(export)", exp_w)
         form.addRow("테스트 파일(file 모드)", self.test_file)
         form.addRow("효과음", self.sounds)
+        form.addRow("효과음 크기", vol_w)
         form.addRow("AI 에이전트", self.agent)
         form.addRow("", self.agent_clips)
         form.addRow("", self.agent_logging)
@@ -103,6 +128,14 @@ class SettingsDialog(QDialog):
                              "※ 소니 ZV-E10 II · FX3: 카메라 MENU → 설정 → USB → USB 연결 모드 → 'USB 스트리밍' 후\n"
                              "   USB-C 로 연결하면 ★ 표시로 나타납니다 (4K 는 해상도 3840×2160)."))
         lay.addWidget(btns)
+
+    def _preview_sound(self) -> None:
+        was = sounds.is_enabled()
+        sounds.set_enabled(True)
+        try:
+            sounds.play("shutter", volume=self.volume.value())
+        finally:
+            sounds.set_enabled(was)
 
     def _browse(self) -> None:
         d = QFileDialog.getExistingDirectory(self, "저장 폴더 선택", self.export.text() or "")
@@ -126,6 +159,7 @@ class SettingsDialog(QDialog):
         c.export_root = self.export.text().strip()
         c.test_file_path = self.test_file.text().strip()
         c.sounds_enabled = self.sounds.isChecked()
+        c.sound_volume = int(self.volume.value())
         c.agent_enabled = self.agent.isChecked()
         c.agent_save_clips = self.agent_clips.isChecked()
         c.agent_logging = self.agent_logging.isChecked()
