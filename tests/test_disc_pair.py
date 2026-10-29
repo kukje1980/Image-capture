@@ -8,6 +8,7 @@ import pytest
 
 from fundusview import discpair, imaging, measure
 from fundusview.demo import synth_fundus
+from fundusview.ui.keys import keys
 
 CAMERAS = [(45, "external", "perspective", "OD"), (50, "external", "perspective", "OS"),
            (135, "internal", "equidistant", "OS"), (176, "internal", "radial", "OD")]
@@ -114,7 +115,7 @@ def test_disc_pair_from_two_picked_photos(app, tmp_path, demo_dir):
         w._select_patient_ref(ref)
         assert w.thumbs.count() == 2
         dlg, why = w._build_disc_pair()
-        assert dlg is None and "Ctrl+클릭" in why        # only one photo picked so far
+        assert dlg is None and keys("Ctrl+클릭") in why  # only one photo picked so far (⌘클릭 on macOS)
         shown = w.current["id"]
         other = w.thumbs.item(1)
         other_id = other.data(Qt.ItemDataRole.UserRole)
