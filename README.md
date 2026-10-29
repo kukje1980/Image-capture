@@ -57,7 +57,7 @@ Intel https://github.com/kukje1980/Image-capture/releases/download/fundus-viewer
 사용). Mac은 `./build_mac.sh` → `dist/FundusViewer.app`과 `dist/FundusViewer-mac-<AppleSilicon|Intel>.dmg`
 (빌드하는 Mac의 칩용). GitHub Actions(`fundus-viewer` 워크플로)가 커밋마다 Windows exe와 Mac 앱
 두 가지(Apple Silicon · Intel)를 빌드·시험해 위 주소(릴리스 `fundus-viewer-latest`)에 올립니다. Mac 빌드는
-번들 앱을 데모 사진으로 실제 실행해 보고, 3D 안구를 macOS OpenGL로 렌더링해 보는 테스트도 돌립니다.
+번들 앱을 데모 사진으로 실제 실행해 보고, 3D 안구를 macOS OpenGL로 렌더링하는 테스트도 거칩니다.
 
 ## 사용 흐름
 

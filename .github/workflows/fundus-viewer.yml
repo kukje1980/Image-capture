@@ -91,11 +91,9 @@ jobs:
           kill $PID || true
           echo "imported demo photos: $n"
           [ "$n" -gt 0 ]
-      # render the 3D eye with Apple's OpenGL, which also checks that every
-      # shader compiles there. Reported but not yet required: whether the
-      # hosted Mac runners can create an OpenGL context is not established.
+      # render the 3D eye with Apple's OpenGL (the runner's window server
+      # provides a context), which also checks that every shader compiles there
       - name: 3D eye on macOS OpenGL
-        continue-on-error: true
         env:
           FUNDUSVIEW_REQUIRE_GL: "1"
         run: python -m pytest -q -rs tests/test_eye3d_gl.py
