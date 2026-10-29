@@ -1,14 +1,16 @@
 """2D image viewer with VK-2 style tools.
 
 Mouse
-  * wheel — zoom at the cursor; **right-drag up/down — zoom** (anchored where
-    the drag started; a right click without dragging opens the menu);
-    middle-drag — pan; double-click — fit.
-  * left button depends on the active tool: 이동 (pan), 확대/축소 (drag up/down
-    to zoom, click ×2, Shift+click ×½), 돋보기 (hold for a loupe; wheel while
-    holding changes its power), 길이 / 각도 / C/D 비 (길이·면적) measurements,
-    글자 / 화살표+글자 annotations, 회색조 분석 (hold: grey-level profile of the
-    row under the cursor).
+  * **drag up/down — zoom** (anchored where the drag started): the left button
+    does it by default (확대/축소 is the starting tool, in every view), the right
+    button does it with any tool (a right click without dragging opens the menu).
+    A click without dragging leaves the zoom alone.
+  * wheel — zoom at the cursor; middle-drag — pan; double-click — fit.
+  * left button depends on the active tool: 확대/축소 (default, above), 이동
+    (pan), 돋보기 (hold for a loupe; wheel while holding changes its power),
+    길이 / 각도 / C/D 비 (길이·면적) measurements, 글자 / 화살표+글자
+    annotations, 회색조 분석 (hold: grey-level profile of the row under the
+    cursor).
 
 Zooming in shows a mini-map (미니맵) in the top-right corner: the whole photo
 with the visible part framed; click or drag in it to move there. Keys: + / −
@@ -44,7 +46,7 @@ TOOLS = {
 }
 TOOL_HINTS = {
     "pan": "드래그: 이동 · 휠/오른쪽 드래그: 확대·축소 · 더블클릭: 화면 맞춤",
-    "zoom": "위로 드래그: 확대 · 아래로 드래그: 축소 · 클릭: 2배 · Shift+클릭: ½",
+    "zoom": "위로 드래그: 확대 · 아래로 드래그: 축소 (누른 곳 중심) · 가운데 버튼 드래그: 이동 · 더블클릭: 화면 맞춤",
     "loupe": "누르고 있는 동안 돋보기 · 누른 채 휠: 배율",
     "length": "드래그해서 길이 측정 (px · 망막 각도 · mm)",
     "angle": "세 점 클릭 (가운데 점이 꼭짓점)",
@@ -184,8 +186,8 @@ class ImageView(QGraphicsView):
         self.geometry: measure.Geometry | None = None
         # view state
         self._zoom, self._rot, self._fh, self._fv, self._fit = 1.0, 0, False, False, True
-        # tools
-        self.tool = "pan"
+        # tools (plain left drag zooms until another tool is picked)
+        self.tool = "zoom"
         self._drag: dict | None = None
         self._annots: list[list[QGraphicsItem]] = []   # one entry per finished annotation
         self._labels: list[QGraphicsSimpleTextItem] = []
@@ -202,6 +204,7 @@ class ImageView(QGraphicsView):
         self.loupe_mag, self.loupe_size = 3.0, 260
         self.show_navigator = True
         self._nav = _Navigator(self)
+        self._restore_cursor()
 
     # =====================================================================
     # image
@@ -409,7 +412,7 @@ class ImageView(QGraphicsView):
     # =====================================================================
     def set_tool(self, tool: str) -> None:
         self._cancel_work()
-        self.tool = tool if tool in TOOLS else "pan"
+        self.tool = tool if tool in TOOLS else "zoom"
         self._restore_cursor()
 
     def _restore_cursor(self) -> None:
@@ -589,8 +592,7 @@ class ImageView(QGraphicsView):
             self._drag = {"kind": "pan", "last": pos}
             self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
         elif t == "zoom":
-            self._drag = {"kind": "zoom", "start": pos, "z0": self._zoom, "moved": False,
-                          "shift": bool(e.modifiers() & Qt.KeyboardModifier.ShiftModifier)}
+            self._drag = {"kind": "zoom", "start": pos, "z0": self._zoom, "moved": False}
         elif t == "loupe":
             self._drag = {"kind": "loupe"}
             self._show_loupe(pos)
@@ -654,8 +656,6 @@ class ImageView(QGraphicsView):
         sp = self.mapToScene(pos)
         if kind == "rzoom" and not d["moved"]:
             self._context_menu(e.globalPosition().toPoint(), sp)
-        elif kind == "zoom" and not d["moved"]:
-            self._zoom_at(self._zoom * (0.5 if d["shift"] else 2.0), d["start"])
         elif kind == "loupe":
             self._loupe.hide()
         elif kind == "profile":

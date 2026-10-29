@@ -59,15 +59,36 @@ def test_right_drag_zooms(view):
     assert view.zoom < z1
 
 
-def test_zoom_tool_drag_and_click(view):
-    from PySide6.QtCore import Qt
-    view.set_tool("zoom")
+def test_plain_left_drag_zooms(view):
+    """No tool to pick: a fresh view zooms on a plain left drag, anchored at the press point."""
+    from PySide6.QtCore import QPoint, Qt
+    assert view.tool == "zoom"
     z0 = view.zoom
-    _drag(view, Qt.MouseButton.LeftButton, (300, 300), (300, 220))
-    assert view.zoom > z0
+    anchor = view.mapToScene(QPoint(300, 250))
+    _drag(view, Qt.MouseButton.LeftButton, (300, 250), (300, 150))   # up = zoom in
     z1 = view.zoom
-    _click(view, (300, 300))
-    assert view.zoom == pytest.approx(z1 * 2)
+    assert z1 > z0 * 1.5
+    after = view.mapToScene(QPoint(300, 250))
+    assert abs(after.x() - anchor.x()) < 3 and abs(after.y() - anchor.y()) < 3
+    _drag(view, Qt.MouseButton.LeftButton, (300, 250), (300, 330))   # down = zoom out
+    z2 = view.zoom
+    assert z2 < z1
+    _click(view, (300, 250))                                         # a click is not a zoom
+    assert view.zoom == pytest.approx(z2)
+    _drag(view, Qt.MouseButton.LeftButton, (300, 250), (420, 251))   # sideways: no zoom
+    assert view.zoom == pytest.approx(z2)
+
+
+def test_pan_with_middle_button_or_pan_tool(view):
+    from PySide6.QtCore import Qt
+    view.zoom_to(3.0)
+    h0 = view.horizontalScrollBar().value()
+    _drag(view, Qt.MouseButton.MiddleButton, (400, 300), (300, 300))
+    h1 = view.horizontalScrollBar().value()
+    assert h1 == h0 + 100 and view.zoom == pytest.approx(3.0)
+    view.set_tool("pan")
+    _drag(view, Qt.MouseButton.LeftButton, (300, 300), (360, 300))
+    assert view.horizontalScrollBar().value() == h1 - 60 and view.zoom == pytest.approx(3.0)
 
 
 def test_length_measurement_in_retinal_units(view):
@@ -166,6 +187,9 @@ def test_main_window_tools(app, tmp_path, demo_dir):
         assert w.thumbs.count() == 3
         w.f_mod.setCurrentIndex(w.f_mod.findData("color"))   # the two single shots (no montage)
         assert w.thumbs.count() == 2 and w.view2d.geometry is not None
+        # drag zoom is on from the start: 2D, compare and multi views, and the ZOOM button is lit
+        assert w.view2d.tool == "zoom" and w.acts["tool:zoom"].isChecked()
+        assert all(v.tool == "zoom" for v in w.cmp_views)
         first = w.current["id"]
         w._on_action("op:sharpen")
         w._on_action("op:enhance")
@@ -201,6 +225,7 @@ def test_main_window_tools(app, tmp_path, demo_dir):
         w.multi.set_count(4)
         app.processEvents()
         assert sum(1 for c in w.multi.cells if c.image_id is not None and c.isVisible()) == 2
+        assert all(c.view.tool == "zoom" for c in w.multi.cells)
         w.tabs.setCurrentIndex(0)
         w._on_action("op:sharpen")
         new_id = w.service.importer.add_derived(w.current, w.view2d._rgb, "편집 영상 (테스트)")

@@ -124,7 +124,7 @@ class MainWindow(QMainWindow):
             elif key.startswith("chan:"):
                 self._chan_group.addAction(a)
             self.acts[key] = a
-        self.acts["tool:pan"].setChecked(True)
+        self.acts["tool:zoom"].setChecked(True)
         # drop-down entries are plain actions (no check marks in the drop-downs)
         self.menus: dict[str, QMenu] = {}
         for key, items in MENUS.items():
@@ -548,7 +548,9 @@ class MainWindow(QMainWindow):
     def _show_help(self) -> None:
         QMessageBox.information(self, "마우스·단축키", (
             "<b>사진 보기</b><br>"
-            "휠 · 오른쪽 버튼 위/아래 드래그: 확대·축소 · +/−: 확대·축소 · 0: 화면 맞춤 · 1: 100%<br>"
+            "위/아래 드래그: 확대·축소 (위로 끌면 확대, 아래로 끌면 축소, 누른 곳 중심)<br>"
+            "휠: 커서 위치 확대·축소 · 오른쪽 버튼 드래그: 어떤 도구에서든 확대·축소<br>"
+            "+/−: 확대·축소 · 0: 화면 맞춤 · 1: 100%<br>"
             "확대하면 오른쪽 위 미니맵에 전체 사진과 보이는 곳이 나옵니다 — 눌러서 이동<br>"
             "화면 맞춤 ▾ 또는 아래쪽 [배율]: 400·800%, 후극부·위/아래/코/귀쪽 주변부로 바로 확대<br>"
             "가운데 버튼 드래그(이동 도구는 왼쪽 드래그): 이동 · 더블클릭: 화면 맞춤<br>"
