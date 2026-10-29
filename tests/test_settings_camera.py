@@ -45,3 +45,16 @@ def test_qss_has_visible_arrows():
     assert "QComboBox::down-arrow" in qss and "QSpinBox::up-arrow" in qss
     url = qss.split('QComboBox::down-arrow {{ image: url("'.replace("{{", "{"))[1].split('")')[0]
     assert Path(url).exists()
+
+
+def test_picking_camera_switches_to_device_mode(qapp, app_env, monkeypatch):
+    config, _ = app_env
+    config.source_mode = "synthetic"
+    config.save = lambda: None
+    monkeypatch.setattr(sd, "device_names", lambda: ["Camera Sensor Front", "ZV-E10M2"])
+    dlg = sd.SettingsDialog(config)
+    dlg.camera_index.setCurrentIndex(1)
+    dlg.camera_index.activated.emit(1)                # 사용자가 목록에서 고름
+    assert dlg.source_mode.currentText() == "device"
+    dlg.apply_to_config()
+    assert (config.source_mode, config.camera_name) == ("device", "ZV-E10M2")

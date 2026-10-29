@@ -87,6 +87,9 @@ class SettingsDialog(QDialog):
 
         self.camera_index = QComboBox()
         self.camera_index.setMinimumWidth(260)
+        # 카메라를 직접 고르면 실제 장비 모드로 (합성/파일 모드에 남아 고른 카메라가 안 나오는 일 방지)
+        self.camera_index.activated.connect(
+            lambda _i: self.source_mode.setCurrentText("device"))
         self._names: list[str] = []
         btn_rescan = QPushButton("다시 찾기")
         btn_rescan.setToolTip("카메라를 연결하거나 USB 스트리밍으로 바꾼 뒤 눌러 목록을 새로 고칩니다")

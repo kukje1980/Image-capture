@@ -89,22 +89,38 @@ def is_sony(name: str | None) -> bool:
 
 
 def parse_dshow_devices(text: str) -> List[str]:
-    """ffmpeg -list_devices (DirectShow) 출력 → 비디오 장치 이름 (OpenCV CAP_DSHOW 인덱스 순서)."""
+    """ffmpeg -list_devices (DirectShow) 출력 → 비디오 장치 이름 (OpenCV CAP_DSHOW 인덱스 순서).
+
+    ffmpeg 는 비디오 장치 범주를 빠짐없이 먼저 출력하고 그 뒤에 오디오 장치를 출력한다.
+    새 형식(ffmpeg 4.4+)은 장치마다 핀 종류를 붙인다: (video) · (video, audio) · (none) · (audio).
+    HDMI 캡처보드는 (video, audio), 연결 전 가상 카메라(소니 Imaging Edge 등)는 (none) 으로 나오므로
+    이들을 빼면 그 뒤 장치들의 번호가 OpenCV 와 어긋나 엉뚱한 카메라가 열린다 → 모두 포함한다.
+    오디오 범주는 첫 '(audio)' 전용 장치부터 시작한다고 본다.
+    """
     names: List[str] = []
     in_video = False
+    legacy = False
     for line in text.splitlines():
         if "DirectShow video devices" in line:
-            in_video = True
+            in_video, legacy = True, True
             continue
         if "DirectShow audio devices" in line:
-            in_video = False
+            break
+        if "Alternative name" in line:
             continue
-        m = re.search(r'"([^"]+)"\s*(\((video|audio|none)\))?', line)
-        if not m or "Alternative name" in line:
+        m = re.search(r'"([^"]+)"\s*(?:\(([^)]*)\))?\s*$', line)
+        if not m:
             continue
-        kind = m.group(3)
-        if kind == "video" or (kind is None and in_video):
-            names.append(m.group(1))
+        kinds = {k.strip() for k in (m.group(2) or "").split(",") if k.strip()}
+        if legacy:
+            if in_video:
+                names.append(m.group(1))
+            continue
+        if not kinds:
+            continue                              # 핀 표시가 없는 줄은 장치 줄이 아님 (새 형식)
+        if kinds == {"audio"}:
+            break                                 # 여기부터 오디오 장치 범주
+        names.append(m.group(1))                  # video · video, audio · none · unknown
     return names
 
 
