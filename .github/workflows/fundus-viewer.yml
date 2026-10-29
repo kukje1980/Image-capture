@@ -1,0 +1,69 @@
+name: fundus-viewer
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# a newer push replaces the build (and the published download) of an older one
+concurrency:
+  group: fundus-viewer-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: >-
+          sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libxkbcommon-x11-0
+          xvfb libgl1-mesa-dri libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0
+          libxcb-xinerama0 libxcb-randr0 libxcb-render-util0 libxcb-image0
+      - run: pip install -r requirements.txt pytest
+      - run: python -m pytest -q tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+      # the offscreen platform has no OpenGL: render the 3D eye once more on Mesa (llvmpipe),
+      # which also checks that every shader compiles
+      - name: 3D eye on OpenGL (Xvfb + Mesa)
+        run: xvfb-run -a -s "-screen 0 1280x1024x24" python -m pytest -q -rs tests/test_eye3d_gl.py
+        env:
+          QT_QPA_PLATFORM: xcb
+          FUNDUSVIEW_REQUIRE_GL: "1"
+
+  build-windows:
+    runs-on: windows-latest
+    permissions:
+      contents: write   # publish the zip as a release (download without logging in)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt pyinstaller pytest
+      - run: python -m pytest -q tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+      - run: pyinstaller fundus_viewer.spec --noconfirm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FundusViewer-windows
+          path: dist/FundusViewer
+      # Fixed download address for the newest build:
+      # https://github.com/<owner>/<repo>/releases/download/fundus-viewer-latest/FundusViewer-windows.zip
+      - name: Publish latest build
+        if: github.event_name != 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          (cd dist && 7z a -tzip ../FundusViewer-windows.zip FundusViewer > /dev/null)
+          gh release delete fundus-viewer-latest --yes --cleanup-tag || true
+          gh release create fundus-viewer-latest FundusViewer-windows.zip \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "안저 사진 뷰어 (Windows 최신 빌드)" \
+            --notes-file docs/release_notes.md
