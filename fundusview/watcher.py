@@ -1,7 +1,7 @@
 """Folder watching and the background import queue.
 
 * ``watchdog`` delivers create / modify / move events (ReadDirectoryChangesW
-  on Windows) for local folders.
+  on Windows, FSEvents on macOS) for local folders.
 * Folders flagged ``polling`` (network shares such as the APOLLO
   ``PatientCapture`` SMB share, mapped drives, NAS) are scanned every
   ``POLL_SECONDS`` instead — change events over SMB are unreliable.
@@ -17,7 +17,10 @@
 from __future__ import annotations
 
 import os
+import posixpath
 import queue
+import re
+import subprocess
 import sys
 import threading
 import time
@@ -37,10 +40,39 @@ def _cheap_candidate(path: str) -> bool:
     return ext in IMAGE_EXTS or ext == ""
 
 
-def is_network_path(path: str) -> bool:
-    """UNC path or (on Windows) a mapped network drive."""
+# macOS file systems whose change events do not report other computers' writes
+_MAC_NET_FS = {"smbfs", "afpfs", "nfs", "webdav", "cifs", "ftp"}
+
+
+def mac_network_mounts(mount_output: str | None = None) -> list[str]:
+    """Mount points of network shares, from ``mount`` output such as
+    ``//user@nas/share on /Volumes/share (smbfs, nodev, nosuid, mounted by me)``."""
+    if mount_output is None:
+        try:
+            mount_output = subprocess.run(["/sbin/mount"], capture_output=True, text=True,
+                                          timeout=5).stdout
+        except (OSError, subprocess.SubprocessError):
+            return []
+    points = []
+    for line in mount_output.splitlines():
+        m = re.match(r".+? on (.+) \(([^,)]+)", line)
+        if m and m.group(2).strip() in _MAC_NET_FS:
+            points.append(m.group(1))
+    return points
+
+
+def is_network_path(path: str, mounts: list[str] | None = None) -> bool:
+    """UNC path, a mapped network drive (Windows) or a folder on a network
+    share mounted under macOS (``mounts`` overrides the live mount table)."""
     if path.startswith(("\\\\", "//")):
         return True
+    if sys.platform == "darwin" or mounts is not None:
+        p = posixpath.normpath(path)   # macOS paths are POSIX paths
+        for mp in (mac_network_mounts() if mounts is None else mounts):
+            mp = mp.rstrip("/")
+            if p == mp or p.startswith(mp + "/"):
+                return True
+        return False
     if sys.platform == "win32" and len(path) >= 2 and path[1] == ":":
         try:
             import ctypes

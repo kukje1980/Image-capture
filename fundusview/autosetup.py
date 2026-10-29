@@ -6,7 +6,8 @@ At every start:
   photos dropped there are *moved* into the library, so an empty inbox means
   everything was imported;
 * the capture software's own folders are looked for on every drive letter
-  (local and mapped network drives) and added with the right camera profile:
+  (local and mapped network drives; on macOS every volume under
+  ``/Volumes``) and added with the right camera profile:
 
   ===================  ==================================================
   RetiCam 3100 Plus    ``X:\\reticam``, ``X:\\레티캠``, ``X:\\SYSEYE``
@@ -42,7 +43,11 @@ def _key(path: str) -> str:
     return os.path.normcase(os.path.abspath(path)).rstrip("\\/")
 
 
-def drive_roots() -> list[str]:
+def drive_roots(volumes: str = "/Volumes") -> list[str]:
+    """Where capture-software folders may live: drive letters on Windows,
+    mounted volumes (USB disks, NAS / SMB shares) on macOS."""
+    if sys.platform == "darwin":
+        return mac_volume_roots(volumes)
     if sys.platform != "win32":
         return []
     if hasattr(os, "listdrives"):  # Python 3.12+
@@ -51,6 +56,26 @@ def drive_roots() -> list[str]:
         except OSError:
             pass
     return [f"{c}:\\" for c in string.ascii_uppercase[2:] if os.path.exists(f"{c}:\\")]
+
+
+def mac_volume_roots(volumes: str = "/Volumes") -> list[str]:
+    """Mounted volumes, without the start-up disk (``/Volumes/Macintosh HD``
+    is a link to ``/``, whose folders are found through the home folder)."""
+    try:
+        names = sorted(os.listdir(volumes))
+    except OSError:
+        return []
+    roots = []
+    for name in names:
+        p = os.path.join(volumes, name)
+        try:
+            if os.path.islink(p) and os.path.realpath(p) == "/":
+                continue
+            if os.path.isdir(p):
+                roots.append(p)
+        except OSError:
+            continue
+    return roots
 
 
 def detect(roots: list[str] | None = None, home: Path | None = None) -> list[tuple[str, str]]:

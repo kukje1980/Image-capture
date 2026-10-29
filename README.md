@@ -1,6 +1,6 @@
 # 안저 사진 뷰어 (Fundus Viewer)
 
-Windows 10 / 11용 안저카메라 전용 뷰어입니다. **감시 폴더에 사진 파일이 떨어지면** 파일에서
+Windows 10 / 11 · macOS 11 이상용 안저카메라 전용 뷰어입니다. **감시 폴더에 사진 파일이 떨어지면** 파일에서
 환자 ID·이름 등 환자 정보를 추출해 뷰어 데이터베이스로 가져오고, 2D로 보거나 **광각 사진을
 실제 안구처럼 입체(3D) 모델**로 돌려 볼 수 있습니다.
 
@@ -41,9 +41,23 @@ https://github.com/kukje1980/Image-capture/releases/download/fundus-viewer-lates
 — 로그인 없이 받아지며 항상 최신 빌드입니다. 압축을 풀고 `FundusViewer\FundusViewer.exe`를 실행합니다
 ("Windows의 PC 보호" 창이 뜨면 **추가 정보 → 실행**).
 
-**직접 빌드:** `build_windows.bat` 실행 → `dist\FundusViewer\FundusViewer.exe` (폴더째 복사해 사용).
-GitHub Actions(`fundus-viewer` 워크플로)가 커밋마다 Windows exe를 빌드해 위 주소(릴리스
-`fundus-viewer-latest`)에 올립니다.
+**내려받기 (Mac, macOS 11 이상):**
+Apple Silicon(M1 · M2 · M3 · M4 …)
+https://github.com/kukje1980/Image-capture/releases/download/fundus-viewer-latest/FundusViewer-mac-AppleSilicon.dmg ·
+Intel https://github.com/kukje1980/Image-capture/releases/download/fundus-viewer-latest/FundusViewer-mac-Intel.dmg
+— dmg를 열어 FundusViewer를 응용 프로그램 폴더로 끌어다 놓습니다. 애플 개발자 인증서 없이 임시(ad-hoc)
+서명만 한 앱이라 처음 열 때 경고가 나옵니다: macOS 15 이상은 **시스템 설정 → 개인정보 보호 및 보안 →
+그래도 열기**, 14 이하는 앱을 **Control+클릭 → 열기**. Mac에서는 Ctrl 대신 ⌘(⌘+클릭 = 두 번째 사진),
+트랙패드 두 손가락 스크롤·벌리기/오므리기로 확대·축소합니다. 설정은
+`~/Library/Application Support/FundusViewer`, 라이브러리는 `문서/FundusViewerLibrary`에 둡니다.
+장비 폴더는 홈 폴더와 연결된 볼륨(`/Volumes`의 USB 디스크·NAS)에서 찾고, 네트워크 공유(SMB·AFP·NFS)의
+폴더는 폴링으로 감시합니다.
+
+**직접 빌드:** Windows는 `build_windows.bat` 실행 → `dist\FundusViewer\FundusViewer.exe` (폴더째 복사해
+사용). Mac은 `./build_mac.sh` → `dist/FundusViewer.app`과 `dist/FundusViewer-mac-<AppleSilicon|Intel>.dmg`
+(빌드하는 Mac의 칩용). GitHub Actions(`fundus-viewer` 워크플로)가 커밋마다 Windows exe와 Mac 앱
+두 가지(Apple Silicon · Intel)를 빌드·시험해 위 주소(릴리스 `fundus-viewer-latest`)에 올립니다. Mac 빌드는
+번들 앱을 데모 사진으로 실제 실행해 보고, 3D 안구를 macOS OpenGL로 렌더링해 보는 테스트도 돌립니다.
 
 ## 사용 흐름
 

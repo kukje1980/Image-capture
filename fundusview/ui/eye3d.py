@@ -44,7 +44,7 @@ import math
 import threading
 
 import numpy as np
-from PySide6.QtCore import QPointF, Qt, Signal
+from PySide6.QtCore import QEvent, QPointF, Qt, Signal
 from PySide6.QtGui import QSurfaceFormat
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
@@ -1387,6 +1387,19 @@ class EyeView(QOpenGLWidget):
 
     def wheelEvent(self, e):
         self.zoom_at(e.angleDelta().y() / 120.0, e.position())
+
+    def pinch(self, value: float, pos: QPointF) -> None:
+        """Trackpad pinch (macOS): magnify by ``1 + value`` toward ``pos``
+        (one wheel notch magnifies by 1 / 0.88)."""
+        if value > -1.0:
+            self.zoom_at(math.log1p(value) / -math.log(0.88), pos)
+
+    def event(self, e):
+        if (e.type() == QEvent.Type.NativeGesture
+                and e.gestureType() == Qt.NativeGestureType.ZoomNativeGesture):
+            self.pinch(e.value(), e.position())
+            return True
+        return super().event(e)
 
     def mouseDoubleClickEvent(self, e):
         self.reset_view()

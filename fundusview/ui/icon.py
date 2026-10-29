@@ -35,3 +35,8 @@ def qicon():
 
 def write_ico(path) -> None:
     icon_image(256).save(path, sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
+
+
+def write_icns(path) -> None:
+    """macOS app icon (16 … 1024 px, Retina sizes included)."""
+    icon_image(1024).save(path, format="ICNS")

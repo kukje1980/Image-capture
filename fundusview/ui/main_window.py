@@ -34,6 +34,7 @@ from .disc_pair import DiscPairDialog
 from .eye3d import EyeView
 from .histogram import HistogramDialog
 from .image_view import TOOL_HINTS, TOOLS, ImageView, from_qimage
+from .keys import IS_MAC, keys
 from .multi_view import MultiView
 from .toolbars import CHECKABLE, COMMANDS, MENUS, PROCESSING, SliderPopup, icon_for
 
@@ -95,6 +96,7 @@ class MainWindow(QMainWindow):
     def _act(self, key: str, label: str, tip: str = "", icon: str | None = None, vk: str = "",
              checkable: bool = False) -> QAction:
         a = QAction(label, self)
+        tip = keys(tip)
         if icon:
             a.setIcon(icon_for(icon))
             a.setIconVisibleInMenu(False)
@@ -305,8 +307,8 @@ class MainWindow(QMainWindow):
         self.thumbs.setFixedHeight(182)
         self.thumbs.setMovement(QListWidget.Movement.Static)
         self.thumbs.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.thumbs.setToolTip("Ctrl+클릭: 두 번째 사진(②) 선택/해제 — 비교 · 디스크 2장 · "
-                               "오른쪽 클릭: 환자 지정·다시 분석")
+        self.thumbs.setToolTip(keys("Ctrl+클릭: 두 번째 사진(②) 선택/해제 — 비교 · 디스크 2장 · "
+                               "오른쪽 클릭: 환자 지정·다시 분석"))
         self.thumbs.viewport().installEventFilter(self)
         self.thumbs.currentItemChanged.connect(lambda cur, _: cur and self._show_image(cur.data(Qt.ItemDataRole.UserRole)))
         self.thumbs.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -546,7 +548,7 @@ class MainWindow(QMainWindow):
             tb.show()
 
     def _show_help(self) -> None:
-        QMessageBox.information(self, "마우스·단축키", (
+        QMessageBox.information(self, "마우스·단축키", keys(
             "<b>사진 보기</b><br>"
             "위/아래 드래그: 확대·축소 (위로 끌면 확대, 아래로 끌면 축소, 누른 곳 중심)<br>"
             "휠: 커서 위치 확대·축소 · 오른쪽 버튼 드래그: 어떤 도구에서든 확대·축소<br>"
@@ -567,8 +569,11 @@ class MainWindow(QMainWindow):
             "사진을 클릭하고 두 번째 사진을 Ctrl+클릭(②, 다시 Ctrl+클릭하면 해제) → 비교 탭<br>"
             "[디스크 2장]: 두 사진의 시신경 유두만 확대해 한 장으로 (OD 왼쪽 · OS 오른쪽, 보험 청구용)<br><br>"
             "<b>사진 가져오기</b><br>"
-            "자동입니다. 레티캠 등 장비 폴더와 [문서\\안저사진 가져오기] 폴더를 감시해 "
-            "새 사진의 환자 ID·이름을 읽고 환자별로 정리합니다."))
+            f"자동입니다. 레티캠 등 장비 폴더와 [문서{os.sep}안저사진 가져오기] 폴더를 감시해 "
+            "새 사진의 환자 ID·이름을 읽고 환자별로 정리합니다."
+            + ("<br><br><b>맥</b><br>⌘ = Ctrl · 트랙패드: 두 손가락 스크롤 또는 벌리기/오므리기로 확대·축소, "
+               "두 손가락 클릭 = 오른쪽 클릭 · PageUp/PageDown = fn+↑/fn+↓ · 지우기 = delete(⌫)"
+               if IS_MAC else "")))
 
     # =====================================================================
     # startup / watching
@@ -1147,7 +1152,7 @@ class MainWindow(QMainWindow):
             op = key[3:]
             self._ops.append(op)
             self._apply_adjust()
-            self.lbl_status.setText(f"{imaging.OP_LABELS.get(op, op)} 적용 (실행 취소: Ctrl+Z)")
+            self.lbl_status.setText(keys(f"{imaging.OP_LABELS.get(op, op)} 적용 (실행 취소: Ctrl+Z)"))
         elif key.startswith("adj:"):
             self._show_slider(key)
         elif key == "adj_reset":
@@ -1534,8 +1539,8 @@ class MainWindow(QMainWindow):
             return
         self.compare = self.db.get_image(image_id)
         self._mark_pair()
-        self.lbl_status.setText("두 사진을 골랐습니다 (② = 두 번째) — [디스크 2장]으로 시신경 유두 2장 만들기 · "
-                                "Ctrl+클릭으로 해제")
+        self.lbl_status.setText(keys("두 사진을 골랐습니다 (② = 두 번째) — [디스크 2장]으로 시신경 유두 2장 만들기 · "
+                                     "Ctrl+클릭으로 해제"))
         self.tabs.setCurrentIndex(3)
         self._fill_compare()
 
@@ -1543,7 +1548,7 @@ class MainWindow(QMainWindow):
         for view, lab, row in zip(self.cmp_views, self.cmp_labels, (self.current, self.compare)):
             if row is None:
                 view.set_rgb(None)
-                lab.setText("Ctrl+클릭으로 비교할 사진을 고르세요" if row is self.compare else "")
+                lab.setText(keys("Ctrl+클릭으로 비교할 사진을 고르세요") if row is self.compare else "")
                 continue
             rgb = self._load(row)
             view.set_rgb(self._adjusted(self._processed(row, rgb)) if rgb is not None else None)
@@ -1581,8 +1586,8 @@ class MainWindow(QMainWindow):
             second_id = self.compare["id"] if self.compare is not None else None
         second = self.db.get_image(second_id) if second_id is not None else None
         if second is None or second["id"] == first["id"]:
-            return None, ("사진 두 장을 고르세요.\n\n썸네일에서 한 장을 클릭한 뒤 두 번째 사진을 Ctrl+클릭하면 "
-                          "② 표시가 붙습니다. 그다음 [디스크 2장]을 누르세요.")
+            return None, keys("사진 두 장을 고르세요.\n\n썸네일에서 한 장을 클릭한 뒤 두 번째 사진을 Ctrl+클릭하면 "
+                              "② 표시가 붙습니다. 그다음 [디스크 2장]을 누르세요.")
         if first["patient_ref"] is None or second["patient_ref"] is None:
             return None, "미분류 사진은 쓸 수 없습니다.\n먼저 [정보 수정]으로 환자를 지정하세요."
         if first["patient_ref"] != second["patient_ref"]:

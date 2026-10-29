@@ -36,8 +36,6 @@ jobs:
 
   build-windows:
     runs-on: windows-latest
-    permissions:
-      contents: write   # publish the zip as a release (download without logging in)
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -52,18 +50,86 @@ jobs:
         with:
           name: FundusViewer-windows
           path: dist/FundusViewer
-      # Fixed download address for the newest build:
-      # https://github.com/<owner>/<repo>/releases/download/fundus-viewer-latest/FundusViewer-windows.zip
-      - name: Publish latest build
-        if: github.event_name != 'pull_request'
+      - name: Zip for the release
         shell: bash
+        run: (cd dist && 7z a -tzip ../FundusViewer-windows.zip FundusViewer > /dev/null)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: FundusViewer-windows.zip
+
+  build-mac:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15          # Apple Silicon (M1, M2, M3, M4 …)
+            label: AppleSilicon
+          - runner: macos-15-intel    # Intel Macs
+            label: Intel
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Tests, app bundle, ad-hoc signature and dmg
+        run: ./build_mac.sh
+      - name: Start the bundled app (demo photos)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          HOME_DIR="$RUNNER_TEMP/fv-home"
+          dist/FundusViewer.app/Contents/MacOS/FundusViewer --demo --home "$HOME_DIR" &
+          PID=$!
+          for i in $(seq 1 30); do
+            n=$(sqlite3 "$HOME_DIR/Library/fundus.db" "select count(*) from images" 2>/dev/null || echo 0)
+            [ "$n" -gt 0 ] && break
+            sleep 1
+          done
+          kill -0 $PID            # still running
+          kill $PID || true
+          echo "imported demo photos: $n"
+          [ "$n" -gt 0 ]
+      # render the 3D eye with Apple's OpenGL, which also checks that every
+      # shader compiles there. Reported but not yet required: whether the
+      # hosted Mac runners can create an OpenGL context is not established.
+      - name: 3D eye on macOS OpenGL
+        continue-on-error: true
+        env:
+          FUNDUSVIEW_REQUIRE_GL: "1"
+        run: python -m pytest -q -rs tests/test_eye3d_gl.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-mac-${{ matrix.label }}
+          path: dist/FundusViewer-mac-${{ matrix.label }}.dmg
+          if-no-files-found: error
+
+  # Fixed download addresses for the newest builds:
+  # https://github.com/<owner>/<repo>/releases/download/fundus-viewer-latest/FundusViewer-windows.zip
+  # https://github.com/<owner>/<repo>/releases/download/fundus-viewer-latest/FundusViewer-mac-AppleSilicon.dmg
+  # https://github.com/<owner>/<repo>/releases/download/fundus-viewer-latest/FundusViewer-mac-Intel.dmg
+  publish:
+    if: github.event_name != 'pull_request'
+    needs: [test-linux, build-windows, build-mac]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # publish the builds as a release (download without logging in)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: out
+      - name: Publish latest builds
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          (cd dist && 7z a -tzip ../FundusViewer-windows.zip FundusViewer > /dev/null)
+          ls -l out
           gh release delete fundus-viewer-latest --yes --cleanup-tag || true
-          gh release create fundus-viewer-latest FundusViewer-windows.zip \
+          gh release create fundus-viewer-latest out/* \
             --target "$GITHUB_SHA" --prerelease \
-            --title "안저 사진 뷰어 (Windows 최신 빌드)" \
+            --title "안저 사진 뷰어 (Windows · Mac 최신 빌드)" \
             --notes-file docs/release_notes.md

@@ -1,6 +1,7 @@
 """Persistent user settings (JSON).
 
-Stored per Windows user in ``%APPDATA%\\FundusViewer\\settings.json`` (or
+Stored per user in ``%APPDATA%\\FundusViewer\\settings.json`` on Windows,
+``~/Library/Application Support/FundusViewer`` on macOS (or
 ``~/.config/fundusviewer`` elsewhere). ``FUNDUSVIEW_HOME`` overrides the
 directory, which keeps tests and portable installs self-contained.
 """
@@ -8,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -27,6 +29,8 @@ def config_dir() -> Path:
     appdata = os.getenv("APPDATA")
     if appdata:  # Windows
         return Path(appdata) / APP_NAME
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / APP_NAME
     return Path.home() / ".config" / APP_NAME.lower()
 
 

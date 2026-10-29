@@ -27,7 +27,7 @@ from __future__ import annotations
 import math
 
 import numpy as np
-from PySide6.QtCore import QLineF, QPoint, QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QEvent, QLineF, QPoint, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import (
     QAction, QBrush, QColor, QCursor, QFont, QImage, QPainter, QPainterPath, QPen, QPixmap, QPolygonF, QTransform,
 )
@@ -377,6 +377,19 @@ class ImageView(QGraphicsView):
         self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() + d.x())
         self.verticalScrollBar().setValue(self.verticalScrollBar().value() + d.y())
         self.zoomChanged.emit(z)
+
+    def pinch(self, value: float, vpos: QPoint) -> None:
+        """One trackpad pinch step (macOS): ``value`` is the relative change
+        in scale (+0.05 = 5 % larger), centred on the fingers."""
+        self._zoom_at(self._zoom * (1.0 + value), vpos)
+
+    def viewportEvent(self, e):
+        # spread / pinch two fingers on a Mac trackpad = zoom where they are
+        if (e.type() == QEvent.Type.NativeGesture
+                and e.gestureType() == Qt.NativeGestureType.ZoomNativeGesture):
+            self.pinch(e.value(), e.position().toPoint())
+            return True
+        return super().viewportEvent(e)
 
     def rotate90(self, clockwise: bool = True) -> None:
         self._rot = (self._rot + (90 if clockwise else -90)) % 360
