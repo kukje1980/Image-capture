@@ -37,7 +37,7 @@ python run_viewer.py --demo
 수 있게 합니다. `--home D:\FundusViewer`를 주면 설정과 라이브러리를 그 폴더 하나에 둡니다(휴대용).
 
 **내려받기 (Windows 10 / 11):**
-https://github.com/kukje1980/ophthal-electrophysiology/releases/download/fundus-viewer-latest/FundusViewer-windows.zip
+https://github.com/kukje1980/Image-capture/releases/download/fundus-viewer-latest/FundusViewer-windows.zip
 — 로그인 없이 받아지며 항상 최신 빌드입니다. 압축을 풀고 `FundusViewer\FundusViewer.exe`를 실행합니다
 ("Windows의 PC 보호" 창이 뜨면 **추가 정보 → 실행**).
 

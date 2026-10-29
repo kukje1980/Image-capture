@@ -2,9 +2,7 @@ name: fundus-viewer
 
 on:
   push:
-    paths: ["fundus_viewer/**", ".github/workflows/fundus-viewer.yml"]
   pull_request:
-    paths: ["fundus_viewer/**", ".github/workflows/fundus-viewer.yml"]
   workflow_dispatch:
 
 # a newer push replaces the build (and the published download) of an older one
@@ -15,9 +13,6 @@ concurrency:
 jobs:
   test-linux:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: fundus_viewer
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -43,9 +38,6 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: write   # publish the zip as a release (download without logging in)
-    defaults:
-      run:
-        working-directory: fundus_viewer
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -59,7 +51,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: FundusViewer-windows
-          path: fundus_viewer/dist/FundusViewer
+          path: dist/FundusViewer
       # Fixed download address for the newest build:
       # https://github.com/<owner>/<repo>/releases/download/fundus-viewer-latest/FundusViewer-windows.zip
       - name: Publish latest build

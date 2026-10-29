@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# Build output (build_windows.bat / pyinstaller)
+build/
+dist/
+
+# Runtime data
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+logs/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+.env

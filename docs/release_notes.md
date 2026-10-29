@@ -17,4 +17,4 @@
 가상 데모 사진으로 먼저 써 보려면 명령 프롬프트에서 `FundusViewer.exe --demo` 로 실행합니다.
 
 ### 항상 최신 버전 주소
-https://github.com/kukje1980/ophthal-electrophysiology/releases/download/fundus-viewer-latest/FundusViewer-windows.zip
+https://github.com/kukje1980/Image-capture/releases/download/fundus-viewer-latest/FundusViewer-windows.zip
