@@ -57,11 +57,13 @@ class PatientsDAO:
         return self._row(r)
 
     def search(self, q: str, limit: int = 200) -> List[Patient]:
-        like = f"%{q}%"
+        # % _ 는 글자 그대로 찾는다 (차트번호 '1_2' 가 '102' 같은 다른 환자와 맞지 않게)
+        like = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
         with self._lock:
             rows = self._c.execute(
                 """SELECT * FROM patients
-                   WHERE name LIKE ? OR chart_no LIKE ? OR phone LIKE ? OR patient_id LIKE ?
+                   WHERE name LIKE ? ESCAPE '\\' OR chart_no LIKE ? ESCAPE '\\'
+                      OR phone LIKE ? ESCAPE '\\' OR patient_id LIKE ? ESCAPE '\\'
                    ORDER BY name LIMIT ?""",
                 (like, like, like, like, limit),
             ).fetchall()

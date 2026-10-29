@@ -35,6 +35,7 @@ class AppConfig:
     export_root: str = ""                    # 동시 저장 폴더 (비면 appdata/export)
     db_path: str = ""                        # SQLite 경로 (비면 appdata/slitlamp.db)
     photo_format: str = "png"                # png | jpg
+    video_quality: str = "normal"            # 동영상 화질: normal(일반 — 가볍고 파일 작음) | high(고화질) (app/capture/video_recorder.py)
     video_fallback_fourcc: str = "mp4v"      # ffmpeg 실패 시 cv2 폴백 코덱
     subfolder_template: str = "{chart_no}_{patient_id}/{date}"
     thumbnail_max_side: int = 120
@@ -107,7 +108,8 @@ class AppConfig:
         data: dict = {}
         if p.exists():
             try:
-                data = json.loads(p.read_text(encoding="utf-8"))
+                # utf-8-sig: 메모장 등이 붙이는 BOM 이 있어도 읽는다 (못 읽으면 저장 폴더가 기본값으로 바뀜)
+                data = json.loads(p.read_text(encoding="utf-8-sig"))
                 # v0.2 Pro 설정의 1~3 감도를 별도 필드로 이관한다.
                 old_sens = data.get("smart_peaking_sensitivity")
                 if "smart_mode" not in data and isinstance(old_sens, int) and 1 <= old_sens <= 3:
@@ -134,10 +136,29 @@ class AppConfig:
                     os.replace(p, p.with_name(p.name + ".broken"))
                 except OSError:
                     pass
+        cfg._fix_out_of_range()
         cfg._apply_defaults()
-        if _agent_edition() and "agent_enabled" not in (data if p.exists() else {}):
+        if _agent_edition() and "agent_enabled" not in (data if isinstance(data, dict) else {}):
             cfg.agent_enabled = True             # 에이전트 에디션은 처음부터 켜진 상태로 시작
         return cfg
+
+    def _fix_out_of_range(self) -> None:
+        """형식은 맞지만 쓸 수 없는 값(예: photo_format "exe", 크기 0)은 기본값으로 — 촬영이 전부 실패하지 않게."""
+        d = type(self)()
+        ok = {
+            "photo_format": self.photo_format.lower() in ("png", "jpg", "jpeg"),
+            "video_quality": self.video_quality in ("normal", "high"),
+            "thumbnail_max_side": self.thumbnail_max_side > 0,
+            "capture_width": self.capture_width > 0,
+            "capture_height": self.capture_height > 0,
+            "camera_index": self.camera_index >= 0,
+            "subfolder_template": _template_ok(self.subfolder_template),
+            "px_per_mm": self.px_per_mm >= 0,
+        }
+        for name, good in ok.items():
+            if not good:
+                log.warning("config %s 값을 쓸 수 없어 기본값으로: %r", name, getattr(self, name))
+                setattr(self, name, getattr(d, name))
 
     def _apply_defaults(self) -> None:
         base = paths.get_appdata_dir()
@@ -158,3 +179,13 @@ class AppConfig:
         tmp = p.with_name(p.name + ".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         os.replace(tmp, p)
+
+
+def _template_ok(tpl: str) -> bool:
+    if not tpl or not tpl.strip("/\\ ."):
+        return False
+    try:
+        tpl.format(chart_no="c", patient_id="p", name="n", date="d")
+    except (KeyError, IndexError, ValueError, AttributeError, TypeError):
+        return False
+    return True

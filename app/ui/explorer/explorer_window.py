@@ -93,6 +93,7 @@ class ExplorerWindow(QMainWindow):
         self._split = False                      # 분할 정지영상 (2 · 4 · 6 · 8 · 16칸)
         self._fullscreen = False
         self._rec_patient = None
+        self._rec_pending = None                   # 인코더가 아직 닫는 중인 녹화 (닫힌 뒤 DB·내보내기 기록)
         self._rec_exam_id = None
         self._rec_eye = "NA"
         self._rec_path = None
@@ -461,7 +462,7 @@ class ExplorerWindow(QMainWindow):
 
     def _update_rec_hud(self) -> None:
         if self.camera.recording and self.camera.rec_started:
-            s = int(time.time() - self.camera.rec_started)
+            s = int(time.monotonic() - self.camera.rec_started)
             self.video.set_hud(state="rec", rec_text=f"{s // 60:02d}:{s % 60:02d}")
 
     def _refresh_hud(self) -> None:
@@ -816,6 +817,10 @@ class ExplorerWindow(QMainWindow):
         if not self._require_patient():
             self._reset_record_button()
             return
+        if self._rec_pending is not None:          # 앞 녹화 파일을 아직 닫는 중 — 새 녹화와 섞이지 않게
+            self._status("앞 동영상 파일을 마무리하는 중입니다. 잠시 후 다시 누르세요.", 5000)
+            self._reset_record_button()
+            return
         path, ts = self.service.begin_video(self.patient, eye=self.eye)
         try:
             self.camera.start_recording(path)
@@ -840,19 +845,43 @@ class ExplorerWindow(QMainWindow):
         sounds.play("rec_stop")
         self._reset_record_button()
         self._refresh_hud()
+        self._rec_pending = (self._rec_path, self._rec_patient, self._rec_eye, self._rec_ts, duration,
+                             first, self._rec_exam_id)
+        if self.camera.recorder.is_finalizing:
+            # 인코더가 아직 파일을 닫는 중: 지금 복사·기록하면 잘린 mp4 가 내보내기에 남는다 → 닫힌 뒤 기록
+            self._status("동영상 파일을 마무리하는 중…")
+            self._rec_waited = 0.0
+            QTimer.singleShot(200, self._poll_rec_finalized)
+            return
+        self._finish_recording()
+
+    def _poll_rec_finalized(self) -> None:
+        self._rec_waited += 0.2
+        if self.camera.recorder.is_finalizing and self._rec_waited < 120:
+            QTimer.singleShot(200, self._poll_rec_finalized)
+            return
+        self._finish_recording()
+
+    def _finish_recording(self) -> None:
+        pending, self._rec_pending = self._rec_pending, None
+        if pending is None:
+            return
+        path, patient, eye, ts, duration, first, exam_id = pending
+        count = self.camera.recorder.frame_count
+        if not self.camera.recorder.is_finalizing:
+            _, count, duration = self.camera.recorder.result()   # 파일을 다 닫은 뒤의 확정값
         if count == 0:
             try:
-                os.remove(self._rec_path)
+                os.remove(path)
             except OSError:
                 pass
             QMessageBox.warning(self, "녹화 실패", "녹화된 영상이 없습니다 (카메라 또는 인코더 오류).")
             return
         try:
-            cap = self.service.finish_video(self._rec_path, self._rec_patient, self._rec_eye, self._rec_ts,
-                                            duration, thumb_frame=first, exam_id=self._rec_exam_id)
+            cap = self.service.finish_video(path, patient, eye, ts, duration, thumb_frame=first, exam_id=exam_id)
         except Exception as e:  # noqa: BLE001
             log.exception("finish_video failed")
-            QMessageBox.warning(self, "오류", f"동영상 저장 실패: {e}")
+            QMessageBox.warning(self, "오류", f"동영상 저장 실패: {e}\n파일: {path}")
             return
         if self.patient is not None and self.patient.id == cap.patient_id:
             self._after_new_capture(cap)
@@ -1210,6 +1239,9 @@ class ExplorerWindow(QMainWindow):
         try:
             if self.camera.recording:
                 self.stop_recording()
+            if self._rec_pending is not None:          # 닫는 중인 녹화 파일은 끝까지 기다려 기록
+                self.camera.recorder.wait_finalized(60)
+                self._finish_recording()
         except Exception:  # noqa: BLE001
             log.warning("stop recording on close failed", exc_info=True)
         self.camera.stop()

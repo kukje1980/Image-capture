@@ -112,3 +112,25 @@ def test_tabs_in_toolbar_and_reference_tab_wired():
     regions = re.findall(r'<option value="(\w+)"', HTML[HTML.index('id="ref-region"'):HTML.index("</select>", HTML.index('id="ref-region"'))])
     assert set(regions) == {"eyelid", "conjunctiva", "cornea", "ac", "iris", "lens", "meibo", "other"}
     assert "compareImages" in PRO_JS and "src.ref" in PRO_JS                # 참조 샘플은 환자 영상으로 저장하지 않음
+
+
+def test_video_quality_modes_wired():
+    """동영상 화질 일반 / 고화질 — 설정 칸, 저장, 녹화 비트레이트."""
+    app_js = (WEB / "static/js/app.js").read_text(encoding="utf-8")
+    sel = HTML[HTML.index('id="vq-select"'):HTML.index("</select>", HTML.index('id="vq-select"'))]
+    assert re.findall(r'<option value="(\w+)"', sel) == ["normal", "high"]
+    assert "prefSet('slitlamp-vq'" in app_js and "videoBitsPerSecond: recordBitrate()" in app_js
+    assert "VQ_BPP = { normal: 0.08, high: 0.2 }" in app_js
+
+
+def test_capture_safety_guards_wired():
+    """촬영본 보호 장치 (실제 브라우저 검증은 tests/e2e_extreme.js)."""
+    app_js = (WEB / "static/js/app.js").read_text(encoding="utf-8")
+    # 녹화 중·저장 중 창 닫기/새로고침 경고
+    assert "addEventListener('beforeunload'" in app_js and "state.saving > 0" in app_js
+    # 카메라 끊김 → 촬영 막기 + 녹화 화면 정리
+    assert "addEventListener('ended'" in app_js and "endRecordingUi()" in app_js
+    # 드롭다운으로 환자를 바꿔도 표와 같은 경로(녹화 종료) 를 탄다
+    assert "if (id) { selectPatient(id); return; }" in app_js
+    # 서버·폴더 모두 실패하면 내려받기로 보존
+    assert "a.download = filename" in app_js

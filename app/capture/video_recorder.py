@@ -9,7 +9,9 @@ cv2.VideoWriter(mp4v)로 폴백한다. 인코딩은 자체 스레드 + 바운디
 
 안전성: 인코더 스레드는 정지 요청(_stop_evt)을 직접 확인하므로 큐가 가득 차 종료 신호가
 들어가지 못해도 남은 프레임을 다 쓴 뒤 반드시 파일을 닫는다. stop() 이 돌아온 뒤에도
-is_finalizing 이 True 면 파일이 아직 닫히지 않은 것이므로, 호출자는 복사·DB 기록을 미뤄야 한다.
+is_finalizing 이 True 면 파일이 아직 닫히지 않은 것이므로, 호출자는 복사·DB 기록을 미뤄야 한다
+(확정된 프레임 수·길이는 마무리 뒤 result()).
+경과 시간은 time.monotonic() 으로 잰다 — 녹화 중 윈도우 시간 동기화로 시계가 바뀌어도 길이가 틀어지지 않는다.
 """
 from __future__ import annotations
 
@@ -35,8 +37,31 @@ except ImportError:
 log = logging.getLogger(__name__)
 
 _QUEUE_MAX = 120
+# 큐 메모리 상한 — 4K 프레임 하나가 약 25MB 라 120장이면 3GB (인코더가 밀리면 메모리 부족으로 꺼질 수 있음)
+_QUEUE_MAX_BYTES = 800 * 1024 * 1024
 _MAX_REPEAT = 8          # 한 번에 채워 넣을 최대 반복 프레임 수 (긴 멈춤 뒤 폭주 방지)
+_STOP_WAIT = 10.0        # stop() 이 인코더 마무리를 기다리는 최대 시간 (그 뒤엔 백그라운드에서 마무리)
 _SENTINEL = object()
+
+
+# 동영상 화질 모드 (설정 → 동영상 화질). 두 모드 모두 실시간(30fps)으로 녹화되도록 해상도에 맞는
+# 인코더 속도를 쓰고, 화질(CRF)만 다르다. 측정(4코어 2.1GHz): 1080p veryfast ≈ 30fps, 4K ultrafast ≈ 29fps
+# (보통 진료실 PC 는 이보다 2~4배 빠름). 예전 설정(medium, CRF 10)은 1080p 6fps · 4K 2fps 라 끊겼다.
+VIDEO_QUALITIES = {"normal": "일반", "high": "고화질"}
+_CRF = {"normal": 23, "high": 18}        # 23 = x264 표준 화질, 18 = 눈으로 원본과 구분이 어려운 수준
+
+
+def encoder_options(quality: str, size: Tuple[int, int]) -> list:
+    """화질 모드·해상도 → libx264 옵션."""
+    crf = _CRF.get(quality, _CRF["normal"])
+    preset = "veryfast" if int(size[0]) * int(size[1]) <= 1920 * 1080 * 1.2 else "ultrafast"   # 4K 급은 가장 빠르게
+    return ["-preset", preset, "-crf", str(crf)]
+
+
+def queue_len(size: Tuple[int, int]) -> int:
+    """인코더 대기 큐 길이 — 1080p 는 120장(약 0.75GB), 4K 는 메모리 상한에 맞춰 약 32장."""
+    frame_bytes = max(1, int(size[0]) * int(size[1]) * 3)
+    return max(8, min(_QUEUE_MAX, _QUEUE_MAX_BYTES // frame_bytes))
 
 
 class VideoRecorder(QObject):
@@ -56,8 +81,10 @@ class VideoRecorder(QObject):
         self._count = 0
         self._queued = 0
         self._start_ts = 0.0
+        self._stop_ts = 0.0
         self._recording = False
         self._failed = False
+        self._quality = "normal"
         self._stop_evt = threading.Event()
 
     @property
@@ -74,6 +101,13 @@ class VideoRecorder(QObject):
     def frame_count(self) -> int:
         return self._count
 
+    def result(self) -> Tuple[str, int, int]:
+        """(경로, 기록한 프레임 수, 길이 ms) — 마무리(is_finalizing=False) 뒤에 확정값."""
+        duration_ms = int(max(0.0, self._stop_ts - self._start_ts) * 1000)
+        if self._failed:                         # 실패한 녹화는 실제로 쓴 길이만큼만
+            duration_ms = int(self._count / self._fps * 1000)
+        return (self._path or "", self._count, duration_ms)
+
     def wait_finalized(self, timeout: float) -> bool:
         """인코더 스레드가 파일을 닫을 때까지 기다린다. 끝났으면 True."""
         t = self._thread
@@ -82,7 +116,7 @@ class VideoRecorder(QObject):
         t.join(timeout=timeout)
         return not t.is_alive()
 
-    def start(self, path, fps: float, size: Tuple[int, int]) -> None:
+    def start(self, path, fps: float, size: Tuple[int, int], quality: str = "normal") -> None:
         if self._recording:
             return
         if self.is_finalizing:                   # 직전 녹화 파일을 아직 닫는 중이면 먼저 끝낸다
@@ -95,22 +129,24 @@ class VideoRecorder(QObject):
         self._queued = 0
         self._failed = False
         self._stop_evt.clear()
+        self._quality = quality if quality in VIDEO_QUALITIES else "normal"
         self._open_writer()
-        self._queue = queue.Queue(maxsize=_QUEUE_MAX)
+        self._queue = queue.Queue(maxsize=queue_len(self._size))
         self._recording = True
-        self._start_ts = time.time()
+        self._start_ts = self._stop_ts = time.monotonic()
         self._thread = threading.Thread(target=self._worker, daemon=True)
         self._thread.start()
-        log.info("recording started: %s (%s, %sfps, %s)",
-                 self._path, self._backend, self._fps, self._size)
+        log.info("recording started: %s (%s, %sfps, %s, 화질=%s)",
+                 self._path, self._backend, self._fps, self._size, self._quality)
 
     def _open_writer(self) -> None:
         if imageio is not None:
             try:
                 self._writer = imageio.get_writer(
                     self._path, format="FFMPEG", mode="I", fps=self._fps,
-                    codec="libx264", quality=8, pixelformat="yuv420p",
+                    codec="libx264", quality=None, pixelformat="yuv420p",
                     macro_block_size=None, ffmpeg_log_level="error",
+                    ffmpeg_params=encoder_options(self._quality, self._size),
                 )
                 self._backend = "ffmpeg"
                 return
@@ -134,7 +170,7 @@ class VideoRecorder(QObject):
         if (w, h) != self._size:                 # 카메라·해상도가 바뀐 프레임은 이 파일에 넣지 않는다
             return
         # 실제 경과 시간에 해당하는 프레임 번호까지 채운다
-        target = int((time.time() - self._start_ts) * self._fps) + 1
+        target = int((time.monotonic() - self._start_ts) * self._fps) + 1
         need = min(target - self._queued, _MAX_REPEAT)
         for _ in range(need):
             try:
@@ -215,23 +251,20 @@ class VideoRecorder(QObject):
         if not self._recording:
             return (self._path or "", 0, 0)
         self._recording = False
-        stop_ts = time.time()                    # 길이는 멈춘 순간 기준 (인코더가 남은 프레임을 쓰는 시간은 빼고)
+        self._stop_ts = time.monotonic()         # 길이는 멈춘 순간 기준 (인코더가 남은 프레임을 쓰는 시간은 빼고)
         self._stop_evt.set()
         try:
-            self._queue.put(_SENTINEL, timeout=2)
-        except Exception:  # noqa: BLE001
+            self._queue.put_nowait(_SENTINEL)
+        except queue.Full:
             pass                                 # 큐가 가득 참 → 워커가 _stop_evt 를 보고 끝낸다
         if self._thread is not None:
-            self._thread.join(timeout=10)
+            self._thread.join(timeout=_STOP_WAIT)
             if self._thread.is_alive():
                 log.warning("인코더가 아직 쓰는 중 — 끝나면 스레드가 파일을 닫습니다 "
                             "(is_finalizing=True)")
         else:
             self._close_writer()
-        duration_ms = int((stop_ts - self._start_ts) * 1000)
-        if self._failed:                         # 실패한 녹화는 실제로 쓴 길이만큼만
-            duration_ms = int(self._count / self._fps * 1000)
-        path, count = self._path or "", self._count
+        path, count, duration_ms = self.result()
         log.info("recording stopped: %s frames=%s duration=%sms", path, count, duration_ms)
         self.finished.emit(path, count, duration_ms)
         return (path, count, duration_ms)

@@ -524,7 +524,7 @@ class MainWindow(QMainWindow):
 
     def _update_rec_hud(self) -> None:
         if self._recording and self._rec_started:
-            s = int(time.time() - self._rec_started)
+            s = int(time.monotonic() - self._rec_started)
             self.video_view.set_hud(state="rec", rec_text=f"{s // 60:02d}:{s % 60:02d}")
 
     def _refresh_hud_state(self) -> None:
@@ -730,7 +730,7 @@ class MainWindow(QMainWindow):
         self.events.log("usb_eye", eye=code, recording=self._recording, frozen=self._single_frozen)
         msg = f"슬릿램프 좌우 신호: {code} ({'우안' if code == 'OD' else '좌안'})"
         if self._recording and self._video_eye and code != self._video_eye:
-            s = int(time.time() - self._rec_started)
+            s = int(time.monotonic() - self._rec_started)
             if not self._video_switches or self._video_switches[-1][1] != code:
                 self._video_switches.append((s, code))
             msg += f" · 녹화 중 전환 — 영상은 시작 눈 {self._video_eye} 로 저장하고 전환 시각을 코멘트에 적습니다"
@@ -747,7 +747,7 @@ class MainWindow(QMainWindow):
         if self._single_frozen:
             self._freeze_eye = code
         if self._recording and self._video_eye and code != self._video_eye:
-            s = int(time.time() - self._rec_started)
+            s = int(time.monotonic() - self._rec_started)
             if not self._video_switches or self._video_switches[-1][1] != code:
                 self._video_switches.append((s, code))
         self._refresh_eye_status()
@@ -1009,7 +1009,7 @@ class MainWindow(QMainWindow):
 
     def _on_frame_ready(self, frame) -> None:
         self._last_frame = frame
-        self._frame_times.append(time.time())
+        self._frame_times.append(time.monotonic())
         if self._recording:
             self.recorder.feed(frame)
             if self._first_video_frame is None:
@@ -1042,6 +1042,11 @@ class MainWindow(QMainWindow):
 
     # ---- 환자 ----
     def _on_patient_changed(self, patient) -> None:
+        rec = self._video_patient
+        if self._recording and (patient is None or rec is None or patient.id != rec.id):
+            # 다른 환자로 바꾸면 녹화를 끝내 앞 환자에게 저장 — 새 환자의 눈이 앞 환자 영상에 섞이지 않게 (웹과 같음)
+            self._stop_recording()
+            self.statusBar().showMessage("환자를 바꿔 녹화를 끝내고 이전 환자에게 저장했습니다.", 8000)
         self._current_patient = patient
         self.control_bar.set_capture_enabled(patient is not None)
         self.btn_edit_patient.setEnabled(patient is not None)
@@ -1906,13 +1911,15 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "확인", "환자를 먼저 선택하세요.")
             self.control_bar.reset_record_button()
             return
+        if self._pending_video is not None and not self.recorder.is_finalizing:
+            self._finalize_video()                     # 앞 녹화를 먼저 기록 (새 녹화의 값과 섞이지 않게)
         eye = self.control_bar.current_eye()
         path, ts = self.service.begin_video(self._current_patient, eye=eye)
         size = self._frame_size
         if self._last_frame is not None:
             size = (self._last_frame.shape[1], self._last_frame.shape[0])
         try:
-            self.recorder.start(path, self._estimate_fps(), size)
+            self.recorder.start(path, self._estimate_fps(), size, quality=self.config.video_quality)
         except Exception as e:  # noqa: BLE001
             log.exception("recorder start failed")
             QMessageBox.warning(self, "오류", f"녹화 시작 실패: {e}")
@@ -1925,32 +1932,23 @@ class MainWindow(QMainWindow):
         self._video_ts = ts
         self._video_eye = eye                          # 영상 전체는 시작한 눈으로 저장 (녹화 중 전환은 코멘트에 기록)
         self._video_switches = []
-        self._video_patient = self._current_patient   # 녹화 중 환자를 바꿔도 시작한 환자에게 저장
+        self._video_patient = self._current_patient   # 시작한 환자에게 저장 (환자를 바꾸면 녹화를 끝냄)
         self._first_video_frame = None
-        self._rec_started = time.time()
+        self._rec_started = time.monotonic()
         self._rec_timer.start()
         self._update_rec_hud()
-        self.control_bar.set_status("녹화 중...")
+        q = "고화질" if self.config.video_quality == "high" else "일반 화질"
+        self.control_bar.set_status(f"녹화 중... ({q})")
 
     def _stop_recording(self) -> None:
         if not self._recording:
             return
         self._recording = False
         sounds.play("rec_stop")
-        self.events.log("record_stop", seconds=round(time.time() - self._rec_started, 1))
+        self.events.log("record_stop", seconds=round(time.monotonic() - self._rec_started, 1))
         self._rec_timer.stop()
         self._refresh_hud_state()
         _, count, duration = self.recorder.stop()
-        if count == 0:
-            # 프레임이 하나도 기록되지 않은 녹화(인코더 오류·카메라 끊김)는 DB 에 남기지 않는다
-            try:
-                os.remove(self._video_path)
-            except OSError:
-                pass
-            QMessageBox.warning(self, "녹화 실패", "녹화된 영상이 없습니다 (카메라 또는 인코더 오류).")
-            self.control_bar.set_status("녹화 실패")
-            self.control_bar.reset_record_button()
-            return
         self._pending_video = (self._video_path, self._video_patient, self._video_eye,
                                self._video_ts, duration, self._first_video_frame, self._video_note())
         if self.recorder.is_finalizing:
@@ -1978,6 +1976,20 @@ class MainWindow(QMainWindow):
         if pending is None:
             return
         path, patient, eye, ts, duration, thumb, note = pending
+        count = self.recorder.frame_count
+        if not self.recorder.is_finalizing:
+            _, count, duration = self.recorder.result()      # 파일을 다 닫은 뒤의 확정값
+        if count == 0:
+            # 프레임이 하나도 기록되지 않은 녹화(인코더 오류·카메라 끊김)는 DB 에 남기지 않는다
+            # (프레임 수는 파일을 다 닫은 뒤에 판단 — 아직 쓰는 중인 파일을 지우지 않게)
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+            QMessageBox.warning(self, "녹화 실패", "녹화된 영상이 없습니다 (카메라 또는 인코더 오류).")
+            self.control_bar.set_status("녹화 실패")
+            self.control_bar.reset_record_button()
+            return
         try:
             cap = self.service.finish_video(path, patient, eye, ts, duration, thumb_frame=thumb, note=note)
             self.thumbnail_panel.add_capture(cap)

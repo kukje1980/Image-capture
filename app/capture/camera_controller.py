@@ -125,7 +125,7 @@ class CameraController(QObject):
 
     def _on_frame(self, frame) -> None:
         self.last_frame = frame
-        self._times.append(time.time())
+        self._times.append(time.monotonic())
         if self.recorder.is_recording:
             self.recorder.feed(frame)
             self._rec_frames += 1
@@ -152,8 +152,8 @@ class CameraController(QObject):
             size = (self.last_frame.shape[1], self.last_frame.shape[0])
         self.first_rec_frame = None
         self._rec_frames = 0
-        self.recorder.start(path, self.estimate_fps(), size)
-        self.rec_started = time.time()
+        self.recorder.start(path, self.estimate_fps(), size, quality=self.config.video_quality)
+        self.rec_started = time.monotonic()
 
     def stop_recording(self) -> tuple[int, int]:
         """(기록된 프레임 수, 길이 ms)."""

@@ -8,6 +8,7 @@ export 실패는 기본 저장/DB를 막지 않으며 export_path=NULL로 기록
 - 이미지는 메모리에서 인코딩한 뒤 임시 파일에 쓰고 os.replace 로 바꿔 넣는다
   → 저장 중 꺼져도 반쯤 쓰인 파일이 남지 않고, Windows 한글 경로(cv2.imwrite 가 못 쓰는)도 안전하다.
 - 같은 밀리초에 두 번 저장되어도 (4분할 저장 등) 기존 파일을 덮어쓰지 않고 새 이름을 쓴다.
+  이름은 새 파일로 먼저 잡아 두므로('x' 모드) 여러 스레드가 동시에 저장해도 겹치지 않는다.
 - 저장 전에 디스크 여유 공간을 확인해 공간 부족을 미리 알린다.
 """
 from __future__ import annotations
@@ -64,6 +65,18 @@ def ensure_free_space(path, min_mb: float, what: str = "저장") -> None:
                             f"최소 {min_mb:.0f}MB 필요).\n{path}")
 
 
+def reserve_unique(path: Path) -> Path:
+    """아직 없는 이름(path, _1, _2 …)을 빈 새 파일로 잡아 두고 돌려준다 — 원자적이라
+    여러 스레드가 같은 순간 같은 이름을 골라도 서로 덮어쓰지 않는다."""
+    for cand in (path, *(path.with_name(f"{path.stem}_{i}{path.suffix}") for i in range(1, 1000))):
+        try:
+            with open(cand, "xb"):
+                return cand
+        except FileExistsError:
+            continue
+    raise RuntimeError(f"저장 파일 이름을 만들 수 없습니다: {path}")
+
+
 def unique_path(path: Path) -> Path:
     """이미 있는 파일이면 _1, _2 … 를 붙여 덮어쓰지 않는 경로를 돌려준다."""
     if not path.exists():
@@ -89,12 +102,18 @@ class CaptureService:
             raise ValueError("환자가 선택되지 않았습니다.")
         ts = datetime.now()
         ext = (self.config.photo_format or "png").lower()
+        if ext not in ("png", "jpg", "jpeg"):
+            ext = "png"
         primary_dir = self._patient_dir(self.config.media_root, patient, ts)
         paths.ensure_dir(primary_dir)
         ensure_free_space(primary_dir, MIN_FREE_MB_PHOTO, "사진 저장")
-        primary_path = unique_path(primary_dir / self._filename(ts, eye, ext))
+        primary_path = reserve_unique(primary_dir / self._filename(ts, eye, ext))
         fname = primary_path.name
-        self._imwrite(primary_path, frame, ext)
+        try:
+            self._imwrite(primary_path, frame, ext)
+        except BaseException:
+            primary_path.unlink(missing_ok=True)     # 잡아 둔 빈 파일을 남기지 않는다
+            raise
 
         thumb_path = self._write_thumbnail(primary_dir, primary_path.stem, frame)
         export_path = self._export(primary_path, patient, ts, fname)
@@ -207,7 +226,7 @@ class CaptureService:
 
     @staticmethod
     def _filename(ts: datetime, eye: str, ext: str) -> str:
-        e = eye or "NA"
+        e = paths.sanitize(eye or "NA", 8)
         return f"{ts:%H%M%S}_{ts.microsecond // 1000:03d}_{e}.{ext}"
 
     def _write_thumbnail(self, parent_dir: Path, stem: str, frame) -> Optional[Path]:
@@ -226,9 +245,7 @@ class CaptureService:
         try:
             export_dir = self._patient_dir(self.config.export_root, patient, ts)
             paths.ensure_dir(export_dir)
-            export_path = export_dir / fname
-            shutil.copy2(primary_path, export_path)
-            return export_path
+            return _copy_new(primary_path, export_dir / fname)
         except Exception:  # noqa: BLE001
             log.warning("export 복사 실패 (export_path=NULL로 기록)", exc_info=True)
             return None
@@ -250,10 +267,30 @@ class CaptureService:
             import io
 
             import imageio
+            rgb = frame
+            if frame.ndim == 3 and frame.shape[2] >= 3:  # BGR(A) → RGB(A) (흑백은 그대로 — 좌우가 뒤집히지 않게)
+                rgb = frame[..., [2, 1, 0, *range(3, frame.shape[2])]]
             bio = io.BytesIO()
-            imageio.imwrite(bio, np.ascontiguousarray(frame[..., ::-1]), extension=f".{ext}")
+            imageio.imwrite(bio, np.ascontiguousarray(rgb), extension=f".{ext}")
             data = bio.getvalue()
         atomic_write_bytes(path, data)
+
+
+def _copy_new(src: Path, dest: Path) -> Path:
+    """dest(또는 _1, _2 …) 새 파일로 복사 — 기존 사본을 덮어쓰지 않고, 복사가 끊기면(NAS 끊김)
+    반쯤 복사된 파일을 남기지 않는다."""
+    dest = reserve_unique(dest)
+    try:
+        with open(src, "rb") as inp, open(dest, "wb") as out:
+            shutil.copyfileobj(inp, out, 1024 * 1024)
+    except BaseException:
+        dest.unlink(missing_ok=True)
+        raise
+    try:
+        shutil.copystat(src, dest)               # 촬영 시각 보존 — 일부 NAS 는 거부하지만 사본 자체는 유효
+    except OSError:
+        pass
+    return dest
 
 
 def atomic_write_bytes(path: Path, data: bytes) -> None:
