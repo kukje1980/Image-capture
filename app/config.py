@@ -96,6 +96,7 @@ class AppConfig:
     camera_props: dict = field(default_factory=dict)  # 카메라 속성 {노출·게인·WB…} (app/capture/camera_props.py)
     report_per_page: int = 2                 # 보고서 한 쪽 영상 수 (1 / 2 / 4)
     slideshow_seconds: int = 3               # 슬라이드쇼 넘김 간격(초)
+    bundled_samples: str = ""               # 설치판 샘플 사진을 등록한 묶음 이름 (한 번만 등록)
 
     @classmethod
     def config_path(cls) -> Path:
