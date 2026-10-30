@@ -134,3 +134,14 @@ def test_capture_safety_guards_wired():
     assert "if (id) { selectPatient(id); return; }" in app_js
     # 서버·폴더 모두 실패하면 내려받기로 보존
     assert "a.download = filename" in app_js
+
+
+def test_delete_selected_wired():
+    """선택 사진 삭제: Pro 툴바 '삭제' 버튼 + Delete 키, 보기 창 '삭제' 버튼."""
+    app_js = (WEB / "static/js/app.js").read_text(encoding="utf-8")
+    assert 'id="pro-delete"' in HTML and 'id="viewer-delete"' in HTML
+    assert "function deleteSelected" in PRO_JS and "function deleteTargets" in PRO_JS
+    assert "e.key === 'Delete'" in PRO_JS                          # Pro 화면 Delete 키
+    assert "method: 'DELETE'" in PRO_JS and "method: 'DELETE'" in app_js
+    assert "slit:captures" in PRO_JS and "slit:captures" in app_js  # 기본 화면 삭제 → Pro 목록 갱신
+    assert "function deleteViewed" in app_js

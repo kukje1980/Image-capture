@@ -2006,7 +2006,24 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"녹화 오류로 녹화를 멈췄습니다: {msg}", 10000)
 
     def _on_thumbnail_clicked(self, capture) -> None:
-        ImageViewerDialog(capture, self).exec()
+        if ImageViewerDialog(capture, self).exec() == ImageViewerDialog.Deleted:
+            self._delete_capture(capture)
+
+    def _delete_capture(self, capture) -> bool:
+        """썸네일 보기에서 확인한 영상 한 건을 삭제하고 양쪽 화면 목록을 갱신한다."""
+        try:
+            ok = self.service.delete_capture(capture)
+        except Exception as e:  # noqa: BLE001
+            log.exception("capture delete failed")
+            QMessageBox.warning(self, "오류", f"영상 삭제 실패: {e}")
+            return False
+        p = self._current_patient
+        self.thumbnail_panel.set_patient(p.id if p else None)
+        self.pro.reload(select_last=False)
+        if hasattr(self, "exam_screen"):
+            self.exam_screen.reload()
+        self.control_bar.set_status("영상 삭제됨" if ok else "이미 삭제된 영상입니다")
+        return ok
 
     def _toggle_theme(self) -> None:
         self.config.theme = "dark" if self.config.theme != "dark" else "light"

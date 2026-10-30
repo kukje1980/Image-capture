@@ -271,9 +271,14 @@ def build_qss(mode: str = "dark") -> str:
     QFrame#ProToolbar {{ background: {c['panel']}; border: 1px solid {c['rule']}; border-radius: 12px; }}
     QFrame#ProSep {{ background: {c['rule']}; margin: 6px 4px; }}
     QFrame#ProSeg {{ background: {c['bg']}; border: 1px solid {c['rule']}; border-radius: 9px; }}
-    QPushButton#ProBtn, QPushButton#ProCapture, QPushButton#ProGhost, QPushButton#ProPrimary, QPushButton#ProSegBtn {{
+    QPushButton#ProBtn, QPushButton#ProCapture, QPushButton#ProGhost, QPushButton#ProPrimary,
+    QPushButton#ProSegBtn, QPushButton#ProDanger {{
         padding: 6px 11px; font-weight: 600; font-size: 12px; border-radius: 7px;
     }}
+    QPushButton#ProDanger {{ background: transparent; border-color: transparent;
+                             color: {c['record']}; }}
+    QPushButton#ProDanger:hover {{ background: {c['record_soft']}; color: {c['record_hover']}; }}
+    QPushButton#ProDanger:disabled {{ color: {c['disabled']}; }}
     QPushButton#ProSegBtn {{ background: transparent; border: 1px solid transparent; color: {c['ink_soft']}; }}
     QPushButton#ProSegBtn:hover {{ background: {c['panel2']}; color: {c['ink']}; }}
     QPushButton#ProSegBtn:checked, QPushButton#ProBtn:checked {{ background: {c['accent']}; color: {c['accent_ink']}; border-color: {c['accent']}; }}

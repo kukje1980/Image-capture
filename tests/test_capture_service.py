@@ -62,3 +62,29 @@ def test_jpg_format(app_env):
     cap = service.save_photo(_frame(), patient, eye="NA")
     assert cap.file_path.endswith(".jpg")
     assert Path(cap.file_path).exists()
+
+
+def test_delete_capture_removes_record_and_files(app_env):
+    config, db = app_env
+    service = CaptureService(db, config)
+    patient = _patient(db)
+    cap = service.save_photo(_frame(), patient, eye="OD")
+    paths = [Path(cap.file_path), Path(cap.thumbnail_path)]
+    assert all(p.exists() for p in paths) and Path(cap.export_path).exists()
+
+    assert service.delete_capture(cap) is True
+    assert db.captures.get(cap.id) is None
+    assert not any(p.exists() for p in paths)              # 기본 저장·썸네일 삭제
+    assert Path(cap.export_path).exists()                  # 지정 폴더 사본은 백업으로 남김
+
+    assert service.delete_capture(cap) is False            # 이미 지운 영상은 False (예외 없음)
+
+
+def test_delete_captures_counts_only_existing(app_env):
+    config, db = app_env
+    service = CaptureService(db, config)
+    patient = _patient(db)
+    a = service.save_photo(_frame(), patient, eye="OD")
+    b = service.save_photo(_frame(), patient, eye="OS")
+    assert service.delete_captures([a, b, a]) == 2
+    assert db.captures.list_by_patient(patient.id) == []

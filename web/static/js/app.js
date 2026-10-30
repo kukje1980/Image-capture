@@ -18,6 +18,7 @@
     recordStart: 0,
     recordTimer: null,
     editingPatientId: null,
+    viewing: null,       // 보기 창에 열어 둔 영상 (삭제 대상)
     statusResetTimer: null,
     dirHandle: null,     // File System Access API 디렉토리 핸들
     // 4분할
@@ -180,8 +181,10 @@
     });
 
     $('viewer-close').addEventListener('click', () => $('viewer-dialog').close());
-    $('viewer-dialog').addEventListener('close', () => { $('viewer-body').innerHTML = ''; });   // 닫으면 동영상 재생·내려받기 중지
+    $('viewer-dialog').addEventListener('close', () => { $('viewer-body').innerHTML = ''; state.viewing = null; });   // 닫으면 동영상 재생·내려받기 중지
     $('viewer-close-2').addEventListener('click', () => $('viewer-dialog').close());
+    $('viewer-delete').addEventListener('click', deleteViewed);
+    $('viewer-dialog').addEventListener('keydown', (e) => { if (e.key === 'Delete') { e.preventDefault(); deleteViewed(); } });
 
     // 단축키 (사용자 지정 — 단축키 설정 창)
     document.addEventListener('keydown', onShortcutKey);
@@ -1253,7 +1256,30 @@
     const dl = $('viewer-download');
     dl.href = c.url;
     dl.download = c.filename || (c.url.split('/').pop()) || 'capture';
+    state.viewing = c;
     dlg.showModal();
+  }
+
+  /** 보기 창에서 '삭제' — 열어 둔 영상 한 건을 DB·파일에서 지우고 목록을 갱신한다 */
+  let deletingViewed = false;
+  async function deleteViewed() {
+    const c = state.viewing;
+    if (!c || deletingViewed) return false;
+    const kind = c.media_type === 'video' ? '동영상' : '사진';
+    if (!confirm(`이 ${kind}(${fmtDT(parseTs(c.captured_at))})을(를) 삭제하시겠습니까?\n\n저장된 파일과 기록이 함께 지워지며 되돌릴 수 없습니다.`)) return false;
+    deletingViewed = true;
+    try {
+      await api(`/captures/${c.id}`, { method: 'DELETE' });
+    } catch (e) {
+      toast('삭제 실패: ' + e.message, 'error');
+      return false;
+    } finally { deletingViewed = false; }
+    state.viewing = null;
+    $('viewer-dialog').close();
+    await renderThumbs();
+    document.dispatchEvent(new CustomEvent('slit:captures'));     // Pro 화면 목록도 갱신
+    toast(`${kind}을(를) 삭제했습니다.`, 'success');
+    return true;
   }
 
   // ---- status / toast ----
