@@ -238,6 +238,25 @@ def build_qss(mode: str = "dark") -> str:
     QSlider#SliderG::handle:horizontal, QSlider#SliderG::sub-page:horizontal {{ background: #4ade80; }}
     QSlider#SliderB::handle:horizontal, QSlider#SliderB::sub-page:horizontal {{ background: #60a5fa; }}
 
+    /* ===== 질환별 참고 사진 (환자 배너의 아이콘 줄 · 사진 패널 · 비교 창) ===== */
+    QFrame#DxBar {{ background: {c['bg']}; border: 1px solid {c['rule']}; border-radius: 9px; }}
+    QPushButton#DxBtn {{ background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 0; min-height: 0; }}
+    QPushButton#DxBtn:hover {{ background: {c['panel2']}; border-color: {c['rule']}; }}
+    QPushButton#DxBtn:checked {{ background: {c['raised']}; border: 1px solid {c['rule_strong']}; }}
+    QFrame#DxPanel {{ background: {c['panel']}; border: none; border-bottom: 1px solid {c['rule']}; }}
+    QFrame#DxPanel QLabel {{ background: transparent; }}
+    QLabel#DxPanelIcon {{ background: {c['accent_soft']}; border-radius: 9px; }}
+    QLabel#DxName {{ font-size: 14px; font-weight: 700; }}
+    QScrollArea#DxStrip, QScrollArea#DxStrip > QWidget > QWidget {{ background: transparent; border: none; }}
+    QPushButton#DxAddCard {{ background: {c['panel2']}; border: 1px dashed {c['rule_strong']}; border-radius: 8px; color: {c['ink_soft']}; font-size: 12px; }}
+    QPushButton#DxAddCard:hover {{ color: {c['ink']}; border-color: {c['accent']}; }}
+    QPushButton#DxLiveCard {{ background: #0a0d12; border: 1px solid {c['rule']}; border-radius: 7px; color: #9fe8dd; font-size: 11px; font-weight: 700; padding: 0; }}
+    QPushButton#DxLiveCard:hover, QPushButton#DxLiveCard:checked {{ border: 2px solid {c['accent']}; }}
+    QLabel#DxTag {{ background: transparent; border-radius: 5px; padding: 1px 7px; font-size: 10px; font-weight: 800; letter-spacing: 1px; }}
+    QScrollArea#DxSide {{ background: {c['panel2']}; border: 1px solid {c['rule']}; border-radius: 10px; }}
+    QScrollArea#DxSide > QWidget > QWidget {{ background: {c['panel2']}; }}
+    QLabel#DxSideText {{ background: {c['panel2']}; color: {c['ink']}; font-size: 12px; }}
+
     QMenuBar {{ background: {c['panel']}; }}
     QMenuBar::item:selected {{ background: {c['panel2']}; }}
     QMenu {{ background: {c['panel']}; border: 1px solid {c['rule_strong']}; padding: 4px; }}

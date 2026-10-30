@@ -38,3 +38,11 @@ class CaptureOut(BaseModel):
     eye: Optional[str] = None
     duration_ms: Optional[int] = None
     note: Optional[str] = None
+
+
+class ReferenceOut(BaseModel):
+    id: int
+    disease: str
+    url: str
+    caption: Optional[str] = None
+    created_at: Optional[str] = None

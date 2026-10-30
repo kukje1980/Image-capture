@@ -6,6 +6,7 @@ from pathlib import Path
 
 from app.db.captures_dao import CapturesDAO
 from app.db.patients_dao import PatientsDAO
+from app.db.references_dao import ReferencesDAO
 
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 
@@ -23,6 +24,7 @@ class Database:
         self._conn: sqlite3.Connection | None = None
         self.patients: PatientsDAO | None = None
         self.captures: CapturesDAO | None = None
+        self.references: ReferencesDAO | None = None
 
     def init(self) -> "Database":
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
@@ -33,6 +35,7 @@ class Database:
         self._migrate()
         self.patients = PatientsDAO(self._conn, self._lock)
         self.captures = CapturesDAO(self._conn, self._lock)
+        self.references = ReferencesDAO(self._conn, self._lock)
         return self
 
     def _migrate(self) -> None:

@@ -7,6 +7,15 @@
 클리닉 PC에서 로컬 서버(uvicorn)로 실행하며, 브라우저(Chrome/Edge 권장)로 `localhost` 접속해 사용합니다.
 동일 시스템의 **데스크탑 앱(Windows·macOS)**은 이 저장소 상위 폴더(`../app`)에 별도로 있습니다.
 
+
+## 질환별 참고 사진 · 비교 설명
+상단(촬영/Pro 전환 오른쪽)의 **질환 아이콘**을 누르면 바로 아래에 그 질환의 참고 사진(모식도 + 병원 등록 사진)이 나오고,
+사진을 누르면 **환자 촬영 사진과 나란히 비교**하는 창이 열립니다(세극등 소견 · 환자 설명 · 비교 포인트 · 확대 · 비교 이미지 저장 · 인쇄/PDF).
+
+- 질환 목록·문구·모식도: `static/dx/library.json`, `static/dx/*.svg` (데스크탑 `assets/dx` 와 같은 파일, `tools/generate_dx_illustrations.py` 로 생성)
+- 병원 등록 참고 사진: `GET/POST /api/v1/references?disease=<id>`, `DELETE /api/v1/references/{id}` — `<미디어>/_references/<질환>/` 에 저장, 환자와 무관.
+  '이 PC에만 저장' 모드에서는 브라우저 저장소(IndexedDB)에 보관됩니다.
+
 ## 기술 스택
 - **FastAPI** + **Jinja2** + **바닐라 JS** (빌드 도구 없음)
 - **SQLite** (stdlib), **uvicorn**

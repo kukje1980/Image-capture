@@ -211,3 +211,35 @@ def test_now_uses_korea_time():
     from app import config
     kst = datetime.now(timezone(timedelta(hours=9))).replace(tzinfo=None)
     assert abs((config.now() - kst).total_seconds()) < 5
+
+
+# ---- 질환별 참고 사진 ----
+def test_reference_images_crud(client):
+    assert client.get("/api/v1/references").json() == []
+    png = b"\x89PNG\r\n\x1a\n" + b"0" * 64
+    r = client.post("/api/v1/references", data={"disease": "cataract", "caption": "핵백내장 2급"},
+                    files={"file": ("ref.png", io.BytesIO(png), "image/png")})
+    assert r.status_code == 201, r.text
+    ref = r.json()
+    assert ref["disease"] == "cataract" and ref["caption"] == "핵백내장 2급"
+    assert ref["url"].startswith("/media/_references/cataract/")
+    assert client.get(ref["url"]).content == png
+
+    assert [x["id"] for x in client.get("/api/v1/references?disease=cataract").json()] == [ref["id"]]
+    assert client.get("/api/v1/references?disease=pterygium").json() == []
+    assert len(client.get("/api/v1/references").json()) == 1
+
+    # 알 수 없는 질환·허용되지 않는 형식·빈 파일은 거부
+    assert client.post("/api/v1/references", data={"disease": "nope"},
+                       files={"file": ("a.png", io.BytesIO(png), "image/png")}).status_code == 400
+    assert client.post("/api/v1/references", data={"disease": "../x"},
+                       files={"file": ("a.png", io.BytesIO(png), "image/png")}).status_code == 400
+    assert client.post("/api/v1/references", data={"disease": "cataract"},
+                       files={"file": ("evil.svg", io.BytesIO(b"<svg/>"), "image/svg+xml")}).status_code == 400
+    assert client.post("/api/v1/references", data={"disease": "cataract"},
+                       files={"file": ("empty.png", io.BytesIO(b""), "image/png")}).status_code == 400
+
+    assert client.delete(f"/api/v1/references/{ref['id']}").status_code == 204
+    assert client.get(ref["url"]).status_code == 404
+    assert client.delete(f"/api/v1/references/{ref['id']}").status_code == 404
+    assert client.get("/api/v1/references?disease=bad%20id").status_code == 400

@@ -148,6 +148,42 @@ class Database:
         return dict(r) if r else None
 
 
+    # ---- reference images (질환별 참고 사진) ----
+    def list_references(self, disease: Optional[str] = None) -> List[dict]:
+        with self._lock:
+            if disease:
+                rows = self._conn.execute(
+                    "SELECT * FROM reference_images WHERE disease=? ORDER BY created_at, id", (disease,)
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT * FROM reference_images ORDER BY disease, created_at, id").fetchall()
+        return [dict(r) for r in rows]
+
+    def get_reference(self, rid: int) -> Optional[dict]:
+        with self._lock:
+            r = self._conn.execute("SELECT * FROM reference_images WHERE id=?", (rid,)).fetchone()
+        return dict(r) if r else None
+
+    def create_reference(self, r: dict) -> int:
+        with self._lock:
+            cur = self._conn.execute(
+                """INSERT INTO reference_images (disease, file_path, url, caption, created_at)
+                   VALUES (:disease, :file_path, :url, :caption, :created_at)""",
+                {"disease": r["disease"], "file_path": r["file_path"], "url": r["url"],
+                 "caption": r.get("caption"), "created_at": r["created_at"]},
+            )
+            self._conn.commit()
+            return cur.lastrowid
+
+    def delete_reference(self, rid: int) -> Optional[dict]:
+        with self._lock:
+            r = self._conn.execute("SELECT file_path FROM reference_images WHERE id=?", (rid,)).fetchone()
+            self._conn.execute("DELETE FROM reference_images WHERE id=?", (rid,))
+            self._conn.commit()
+        return dict(r) if r else None
+
+
 def _patient_params(p: dict) -> dict:
     return {
         "chart_no": p.get("chart_no"),

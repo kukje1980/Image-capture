@@ -28,6 +28,7 @@ datas += [("assets/icons/app.ico", "assets/icons"),
           ("assets/icons/app.png", "assets/icons")]
 # 브랜드 로고·아이콘 (Keeler 등)
 datas += [("assets/brand", "assets/brand")]
+datas += [("assets/dx", "assets/dx")]            # 질환별 참고 모식도 + library.json
 
 block_cipher = None
 

@@ -25,13 +25,20 @@
   function db() {
     if (dbp) return dbp;
     dbp = new Promise((resolve, reject) => {
-      const rq = indexedDB.open(DB_NAME, 1);
+      const rq = indexedDB.open(DB_NAME, 2);
       rq.onupgradeneeded = () => {
         const d = rq.result;
-        d.createObjectStore('patients', { keyPath: 'id', autoIncrement: true });
-        const c = d.createObjectStore('captures', { keyPath: 'id', autoIncrement: true });
-        c.createIndex('patient_id', 'patient_id');
-        d.createObjectStore('files');                       // key = capture id → Blob
+        if (!d.objectStoreNames.contains('patients')) {
+          d.createObjectStore('patients', { keyPath: 'id', autoIncrement: true });
+          const c = d.createObjectStore('captures', { keyPath: 'id', autoIncrement: true });
+          c.createIndex('patient_id', 'patient_id');
+          d.createObjectStore('files');                     // key = capture id → Blob
+        }
+        if (!d.objectStoreNames.contains('references')) {   // v2: 질환별 참고 사진
+          const r = d.createObjectStore('references', { keyPath: 'id', autoIncrement: true });
+          r.createIndex('disease', 'disease');
+          d.createObjectStore('reffiles');                  // key = reference id → Blob
+        }
       };
       rq.onsuccess = () => resolve(rq.result);
       rq.onerror = () => reject(rq.error || new Error('브라우저 저장소를 열 수 없습니다.'));
@@ -69,6 +76,14 @@
     const u = urls.get(id);
     if (u) URL.revokeObjectURL(u);
     urls.delete(id);
+  }
+  const refUrls = new Map();
+  async function withRefUrl(ref) {
+    if (!refUrls.has(ref.id)) {
+      const blob = await tx('reffiles', 'readonly', (f) => done(f.get(ref.id)));
+      refUrls.set(ref.id, blob ? URL.createObjectURL(blob) : '');
+    }
+    return { ...ref, url: refUrls.get(ref.id) };
   }
 
   // ---------- 서버 API 와 같은 동작 ----------
@@ -160,6 +175,39 @@
       if (method === 'DELETE') {
         await tx(['captures', 'files'], 'readwrite', (c, f) => { c.delete(id); f.delete(id); });
         dropUrl(id);
+        return null;
+      }
+    }
+    if (seg[0] === 'references') {                    // 질환별 참고 사진 (서버 routers/references.py 와 같은 규칙)
+      if (seg.length === 1 && method === 'GET') {
+        const dz = u.searchParams.get('disease');
+        const all = await tx('references', 'readonly', (s) => (dz ? done(s.index('disease').getAll(dz)) : done(s.getAll())));
+        all.sort((a, b) => (a.created_at === b.created_at ? a.id - b.id : a.created_at < b.created_at ? -1 : 1));
+        return Promise.all(all.map(withRefUrl));
+      }
+      if (seg.length === 1 && method === 'POST') {
+        const fd = options.body;
+        const file = fd.get('file');
+        const disease = (fd.get('disease') || '').trim().toLowerCase();
+        if (!/^[a-z][a-z0-9_]{0,39}$/.test(disease)) fail('알 수 없는 질환입니다.');
+        if (!file || !file.size) fail('빈 파일입니다.');
+        if (!/^image\/(png|jpeg|webp)$/.test(file.type || '')) fail('사진 파일(png·jpg·webp)만 등록할 수 있습니다.');
+        const rec = { disease, caption: ((fd.get('caption') || '') + '').trim().slice(0, 200) || null, created_at: now() };
+        const id = await tx(['references', 'reffiles'], 'readwrite', async (r, f) => {
+          const newId = await done(r.add(rec));
+          f.put(file, newId);
+          return newId;
+        });
+        return withRefUrl({ ...rec, id });
+      }
+      if (seg.length === 2 && method === 'DELETE') {
+        const id = Number(seg[1]);
+        const cur = await tx('references', 'readonly', (s) => done(s.get(id)));
+        if (!cur) fail('참고 사진을 찾을 수 없습니다.');
+        await tx(['references', 'reffiles'], 'readwrite', (r, f) => { r.delete(id); f.delete(id); });
+        const uu = refUrls.get(id);
+        if (uu) URL.revokeObjectURL(uu);
+        refUrls.delete(id);
         return null;
       }
     }

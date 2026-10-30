@@ -33,3 +33,13 @@ CREATE INDEX IF NOT EXISTS idx_captures_patient ON captures(patient_id);
 CREATE INDEX IF NOT EXISTS idx_captures_capdate ON captures(patient_id, captured_at);
 CREATE INDEX IF NOT EXISTS idx_patients_name    ON patients(name);
 CREATE INDEX IF NOT EXISTS idx_patients_chart   ON patients(chart_no);
+
+-- 질환별 참고 사진 (병원이 직접 등록한 비교용 사진; 환자와 무관)
+CREATE TABLE IF NOT EXISTS reference_images (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    disease     TEXT NOT NULL,               -- assets/dx/library.json 의 질환 id
+    file_path   TEXT NOT NULL,
+    caption     TEXT,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_refimg_disease ON reference_images(disease);

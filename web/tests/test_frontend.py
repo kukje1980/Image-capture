@@ -46,3 +46,25 @@ def test_meibo_mode_wired():
     assert "100 / 3" in PRO_JS and "200 / 3" in PRO_JS
     for cat in ("'0%'", "'<25%'", "'25–50%'", "'51–75%'", "'>75%'"):
         assert cat in PRO_JS
+
+
+def test_dx_reference_feature_wired():
+    """질환별 참고 사진: 상단 아이콘 줄 · 패널 · 비교 창의 id 가 템플릿에 있고 라이브러리 아이콘이 스프라이트에 있다."""
+    import json
+    DX_JS = (WEB / "static" / "js" / "dx.js").read_text(encoding="utf-8")
+    used = set(re.findall(r"\$\('([a-z0-9-]+)'\)", DX_JS))
+    assert {"dxbar", "dx-panel", "dxp-strip", "dx-dialog", "dxd-ref-img", "dxd-pt-img", "dxd-save", "dxd-print"} <= used
+    missing = sorted(used - HTML_IDS)
+    assert not missing, f"템플릿에 없는 id: {missing}"
+    lib = json.loads((WEB / "static" / "dx" / "library.json").read_text(encoding="utf-8"))
+    assert len(lib["diseases"]) >= 10
+    for d in lib["diseases"]:
+        assert f'id="{d["icon"]}"' in HTML, d["icon"]
+        assert (WEB / "static" / "dx" / d["illustrations"][0]["file"]).is_file()
+    assert '/static/js/dx.js' in HTML and "/references" in DX_JS
+    APP_CSS = (WEB / "static" / "css" / "app.css").read_text(encoding="utf-8")
+    for cls in (".dxbar", ".dx-btn", ".dxpanel", ".dx-card", "dialog.dx-dialog", ".dxd-body"):
+        assert cls in APP_CSS, cls
+    # '이 PC에만 저장' 모드도 같은 API 를 흉내낸다
+    LOCAL = (WEB / "static" / "js" / "localstore.js").read_text(encoding="utf-8")
+    assert "seg[0] === 'references'" in LOCAL and "'reffiles'" in LOCAL

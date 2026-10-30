@@ -29,6 +29,7 @@ datas += [("app/db/schema.sql", "app/db")]
 # 앱 아이콘 동봉
 datas += [("assets/icons/app.png", "assets/icons")]
 datas += [("assets/brand", "assets/brand")]
+datas += [("assets/dx", "assets/dx")]            # 질환별 참고 모식도 + library.json
 
 a = Analysis(
     ["run.py"],

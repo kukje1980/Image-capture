@@ -10,6 +10,7 @@ from PySide6.QtCore import QSize, Qt, QThread, QTimer
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -27,7 +28,11 @@ from app.capture.frame_utils import device_names, find_sony_index
 from app.capture.sources import DeviceSource, FileSource, SyntheticSource
 from app.capture.video_recorder import VideoRecorder
 from app.services.capture_service import CaptureService
+from app.services.reference_service import ReferenceStore
 from app.ui.control_bar import ControlBar
+from app.ui.dx_bar import DxBar
+from app.ui.dx_compare_dialog import DxCompareDialog
+from app.ui.dx_panel import DxPanel
 from app.ui.image_viewer import ImageViewerDialog
 from app.ui.patient_panel import PatientPanel
 from app.ui.pro.pro_workspace import ProWorkspace
@@ -52,6 +57,7 @@ class MainWindow(QMainWindow):
         self.config = config
         self.db = db
         self.service = CaptureService(db, config)
+        self.refstore = ReferenceStore(db, config)
         self.brand = app_brand.current()
         self.setWindowTitle(self.brand["window_title"])
         self.setWindowIcon(make_app_icon())
@@ -92,6 +98,12 @@ class MainWindow(QMainWindow):
         outer.addWidget(self.topbar)
         self.patient_panel = PatientPanel(self.db)
         outer.addWidget(self.patient_panel)          # 단일/Pro 공통 환자 배너
+        # 환자 배너 오른쪽 빈 공간: 질환별 작은 아이콘 → 누르면 배너 아래에 참고 사진 패널
+        self.dx_bar = DxBar()
+        plo = self.patient_panel.layout()
+        plo.insertWidget(plo.indexOf(self.patient_panel.btn_edit), self.dx_bar)
+        self.dx_panel = DxPanel(self.refstore)
+        outer.addWidget(self.dx_panel)
 
         body = QWidget()
         body_lay = QVBoxLayout(body)
@@ -131,6 +143,12 @@ class MainWindow(QMainWindow):
         self.pro.patientUpdated.connect(self._on_pro_patient_updated)
 
         self.patient_panel.patientChanged.connect(self._on_patient_changed)
+        self.dx_bar.diseaseClicked.connect(self._on_dx_clicked)
+        self.dx_panel.closed.connect(lambda: self.dx_bar.set_active(None))
+        self.dx_panel.referenceChosen.connect(self._open_dx_compare)
+        self.dx_panel.compareRequested.connect(lambda did: self._open_dx_compare(did, None))
+        self.dx_panel.addRequested.connect(self._add_dx_reference)
+        self.dx_panel.deleteRequested.connect(self._delete_dx_reference)
         self.control_bar.pauseToggled.connect(self._on_pause)
         self.control_bar.captureClicked.connect(self._on_capture)
         self.control_bar.recordToggled.connect(self._on_record_toggle)
@@ -365,6 +383,9 @@ class MainWindow(QMainWindow):
         for w in (self.topbar, self.patient_panel, self.thumbnail_panel, self.statusBar()):
             w.setVisible(not on)
         if on:
+            self.dx_panel.hide()
+            self.dx_bar.set_active(None)
+        if on:
             self._was_maximized = self.isMaximized()
             self.showFullScreen()
             self.statusBar().showMessage("전체 화면 — Esc 로 나가기", 3000)
@@ -515,6 +536,52 @@ class MainWindow(QMainWindow):
                                          else (patient.name if patient else "환자 미선택")))
         self.thumbnail_panel.set_patient(patient.id if patient else None)
         self.pro.set_patient(patient)
+
+    # ---- 질환별 참고 사진 ----
+    def _on_dx_clicked(self, disease_id: str) -> None:
+        if self.dx_panel.isVisible() and self.dx_panel.disease == disease_id:
+            self.dx_panel.close_panel()
+            return
+        self.dx_bar.set_active(disease_id)
+        self.dx_panel.show_disease(disease_id)
+
+    def _open_dx_compare(self, disease_id: str, item) -> None:
+        if not disease_id:
+            return
+        if item is None:
+            items = self.refstore.items(disease_id)
+            item = items[0] if items else None
+        p = self._current_patient
+        caps = self.db.captures.list_by_patient(p.id, order="desc") if p else []
+        live = None if self._last_frame is None else self._last_frame.copy()
+        dlg = DxCompareDialog(self.refstore, self.service, self.config, disease_id, item, p, caps, live, self)
+        dlg.savedCapture.connect(self._on_pro_saved)
+        dlg.referencesChanged.connect(self.dx_panel.refresh)
+        dlg.exec()
+
+    def _add_dx_reference(self, disease_id: str) -> None:
+        if not disease_id:
+            return
+        files, _ = QFileDialog.getOpenFileNames(self, "참고 사진 추가", "", "사진 (*.png *.jpg *.jpeg *.webp *.bmp)")
+        n = 0
+        for f in files:
+            try:
+                self.refstore.add_file(disease_id, f, os.path.splitext(os.path.basename(f))[0])
+                n += 1
+            except Exception as e:  # noqa: BLE001
+                QMessageBox.warning(self, "등록 실패", f"{os.path.basename(f)}: {e}")
+        if n:
+            self.dx_panel.refresh()
+            self.statusBar().showMessage(f"참고 사진 {n}장 등록", 3000)
+
+    def _delete_dx_reference(self, disease_id: str, item) -> None:
+        ref = item.get("ref") if item else None
+        if ref is None:
+            return
+        if QMessageBox.question(self, "참고 사진 삭제", f"참고 사진을 삭제할까요?\n{item.get('caption', '')}") != QMessageBox.StandardButton.Yes:
+            return
+        self.refstore.delete(ref)
+        self.dx_panel.refresh()
 
     # ---- Pro 모드 ----
     def _on_pro_toggled(self, on: bool) -> None:

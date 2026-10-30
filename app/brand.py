@@ -64,6 +64,11 @@ def _assets_dir() -> Path:
     return Path(__file__).resolve().parent.parent / "assets"
 
 
+def assets_dir() -> Path:
+    """assets/ 폴더 (소스 실행·PyInstaller 번들 모두)."""
+    return _assets_dir()
+
+
 def key_from(argv=None, config_brand: str | None = None) -> str:
     argv = list(sys.argv if argv is None else argv)
     for i, a in enumerate(argv):
