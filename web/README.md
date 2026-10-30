@@ -51,7 +51,7 @@ HTTPS 주소라서 카메라·저장 폴더 기능도 그대로 동작합니다.
 
 ### Render (권장 — 사진·동영상 모두 저장)
 1. [render.com](https://render.com) 에 GitHub 계정으로 로그인
-2. **New → Blueprint** → 저장소 `Image-capture` 선택 → 브랜치 `claude/slit-lamp-imaging-system-ecM9y` (병합 후에는 `main`)
+2. **New → Blueprint** → 저장소 `slit-lamp-imaging` 선택 → 브랜치 `claude/slit-lamp-imaging-system-ecM9y` (병합 후에는 `main`)
 3. 저장소의 `render.yaml` 이 자동으로 읽힙니다. **SLITLAMP_PASSWORD**(접속 비밀번호) 입력란에 비밀번호를 넣고 **Apply**
 4. 몇 분 뒤 `https://slitlamp-imaging.onrender.com` 같은 주소가 생깁니다 → 접속 → 비밀번호 입력
 
@@ -60,7 +60,7 @@ HTTPS 주소라서 카메라·저장 폴더 기능도 그대로 동작합니다.
 > 서버에 영구 보관하려면 `render.yaml` 의 안내대로 유료 플랜 + 디스크를 붙이세요.
 
 ### Vercel (MedFix 와 같은 서비스)
-1. [vercel.com](https://vercel.com) → **Add New → Project** → `Image-capture` 가져오기
+1. [vercel.com](https://vercel.com) → **Add New → Project** → `slit-lamp-imaging` 가져오기
 2. **Root Directory 를 `web`** 으로 지정 (중요), Environment Variables 에 `SLITLAMP_PASSWORD` 추가 → **Deploy**
 
 > **Vercel 제약:** 저장 공간이 임시(수시로 초기화)이고 업로드가 약 4.5MB로 제한되어 **긴 동영상은 저장되지 않습니다**
@@ -82,7 +82,7 @@ HTTPS 주소라서 카메라·저장 폴더 기능도 그대로 동작합니다.
 (예: `https://image-capture-web.vercel.app/keeler`). 같은 서버·같은 환자 DB 를 씁니다.
 
 **Keeler 전용 주소를 따로 만들기 (Vercel, 2~3분 — 데이터도 분리)**
-1. vercel.com → **Add New → Project** → 같은 `Image-capture` 저장소 **Import** (프로젝트 이름 예: `keeler-slitlamp`)
+1. vercel.com → **Add New → Project** → 같은 `slit-lamp-imaging` 저장소 **Import** (프로젝트 이름 예: `keeler-slitlamp`)
 2. **Root Directory = `web`**
 3. Environment Variables: `SLITLAMP_PASSWORD` = 접속 비밀번호 → **Deploy**
    (프로젝트 이름에 `keeler` 가 들어가면 주소로 자동 인식해 Keeler 화면이 됩니다. 다른 이름이면 `SLITLAMP_BRAND` = `keeler` 도 추가)
