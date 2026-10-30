@@ -154,3 +154,14 @@ def test_delete_day_wired():
     assert "class=\"thumb-day-del\"" in app_js and "function deleteDay" in app_js
     assert "deleteDay(d, dayCaps)" in app_js                      # 필터와 무관하게 그 날 전체
     assert ".thumb-day-del" in css
+
+
+def test_after_capture_viewer_wired():
+    """v1.20.0: 사진을 찍으면 큰 화면 보기 창 + '다시 촬영' (설정 '촬영 후 보기', 기본 켬)."""
+    APP_JS = (WEB / "static" / "js" / "app.js").read_text(encoding="utf-8")
+    CSS = (WEB / "static" / "css" / "app.css").read_text(encoding="utf-8")
+    for el in ("viewer-retake", "view-after-capture"):
+        assert f'id="{el}"' in HTML, el
+    assert "openViewer(rec, parseTs(rec.captured_at), { afterCapture: true })" in APP_JS
+    assert "slitlamp-view-after" in APP_JS and "keymap.capture" in APP_JS
+    assert "dialog.viewer-dialog.after-capture" in CSS

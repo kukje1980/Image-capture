@@ -5,6 +5,9 @@
 
 하단 '삭제' 버튼(Delete)을 누르고 확인하면 대화상자가 ``ImageViewerDialog.Deleted`` 코드로 닫히고,
 실제 삭제(DB·파일)는 호출한 쪽(메인 창)이 수행한다.
+
+after_capture=True: 사진을 찍은 직후 자동으로 뜨는 큰 화면. '다시 촬영'(Esc · Enter)을 누르면 닫히고 촬영 화면으로
+돌아간다. capture_keys 로 준 촬영 단축키를 누르면 retakeRequested 가 나가 메인 창이 창을 닫고 바로 다시 찍는다.
 """
 from __future__ import annotations
 
@@ -13,7 +16,8 @@ import subprocess
 import sys
 
 import numpy as np
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QButtonGroup,
     QDialog,
@@ -55,14 +59,22 @@ def _load_bgr(path: str):
 
 class ImageViewerDialog(QDialog):
     Deleted = 2  # exec() 반환값: 사용자가 '삭제'를 확인함
+    retakeRequested = Signal()   # 촬영 뒤 보기 창에서 촬영 단축키를 누름 → 닫고 바로 다시 찍기
 
-    def __init__(self, capture, parent=None, allow_delete: bool = True):
+    def __init__(self, capture, parent=None, allow_delete: bool = True, after_capture: bool = False,
+                 capture_keys=()):
         super().__init__(parent)
         self.capture = capture
-        self.setWindowTitle(f"보기 - {capture.captured_at}")
+        self.after_capture = bool(after_capture)
+        self.b_retake = None
+        self.setWindowTitle((f"촬영한 사진 - {capture.captured_at}" if after_capture else f"보기 - {capture.captured_at}"))
         self.resize(920, 720)
         lay = QVBoxLayout(self)
         self.canvas = None
+        for k in capture_keys or ():
+            seq = QKeySequence(k)
+            if not seq.isEmpty():
+                QShortcut(seq, self, activated=lambda: self.retakeRequested.emit())
 
         if capture.media_type == "video":
             open_in_default_player(capture.file_path)
@@ -94,7 +106,8 @@ class ImageViewerDialog(QDialog):
         self.b_fit.setToolTip("창에 맞춤")
         self.b_fit.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         bar.addWidget(self.b_fit)
-        hint = QLabel("누르고 있으면 확대 렌즈 · 휠로 확대 · 축소")
+        hint = QLabel("누르고 있으면 확대 렌즈 · 휠로 확대 · 축소"
+                      + ("   ·   '다시 촬영' 또는 촬영 키 · USB 버튼으로 촬영 화면으로" if self.after_capture else ""))
         hint.setObjectName("Muted")
         bar.addWidget(hint)
         bar.addStretch(1)
@@ -127,10 +140,22 @@ class ImageViewerDialog(QDialog):
         self.b_delete.setVisible(allow_delete)
         self.b_delete.clicked.connect(self._confirm_delete)
         b_close = QPushButton("닫기")
-        b_close.setDefault(True)
         b_close.clicked.connect(self.accept)
         foot.addWidget(self.b_delete)
         foot.addStretch(1)
+        if self.after_capture:
+            # 촬영 직후 화면: 큰 버튼 하나로 촬영 화면 복귀 (Enter · Esc 도 같음)
+            self.b_retake = QPushButton(icons.gap("다시 촬영"))
+            self.b_retake.setObjectName("Primary")
+            self.b_retake.setIcon(icons.icon("camera", ICON_ON_ACCENT, 18))
+            self.b_retake.setIconSize(QSize(18, 18))
+            self.b_retake.setMinimumHeight(40)
+            self.b_retake.setToolTip("촬영 화면으로 돌아가기 (Enter · Esc) — 촬영 단축키 · USB 버튼을 누르면 바로 다시 찍습니다")
+            self.b_retake.setDefault(True)
+            self.b_retake.clicked.connect(self.accept)
+            foot.addWidget(self.b_retake)
+        else:
+            b_close.setDefault(True)
         foot.addWidget(b_close)
         return foot
 

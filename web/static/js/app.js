@@ -156,6 +156,8 @@
     $('camera-select').addEventListener('change', (e) => { prefSet('slitlamp-cam', e.target.value); startCamera(e.target.value); });
     $('vq-select').value = prefGet('slitlamp-vq') === 'high' ? 'high' : 'normal';
     $('vq-select').addEventListener('change', (e) => prefSet('slitlamp-vq', e.target.value));
+    $('view-after-capture').checked = prefGet('slitlamp-view-after') !== '0';      // 기본: 켬
+    $('view-after-capture').addEventListener('change', (e) => prefSet('slitlamp-view-after', e.target.checked ? '1' : '0'));
     $('res-select').value = prefGet('slitlamp-res') || '1080';
     $('res-select').addEventListener('change', (e) => {
       prefSet('slitlamp-res', e.target.value);
@@ -183,6 +185,12 @@
     $('viewer-close').addEventListener('click', () => $('viewer-dialog').close());
     $('viewer-dialog').addEventListener('close', () => { $('viewer-body').innerHTML = ''; state.viewing = null; });   // 닫으면 동영상 재생·내려받기 중지
     $('viewer-close-2').addEventListener('click', () => $('viewer-dialog').close());
+    $('viewer-retake').addEventListener('click', () => $('viewer-dialog').close());
+    $('viewer-dialog').addEventListener('keydown', (e) => {
+      if (!$('viewer-dialog').classList.contains('after-capture')) return;
+      if (e.key === 'Enter') { e.preventDefault(); $('viewer-dialog').close(); }
+    });
+    $('viewer-dialog').addEventListener('close', () => $('viewer-dialog').classList.remove('after-capture'));
     $('viewer-delete').addEventListener('click', deleteViewed);
     $('viewer-dialog').addEventListener('keydown', (e) => { if (e.key === 'Delete') { e.preventDefault(); deleteViewed(); } });
 
@@ -249,6 +257,14 @@
   function onShortcutKey(e) {
     if (capturingKey) return;
     if (e.repeat) return;                              // 키·발판을 누르고 있어도 한 번만 실행
+    const vd = $('viewer-dialog');
+    if (vd.open && vd.classList.contains('after-capture') && keyName(e) === keymap.capture) {
+      // 촬영 직후 보기 창에서 촬영 키 → 닫고 바로 다시 찍기
+      e.preventDefault();
+      vd.close();
+      if (!$('btn-capture').disabled) capturePhoto();
+      return;
+    }
     if ((e.target instanceof Element && e.target.matches('input, textarea, select')) || document.querySelector('dialog[open]')) return;
     const name = keyName(e);
     if (!name) return;
@@ -846,7 +862,13 @@
     const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
     if (!blob) return;
     const eye = $('eye-select').value;
-    await persistCapture(patient, 'photo', blob, 'png', eye, null, meibo.on ? `마이봄 ${LID_KO[meibo.lid]}` : null);
+    state.lastSaved = null;
+    const ok = await persistCapture(patient, 'photo', blob, 'png', eye, null, meibo.on ? `마이봄 ${LID_KO[meibo.lid]}` : null);
+    // 찍은 사진을 큰 화면으로 — '다시 촬영' · Enter · Esc 로 촬영 화면, 촬영 키는 닫고 바로 다시 찍기
+    const rec = state.lastSaved;
+    if (ok && rec && rec.url && $('view-after-capture').checked && !document.fullscreenElement && !document.querySelector('dialog[open]')) {
+      openViewer(rec, parseTs(rec.captured_at), { afterCapture: true });
+    }
   }
 
   function toggleRecord() {
@@ -991,7 +1013,7 @@
         if (durationMs != null) fd.append('duration_ms', String(durationMs));
         if (note) fd.append('note', note);
         fd.append('file', upBlob, upName);
-        await api('/captures', { method: 'POST', body: fd });
+        state.lastSaved = await api('/captures', { method: 'POST', body: fd });
         return true;
       } catch (err) {
         toast((LOCAL_MODE ? '이 PC 저장 실패: ' : '서버 저장 실패: ') + err.message, 'error');
@@ -1245,12 +1267,16 @@
     }
   }
 
-  function openViewer(c, ts) {
+  function openViewer(c, ts, opts = {}) {
     const dlg = $('viewer-dialog');
     const body = $('viewer-body');
     body.innerHTML = '';
+    const after = !!opts.afterCapture;
+    dlg.classList.toggle('after-capture', after);
+    $('viewer-retake').style.display = after ? '' : 'none';      // .btn 의 display 가 hidden 속성을 덮으므로 직접
+    $('viewer-close-2').style.display = after ? 'none' : '';
     const patient = state.patients.find(p => p.id === c.patient_id);
-    $('viewer-title').textContent = `${patient?.name || ''} · ${fmtDT(ts)}${c.eye && c.eye !== 'NA' ? ' · ' + c.eye : ''}`;
+    $('viewer-title').textContent = `${after ? '촬영한 사진 · ' : ''}${patient?.name || ''} · ${fmtDT(ts)}${c.eye && c.eye !== 'NA' ? ' · ' + c.eye : ''}`;
     if (c.media_type === 'photo') {
       const img = document.createElement('img'); img.src = c.url; body.appendChild(img);
     } else {

@@ -80,6 +80,8 @@ class AppConfig:
     smart_roi: list = field(default_factory=list)   # 정규화 [x, y, w, h] (비면 화면 중앙 60%)
     smart_bar_visible: bool = True           # 촬영 화면의 Smart 도구줄 보이기 (숨겨도 자동 촬영 설정은 유지)
     ref_bar_visible: bool = False            # 촬영 화면의 참조 줄 보이기 (고른 참조 사진은 멀티 화면에 같이)
+    multi_side_visible: bool = False         # 멀티 화면 오른쪽 메뉴(보정 · 편집 · 분석) 보이기 (기본: 접힘)
+    view_after_capture: bool = True          # 사진을 찍으면 큰 화면으로 바로 보기 ('다시 촬영' 으로 촬영 화면 복귀)
     smart_best_shot: bool = True             # 사진 캡처 시 최근 0.6초 중 가장 선명한 프레임 저장
     smart_ready_pct: float = 85.0            # 초점 판정 기준 (최근 최고 선명도 대비 %)
     smart_cooldown_s: float = 2.5            # 자동 촬영 사이 최소 간격(초)

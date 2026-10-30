@@ -46,6 +46,7 @@ from app.capture.smart_capture import DEFAULT_ROI, SmartSettings, normalize_roi
 from app.capture.smart_worker import SmartCaptureWorker
 from app.capture.sources import DeviceSource, FileSource, SyntheticSource
 from app.capture.video_recorder import VideoRecorder
+from app.services import sample_import
 from app.services.capture_service import CaptureService
 from app.ui import icons
 from app.ui.agent_bar import AgentBar
@@ -56,6 +57,7 @@ from app.ui.fit import HScroll
 from app.ui.home_screen import HomeScreen
 from app.ui.multi_view import is_reference, ref_capture
 from app.ui.patient_list_screen import PatientListScreen
+from app.ui.dx_bar import DxBar
 from app.ui.image_viewer import ImageViewerDialog
 from app.ui.patient_panel import PatientPanel
 from app.ui.pro import print_util
@@ -315,6 +317,8 @@ class MainWindow(QMainWindow):
         self._fullscreen = False
         self._set_smart_bar_visible(bool(getattr(cfg, "smart_bar_visible", True)), save=False)
         self._set_ref_bar_visible(bool(getattr(cfg, "ref_bar_visible", False)), save=False)
+        self._refresh_dx_bar()
+        self._capture_viewer = None            # 촬영 직후 자동으로 뜨는 큰 보기 창
         self._install_shortcuts()
         # 슬릿램프 USB 버튼 · 좌우 신호(키 조합을 보내는 장치) — 앱 전체 키 이벤트에서 누름 · 뗌을 보고 촬영 동작을 부른다.
         # 좌우 신호(F6 → OD · F7 → OS)는 Windows Raw Input 으로 그 장치(VID 04D9 / PID 1203)에서 온 키인지 확인한다.
@@ -428,6 +432,10 @@ class MainWindow(QMainWindow):
         pl.addWidget(self.btn_edit_patient)
         lay.addWidget(pw)
         lay.addWidget(self.patient_panel)               # 이름 · 차트번호 검색 + 환자 선택
+        # 빈 공간: 질환별 작은 아이콘 — 누르면 아래 참조 줄에 그 질환 사진 + 멀티 화면 (app/ui/dx_bar.py)
+        self.dx_bar = DxBar()
+        self.dx_bar.diseaseClicked.connect(self._on_dx_clicked)
+        lay.addWidget(self.dx_bar)
         lay.addStretch(1)
 
         # 카메라 재연결 · 단축키 · 샘플 · 테마는 모두 설정 창 안으로 (오른쪽에는 설정 하나)
@@ -476,6 +484,7 @@ class MainWindow(QMainWindow):
             b.setMinimumWidth(44 if compact else 58)
         for lb in self._brand_texts:
             lb.setVisible(not compact)
+        self.dx_bar.set_compact(compact)
         # 묶음(NavSeg) 칸의 크기 기억을 지워야 바로 줄어든 폭으로 계산된다
         for seg in {b.parentWidget() for b in self.nav_buttons}:
             if seg is not None and seg.layout() is not None:
@@ -650,7 +659,10 @@ class MainWindow(QMainWindow):
         """USB 버튼을 지금 실행해도 되면 None, 아니면 그 이유 (window · screen · text)."""
         from PySide6.QtWidgets import (QAbstractSpinBox, QComboBox, QKeySequenceEdit, QLineEdit,
                                        QPlainTextEdit, QTextEdit)
-        if QApplication.activeWindow() is not self or QApplication.activeModalWidget() is not None:
+        viewer = self._capture_viewer
+        if viewer is not None and QApplication.activeWindow() is viewer:
+            self._close_capture_viewer()          # 촬영 뒤 보기 창: USB 버튼이 오면 닫고 바로 다음 동작 (다시 촬영 등)
+        elif QApplication.activeWindow() is not self or QApplication.activeModalWidget() is not None:
             return "window"                       # 설정 · 안내 창 · 다른 프로그램
         if self._mode != "capture" or self.mode_stack.currentIndex() != 0:
             return "screen"                       # 촬영 화면에서만
@@ -1067,6 +1079,94 @@ class MainWindow(QMainWindow):
         self._agent_candidates = None
         self.events.log("patient_changed", has_patient=patient is not None)
 
+    # ---- 상단 질환 아이콘 (app/ui/dx_bar.py) ----
+    DX_MAX_REFS = 4                      # 한 질환에서 멀티 화면에 같이 놓는 사진 수 (참조 줄에서 더 고를 수 있음)
+
+    def _refresh_dx_bar(self) -> None:
+        """샘플 질환 · 등록한 참조 분류로 상단 아이콘 줄을 다시 만든다 (샘플 가져오기 · 참조 등록 뒤)."""
+        try:
+            self.dx_bar.set_categories(sample_import.sample_categories(self.db), self.db.references.categories())
+        except Exception:  # noqa: BLE001
+            log.warning("dx bar refresh failed", exc_info=True)
+
+    def _on_dx_clicked(self, source: str, category: str) -> None:
+        """질환 아이콘: 참조 줄을 열어 그 질환 사진을 보이고, 지금 환자 사진과 함께 멀티 화면으로.
+        같은 아이콘을 다시 누르면 그 질환 사진을 뺀다."""
+        log.info("버튼: 질환 참조 %s/%s", source, category)
+        try:
+            self._dx_select(source, category)
+        except Exception as e:  # noqa: BLE001
+            log.exception("질환 참조 실패")
+            QMessageBox.warning(self, "질환 참조", f"'{category}' 참조 사진을 여는 중 문제가 생겼습니다.\n{e}")
+
+    def _dx_select(self, source: str, category: str) -> None:
+        key = (source, category)
+        if self.dx_bar.active() == key:
+            self.dx_bar.set_active(None)
+            self.ref_bar.clear_selection()                 # → _on_refs_changed → 환자 사진만 남거나 멀티 닫힘
+            self.statusBar().showMessage(f"'{category}' 참조 사진을 뺐습니다", 3000)
+            return
+        if self._mode != "capture":
+            self.set_mode("capture")
+        self._set_ref_bar_visible(True)
+        if not self.ref_bar.show_category(source, category):
+            self.ref_bar.refresh()
+            if not self.ref_bar.show_category(source, category):
+                self.statusBar().showMessage(f"'{category}' 참조 사진이 없습니다", 4000)
+                return
+        self.dx_bar.set_active(key)
+        p = self._current_patient
+        if p is not None and not self.thumbnail_panel.selected_captures():
+            # 고른 환자 사진이 없으면 가장 최근 사진을 골라 같이 놓는다 (오른쪽 목록에서 더 고를 수 있음)
+            latest = next((c for c in self.db.captures.list_by_patient(p.id, order="desc") if c.media_type == "photo"), None)
+            if latest is not None:
+                self.thumbnail_panel.toggle_selection(latest)
+        refs = self.ref_bar.choose_only_current(self.DX_MAX_REFS)   # → _on_refs_changed → 멀티
+        n_pt = len(self.thumbnail_panel.selected_captures())
+        self.statusBar().showMessage(
+            f"'{category}' 참조 사진 {len(refs)}장" + (f" + 환자 사진 {n_pt}장을 멀티 화면에 놓았습니다" if n_pt
+                                                   else " — 오른쪽 목록에서 환자 사진을 누르면 같이 놓입니다")
+            + "  ·  아래 참조 줄에서 사진을 더 고르거나 뺄 수 있습니다", 6000)
+
+    # ---- 촬영 직후 큰 화면 보기 ----
+    def _show_capture_viewer(self, cap) -> None:
+        """사진을 찍은 직후 큰 화면(창 최대화)으로 보여 준다. '다시 촬영' · Esc · 촬영 키 · USB 버튼으로 촬영 화면 복귀."""
+        old = self._capture_viewer
+        if old is not None:
+            self._capture_viewer = None
+            old.close()
+        keys = [k for k in (shortcuts.load(self.config).get("capture", ""),) if k]
+        dlg = ImageViewerDialog(cap, self, after_capture=True, capture_keys=keys)
+        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        dlg.retakeRequested.connect(lambda d=dlg: self._retake_from_viewer(d))
+        dlg.finished.connect(lambda code, d=dlg, c=cap: self._on_capture_viewer_closed(d, c, code))
+        self._capture_viewer = dlg
+        dlg.showMaximized()
+        dlg.raise_()
+        dlg.activateWindow()
+
+    def _retake_from_viewer(self, dlg) -> None:
+        """보기 창에서 촬영 키 → 창을 닫고 바로 다시 찍는다."""
+        dlg.accept()
+        QTimer.singleShot(0, lambda: self._run_action("capture"))
+
+    def _on_capture_viewer_closed(self, dlg, cap, code: int) -> None:
+        if self._capture_viewer is dlg:
+            self._capture_viewer = None
+        if code == ImageViewerDialog.Deleted:
+            self._delete_capture(cap)
+        if self._mode == "capture":
+            self._focus_capture_view()
+
+    def _close_capture_viewer(self) -> bool:
+        """촬영 뒤 보기 창이 떠 있으면 닫는다 (USB 버튼 · 단축키가 바로 다음 동작을 하게). 닫았으면 True."""
+        dlg = self._capture_viewer
+        if dlg is None:
+            return False
+        self._capture_viewer = None
+        dlg.accept()
+        return True
+
     # ---- Pro 모드 ----
     def _set_ref_bar_visible(self, on: bool, save: bool = True) -> None:
         """참조 줄 보이기/숨기기 — 숨겨도 고른 참조 사진은 멀티 화면에 그대로 있다."""
@@ -1299,6 +1399,8 @@ class MainWindow(QMainWindow):
 
     def _on_refs_changed(self, refs: list) -> None:
         """참조 줄에서 고르면 바로 멀티 화면에 같이 (지금 환자 사진은 오른쪽 목록에서 고른 것)."""
+        if not refs:
+            self.dx_bar.set_active(None)          # 참조 사진을 다 빼면 상단 질환 아이콘도 꺼짐
         items = self._multi_items()
         if self._multi:
             if items:
@@ -1530,6 +1632,8 @@ class MainWindow(QMainWindow):
         self.events.log("capture", capture_id=cap.id, eye=eye, best_shot=bool(note),
                         scene_label=scene.label, scene=scene, quality=self.smart.last_quality())
         self._after_capture(cap, scene.label, eye, auto=False)
+        if getattr(self.config, "view_after_capture", True) and not self._fullscreen:
+            self._show_capture_viewer(cap)       # 찍은 사진을 큰 화면으로 — '다시 촬영' 으로 돌아온다
 
     # ---- AI 에이전트 ----
     def _agent_settings(self) -> AgentSettings:
@@ -2170,7 +2274,7 @@ class MainWindow(QMainWindow):
                                      on_register=lambda parent: self._register_reference(cap, parent),
                                      on_save_screen=lambda img, note: self._save_reference_screen(img, note, cap))
         dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
-        dlg.finished.connect(lambda *_: self.ref_bar.refresh())   # 등록 · 삭제 · 가져온 샘플을 참조 줄에도
+        dlg.finished.connect(lambda *_: (self.ref_bar.refresh(), self._refresh_dx_bar()))   # 등록 · 삭제 · 샘플 → 참조 줄 · 질환 아이콘
         dlg.show()
         self._refs_dialog = dlg
         return dlg
@@ -2211,6 +2315,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(parent or self, "참조 영상", f"등록하지 못했습니다.\n{e}")
             return False
         self.ref_bar.refresh()
+        self._refresh_dx_bar()
         self.statusBar().showMessage(f"참조 영상으로 등록했습니다 ({ref.category})", 4000)
         return True
 
@@ -2236,6 +2341,7 @@ class MainWindow(QMainWindow):
         QApplication.restoreOverrideCursor()
         self.patient_panel._reload()
         self.ref_bar.refresh()
+        self._refresh_dx_bar()
         QMessageBox.information(
             parent, "샘플 사진",
             result.summary() + "\n\n환자 목록에서 '샘플 · 질환명' 환자를 고르거나, 아래 촬영 도크의 '참조' 줄에서 "

@@ -352,8 +352,24 @@ class ProWorkspace(QWidget):
         if self.embedded:                           # 쓰지 않는 비교 화면(캔버스 2개)이 창 최소 폭을 키우지 않게
             self.stack.setMinimumSize(self.grid_view.minimumSize())
         body.addWidget(self.stack, 1)
-        body.addWidget(self._build_side())
+        self.side = self._build_side()
+        self.side_toggle = None
+        if self.embedded:
+            # 멀티: 오른쪽 메뉴(보정 · 편집 · 분석)는 가는 손잡이로 접고 편다 — 기본은 접힘 (config.multi_side_visible)
+            self.side_toggle = QToolButton()
+            self.side_toggle.setObjectName("ProSideToggle")
+            self.side_toggle.setCheckable(True)
+            self.side_toggle.setFixedWidth(22)
+            self.side_toggle.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
+            self.side_toggle.setIconSize(QSize(14, 14))
+            self.side_toggle.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            self.side_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.side_toggle.clicked.connect(lambda on: self.set_side_visible(on))
+            body.addWidget(self.side_toggle)
+        body.addWidget(self.side)
         root.addLayout(body, 1)
+        if self.embedded:
+            self.set_side_visible(bool(getattr(self.config, "multi_side_visible", False)), save=False)
 
         self.info = QLabel()
         self.info.setObjectName("ProInfo")
@@ -771,6 +787,25 @@ class ProWorkspace(QWidget):
 
     def mode(self) -> str:
         return self._mode
+
+    def set_side_visible(self, on: bool, save: bool = True) -> None:
+        """멀티(embedded) 오른쪽 메뉴 보이기 / 접기. 접어도 보정 값 · 편집은 그대로다."""
+        if not self.embedded or self.side_toggle is None:
+            return
+        on = bool(on)
+        self.side.setVisible(on)
+        self.side_toggle.setChecked(on)
+        self.side_toggle.setIcon(icons.icon("chev-r" if on else "chev-l", ICON, 14))
+        self.side_toggle.setToolTip("보정 · 편집 · 분석 메뉴 접기" if on else "보정 · 편집 · 분석 메뉴 펴기")
+        if save and getattr(self.config, "multi_side_visible", None) != on:
+            self.config.multi_side_visible = on
+            try:
+                self.config.save()
+            except Exception:  # noqa: BLE001
+                log.warning("multi_side_visible save failed", exc_info=True)
+
+    def side_visible(self) -> bool:
+        return self.side.isVisibleTo(self) if self.embedded else True
 
     def current_capture(self):
         """지금 보고 있는 환자 사진 (1화면 · 멀티의 누른 칸). 참조 사진 · 그 밖의 화면은 None."""
