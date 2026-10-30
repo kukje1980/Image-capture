@@ -127,6 +127,9 @@ def build_qss(mode: str = "dark") -> str:
         border-radius: 9px; padding: 1px 8px; font-size: 11px; font-weight: 700; }}
     QLabel#ThumbTitle {{ font-weight: 700; font-size: 13px; }}
     QLabel#DayHeader {{ color: {c['ink_muted']}; font-size: 11px; font-weight: 700; padding: 6px 2px 0; }}
+    QPushButton#DayDeleteBtn {{ background: transparent; border: 1px solid transparent; border-radius: 6px;
+                               padding: 0; margin-top: 4px; }}
+    QPushButton#DayDeleteBtn:hover {{ background: {c['record_soft']}; border-color: {c['record']}; }}
 
     /* 입력/콤보 */
     QLineEdit, QComboBox, QSpinBox, QPlainTextEdit, QTextEdit, QDateEdit, QDoubleSpinBox {{

@@ -88,3 +88,28 @@ def test_delete_captures_counts_only_existing(app_env):
     b = service.save_photo(_frame(), patient, eye="OS")
     assert service.delete_captures([a, b, a]) == 2
     assert db.captures.list_by_patient(patient.id) == []
+
+
+def test_delete_day_removes_only_that_day(app_env):
+    from app.models.capture import Capture
+    config, db = app_env
+    service = CaptureService(db, config)
+    patient = _patient(db)
+    today_a = service.save_photo(_frame(), patient, eye="OD")
+    today_b = service.save_photo(_frame(), patient, eye="OS")
+    other = service.save_photo(_frame(), patient, eye="OD")
+    # 다른 날짜 기록: captured_at 만 바꿔 새 레코드로 (파일은 다른 사진 것을 빌려 씀)
+    old_id = db.captures.insert(Capture(patient_id=patient.id, media_type="photo", file_path=other.file_path,
+                                        thumbnail_path=other.thumbnail_path, captured_at="2025-01-05 09:30:00", eye="OD"))
+    today = today_a.captured_at[:10]
+
+    assert [c.id for c in service.captures_on(patient.id, today)] == [today_a.id, today_b.id, other.id]
+    assert [c.id for c in service.captures_on(patient.id, "2025-01-05")] == [old_id]
+    assert service.captures_on(patient.id, "1999-01-01") == []
+
+    assert service.delete_day(patient.id, today) == 3
+    left = db.captures.list_by_patient(patient.id)
+    assert [c.id for c in left] == [old_id]                       # 다른 날짜는 그대로
+    assert not Path(today_a.file_path).exists() and not Path(today_b.thumbnail_path).exists()
+    assert Path(today_a.export_path).exists()                     # export 사본은 보존
+    assert service.delete_day(patient.id, today) == 0             # 이미 비었음

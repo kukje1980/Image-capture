@@ -221,6 +221,18 @@ class CaptureService:
         """여러 영상 삭제. 지워진 레코드 수를 돌려준다."""
         return sum(1 for c in list(captures) if self.delete_capture(c))
 
+    def captures_on(self, patient_id: int, day: str) -> list:
+        """한 환자의 특정 촬영일('YYYY-MM-DD') 영상(사진 · 동영상) 목록, 촬영 순서."""
+        return [c for c in self.db.captures.list_by_patient(patient_id, order="asc")
+                if (c.captured_at or "")[:10] == day]
+
+    def delete_day(self, patient_id: int, day: str) -> int:
+        """그 날 촬영한 영상을 모두 삭제 (레코드 · 기본 저장 파일 · 썸네일, export 사본은 보존).
+
+        검사 소견(exam_notes)은 임상 기록이라 남겨 둔다. 지워진 장수를 돌려준다.
+        """
+        return self.delete_captures(self.captures_on(patient_id, day))
+
     def low_space_warning(self) -> Optional[str]:
         """시작 시 상태바에 보여줄 디스크 여유 공간 경고 (문제 없으면 None)."""
         free = free_space_mb(self.config.media_root)

@@ -283,7 +283,11 @@ body.meibo-on .mb-ctl { display: inline-flex; align-items: center; gap: 4px; }
 .thumbs-list { padding: 4px 10px 12px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; flex: 1; }
 .thumb-day { flex: none; position: sticky; top: 0; z-index: 1; margin: 6px -10px 0; padding: 6px 12px; font-size: 11px; font-weight: 700; color: var(--ink-muted);
   letter-spacing: .04em; background: var(--panel); display: flex; justify-content: space-between; }
-.thumb-day span:last-child { font-weight: 500; }
+.thumb-day .thumb-day-r { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; }
+.thumb-day-del { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; padding: 0; border: 1px solid transparent; border-radius: 5px;
+  background: transparent; color: var(--record); cursor: pointer; opacity: .75; }
+.thumb-day-del .ic { width: 12px; height: 12px; }
+.thumb-day-del:hover { opacity: 1; background: var(--record-soft); border-color: var(--record); }
 .thumb { flex: none; cursor: pointer; border-radius: 9px; background: #000; overflow: hidden; position: relative; transition: transform .12s, box-shadow .15s;
   box-shadow: inset 0 0 0 1px var(--rule); }
 .thumb::after { content: ""; position: absolute; inset: 0; border-radius: 9px; pointer-events: none; box-shadow: inset 0 0 0 1px rgba(255,255,255,.04); transition: box-shadow .15s; }

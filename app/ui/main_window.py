@@ -67,7 +67,7 @@ from app.ui.ref_bar import RefBar
 from app.ui.smart_bar import SmartBar, mode_text
 from app.ui import icons
 from app.ui.theme import ICON, ICON_ACCENT, build_qss, make_app_icon
-from app.ui.thumbnail_panel import ThumbnailPanel
+from app.ui.thumbnail_panel import ThumbnailPanel, day_label
 from app.ui.video_view import VideoView
 
 from app import __version__
@@ -234,6 +234,7 @@ class MainWindow(QMainWindow):
         self.exam_screen.openCapture.connect(self._on_thumbnail_clicked)
         self.exam_screen.openInPro.connect(lambda: self.set_mode("pro"))
         self.exam_screen.editPatient.connect(lambda: self.patient_panel.edit_patient())
+        self.exam_screen.deleteDay.connect(self._delete_day)
         self.home.action.connect(self._on_home_action)
         self.patient_list.openCapture.connect(lambda pid: self._open_patient(pid, "capture"))
         self.patient_list.openExam.connect(lambda pid: self._open_patient(pid, "exam"))
@@ -259,6 +260,7 @@ class MainWindow(QMainWindow):
         self.thumbnail_panel.selectionChanged.connect(self._on_selection_changed)   # 한 번 클릭: 선택
         # 오른쪽 클릭 = '멀티' (사진 목록의 사진: 그 사진도 골라서 · 라이브 영상: 고른 사진으로)
         self.thumbnail_panel.multiRequested.connect(self._safe("오른쪽 클릭 멀티", lambda: self._multi_by_right_click()))
+        self.thumbnail_panel.dayDeleteRequested.connect(self._delete_day)      # 촬영일 제목 줄의 삭제: 그 날 모두
         self.video_view.rightClicked.connect(self._safe("오른쪽 클릭 멀티", lambda: self._multi_by_right_click()))
         self.control_bar.multiToggled.connect(self._on_multi_toggled)
         self.control_bar.saveMultiClicked.connect(self._safe("멀티 저장", lambda: self._on_save_multi()))
@@ -2024,6 +2026,43 @@ class MainWindow(QMainWindow):
             self.exam_screen.reload()
         self.control_bar.set_status("영상 삭제됨" if ok else "이미 삭제된 영상입니다")
         return ok
+
+    def _delete_day(self, day: str, confirm: bool = True) -> int:
+        """현재 환자가 그 날('YYYY-MM-DD') 촬영한 사진 · 동영상을 모두 삭제 (검사 소견은 남김)."""
+        p = self._current_patient
+        if p is None or not day:
+            return 0
+        caps = self.service.captures_on(p.id, day)
+        if not caps:
+            if self.isVisible():
+                QMessageBox.information(self, "촬영일 삭제", f"{day_label(day)} 에 촬영한 영상이 없습니다.")
+            return 0
+        n_photo = sum(1 for c in caps if c.media_type != "video")
+        n_video = len(caps) - n_photo
+        what = " · ".join(x for x in (f"사진 {n_photo}장" if n_photo else "",
+                                      f"동영상 {n_video}개" if n_video else "") if x)
+        if confirm:
+            ret = QMessageBox.question(
+                self, "촬영일 삭제",
+                f"{p.name} 환자의 {day_label(day)} 촬영 영상을 모두 삭제하시겠습니까?\n\n"
+                f"{what} — DB 기록과 저장된 파일(썸네일 포함)이 지워지며 되돌릴 수 없습니다.\n"
+                "(지정 폴더에 복사된 사본과 그 날의 검사 소견은 남겨 둡니다)",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
+            if ret != QMessageBox.StandardButton.Yes:
+                return 0
+        try:
+            n = self.service.delete_captures(caps)
+        except Exception as e:  # noqa: BLE001
+            log.exception("day delete failed")
+            QMessageBox.warning(self, "오류", f"촬영일 삭제 실패: {e}")
+            n = 0
+        self.thumbnail_panel.set_patient(p.id)
+        self.pro.reload(select_last=False)
+        if hasattr(self, "exam_screen"):
+            self.exam_screen.reload()
+        self.control_bar.set_status(f"{day_label(day)} 촬영 영상 {n}장 삭제됨")
+        return n
 
     def _toggle_theme(self) -> None:
         self.config.theme = "dark" if self.config.theme != "dark" else "light"
