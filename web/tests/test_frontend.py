@@ -145,3 +145,12 @@ def test_delete_selected_wired():
     assert "method: 'DELETE'" in PRO_JS and "method: 'DELETE'" in app_js
     assert "slit:captures" in PRO_JS and "slit:captures" in app_js  # 기본 화면 삭제 → Pro 목록 갱신
     assert "function deleteViewed" in app_js
+
+
+def test_delete_day_wired():
+    """촬영일 제목 줄의 쓰레기통 버튼 → 그 날 영상 모두 삭제."""
+    app_js = (WEB / "static/js/app.js").read_text(encoding="utf-8")
+    css = (WEB / "static/css/app.css").read_text(encoding="utf-8")
+    assert "class=\"thumb-day-del\"" in app_js and "function deleteDay" in app_js
+    assert "deleteDay(d, dayCaps)" in app_js                      # 필터와 무관하게 그 날 전체
+    assert ".thumb-day-del" in css
