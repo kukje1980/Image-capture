@@ -67,6 +67,10 @@ _PATHS = {
     "trash": '<path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/>',
     "keyboard": '<rect x="2" y="5" width="20" height="14" rx="2.5"/><path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 12.5h.01M10 12.5h.01M14 12.5h.01M18 12.5h.01M8 16h8"/>',
     "download": '<path d="M12 3v12M7 10l5 5 5-5M4 21h16"/>',
+    "send": '<path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4z"/>',
+    "check": '<path d="M20 6L9 17l-5-5"/>',
+    "check-all": '<path d="M2 12.5l4.5 4.5L15 8.5"/><path d="M9.5 15.5l1.5 1.5L22 6.5"/>',
+    "deselect": '<rect x="3" y="3" width="18" height="18" rx="2.5"/><path d="M9 9l6 6M15 9l-6 6"/>',
 }
 
 _SVG = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{c}" '

@@ -112,7 +112,8 @@ class MainWindow(QMainWindow):
         left.addWidget(self.view_stack, 1)
         left.addWidget(self.control_bar)
 
-        self.thumbnail_panel = ThumbnailPanel(self.db, newest_on_top=self.config.newest_on_top)
+        self.thumbnail_panel = ThumbnailPanel(self.db, newest_on_top=self.config.newest_on_top,
+                                              delete_after_send=self.config.send_delete_after)
 
         root.addLayout(left, 1)
         root.addWidget(self.thumbnail_panel)
@@ -140,6 +141,10 @@ class MainWindow(QMainWindow):
         self.control_bar.clearQuadClicked.connect(self._on_clear_quad)
         self.quad_view.cellClicked.connect(self._on_quad_cell_clicked)
         self.thumbnail_panel.thumbnailClicked.connect(self._on_thumbnail_clicked)
+        self.thumbnail_panel.sendRequested.connect(self._on_send_captures)
+        self.thumbnail_panel.deleteRequested.connect(self._on_delete_captures)
+        self.thumbnail_panel.deleteAfterSendToggled.connect(self._on_delete_after_send_toggled)
+        self.thumbnail_panel.selectionChanged.connect(self._on_thumb_selection_changed)
         self.control_bar.eyeChanged.connect(lambda e: self.video_view.set_hud(eye=e))
         self._rec_timer = QTimer(self)
         self._rec_timer.setInterval(500)
@@ -705,6 +710,104 @@ class MainWindow(QMainWindow):
     def _on_thumbnail_clicked(self, capture) -> None:
         ImageViewerDialog(capture, self).exec()
 
+    # ---- 썸네일 목록: 선택 → 보내기 / 삭제 ----
+    def _on_thumb_selection_changed(self, n: int) -> None:
+        if n:
+            self.statusBar().showMessage(
+                f"{n}장 선택 — 오른쪽 클릭: 전송 폴더로 보내기 · 삭제   (더블클릭: 크게 보기)", 6000)
+
+    def _on_delete_after_send_toggled(self, on: bool) -> None:
+        self.config.send_delete_after = bool(on)
+        try:
+            self.config.save()
+        except Exception:  # noqa: BLE001
+            log.warning("send_delete_after save failed", exc_info=True)
+        self.statusBar().showMessage(
+            "보내기 후 원본을 자동 삭제합니다" if on else "보내기 후 원본을 남겨둡니다", 4000)
+
+    def _on_send_captures(self, captures) -> None:
+        """선택한 영상을 전송 폴더로 복사. 설정에 따라 원본을 지운다."""
+        if not captures:
+            return
+        if not self.config.export_root:
+            QMessageBox.information(self, "전송 폴더", "전송 폴더가 설정되지 않았습니다.\n설정에서 전송 폴더를 지정하세요.")
+            return
+        delete_after = bool(self.config.send_delete_after)
+        patients = {}
+        sent, removed, failed = [], [], []
+        for cap in captures:
+            patient = patients.get(cap.patient_id)
+            if patient is None:
+                patient = patients[cap.patient_id] = self.db.patients.get(cap.patient_id)
+            if patient is None:
+                failed.append(cap)
+                continue
+            try:
+                self.service.send_to_export(cap, patient)
+                sent.append(cap)
+            except Exception:  # noqa: BLE001
+                log.exception("send_to_export failed id=%s", cap.id)
+                failed.append(cap)
+                continue
+            if delete_after:
+                try:
+                    self.service.delete_capture(cap)
+                    removed.append(cap)
+                except Exception:  # noqa: BLE001
+                    log.exception("delete after send failed id=%s", cap.id)
+        if removed:
+            from app.ui.thumbnail_widget import forget_pixmap
+            for cap in removed:
+                forget_pixmap(cap)
+            self.thumbnail_panel.remove_captures(removed)
+        else:
+            self.thumbnail_panel.clear_selection()
+        msg = f"{len(sent)}장을 전송 폴더로 보냈습니다"
+        if removed:
+            msg += f" (원본 {len(removed)}장 삭제)"
+        if failed:
+            msg += f" · 실패 {len(failed)}장"
+            QMessageBox.warning(self, "보내기", f"{len(failed)}장을 보내지 못했습니다.\n"
+                                "원본 파일이 없거나 전송 폴더에 쓸 수 없습니다 (로그 참고).")
+        self.statusBar().showMessage(msg, 6000)
+        self.control_bar.set_status(msg)
+
+    def _on_delete_captures(self, captures) -> None:
+        """선택한 영상을 확인 후 삭제 (전송 폴더의 복사본은 남긴다)."""
+        if not captures:
+            return
+        n = len(captures)
+        videos = sum(1 for c in captures if c.media_type == "video")
+        what = f"{n}개 영상" if videos else f"사진 {n}장"
+        box = QMessageBox(QMessageBox.Icon.Warning, "삭제",
+                          f"선택한 {what}을(를) 삭제할까요?\n\n기본 저장 폴더의 원본과 목록에서 지워지며 되돌릴 수 없습니다.\n"
+                          "전송 폴더에 이미 보낸 복사본은 남습니다.",
+                          QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel, self)
+        box.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        box.button(QMessageBox.StandardButton.Yes).setText("삭제")
+        box.button(QMessageBox.StandardButton.Cancel).setText("취소")
+        if box.exec() != QMessageBox.StandardButton.Yes:
+            return
+        self._delete_captures(captures)
+
+    def _delete_captures(self, captures) -> int:
+        from app.ui.thumbnail_widget import forget_pixmap
+        removed = []
+        for cap in captures:
+            try:
+                self.service.delete_capture(cap)
+                forget_pixmap(cap)
+                removed.append(cap)
+            except Exception:  # noqa: BLE001
+                log.exception("delete capture failed id=%s", cap.id)
+        self.thumbnail_panel.remove_captures(removed)
+        msg = f"{len(removed)}장을 삭제했습니다"
+        if len(removed) != len(captures):
+            msg += f" · 실패 {len(captures) - len(removed)}장"
+        self.statusBar().showMessage(msg, 5000)
+        self.control_bar.set_status(msg)
+        return len(removed)
+
     def _toggle_theme(self) -> None:
         self.config.theme = "dark" if self.config.theme != "dark" else "light"
         app = QApplication.instance()
@@ -722,6 +825,7 @@ class MainWindow(QMainWindow):
         if dlg.exec():
             dlg.apply_to_config()
             self.thumbnail_panel.newest_on_top = self.config.newest_on_top
+            self.thumbnail_panel.set_delete_after_send(self.config.send_delete_after)
             self._restart_camera()
 
     # ---- 종료 ----

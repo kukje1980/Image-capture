@@ -1,4 +1,7 @@
-"""썸네일 패널의 단일 항목 (클릭 가능): 4:3 영상 + 안구 배지 + 시각·코멘트 오버레이."""
+"""썸네일 패널의 단일 항목: 4:3 영상 + 안구 배지 + 시각·코멘트 오버레이.
+
+마우스 왼쪽 클릭 = 선택/해제(토글), 더블클릭 = 크게 보기, 오른쪽 클릭 = 패널의 메뉴(보내기·삭제).
+"""
 from __future__ import annotations
 
 from PySide6.QtCore import QRectF, Qt, Signal
@@ -11,6 +14,7 @@ from app.ui.theme import EYE_COLORS
 from app.ui.video_view import scaled_font
 
 _cache: dict[str, QPixmap] = {}
+SELECT_COLOR = "#33c2b1"
 
 
 def _load_pixmap(capture: Capture) -> QPixmap | None:
@@ -30,20 +34,40 @@ def _load_pixmap(capture: Capture) -> QPixmap | None:
     return pm
 
 
-class ThumbnailWidget(QWidget):
-    clicked = Signal(object)  # Capture
+def forget_pixmap(capture: Capture) -> None:
+    """삭제된 영상의 캐시를 비운다 (같은 경로가 다시 쓰여도 옛 그림이 남지 않게)."""
+    for path in (capture.thumbnail_path, capture.file_path):
+        if path:
+            _cache.pop(path, None)
 
-    def __init__(self, capture: Capture, parent=None):
+
+class ThumbnailWidget(QWidget):
+    clicked = Signal(object)            # Capture — 왼쪽 클릭(선택 토글 요청)
+    activated = Signal(object)          # Capture — 더블클릭(크게 보기)
+    contextRequested = Signal(object, object)   # Capture, QPoint(global) — 오른쪽 클릭
+
+    def __init__(self, capture: Capture, selected: bool = False, parent=None):
         super().__init__(parent)
         self.capture = capture
         self.setObjectName("ThumbCard")
         self._pm = _load_pixmap(capture)
         self._hover = False
+        self._selected = selected
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setMinimumHeight(120)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         eye = capture.eye if capture.eye and capture.eye != "NA" else ""
-        self.setToolTip(" · ".join(x for x in (capture.captured_at, eye, capture.note or "") if x))
+        tip = " · ".join(x for x in (capture.captured_at, eye, capture.note or "") if x)
+        self.setToolTip(tip + "\n클릭: 선택 · 더블클릭: 크게 보기 · 오른쪽 클릭: 보내기/삭제")
+
+    # ---- 선택 상태 ----
+    def is_selected(self) -> bool:
+        return self._selected
+
+    def set_selected(self, on: bool) -> None:
+        if on != self._selected:
+            self._selected = on
+            self.update()
 
     def heightForWidth(self, w: int) -> int:  # noqa: N802
         return int(w * 3 / 4)
@@ -118,10 +142,34 @@ class ThumbnailWidget(QWidget):
             p.setPen(QColor(col))
             p.drawText(br, Qt.AlignmentFlag.AlignCenter, text)
             bx += w + 4
+        if self._selected:
+            # 선택 표시: 살짝 밝은 덮개 + 오른쪽 위 체크 동그라미
+            p.fillRect(self.rect(), QColor(51, 194, 177, 38))
+            d = 22.0
+            cr = QRectF(self.width() - d - 6, 6, d, d)
+            p.setPen(QPen(QColor("#ffffff"), 1.5))
+            p.setBrush(QColor(SELECT_COLOR))
+            p.drawEllipse(cr)
+            p.drawPixmap(int(cr.x() + 4), int(cr.y() + 4), icons.pixmap("check", "#032321", 14, 2.6))
         p.restore()
         p.setBrush(Qt.BrushStyle.NoBrush)
-        p.setPen(QPen(QColor("#33c2b1"), 2) if self._hover else QPen(QColor(255, 255, 255, 18), 1))
-        p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 9, 9)
+        if self._selected:
+            p.setPen(QPen(QColor(SELECT_COLOR), 3))
+            p.drawRoundedRect(r.adjusted(1, 1, -1, -1), 9, 9)
+        else:
+            p.setPen(QPen(QColor(SELECT_COLOR), 2) if self._hover else QPen(QColor(255, 255, 255, 18), 1))
+            p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 9, 9)
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
-        self.clicked.emit(self.capture)
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(self.capture)
+        elif event.button() == Qt.MouseButton.RightButton:
+            self.contextRequested.emit(self.capture, event.globalPosition().toPoint())
+        else:
+            super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.activated.emit(self.capture)
+        else:
+            super().mouseDoubleClickEvent(event)

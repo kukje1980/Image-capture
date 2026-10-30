@@ -62,3 +62,59 @@ def test_jpg_format(app_env):
     cap = service.save_photo(_frame(), patient, eye="NA")
     assert cap.file_path.endswith(".jpg")
     assert Path(cap.file_path).exists()
+
+
+def test_export_on_capture_off_then_send(app_env):
+    """촬영 시 자동 전송을 끄면 export 복사본이 없고, 목록 '보내기'로 나중에 전송된다."""
+    config, db = app_env
+    config.export_on_capture = False
+    service = CaptureService(db, config)
+    patient = _patient(db)
+
+    cap = service.save_photo(_frame(), patient, eye="OD")
+    assert cap.export_path is None
+    assert not list(Path(config.export_root).rglob("*.png"))
+
+    dst = service.send_to_export(cap, patient)
+    assert dst.exists() and dst.name == Path(cap.file_path).name
+    assert str(dst).startswith(config.export_root)
+    assert db.captures.get(cap.id).export_path == str(dst)
+    # 원본은 그대로
+    assert Path(cap.file_path).exists()
+    # 다시 보내도 같은 경로, 예외 없음
+    assert service.send_to_export(cap, patient) == dst
+
+
+def test_send_recopies_when_export_copy_missing(app_env):
+    config, db = app_env
+    service = CaptureService(db, config)
+    patient = _patient(db)
+    cap = service.save_photo(_frame(), patient, eye="OS")
+    Path(cap.export_path).unlink()                   # 누군가 전송 폴더에서 지움
+    dst = service.send_to_export(cap, patient)
+    assert dst.exists() and str(dst) == cap.export_path
+
+
+def test_send_requires_export_root(app_env):
+    import pytest
+    config, db = app_env
+    config.export_root = ""
+    service = CaptureService(db, config)
+    patient = _patient(db)
+    cap = service.save_photo(_frame(), patient)
+    with pytest.raises(RuntimeError):
+        service.send_to_export(cap, patient)
+
+
+def test_delete_capture_keeps_export_copy(app_env):
+    config, db = app_env
+    service = CaptureService(db, config)
+    patient = _patient(db)
+    cap = service.save_photo(_frame(), patient, eye="OD")
+    service.delete_capture(cap)
+    assert not Path(cap.file_path).exists()
+    assert not Path(cap.thumbnail_path).exists()
+    assert Path(cap.export_path).exists()             # 전송 폴더 복사본은 남는다
+    assert db.captures.get(cap.id) is None
+    assert db.captures.list_by_patient(patient.id) == []
+    service.delete_capture(cap)                       # 이미 없어도 예외 없음

@@ -1,7 +1,8 @@
-"""설정 다이얼로그: 소스 모드, 카메라, 해상도, 사진 형식, export 폴더."""
+"""설정 다이얼로그: 소스 모드, 카메라, 해상도, 사진 형식, 전송(export) 폴더와 보내기 동작."""
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -24,7 +25,7 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.config = config
         self.setWindowTitle("설정")
-        self.resize(500, 380)
+        self.resize(520, 440)
 
         form = QFormLayout()
         self.source_mode = QComboBox()
@@ -67,6 +68,16 @@ class SettingsDialog(QDialog):
         exp_w = QWidget()
         exp_w.setLayout(exp_row)
 
+        self.export_on_capture = QCheckBox("촬영하면 바로 전송 폴더에도 복사")
+        self.export_on_capture.setChecked(bool(config.export_on_capture))
+        self.export_on_capture.setToolTip("끄면 촬영 사진은 기본 저장 폴더에만 남고, 우측 목록에서 골라 '보내기' 할 때만 전송됩니다")
+
+        self.after_send = QComboBox()
+        self.after_send.addItem("원본을 남겨둠 (목록에 그대로)", False)
+        self.after_send.addItem("원본을 자동 삭제 (전송 폴더에만 남김)", True)
+        self.after_send.setCurrentIndex(1 if config.send_delete_after else 0)
+        self.after_send.setToolTip("우측 목록에서 사진을 선택해 '보내기' 한 뒤의 동작")
+
         self.test_file = QLineEdit(config.test_file_path)
 
         form.addRow("소스 모드", self.source_mode)
@@ -74,7 +85,9 @@ class SettingsDialog(QDialog):
         form.addRow("가로 해상도", self.width)
         form.addRow("세로 해상도", self.height)
         form.addRow("사진 형식", self.photo_format)
-        form.addRow("저장 폴더(export)", exp_w)
+        form.addRow("전송 폴더(export)", exp_w)
+        form.addRow("촬영 시 자동 전송", self.export_on_capture)
+        form.addRow("보내기 후 사진", self.after_send)
         form.addRow("테스트 파일(file 모드)", self.test_file)
 
         btns = QDialogButtonBox(
@@ -91,7 +104,7 @@ class SettingsDialog(QDialog):
         lay.addWidget(btns)
 
     def _browse(self) -> None:
-        d = QFileDialog.getExistingDirectory(self, "저장 폴더 선택", self.export.text() or "")
+        d = QFileDialog.getExistingDirectory(self, "전송 폴더 선택", self.export.text() or "")
         if d:
             self.export.setText(d)
 
@@ -110,6 +123,8 @@ class SettingsDialog(QDialog):
         c.capture_height = self.height.value()
         c.photo_format = self.photo_format.currentText()
         c.export_root = self.export.text().strip()
+        c.export_on_capture = self.export_on_capture.isChecked()
+        c.send_delete_after = bool(self.after_send.currentData())
         c.test_file_path = self.test_file.text().strip()
         c.save()
         return c

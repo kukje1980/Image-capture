@@ -46,6 +46,12 @@ class CapturesDAO:
             self._c.execute("UPDATE captures SET note=? WHERE id=?", (note, cid))
             self._c.commit()
 
+    def update_export_path(self, cid: int, export_path: Optional[str]) -> None:
+        """목록에서 '보내기'로 전송 폴더에 복사한 뒤 복사본 경로를 기록한다."""
+        with self._lock:
+            self._c.execute("UPDATE captures SET export_path=? WHERE id=?", (export_path, cid))
+            self._c.commit()
+
     def delete(self, cid: int) -> Optional[dict]:
         """레코드를 지우고, 디스크 정리를 위해 관련 경로를 반환한다."""
         with self._lock:

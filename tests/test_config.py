@@ -46,3 +46,13 @@ def test_save_is_atomic(app_env):
     config.save()
     p = AppConfig.config_path()
     assert p.exists() and not p.with_name(p.name + ".tmp").exists()
+
+
+def test_send_options_roundtrip(app_env):
+    config, _ = app_env
+    assert config.export_on_capture is True and config.send_delete_after is False
+    config.export_on_capture = False
+    config.send_delete_after = True
+    config.save()
+    c = AppConfig.load()
+    assert c.export_on_capture is False and c.send_delete_after is True

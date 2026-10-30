@@ -176,6 +176,11 @@ def build_qss(mode: str = "dark") -> str:
     QPushButton#FilterChip:hover {{ color: {c['ink']}; border-color: {c['rule_strong']}; }}
     QPushButton#FilterChip:checked {{ background: {c['raised']}; color: {c['ink']}; border: 1px solid {c['rule_strong']}; border-bottom: 2px solid {c['accent']}; }}
     QFrame#ThumbSep {{ background: {c['rule']}; }}
+    QFrame#SelectBar {{ background: {c['accent_soft']}; border: 1px solid {c['accent']}; border-radius: 8px; }}
+    QLabel#SelectCount {{ color: {c['accent_hover'] if mode == 'dark' else c['accent']}; font-size: 12px; font-weight: 700; }}
+    QPushButton#SelectBarBtn {{ background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 4px; min-width: 16px; min-height: 16px; }}
+    QPushButton#SelectBarBtn:hover {{ background: {c['raised']}; border-color: {c['rule_strong']}; }}
+    QMenu#ThumbMenu::item {{ padding: 7px 22px 7px 10px; }}
 
     /* ===== Pro 모드 ===== */
     QFrame#ProToolbar {{ background: {c['panel']}; border: 1px solid {c['rule']}; border-radius: 12px; }}
