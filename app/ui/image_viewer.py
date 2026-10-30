@@ -2,6 +2,9 @@
 
 사진은 Pro 검토와 같은 캔버스(ImageCanvas): 기본 도구는 돋보기 — 사진을 누르고 있는 동안 확대 렌즈,
 마우스 휠 = 확대 · 축소, '이동' 으로 바꾸면 끌어서 옮기기, '맞춤' = 창에 맞춤.
+
+하단 '삭제' 버튼(Delete)을 누르고 확인하면 대화상자가 ``ImageViewerDialog.Deleted`` 코드로 닫히고,
+실제 삭제(DB·파일)는 호출한 쪽(메인 창)이 수행한다.
 """
 from __future__ import annotations
 
@@ -11,7 +14,15 @@ import sys
 
 import numpy as np
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtWidgets import QButtonGroup, QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
+from PySide6.QtWidgets import (
+    QButtonGroup,
+    QDialog,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QVBoxLayout,
+)
 
 from app.ui import icons
 from app.ui.pro.image_canvas import ImageCanvas
@@ -43,8 +54,11 @@ def _load_bgr(path: str):
 
 
 class ImageViewerDialog(QDialog):
-    def __init__(self, capture, parent=None):
+    Deleted = 2  # exec() 반환값: 사용자가 '삭제'를 확인함
+
+    def __init__(self, capture, parent=None, allow_delete: bool = True):
         super().__init__(parent)
+        self.capture = capture
         self.setWindowTitle(f"보기 - {capture.captured_at}")
         self.resize(920, 720)
         lay = QVBoxLayout(self)
@@ -53,6 +67,7 @@ class ImageViewerDialog(QDialog):
         if capture.media_type == "video":
             open_in_default_player(capture.file_path)
             lay.addWidget(QLabel("동영상을 기본 플레이어로 재생합니다.\n\n" + capture.file_path))
+            lay.addLayout(self._footer(allow_delete))
             return
 
         bar = QHBoxLayout()
@@ -91,9 +106,42 @@ class ImageViewerDialog(QDialog):
         lay.addWidget(self.canvas, 1)
         self.b_fit.clicked.connect(self.canvas.reset_view)
         self.set_tool("magnify")
+        lay.addLayout(self._footer(allow_delete))
 
     def set_tool(self, tool: str) -> None:
         if self.canvas is None:
             return
         self.canvas.set_tool(tool)
         self.tool_buttons[tool].setChecked(True)
+
+    # ---- 하단: 삭제 · 닫기 ----
+    def _footer(self, allow_delete: bool) -> QHBoxLayout:
+        foot = QHBoxLayout()
+        self.b_delete = QPushButton(icons.gap("삭제"))
+        self.b_delete.setObjectName("ProDanger")
+        self.b_delete.setIcon(icons.icon("trash", "#ef4f4c", 16))
+        self.b_delete.setIconSize(QSize(16, 16))
+        self.b_delete.setToolTip("이 영상을 DB와 디스크에서 삭제 (Delete)")
+        self.b_delete.setShortcut(Qt.Key.Key_Delete)
+        self.b_delete.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.b_delete.setVisible(allow_delete)
+        self.b_delete.clicked.connect(self._confirm_delete)
+        b_close = QPushButton("닫기")
+        b_close.setDefault(True)
+        b_close.clicked.connect(self.accept)
+        foot.addWidget(self.b_delete)
+        foot.addStretch(1)
+        foot.addWidget(b_close)
+        return foot
+
+    def _confirm_delete(self) -> None:
+        kind = "동영상" if self.capture.media_type == "video" else "사진"
+        ret = QMessageBox.question(
+            self, f"{kind} 삭제",
+            f"이 {kind}({self.capture.captured_at})을(를) 삭제하시겠습니까?\n\n"
+            "DB 기록과 저장된 파일(썸네일 포함)이 함께 지워지며 되돌릴 수 없습니다.\n"
+            "(지정 폴더에 복사된 사본은 남겨 둡니다)",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if ret == QMessageBox.StandardButton.Yes:
+            self.done(self.Deleted)

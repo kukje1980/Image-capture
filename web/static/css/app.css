@@ -366,6 +366,8 @@ body.pro-on .workspace { display: none; }
 .pbtn.on, .pbtn.on:hover:not(:disabled) { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); position: relative; z-index: 1; }
 .pbtn:disabled { opacity: .35; cursor: not-allowed; }
 .pghost { background: transparent; border-color: transparent; color: var(--ink-soft); }
+.pdanger, .pdanger:hover:not(:disabled) { color: var(--record); }
+.pdanger:hover:not(:disabled) { background: var(--record-soft); border-color: transparent; }
 .seg { display: inline-flex; padding: 2px; gap: 2px; background: var(--bg); border: 1px solid var(--rule); border-radius: 9px; }
 .seg .pbtn { border-color: transparent; background: transparent; color: var(--ink-soft); }
 .seg .pbtn:hover:not(:disabled) { color: var(--ink); background: var(--panel-2); border-color: transparent; }
