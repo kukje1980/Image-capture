@@ -42,6 +42,18 @@ def sanitize(name: str) -> str:
     return name or "_"
 
 
+def unique_path(p) -> Path:
+    """같은 이름의 파일이 있으면 '이름_1.확장자', '이름_2.확장자' … 로 비어 있는 경로를 찾는다 (덮어쓰기 방지)."""
+    p = Path(p)
+    if not p.exists():
+        return p
+    for i in range(1, 100000):
+        q = p.with_name(f"{p.stem}_{i}{p.suffix}")
+        if not q.exists():
+            return q
+    raise FileExistsError(p)
+
+
 def patient_subdir(root, patient, template: str, ts) -> Path:
     """<root>/<template>를 환자/날짜 값으로 채운 경로를 만든다.
 

@@ -1346,6 +1346,7 @@
   $('pro-start-camera').addEventListener('click', async () => { await App.startCamera(); attachLive(); });
 
   document.addEventListener('slit:patient', () => { if (P.on) reload(false); });
+  document.addEventListener('slit:imported', () => { if (P.on) reload(false); });   // 가져오기 폴더에서 새 사진 (보던 영상·편집은 그대로)
   document.addEventListener('keydown', (e) => {
     if (!P.on || document.querySelector('dialog[open]')) return;
     const el = e.target instanceof Element ? e.target : null;

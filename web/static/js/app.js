@@ -2,6 +2,7 @@
  * - navigator.mediaDevices.getUserMedia 로 캡처 장비 라이브
  * - canvas.toBlob (사진) / MediaRecorder (동영상)
  * - 저장: (a) 서버 POST /api/v1/captures  (b) File System Access API 로 지정 폴더에도 동시 write
+ * - 가져오기 폴더: 카메라·다른 장비가 지정 폴더에 넣은 사진을 지금 환자에게 가져옴 (File System Access API)
  */
 (() => {
   const $ = (id) => document.getElementById(id);
@@ -72,6 +73,8 @@
     if (!('showDirectoryPicker' in window)) {
       $('btn-folder').disabled = true;
       $('btn-folder').title = '이 브라우저는 폴더 저장을 지원하지 않습니다 (Chrome/Edge 사용)';
+      $('btn-import-folder').disabled = true;
+      $('btn-import-folder').title = '이 브라우저는 폴더 가져오기를 지원하지 않습니다 (Chrome/Edge 사용)';
     }
     await loadPatients();
     updateCaptureButtons();
@@ -124,6 +127,8 @@
     $('btn-fs-record').addEventListener('click', () => $('btn-record').click());
     document.addEventListener('fullscreenchange', syncFullscreen);
     $('btn-folder').addEventListener('click', pickFolder);
+    $('btn-import-folder').addEventListener('click', pickImportFolder);
+    $('btn-import-off').addEventListener('click', () => { stopImport(); toast('가져오기 폴더 감시를 껐습니다.', 'success'); });
 
     $('btn-start-camera').addEventListener('click', () => startCamera());
     $('camera-select').addEventListener('change', (e) => { prefSet('slitlamp-cam', e.target.value); startCamera(e.target.value); });
@@ -567,7 +572,12 @@
   // ---- folder (File System Access API) ----
   async function pickFolder() {
     try {
-      state.dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+      const dir = await window.showDirectoryPicker({ mode: 'readwrite' });
+      if (imp.dir && await dir.isSameEntry(imp.dir)) {   // 저장한 사진을 다시 가져오게 되므로 막는다
+        toast('PC 저장 폴더는 가져오기 폴더와 다른 폴더로 지정하세요.', 'error');
+        return;
+      }
+      state.dirHandle = dir;
       const status = $('folder-status');
       status.classList.add('linked');
       status.innerHTML = `<span class="dot"></span> ${state.dirHandle.name} 폴더 연결됨`;
@@ -589,6 +599,212 @@
       toast('지정 폴더 저장 실패: ' + err.message, 'error');
       return false;
     }
+  }
+
+  // ---- 가져오기 폴더 (File System Access API) ----
+  // 카메라·다른 장비가 이 폴더에 넣은 사진을 지금 환자에게 가져오고, 원본은 폴더 안 '가져옴' 폴더로 옮긴다.
+  // - 크기·수정 시각이 한 번 이상 그대로이고 파일 끝까지 써진 것을 확인한 뒤에 가져온다 (복사 중인 반쪽 파일 방지)
+  // - 폴더를 고를 때 이미 있던 사진과 환자를 고르지 않은 동안 들어온 사진은 먼저 묻는다 (다른 환자 기록에 섞이지 않게)
+  // - 폴더 바로 아래의 사진만 본다 (하위 폴더는 보지 않음)
+  const IMPORT_DONE = '가져옴';
+  const IMPORT_RE = /\.(jpe?g|png|webp|bmp)$/i;
+  const IMPORT_EVERY = 1500;        // ms
+  const IMPORT_SETTLE = 3;          // 끝 표시가 없는 파일도 이만큼 그대로면 다 써진 것으로 본다
+  const imp = { dir: null, timer: null, busy: false, first: true, entries: new Map(), skip: new Map(), errShown: false, waitShown: 0 };
+
+  function syncImportUI() {
+    const st = $('import-status'), on = !!imp.dir;
+    st.classList.toggle('linked', on);
+    const name = on ? (imp.dir.name.length > 16 ? imp.dir.name.slice(0, 15) + '…' : imp.dir.name) : '';
+    st.innerHTML = `<span class="dot"></span> ${on ? escHtml(name) + ' 감시 중' : '사용 안 함'}`;
+    st.title = on ? `'${imp.dir.name}' 폴더에 새로 들어오는 사진을 지금 환자에게 가져옵니다` : '가져오기 폴더를 지정하지 않았습니다';
+    $('btn-import-off').hidden = !on;
+  }
+  async function pickImportFolder() {
+    let dir;
+    try {
+      dir = await window.showDirectoryPicker({ id: 'slit-import', mode: 'readwrite' });   // 원본을 '가져옴' 으로 옮기려면 쓰기 권한
+    } catch (err) {
+      if (err && err.name !== 'AbortError') toast('가져오기 폴더 연결 실패: ' + err.message, 'error');
+      return;
+    }
+    if (state.dirHandle && await dir.isSameEntry(state.dirHandle)) {
+      toast('가져오기 폴더는 PC 저장 폴더와 다른 폴더로 지정하세요 (저장한 사진을 다시 가져오게 됩니다).', 'error');
+      return;
+    }
+    watchImportFolder(dir);
+    toast(`'${dir.name}' 폴더에 새로 들어오는 사진을 지금 환자에게 가져옵니다.`, 'success');
+  }
+  function watchImportFolder(dir) {
+    stopImport();
+    imp.dir = dir;
+    syncImportUI();
+    imp.timer = setInterval(pollImport, IMPORT_EVERY);
+    pollImport();
+  }
+  function stopImport() {
+    clearInterval(imp.timer);
+    Object.assign(imp, { dir: null, timer: null, first: true, errShown: false, waitShown: 0 });
+    imp.entries.clear(); imp.skip.clear();
+    syncImportUI();
+  }
+  const importEye = () => (document.body.classList.contains('pro-on') && $('pro-eye') ? $('pro-eye').value : $('eye-select').value) || 'NA';
+
+  async function scanImport(dir, havePatient) {
+    const seen = new Set(), ready = [];
+    for await (const [name, h] of dir.entries()) {
+      if (h.kind !== 'file' || /^[.~]/.test(name) || !IMPORT_RE.test(name)) continue;
+      let f;
+      try { f = await h.getFile(); } catch (_) { continue; }
+      const sig = `${f.size}:${f.lastModified}`;
+      seen.add(name);
+      if (imp.skip.has(name)) {
+        if (imp.skip.get(name) === sig) continue;
+        imp.skip.delete(name);                       // 같은 이름의 새 사진 (카메라 번호가 처음으로 돌아감 등)
+      }
+      const e = imp.entries.get(name);
+      if (!e) imp.entries.set(name, { sig, t: f.lastModified, held: imp.first || !havePatient, stable: 0, retryAt: 0 });
+      else if (e.sig !== sig) Object.assign(e, { sig, t: f.lastModified, stable: 0 });   // 아직 쓰는 중
+      else { e.stable++; if (f.size > 0) ready.push(name); }
+    }
+    for (const n of [...imp.entries.keys()]) if (!seen.has(n)) imp.entries.delete(n);
+    for (const n of [...imp.skip.keys()]) if (!seen.has(n)) imp.skip.delete(n);
+    imp.first = false;
+    return ready.sort((a, b) => (imp.entries.get(a).t - imp.entries.get(b).t) || a.localeCompare(b));
+  }
+
+  async function pollImport() {
+    if (!imp.dir || imp.busy) return;
+    imp.busy = true;
+    const dir = imp.dir, live = () => dir === imp.dir;   // 도중에 끄거나 다른 폴더로 바꾸면 멈춘다
+    let got = 0, patient = null;
+    try {
+      patient = currentPatient();
+      const ready = await scanImport(dir, !!patient);
+      if (!live()) return;
+      imp.errShown = false;
+      if (!patient) {
+        if (ready.length && ready.length !== imp.waitShown) toast(`가져올 사진 ${ready.length}장이 기다리고 있습니다 — 환자를 선택하면 가져옵니다.`);
+        imp.waitShown = ready.length;
+        return;
+      }
+      imp.waitShown = 0;
+      for (const name of ready) {
+        if (!live()) break;
+        const e = imp.entries.get(name);
+        if (e && !e.held) got += await importOne(dir, name, patient);
+      }
+      const held = live() ? ready.filter((n) => imp.entries.get(n)?.held) : [];
+      if (held.length) {
+        const who = `${patient.name}${patient.chart_no ? ` (${patient.chart_no})` : ''}`;
+        const yes = confirm(`가져오기 폴더에 전부터 있던 사진 ${held.length}장이 있습니다.\n지금 환자 ${who} 에게 가져올까요?\n\n`
+          + "'취소' 를 누르면 가져오지 않고 폴더에 그대로 둡니다 (폴더를 다시 지정하면 다시 묻습니다).");
+        for (const name of held) {
+          const e = imp.entries.get(name);
+          if (!live() || !e) break;
+          if (yes) {
+            e.held = false;                              // 허락받음 — 저장이 실패해 다시 시도해도 또 묻지 않는다
+            got += await importOne(dir, name, patient);
+          } else {
+            imp.skip.set(name, e.sig); imp.entries.delete(name);
+          }
+        }
+      }
+    } catch (err) {
+      if (live() && !imp.errShown) toast('가져오기 폴더를 읽지 못했습니다: ' + (err.message || err.name), 'error');
+      if (live()) imp.errShown = true;
+    } finally {
+      imp.busy = false;
+      if (got) {
+        toast(`가져오기 폴더에서 사진 ${got}장을 ${patient.name} 님 기록으로 가져왔습니다.`, 'success');
+        document.dispatchEvent(new CustomEvent('slit:imported'));
+      }
+    }
+  }
+
+  /** 파일 끝까지 써졌는지 형식별 끝 표시로 확인 (JPEG EOI · PNG IEND · BMP/WebP 헤더 크기) */
+  async function importComplete(file, ext) {
+    if (!file.size) return false;
+    const head = new Uint8Array(await file.slice(0, 12).arrayBuffer());
+    const tail = new Uint8Array(await file.slice(Math.max(0, file.size - 4096)).arrayBuffer());
+    const u32 = (o) => (head[o] | head[o + 1] << 8 | head[o + 2] << 16 | head[o + 3] << 24) >>> 0;
+    const has = (pat, from) => { for (let i = tail.length - pat.length; i >= from; i--) if (pat.every((b, j) => tail[i + j] === b)) return true; return false; };
+    if (ext === 'jpg') return head[0] === 0xff && head[1] === 0xd8 && has([0xff, 0xd9], 0);
+    if (ext === 'png') return head[0] === 0x89 && head[1] === 0x50 && has([0x49, 0x45, 0x4e, 0x44], Math.max(0, tail.length - 32));
+    if (ext === 'bmp') return head[0] === 0x42 && head[1] === 0x4d && file.size >= u32(2);
+    if (ext === 'webp') return head[0] === 0x52 && head[1] === 0x49 && file.size >= u32(4) + 8;
+    return true;
+  }
+  async function decodable(file) {
+    try { const b = await createImageBitmap(file); b.close(); return true; } catch (_) { return false; }
+  }
+  async function bmpToPng(file) {
+    const b = await createImageBitmap(file);
+    const c = document.createElement('canvas');
+    c.width = b.width; c.height = b.height;
+    c.getContext('2d').drawImage(b, 0, 0);
+    b.close();
+    return new Promise((res) => c.toBlob(res, 'image/png'));
+  }
+
+  /** 사진 한 장을 지금 환자에게 가져온다. 가져왔으면 1, 아니면(아직 쓰는 중·실패) 0 */
+  async function importOne(dir, name, patient) {
+    const e = imp.entries.get(name);
+    if (!e || e.retryAt > Date.now()) return 0;
+    let file;
+    try { file = await (await dir.getFileHandle(name)).getFile(); } catch (_) { return 0; }   // 다른 프로그램이 옮김·사용 중 → 다음에
+    if (`${file.size}:${file.lastModified}` !== e.sig) { e.stable = 0; return 0; }
+    const raw = (name.split('.').pop() || '').toLowerCase();
+    const ext = raw === 'jpeg' ? 'jpg' : raw;
+    const settled = e.stable >= IMPORT_SETTLE;
+    if (!(await importComplete(file, ext)) && !settled) return 0;   // 끝까지 안 써졌을 수 있음 → 조금 더 기다린다
+    const giveUp = (why) => {
+      imp.skip.set(name, e.sig); imp.entries.delete(name);
+      toast(`'${name}' 가져오기 실패: ${why}`, 'error');
+      return 0;
+    };
+    if (!(await decodable(file))) return settled ? giveUp('사진을 읽을 수 없습니다 (손상되었거나 지원하지 않는 형식)') : 0;
+    let blob = file, upExt = ext;
+    if (ext === 'bmp') {
+      blob = await bmpToPng(file).catch(() => null);
+      if (!blob) return giveUp('BMP 를 PNG 로 바꾸지 못했습니다');
+      upExt = 'png';
+    }
+    const ok = await persistCapture(patient, 'photo', blob, upExt, importEye(), null, `가져옴 · ${name}`, { keepSource: true });
+    if (!ok) { e.retryAt = Date.now() + 30000; return 0; }          // 서버 저장 실패 → 원본은 그대로 두고 30초 뒤 다시
+    imp.entries.delete(name);
+    if (!(await moveImported(dir, name, file))) {
+      imp.skip.set(name, e.sig);                                     // 이번에는 다시 가져오지 않는다
+      toast(`'${name}' 원본을 '${IMPORT_DONE}' 폴더로 옮기지 못했습니다 (폴더 쓰기 권한을 확인하세요).`, 'error');
+    }
+    return 1;
+  }
+  async function moveImported(dir, name, file) {
+    try {
+      const done = await dir.getDirectoryHandle(IMPORT_DONE, { create: true });
+      if (await done.isSameEntry(dir)) return false;                 // 하위 폴더를 만들지 못함 (안전장치)
+      const dot = name.lastIndexOf('.'), stem = dot > 0 ? name.slice(0, dot) : name, sfx = dot > 0 ? name.slice(dot) : '';
+      let target = name;
+      for (let i = 1; await importHas(done, target); i++) target = `${stem}_${i}${sfx}`;   // 같은 이름이 있으면 이름_1, 이름_2 …
+      const fh = await dir.getFileHandle(name);
+      let moved = false;
+      if (typeof fh.move === 'function') {
+        try { await fh.move(done, target); moved = true; } catch (_) { /* 이 브라우저·폴더에선 옮기기 불가 → 복사 후 지우기 */ }
+      }
+      if (!moved) {
+        const out = await done.getFileHandle(target, { create: true });
+        const w = await out.createWritable();
+        await w.write(file);
+        await w.close();
+        await dir.removeEntry(name);
+      }
+      return !(await importHas(dir, name));                          // 정말 옮겨졌는지 (남아 있으면 다시 가져오지 않게)
+    } catch (_) {
+      return false;
+    }
+  }
+  async function importHas(dir, name) {
+    try { await dir.getFileHandle(name); return true; } catch (err) { if (err.name === 'NotFoundError') return false; throw err; }
   }
 
   // ---- camera ----
@@ -880,7 +1096,7 @@
 
     // (c) 서버·폴더 모두 실패하면 촬영본을 잃지 않도록 파일로 내려받는다
     //     (예: 인터넷 호스팅의 업로드 크기 제한에 걸린 긴 동영상)
-    if (!serverOk && !folderOk) {
+    if (!serverOk && !folderOk && !opts.keepSource) {   // 가져오기 폴더의 사진은 원본이 폴더에 남아 있어 내려받지 않는다
       try {
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
@@ -1191,7 +1407,7 @@
   // Pro 모드(pro.js)에서 쓰는 공개 API
   window.SlitApp = {
     state, api, currentPatient, persistCapture, renderThumbs, toast, setStatus,
-    startCamera, openPatientDialog, parseTs, fmtDT,
+    startCamera, openPatientDialog, parseTs, fmtDT, watchImportFolder, stopImport,
   };
 
   init();

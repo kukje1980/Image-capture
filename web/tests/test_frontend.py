@@ -46,3 +46,21 @@ def test_meibo_mode_wired():
     assert "100 / 3" in PRO_JS and "200 / 3" in PRO_JS
     for cat in ("'0%'", "'<25%'", "'25–50%'", "'51–75%'", "'>75%'"):
         assert cat in PRO_JS
+
+
+def test_import_folder_wired():
+    """설정 → 가져오기 폴더: 새로 들어온 사진을 지금 환자에게 가져오고 원본은 '가져옴' 으로 옮긴다."""
+    APP_JS = (WEB / "static/js/app.js").read_text(encoding="utf-8")
+    for el in ("import-status", "btn-import-folder", "btn-import-off"):
+        assert f'id="{el}"' in HTML and f"$('{el}')" in APP_JS, el
+    assert "showDirectoryPicker({ id: 'slit-import', mode: 'readwrite' })" in APP_JS
+    assert "const IMPORT_DONE = '가져옴'" in APP_JS
+    # 저장 폴더와 같은 폴더면 저장한 사진을 다시 가져오므로 양쪽에서 막는다
+    assert "dir.isSameEntry(state.dirHandle)" in APP_JS and "dir.isSameEntry(imp.dir)" in APP_JS
+    # 전부터 있던 사진은 묻고, 가져온 사진은 내려받기 대신 원본을 폴더에 둔다
+    assert "held: imp.first || !havePatient" in APP_JS and "confirm(" in APP_JS
+    assert "{ keepSource: true }" in APP_JS and "!opts.keepSource" in APP_JS
+    # 옮겨지지 않았으면 다시 가져오지 않게
+    assert "return !(await importHas(dir, name))" in APP_JS
+    PRO = (WEB / "static/js/pro.js").read_text(encoding="utf-8")
+    assert "'slit:imported'" in APP_JS and "'slit:imported'" in PRO

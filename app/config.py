@@ -24,6 +24,7 @@ class AppConfig:
     test_file_path: str = ""                 # source_mode=file 일 때 재생할 파일
     media_root: str = ""                     # 기본 저장 루트 (비면 appdata/media)
     export_root: str = ""                    # 동시 저장 폴더 (비면 appdata/export)
+    import_folder: str = ""                  # 가져오기 폴더 — 새로 들어온 사진을 지금 환자에게 가져옴 (비면 끔)
     db_path: str = ""                        # SQLite 경로 (비면 appdata/slitlamp.db)
     photo_format: str = "png"                # png | jpg
     video_fallback_fourcc: str = "mp4v"      # ffmpeg 실패 시 cv2 폴백 코덱

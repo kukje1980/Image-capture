@@ -566,6 +566,23 @@ class ProWorkspace(QWidget):
         self._show_current()
         self._update_info()
 
+    def refresh_captures(self) -> None:
+        """새 영상이 들어왔을 때(가져오기 폴더 등) 목록·MULTI 만 새로 고친다 — 보고 있는 영상·편집 중인 내용은 그대로."""
+        if self._patient is None:
+            return
+        cur = self._caps[self._idx].id if 0 <= self._idx < len(self._caps) else None
+        self._caps = [c for c in self.db.captures.list_by_patient(self._patient.id, order="asc")
+                      if c.media_type == "photo"]
+        self.multi.set_captures(self._caps, keep_page=True)
+        idx = next((i for i, c in enumerate(self._caps) if c.id == cur), None)
+        if idx is None:                         # 보던 영상이 없었으면 새로 들어온 마지막 영상을 보여 준다
+            self._idx = len(self._caps) - 1
+            self._show_current()
+        else:
+            self._idx = idx
+        self._update_side()
+        self._update_info()
+
     def captures(self) -> list:
         return list(self._caps)
 

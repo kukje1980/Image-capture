@@ -6,7 +6,7 @@ import subprocess
 import sys
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QImageReader, QPixmap
 from PySide6.QtWidgets import QDialog, QLabel, QScrollArea, QVBoxLayout
 
 
@@ -37,7 +37,9 @@ class ImageViewerDialog(QDialog):
             area.setWidgetResizable(True)
             lbl = QLabel()
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            pm = QPixmap(capture.file_path)
+            reader = QImageReader(capture.file_path)
+            reader.setAutoTransform(True)          # 카메라 사진의 EXIF 회전(세로 사진) 반영
+            pm = QPixmap.fromImage(reader.read())
             if not pm.isNull():
                 lbl.setPixmap(
                     pm.scaled(900, 680, Qt.AspectRatioMode.KeepAspectRatio,

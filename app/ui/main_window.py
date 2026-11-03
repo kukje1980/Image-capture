@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 from collections import deque
+from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt, QThread, QTimer
+from PySide6.QtCore import QObject, QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -27,6 +29,7 @@ from app.capture.frame_utils import device_names, find_sony_index
 from app.capture.sources import DeviceSource, FileSource, SyntheticSource
 from app.capture.video_recorder import VideoRecorder
 from app.services.capture_service import CaptureService
+from app.services.folder_import import DONE_DIR, FolderImporter
 from app.ui.control_bar import ControlBar
 from app.ui.image_viewer import ImageViewerDialog
 from app.ui.patient_panel import PatientPanel
@@ -44,6 +47,11 @@ from app.ui.video_view import VideoView
 from PySide6.QtWidgets import QApplication
 
 log = logging.getLogger(__name__)
+
+
+class _ImportRelay(QObject):
+    """가져오기 작업 스레드 → 메인(GUI) 스레드로 결과 전달."""
+    finished = Signal(object, object, str, object)   # PollResult | None, 환자, 작업 종류, FolderImporter
 
 
 class MainWindow(QMainWindow):
@@ -81,6 +89,20 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._pick_camera()
         self._start_camera()
+
+        # 가져오기 폴더 감시 (설정의 import_folder — 1초마다 살펴 새 사진을 지금 환자에게)
+        # 폴더 살피기·파일 복사는 작업 스레드에서 한다 (네트워크 폴더가 끊겨 오래 걸려도 화면이 멈추지 않게)
+        self._importer = None
+        self._import_job = None              # 진행 중인 작업 스레드 (한 번에 하나)
+        self._import_asking = False
+        self._import_closed = False
+        self._import_notice = None
+        self._import_relay = _ImportRelay(self)
+        self._import_relay.finished.connect(self._on_import_done)
+        self._import_timer = QTimer(self)
+        self._import_timer.setInterval(1000)
+        self._import_timer.timeout.connect(self._poll_import)
+        self._setup_import()
 
     # ---- UI 구성 ----
     def _build_ui(self) -> None:
@@ -541,6 +563,104 @@ class MainWindow(QMainWindow):
         self.patient_panel.refresh_current(patient)
         self.video_view.set_hud(patient=f"{patient.name}  ·  {patient.chart_no}" if patient.chart_no else patient.name)
 
+    # ---- 가져오기 폴더 ----
+    def _setup_import(self) -> None:
+        """설정의 가져오기 폴더로 감시를 (다시) 시작한다. 같은 폴더면 지금 상태를 그대로 둔다."""
+        folder = (self.config.import_folder or "").strip()
+        if self._importer is not None and folder and Path(folder).expanduser() == self._importer.folder:
+            return
+        self._importer = FolderImporter(self.service, folder) if folder else None
+        self._import_notice = None
+        if self._importer is not None:
+            self._import_timer.start()
+            log.info("watching import folder: %s", folder)
+        else:
+            self._import_timer.stop()
+
+    def _current_eye(self) -> str:
+        return self.pro.current_eye() if self.mode_stack.currentIndex() == 1 else self.control_bar.current_eye()
+
+    def _run_import(self, kind: str, fn, patient) -> None:
+        importer, relay = self._importer, self._import_relay
+
+        def work():
+            try:
+                res = fn()
+            except Exception:  # noqa: BLE001
+                log.exception("folder import failed")
+                res = None
+            try:
+                relay.finished.emit(res, patient, kind, importer)
+            except RuntimeError:             # 창이 이미 닫힘
+                pass
+
+        self._import_job = threading.Thread(target=work, name="folder-import", daemon=True)
+        self._import_job.start()
+
+    def _poll_import(self) -> None:
+        if self._importer is None or self._import_job is not None or self._import_asking:
+            return
+        importer, patient, eye = self._importer, self._current_patient, self._current_eye()
+        self._run_import("poll", lambda: importer.poll(patient, eye), patient)
+
+    def _on_import_done(self, res, patient, kind: str, importer) -> None:
+        self._import_job = None
+        if res is None or self._import_closed:
+            return
+        if importer is not self._importer:   # 그 사이 설정에서 폴더를 바꿈 — 이미 가져온 사진만 보여 준다
+            res.failed, res.warnings, res.held, res.waiting, res.error = [], [], 0, 0, None
+            self._after_import(res, patient)
+            return
+        self._after_import(res, patient)
+        cur = self._current_patient
+        if kind == "poll" and res.held and cur is not None and patient is not None and cur.id == patient.id:
+            self._ask_import_held(res.held, cur)
+
+    def _ask_import_held(self, n: int, patient) -> None:
+        """감시 전부터 있던 사진(또는 환자 없이 들어온 사진)은 바로 넣지 않고 지금 환자에게 넣을지 묻는다."""
+        who = f"{patient.name} ({patient.chart_no})" if patient.chart_no else patient.name
+        importer = self._importer
+        self._import_asking = True           # 묻는 동안에는 새로 살피지 않는다
+        try:
+            ans = QMessageBox.question(
+                self, "사진 가져오기",
+                f"가져오기 폴더에 전부터 있던 사진 {n}장이 있습니다.\n"
+                f"지금 환자 {who} 에게 가져올까요?\n\n"
+                "'아니요' 를 누르면 가져오지 않고 폴더에 그대로 둡니다 (프로그램을 다시 열면 다시 묻습니다).",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
+        finally:
+            self._import_asking = False
+        if importer is not self._importer:      # 그 사이 설정에서 폴더를 바꿈
+            return
+        if ans == QMessageBox.StandardButton.Yes:
+            eye = self._current_eye()
+            self._run_import("held", lambda: importer.import_held(patient, eye), patient)
+        else:
+            importer.skip_held()                 # 작업 스레드가 쉬는 중이라 여기서 바로 처리
+            self.statusBar().showMessage("전부터 있던 사진은 가져오지 않고 폴더에 그대로 두었습니다", 6000)
+
+    def _after_import(self, res, patient) -> None:
+        if res.imported:
+            for cap in res.imported:
+                self.thumbnail_panel.add_capture(cap)
+            if self.mode_stack.currentIndex() == 1:
+                self.pro.refresh_captures()
+            n = len(res.imported)
+            self.control_bar.set_status(f"가져오기 폴더에서 사진 {n}장 가져옴")
+            self.statusBar().showMessage(
+                f"가져오기 폴더에서 사진 {n}장을 {patient.name} 님 기록으로 가져왔습니다 "
+                f"(원본은 '{DONE_DIR}' 폴더로 옮김)", 8000)
+        problems = [f"'{name}' 가져오기 실패: {why}" for name, why in res.failed] + list(res.warnings)
+        if problems:
+            self.statusBar().showMessage(" · ".join(problems), 15000)
+        notice = res.error or (f"가져올 사진 {res.waiting}장이 기다리고 있습니다 — 환자를 선택하면 가져옵니다"
+                               if res.waiting else None)
+        if notice != self._import_notice:         # 같은 알림을 1초마다 반복해 띄우지 않는다
+            self._import_notice = notice
+            if notice:
+                self.statusBar().showMessage(notice, 15000)
+
     # ---- 컨트롤 ----
     def _on_pause(self, checked: bool) -> None:
         self._paused = checked
@@ -722,10 +842,16 @@ class MainWindow(QMainWindow):
         if dlg.exec():
             dlg.apply_to_config()
             self.thumbnail_panel.newest_on_top = self.config.newest_on_top
+            self._setup_import()
             self._restart_camera()
 
     # ---- 종료 ----
     def closeEvent(self, event) -> None:  # noqa: N802
+        self._import_timer.stop()
+        self._importer = None
+        self._import_closed = True
+        if self._import_job is not None:     # 가져오던 사진은 마저 저장하고 닫는다 (DB 를 닫기 전에)
+            self._import_job.join(3.0)
         try:
             if self._recording:
                 self._stop_recording()

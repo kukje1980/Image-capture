@@ -60,6 +60,56 @@ class CaptureService:
         log.info("photo saved id=%s path=%s export=%s", cap.id, primary_path, export_path)
         return cap
 
+    # ---- 가져오기 (다른 장비가 만든 사진 파일) ----
+    def import_photo(self, data: bytes, ext: str, patient: Patient,
+                     eye: str = "NA", note: str = "") -> Capture:
+        """사진 파일 내용(bytes)을 환자 기록으로 가져온다: 기본 저장 + 썸네일 + export + DB.
+
+        JPEG·PNG 는 받은 그대로 저장하고(화질·EXIF 보존), BMP·TIFF 는 설정의 사진 형식으로 바꿔 저장한다.
+        읽을 수 없는 파일이면 아무것도 쓰지 않고 ValueError 를 낸다.
+        """
+        if cv2 is None:
+            raise RuntimeError("OpenCV 가 없어 사진을 가져올 수 없습니다.")
+        ext = (ext or "").lower().lstrip(".")
+        buf = np.frombuffer(data, dtype=np.uint8)
+        keep = ext in ("jpg", "jpeg", "png")
+        frame = None
+        if buf.size and ext in ("jpg", "jpeg"):
+            # 큰 카메라 JPEG 는 1/4 크기로 읽으면 썸네일에 충분하고 훨씬 빠르다 (작은 사진만 원래 크기로)
+            frame = cv2.imdecode(buf, cv2.IMREAD_REDUCED_COLOR_4)
+            if frame is not None and max(frame.shape[:2]) < self.config.thumbnail_max_side * 2:
+                frame = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+        elif buf.size:
+            frame = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+        if frame is None:
+            raise ValueError("사진을 읽을 수 없습니다 (손상되었거나 지원하지 않는 형식)")
+
+        ts = datetime.now()
+        if keep:
+            out_ext, payload = ("jpg" if ext == "jpeg" else ext), data
+        else:
+            out_ext = (self.config.photo_format or "png").lower()
+            payload = self._encode(frame, out_ext)
+        primary_dir = self._patient_dir(self.config.media_root, patient, ts)
+        paths.ensure_dir(primary_dir)
+        primary_path = paths.unique_path(primary_dir / self._filename(ts, eye, out_ext))
+        primary_path.write_bytes(payload)
+
+        thumb_path = self._write_thumbnail(primary_dir, primary_path.stem, frame)
+        export_path = self._export(primary_path, patient, ts, primary_path.name)
+
+        cap = Capture(
+            patient_id=patient.id, media_type="photo",
+            file_path=str(primary_path),
+            export_path=(str(export_path) if export_path else None),
+            thumbnail_path=(str(thumb_path) if thumb_path else None),
+            captured_at=ts.strftime("%Y-%m-%d %H:%M:%S"),
+            eye=eye, duration_ms=None, note=note,
+        )
+        cap.id = self.db.captures.insert(cap)
+        log.info("photo imported id=%s path=%s export=%s", cap.id, primary_path, export_path)
+        return cap
+
     # ---- 동영상 ----
     def begin_video(self, patient: Patient, eye: str = "NA") -> Tuple[Path, datetime]:
         """녹화기가 직접 쓸 대상 경로를 만들어 반환한다."""
@@ -121,6 +171,14 @@ class CaptureService:
         except Exception:  # noqa: BLE001
             log.warning("export 복사 실패 (export_path=NULL로 기록)", exc_info=True)
             return None
+
+    @staticmethod
+    def _encode(frame, ext: str) -> bytes:
+        params = [cv2.IMWRITE_JPEG_QUALITY, 95] if ext in ("jpg", "jpeg") else []
+        ok, enc = cv2.imencode(f".{ext}", frame, params)
+        if not ok:
+            raise RuntimeError(f"이미지 변환 실패: {ext}")
+        return enc.tobytes()
 
     def _imwrite(self, path: Path, frame, ext: str) -> None:
         ext = ext.lower()
