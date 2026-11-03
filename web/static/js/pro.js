@@ -10,6 +10,9 @@
  *           실행 취소/다시 실행(20단계), 원본 복원
  *  편집본 저장 · 코멘트 · 환자정보 · 인쇄/PDF(A4 보고서)
  *  삭제     MULTI에서 선택한 영상(최대 2장) / 1화면의 현재 영상을 삭제 (Delete 키)
+ *  멀티 창  촬영 화면에서 고른 1~16장을 한 화면 격자로 (mode 'grid'). 칸 클릭 = 편집 대상,
+ *           더블클릭 = 1장 크게 ↔ 전체, 보정 모두 적용 · 확대 동기화 · 안구(OD/OS) 수정 · 편집본 저장
+ *           오른쪽 보정·필터·편집 패널은 Pro 검토의 것을 그대로 옮겨 와 쓴다
  *  스마트 · 분석 탭은 smart.js, 참조 탭(부위별 정상/비정상 샘플 비교)은 refs.js
  *  (이 파일의 window.SlitPro 와 'slit:pro-*' 이벤트를 사용)
  *
@@ -35,9 +38,9 @@
   const DRAG_TOOLS = new Set(['arrow', 'circle', 'length', 'crop', 'calibrate']);
   // 도구별 사용 가능 모드 (윈도우앱 _TOOLS 와 동일)
   const TOOL_MODES = {
-    pan: ['single', 'compare', 'multi', 'live'], magnify: ['single', 'compare'], crop: ['single'],
-    text: ['single', 'compare'], arrow: ['single', 'compare'], circle: ['single', 'compare'],
-    length: ['single', 'compare'], angle: ['single', 'compare'], calibrate: ['single'],
+    pan: ['single', 'compare', 'multi', 'live', 'grid'], magnify: ['single', 'compare', 'grid'], crop: ['single', 'grid'],
+    text: ['single', 'compare', 'grid'], arrow: ['single', 'compare', 'grid'], circle: ['single', 'compare', 'grid'],
+    length: ['single', 'compare', 'grid'], angle: ['single', 'compare', 'grid'], calibrate: ['single', 'grid'],
     tarsus: ['single'], dropout: ['single'],               // 마이봄: 검판 영역 / 소실 영역 (다각형)
   };
   const POLY_TOOLS = new Set(['tarsus', 'dropout']);
@@ -636,6 +639,9 @@
 
   const V = { single: new Viewer($('pcv-single')), left: new Viewer($('pcv-left')), right: new Viewer($('pcv-right')) };
   V.left.peer = V.right; V.right.peer = V.left;
+  // 멀티 창 (grid) 상태 — 칸 뷰어는 처음 열 때 만들어 재사용
+  const MW = { open: false, caps: [], viewers: [], cells: [], active: 0, solo: false, prevMode: 'multi', patient: null, moved: [] };
+  const allViewers = () => [...Object.values(V), ...MW.viewers];
 
   // ================= 데이터 =================
   // 최근 사용 순(LRU) 캐시 — 오래 쓰면 메모리가 계속 늘지 않도록 개수 제한
@@ -713,7 +719,15 @@
         P.pair.filter(Boolean).map((x, i) => `${i ? '우' : '좌'}: ${x.captured_at} ${x.ref ? '· ' + x.note : EYE_KO[x.eye] || ''}`).join('\n');
     } else if (P.mode === 'live') {
       el.textContent = 'LIVE — ' + (P.frozen ? '정지됨 · SAVE로 저장' : '실시간');
+    } else if (P.mode === 'grid' && MW.caps[MW.active]) {
+      const g = MW.caps[MW.active];
+      el.textContent = `멀티 ${MW.active + 1} / ${MW.caps.length}  ·  ${MW.solo ? '1장 크게' : MW.caps.length + '장 격자'}\n`
+        + `촬영: ${g.captured_at}\n안구: ${EYE_KO[g.eye] || '미지정'}\n코멘트: ${g.note || '-'}`;
     } else el.textContent = '영상이 없습니다';
+    if (P.mode === 'grid') {
+      $('pro-selinfo').textContent = '칸을 클릭하면 그 영상을 보정·편집합니다 · 더블클릭 = 1장 크게 ↔ 전체 · ←/→ = 칸 이동 · Esc = 닫기';
+      return;
+    }
     $('pro-selinfo').textContent = P.sel.length
       ? `선택 ${P.sel.length}/2 — 2장이면 '비교', 지우려면 '삭제'(Delete).`
       : "MULTI에서 영상 2장을 클릭해 선택한 뒤 '비교'를 누르세요.";
@@ -852,6 +866,7 @@
   }
   function openIndex(i) { if (P.caps[i]) { P.idx = i; return setMode('single'); } }
   function step(d) {
+    if (P.mode === 'grid') { gridActivate(MW.active + d); return; }
     if (P.mode === 'multi') {
       const np = Math.min(Math.max(0, P.page + d), pageCount() - 1);
       if (np !== P.page) { P.page = np; renderMulti(); updateSide(); }
@@ -913,11 +928,16 @@
   const OUT_ID = { 'adj-bright': 'o-bright', 'adj-contrast': 'o-contrast', 'adj-gamma': 'o-gamma', 'adj-sat': 'o-sat',
     'adj-r': 'o-r', 'adj-g': 'o-g', 'adj-b': 'o-b', 'adj-black': 'o-black', 'adj-white': 'o-white' };
 
-  const targets = () => (P.mode === 'single' ? [V.single] : P.mode === 'compare' ? [V.left, V.right] : []);
+  const gridUsed = () => MW.viewers.slice(0, MW.caps.length);
+  function targets() {
+    if (P.mode === 'grid') return $('mw-all').checked ? gridUsed().filter((v) => v.base) : (active() ? [active()] : []);
+    return P.mode === 'single' ? [V.single] : P.mode === 'compare' ? [V.left, V.right] : [];
+  }
   /** 편집 명령(회전·실행 취소·자동 대비 등)이 적용될 뷰어 */
   function active() {
     if (P.mode === 'single') return V.single;
     if (P.mode === 'compare') return P.active === V.right ? V.right : V.left;
+    if (P.mode === 'grid') return MW.viewers[MW.active] && MW.active < MW.caps.length ? MW.viewers[MW.active] : null;
     return null;
   }
 
@@ -964,6 +984,7 @@
     refreshEdit();
   }
   function onViewerActivated(v) {
+    if (P.mode === 'grid') { const i = MW.viewers.indexOf(v); if (i >= 0 && i !== MW.active) gridActivate(i); return; }
     if (P.mode !== 'compare' || P.active === v) return;
     P.active = v;
     for (const x of [V.left, V.right]) x.cv.classList.toggle('active', x === v);
@@ -973,7 +994,7 @@
   for (const v of Object.values(V)) { v.onEdit = onViewerEdited; v.onActivate = onViewerActivated; }
 
   function refreshEdit() {
-    const v = active(), single = P.mode === 'single';
+    const v = active(), single = P.mode === 'single' || P.mode === 'grid';
     for (const id of ['ed-rot-l', 'ed-rot-r', 'ed-flip-h', 'ed-flip-v']) $(id).disabled = !single || !v?.base;
     $('ed-undo').disabled = !v?.undoStack.length;
     $('ed-redo').disabled = !v?.redoStack.length;
@@ -1010,8 +1031,8 @@
     x.fillRect(px(P.adj.black), 0, 1, H); x.fillRect(px(P.adj.white) - 1, 0, 1, H);
   }
 
-  function rotate(k) { if (P.mode === 'single') V.single.rotate(k); }
-  function flip(h) { if (P.mode === 'single') V.single.flip(h); }
+  function rotate(k) { if (P.mode === 'single' || P.mode === 'grid') active()?.rotate(k); }
+  function flip(h) { if (P.mode === 'single' || P.mode === 'grid') active()?.flip(h); }
   function undo() { const v = active(); return !!(v && v.undo()); }
   function redo() { const v = active(); return !!(v && v.redo()); }
   function restoreOriginal() { const v = active(); return !!(v && v.restoreOriginal()); }
@@ -1022,7 +1043,7 @@
     try { localStorage.setItem('slitlamp-pxmm', String(P.pxmm)); } catch (_) { /* 저장소 차단 */ }
     $('pro-calib').textContent = P.pxmm > 0 ? `눈금: 1 mm = ${P.pxmm.toFixed(1)} px` : '눈금: 미보정 (px 단위)';
     $('pro-calib-clear').disabled = !(P.pxmm > 0);
-    for (const v of Object.values(V)) v.draw();
+    for (const v of allViewers()) v.draw();
   }
   function calibrateFrom(px) {
     const t = window.prompt(`그은 선: ${Math.round(px)} px\n이 선의 실제 길이(mm)를 입력하세요:`, '10');
@@ -1036,7 +1057,7 @@
     if (!TOOL_MODES[t] || (!TOOL_MODES[t].includes(P.mode) && t !== 'pan')) t = 'pan';
     P.tool = t;
     document.querySelectorAll('.pro-side [data-tool]').forEach((b) => b.classList.toggle('on', b.dataset.tool === t));
-    for (const v of Object.values(V)) { v.cancelTemp(); v.cv.style.cursor = cursorFor(t); }
+    for (const v of allViewers()) { v.cancelTemp(); v.cv.style.cursor = cursorFor(t); }
   }
   function clearAnn() { for (const v of targets()) v.clearAnn(); refreshEdit(); }
   // ================= 마이봄샘 분석 (적외선 meibography) =================
@@ -1246,6 +1267,7 @@
 
   // ================= 보정본 저장 / 코멘트 / 환자정보 =================
   async function saveEdited() {
+    if (P.mode === 'grid') return saveGrid();
     const p = App.currentPatient();
     if (!p) { App.toast('환자를 먼저 선택하세요.', 'error'); return 0; }
     if (!P.patient || P.patient.id !== p.id) { App.toast('환자 영상 목록을 불러오는 중입니다. 잠시 후 다시 저장하세요.', 'error'); return 0; }
@@ -1272,6 +1294,7 @@
     return n;
   }
   async function setComment(text) {
+    if (P.mode === 'grid') return setGridCapture({ note: text });
     const c = P.caps[P.idx];
     if (!c) return;
     try {
@@ -1297,6 +1320,10 @@
 
   // ================= 인쇄 / PDF 보고서 =================
   async function printItems() {
+    if (P.mode === 'grid') {
+      const shown = MW.solo ? [active()] : gridUsed();
+      return shown.filter((v) => v && v.proc).map((v) => [v.renderFull(), caption(MW.caps[MW.viewers.indexOf(v)])]);
+    }
     if (P.mode === 'single' && V.single.proc) return [[V.single.renderFull(), caption(P.caps[P.idx])]];
     if (P.mode === 'compare') {
       return [[V.left, P.pair[0]], [V.right, P.pair[1]]].filter(([v, c]) => v.proc && c)
@@ -1328,7 +1355,7 @@
   async function buildReport() {
     const items = await printItems();
     if (!items.length) return 0;
-    const p = P.patient, sex = { M: '남', F: '여', O: '기타' }[p?.sex] || '';
+    const p = P.mode === 'grid' ? MW.patient : P.patient, sex = { M: '남', F: '여', O: '기타' }[p?.sex] || '';
     const pages = [];
     if (items.length > 2) for (let i = 0; i < items.length; i += 4) pages.push(items.slice(i, i + 4));
     else pages.push(items);
@@ -1357,6 +1384,202 @@
     try { window.print(); } catch (_) { App.toast('이 환경에서는 인쇄 창을 열 수 없습니다.', 'error'); }
   }
   window.addEventListener('afterprint', () => { const a = $('print-area'); if (a) a.innerHTML = ''; });   // 큰 보고서 이미지 메모리 해제
+
+
+  // ================= 멀티 창 (grid) =================
+  const GRID_DIMS = { 1: [1, 1], 2: [1, 2], 3: [1, 3], 4: [2, 2], 5: [2, 3], 6: [2, 3], 7: [2, 4], 8: [2, 4],
+    9: [3, 3], 10: [3, 4], 11: [3, 4], 12: [3, 4] };
+  const gridDims = (n) => GRID_DIMS[n] || [4, 4];
+  const eyeOf = (c) => (c && ['OD', 'OS', 'OU'].includes(c.eye) ? c.eye : 'NA');
+
+  function ensureMwViewers(n) {
+    const g = $('mw-grid');
+    while (MW.viewers.length < n) {
+      const i = MW.viewers.length, cell = document.createElement('div');
+      cell.className = 'mw-cell';
+      cell.dataset.i = String(i);
+      cell.innerHTML = '<canvas class="pcv"></canvas><span class="mw-tag e-NA">미지정</span><span class="mw-no"></span><div class="mw-cap"></div>';
+      g.appendChild(cell);
+      const v = new Viewer(cell.querySelector('canvas'));
+      v.onEdit = onViewerEdited; v.onActivate = onViewerActivated;
+      v.cv.style.cursor = cursorFor(P.tool);
+      cell.addEventListener('dblclick', () => {            // 더블클릭 = 1장 크게 ↔ 전체 (이동·돋보기 도구일 때)
+        if (P.mode === 'grid' && (P.tool === 'pan' || P.tool === 'magnify')) { gridActivate(i); toggleSolo(); }
+      });
+      MW.viewers.push(v); MW.cells.push(cell);
+    }
+  }
+  function gridLabels() {
+    MW.cells.forEach((cell, i) => {
+      const c = MW.caps[i];
+      cell.hidden = !c || (MW.solo && i !== MW.active);
+      cell.classList.toggle('active', !!c && i === MW.active);
+      if (!c) return;
+      const tag = cell.querySelector('.mw-tag'), eye = eyeOf(c);
+      tag.className = `mw-tag e-${eye}`;
+      tag.textContent = eye === 'NA' ? '미지정' : eye;
+      cell.querySelector('.mw-no').textContent = `${i + 1}/${MW.caps.length}`;
+      cell.querySelector('.mw-cap').innerHTML = esc(c.captured_at || '') + (c.note ? `<span class="mw-note">${esc(c.note)}</span>` : '');
+      cell.title = caption(c);
+    });
+  }
+  function layoutGrid() {
+    const g = $('mw-grid'), n = MW.caps.length;
+    const [r, c] = MW.solo ? [1, 1] : gridDims(n);
+    g.style.gridTemplateColumns = `repeat(${c}, minmax(0, 1fr))`;
+    g.style.gridTemplateRows = `repeat(${r}, minmax(0, 1fr))`;
+    g.classList.toggle('single', MW.solo || n === 1);
+    gridLabels();
+    $('mw-solo').setAttribute('aria-pressed', String(MW.solo));
+    $('mw-solo').disabled = n < 2;
+    requestAnimationFrame(() => { for (const v of gridUsed()) v.resize(); });
+  }
+  function gridActivate(i) {
+    if (!MW.caps.length) return;
+    i = clamp(i, 0, MW.caps.length - 1);
+    const changed = i !== MW.active;
+    MW.active = i;
+    if (MW.solo && changed) layoutGrid(); else gridLabels();
+    const v = active();
+    if (v) syncControls(v.adj);
+    $('mw-eye').value = eyeOf(MW.caps[i]);
+    refreshEdit();
+    updateSide();
+  }
+  function toggleSolo(on = !MW.solo) {
+    MW.solo = !!on && MW.caps.length > 1;
+    layoutGrid();
+    updateSide();
+  }
+  /** 확대 동기화: 켜면 한 칸의 확대·이동이 다른 칸에도 (지금 선택 칸의 배율·위치로 맞춘 뒤) */
+  function applyLink() {
+    const on = $('mw-link').checked, used = gridUsed();
+    for (const v of MW.viewers) v.peer = null;
+    if (!on) return;
+    for (const v of used) {
+      const others = used.filter((o) => o !== v);
+      v.peer = { zoomAt: (f, cx, cy) => others.forEach((o) => o.zoomAt(f, cx, cy, true)),
+        pan: (dx, dy) => others.forEach((o) => o.pan(dx, dy, true)) };
+    }
+    const a = active();
+    if (a) for (const o of used) {
+      if (o === a || !o.proc) continue;
+      if (a.autofit) o.resetView();
+      else { o.autofit = false; o.zoom = a.zoom; o.px = a.px; o.py = a.py; o.draw(); }
+    }
+  }
+  const gridModified = () => gridUsed().some((v) => v.proc && v.isModified());
+
+  let mwSeq = 0;
+  /** 촬영 화면에서 고른 사진(선택 순서, 최대 16장)을 멀티 창에서 연다 */
+  async function openMulti(caps) {
+    const tok = ++mwSeq;
+    const photos = (caps || []).filter((c) => c && c.media_type === 'photo').slice(0, App.MULTI_MAX || 16);
+    const patient = App.currentPatient();
+    if (!photos.length || !patient) { App.toast('멀티로 볼 사진을 먼저 선택하세요.', 'error'); return false; }
+    if (MW.open && gridModified() && !window.confirm('저장하지 않은 편집이 있습니다. 버리고 새로 열까요?')) return false;
+    const imgs = await Promise.all(photos.map((c) => loadImage(c.url).catch(() => null)));
+    if (tok !== mwSeq) return false;                       // 그 사이 다른 사진으로 다시 열었음
+    if (!MW.open) {
+      MW.prevMode = P.mode;
+      // 보정·필터·편집 탭 줄(Pro 툴바)과 패널을 멀티 창으로 옮겨 그대로 쓴다 — 닫으면 제자리로
+      const slot = $('mw-side-slot');
+      MW.moved = [];
+      for (const el of [document.querySelector('.pro-toolbar > .ptabs'), document.querySelector('.pro-side')]) {
+        if (!el) continue;
+        MW.moved.push({ el, parent: el.parentNode, next: el.nextSibling });
+        slot.appendChild(el);
+      }
+      $('mwin').hidden = false;
+      document.body.classList.add('mwin-on');
+      MW.open = true;
+    }
+    MW.patient = patient;
+    MW.caps = photos.map((c) => ({ ...c }));
+    MW.active = 0;
+    MW.solo = false;
+    ensureMwViewers(photos.length);
+    MW.viewers.forEach((v, i) => { v.caption = ''; v.setSource(i < photos.length ? imgs[i] : null, IDENTITY); });
+    P.mode = 'grid';
+    const tab = document.querySelector('.ptab.on');
+    if (tab && ['meibo', 'anal', 'ref'].includes(tab.dataset.tab)) setTab('adj');   // 1화면 전용 탭은 멀티 창에서 숨김
+    $('mw-patient').innerHTML = `<b>${esc(patient.name)}</b>${patient.chart_no ? ' #' + esc(patient.chart_no) : ''}`
+      + ` &nbsp;·&nbsp; 진단명 ${esc(patient.diagnosis || '-')}`;
+    $('mw-count').textContent = `${photos.length}장`;
+    layoutGrid();
+    applyLink();
+    setTool(TOOL_MODES[P.tool] && TOOL_MODES[P.tool].includes('grid') ? P.tool : 'pan');
+    gridActivate(0);
+    const bad = imgs.filter((x) => !x).length;
+    if (bad) App.toast(`${bad}장을 불러오지 못했습니다.`, 'error');
+    return true;
+  }
+  function closeMulti(force = false) {
+    if (!MW.open) return true;
+    if (!force && gridModified() && !window.confirm('저장하지 않은 편집이 있습니다. 닫을까요? (편집 내용은 사라집니다)')) return false;
+    ++mwSeq;
+    for (const v of MW.viewers) { v.peer = null; v.setSource(null, IDENTITY); }   // 큰 영상 메모리 해제
+    MW.caps = []; MW.open = false; MW.solo = false; MW.patient = null;
+    for (const m of (MW.moved || []).reverse()) m.parent.insertBefore(m.el, m.next);   // 탭 줄 · 패널을 제자리로
+    MW.moved = [];
+    $('mwin').hidden = true;
+    document.body.classList.remove('mwin-on');
+    P.mode = MW.prevMode && MW.prevMode !== 'grid' ? MW.prevMode : 'multi';
+    if (P.on) setMode(P.mode);
+    else { setTool(P.tool); const av = active(); syncControls(av ? av.adj : IDENTITY); refreshEdit(); updateSide(); }
+    return true;
+  }
+  /** 수정한 칸을 모두 새 영상으로 저장 (원본 보존) — 그 칸은 저장본으로 바뀐다 */
+  async function saveGrid() {
+    const p = MW.patient;
+    const mod = gridUsed().filter((v) => v.proc && v.isModified());
+    if (!p || !mod.length) { App.toast('보정·편집·주석이 없어 저장할 내용이 없습니다.', 'error'); return 0; }
+    let n = 0;
+    for (const v of mod) {
+      const i = MW.viewers.indexOf(v), src = MW.caps[i];
+      const kinds = new Set(v.ann.map((a) => a.type));
+      const note = kinds.has('length') || kinds.has('angle') ? '측정' : kinds.size ? '주석' : v.geometryChanged() ? '편집본' : '보정본';
+      const full = v.renderFull();
+      const blob = await new Promise((r) => full.toBlob(r, 'image/png'));
+      const saved = blob && await App.persistCapture(p, 'photo', blob, 'png', src.eye || 'NA', null, note, { silent: true });
+      if (!saved) break;
+      n++;
+      MW.caps[i] = typeof saved === 'object' ? { ...saved } : { ...src, note };
+      v.setSource(full, IDENTITY);                       // 보정·주석이 이미 반영된 저장본
+    }
+    if (!n) return 0;
+    gridActivate(MW.active);
+    App.renderThumbs();
+    if (P.on) reload(false);
+    App.toast(`편집본 ${n}장을 저장했습니다 (원본 보존).`, 'success');
+    return n;
+  }
+  /** 선택 칸 영상의 안구(eye)·코멘트(note) 수정 → 환자 DB */
+  async function setGridCapture(patch) {
+    const c = MW.caps[MW.active];
+    if (P.mode !== 'grid' || !c) return false;
+    try {
+      const r = await App.api(`/captures/${c.id}`, { method: 'PATCH', body: JSON.stringify(patch) });
+      for (const x of MW.caps) if (x.id === c.id) { x.eye = r.eye; x.note = r.note; }
+      gridLabels();
+      $('mw-eye').value = eyeOf(MW.caps[MW.active]);
+      updateSide();
+      App.renderThumbs();
+      if (P.on) reload(false);
+      App.toast('eye' in patch ? `안구 표시를 ${r.eye === 'NA' ? '미지정' : r.eye}(으)로 고쳤습니다.` : '코멘트를 저장했습니다.', 'success');
+      return true;
+    } catch (e) {
+      $('mw-eye').value = eyeOf(c);
+      App.toast(e.message, 'error');
+      return false;
+    }
+  }
+  function editGridComment() {
+    const c = MW.caps[MW.active];
+    if (!c) return;
+    const t = window.prompt('이 영상의 코멘트:', c.note || '');
+    if (t !== null) setGridCapture({ note: t });
+  }
 
   // ================= 토글 · 이벤트 =================
   async function setPro(on) {
@@ -1391,9 +1614,10 @@
   });
   $('pro-clear').addEventListener('click', clearAnn);
   $('pro-save-edited').addEventListener('click', saveEdited);
-  $('pro-fit').addEventListener('click', () => { for (const v of Object.values(V)) v.resetView(); });
-  $('pro-zin').addEventListener('click', () => (P.mode === 'compare' ? V.left : V.single).zoomAt(1.25));
-  $('pro-zout').addEventListener('click', () => (P.mode === 'compare' ? V.left : V.single).zoomAt(0.8));
+  $('pro-fit').addEventListener('click', () => { for (const v of allViewers()) v.resetView(); });
+  const zoomTarget = () => (P.mode === 'compare' ? V.left : P.mode === 'grid' ? active() : V.single);
+  $('pro-zin').addEventListener('click', () => zoomTarget()?.zoomAt(1.25));
+  $('pro-zout').addEventListener('click', () => zoomTarget()?.zoomAt(0.8));
   $('adj-reset').addEventListener('click', () => setAdj(IDENTITY));
   $('adj-auto').addEventListener('click', autoContrast);
   for (const [id] of SLIDERS) $(id).addEventListener('input', onAdj);
@@ -1410,15 +1634,32 @@
   // 스마트 캡처는 실시간 영상에 쓰므로 LIVE 옆 버튼을 누르면 LIVE 화면으로 함께 전환
   document.querySelectorAll('#pro-modes .ptab[data-tab="smart"]').forEach((b) => b.addEventListener('click', () => { if (P.mode !== 'live') setMode('live'); }));
   $('pro-start-camera').addEventListener('click', async () => { await App.startCamera(); attachLive(); });
+  // 멀티 창
+  $('mw-prev').addEventListener('click', () => step(-1));
+  $('mw-next').addEventListener('click', () => step(1));
+  $('mw-solo').addEventListener('click', () => toggleSolo());
+  $('mw-all').addEventListener('change', refreshEdit);
+  $('mw-link').addEventListener('change', applyLink);
+  $('mw-eye').addEventListener('change', (e) => setGridCapture({ eye: e.target.value }));
+  $('mw-comment').addEventListener('click', editGridComment);
+  $('mw-save').addEventListener('click', saveEdited);
+  $('mw-print').addEventListener('click', doPrint);
+  $('mw-close').addEventListener('click', () => closeMulti());
 
   document.addEventListener('slit:patient', () => { if (P.on) reload(false); });
   document.addEventListener('slit:captures', () => { if (P.on) reload(false); });   // 기본 화면에서 영상 삭제 등
   document.addEventListener('keydown', (e) => {
-    if (!P.on || document.querySelector('dialog[open]')) return;
+    if ((!P.on && !MW.open) || document.querySelector('dialog[open]')) return;
     const el = e.target instanceof Element ? e.target : null;
     if (el && el.matches('input:not([type=range]):not([type=checkbox]), textarea')) return;   // 글자 입력 중
     const ctrl = e.ctrlKey || e.metaKey;
     if (!ctrl && el && el.matches('input, select')) return;     // 슬라이더·선택 상자의 화살표 키는 그대로 (Ctrl+Z/Y 는 허용)
+    if (MW.open && e.key === 'Escape') {                         // 멀티 창: 도구 해제 → 한 번 더 누르면 닫기
+      e.preventDefault();
+      const busy = P.tool !== 'pan' || gridUsed().some((v) => v.temp || v.apts.length || v.poly);
+      if (busy) setTool('pan'); else closeMulti();
+      return;
+    }
     if (e.key === 'ArrowLeft') { e.preventDefault(); step(-1); }
     else if (e.key === 'ArrowRight') { e.preventDefault(); step(1); }
     else if (e.key === ' ' && P.mode === 'live') { e.preventDefault(); toggleCapture(); }
@@ -1440,5 +1681,6 @@
   window.SlitPro = { state: P, viewers: V, setPro, setMode, setPer, openIndex, step, toggleSel, setAdj,
     setTool, saveEdited, setComment, deleteSelected, deleteTargets, buildReport, reload, active, autoContrast, rotate, flip, undo, redo,
     original: restoreOriginal, setPxPerMm, clearAnn, setTab, mbRunAuto, mbResult: () => mbResult(V.single), mbSave, mbClear,
-    toggleCapture, saveLive, grabVideo, loadImage, caption, prepareCompare, compareImages };
+    toggleCapture, saveLive, grabVideo, loadImage, caption, prepareCompare, compareImages,
+    multi: MW, openMulti, closeMulti, gridActivate, toggleSolo, gridModified, setGridCapture };
 })();

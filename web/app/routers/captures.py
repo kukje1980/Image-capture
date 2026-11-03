@@ -123,12 +123,17 @@ async def create_capture(
 
 @router.patch("/{cid}", response_model=CaptureOut)
 def update_capture(request: Request, cid: int, body: CaptureNoteIn):
-    """영상별 코멘트 수정 (Pro 모드)."""
+    """영상별 코멘트(Pro·멀티) · 안구 표시(멀티 창) 수정. 보낸 항목만 바꾼다."""
     db = _db(request)
     if not db.get_capture(cid):
         raise HTTPException(status_code=404, detail="영상을 찾을 수 없습니다.")
-    note = (body.note or "").strip() or None
-    db.update_capture_note(cid, note)
+    sent = body.model_fields_set
+    if "eye" in sent:
+        if body.eye not in ("OD", "OS", "OU", "NA"):
+            raise HTTPException(status_code=400, detail="eye 는 OD, OS, OU, NA 중 하나여야 합니다.")
+        db.update_capture_eye(cid, body.eye)
+    if "note" in sent or not sent:
+        db.update_capture_note(cid, (body.note or "").strip() or None)
     return db.get_capture(cid)
 
 

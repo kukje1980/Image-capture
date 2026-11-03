@@ -29,7 +29,9 @@ class PatientOut(PatientIn):
 
 
 class CaptureNoteIn(BaseModel):
+    """영상 정보 수정 — 보낸 항목만 바뀐다 (코멘트 note, 안구 eye: OD/OS/OU/NA)."""
     note: Optional[str] = None
+    eye: Optional[str] = None
 
 
 class MeasurementIn(BaseModel):

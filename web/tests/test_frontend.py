@@ -154,3 +154,25 @@ def test_delete_day_wired():
     assert "class=\"thumb-day-del\"" in app_js and "function deleteDay" in app_js
     assert "deleteDay(d, dayCaps)" in app_js                      # 필터와 무관하게 그 날 전체
     assert ".thumb-day-del" in css
+
+
+def test_thumbnail_select_and_multi_window_wired():
+    """촬영 화면: 여러 장(1~3열)·안구 배지·클릭 선택 → [멀티] → 멀티 창(격자 편집)."""
+    app_js = (WEB / "static" / "js" / "app.js").read_text(encoding="utf-8")
+    css = (WEB / "static" / "css" / "app.css").read_text(encoding="utf-8")
+    used = set(re.findall(r"\$\('([a-z0-9-]+)'\)", app_js))
+    missing = sorted(used - HTML_IDS)
+    assert not missing, f"템플릿에 없는 id: {missing}"
+    for el in ("btn-multi", "btn-thumb-clear", "btn-thumb-cols", "thumb-sel-info", "mwin", "mw-grid", "mw-side-slot",
+               "mw-solo", "mw-all", "mw-link", "mw-eye", "mw-comment", "mw-save", "mw-print", "mw-close"):
+        assert f'id="{el}"' in HTML, el
+    assert "window.SlitPro.openMulti" in app_js and "openMulti," in PRO_JS
+    assert "mwin-on" in app_js                                   # 멀티 창에서는 촬영 단축키를 끈다
+    assert "'contextmenu'" in app_js and "openViewer(c, ts)" in app_js   # 오른쪽 클릭 = 멀티 · 두 번 클릭 = 크게 보기 (앱과 같게)
+    assert "'.pro-toolbar > .ptabs'" in PRO_JS                  # 보정·필터·편집 탭 줄도 멀티 창으로 옮긴다
+    # 주석·측정 도구는 멀티 창(grid)에서도 쓸 수 있다 (마이봄 다각형은 1화면 전용)
+    for t in ("pan", "magnify", "crop", "text", "arrow", "circle", "length", "angle", "calibrate"):
+        assert re.search(rf"\b{t}: \[[^\]]*'grid'", PRO_JS), t
+    assert not re.search(r"tarsus: \[[^\]]*'grid'", PRO_JS)
+    for sel in (".thumb-eye.e-OD", ".thumb-eye.e-OS", ".thumb-eye.e-NA", ".thumb.sel", ".mwin[hidden]", "body.tcols-3"):
+        assert sel in css, sel

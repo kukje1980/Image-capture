@@ -56,6 +56,7 @@ class AppConfig:
     send_pacs_ae: str = "PACS"               # 받는 쪽(PACS) AE Title
     send_pacs_calling_ae: str = "SLITLAMP"   # 보내는 쪽(이 프로그램) AE Title
     thumbs_split_eyes: bool = False          # 오른쪽 사진 목록을 OD(우안) · OS(좌안) 로 나눠 보기
+    thumb_columns: int = 2                   # 오른쪽 사진 목록 한 줄 장수 (1 · 2 · 3, 썸네일 위 '열' 버튼)
     theme: str = "dark"                      # dark(기본, 영상 작업 공간) | light
     start_screen: str = "home"               # 시작 화면: home(홈 메뉴) | capture(바로 촬영)
     home_image: str = ""                     # 홈 화면 큰 사진 (비면 브랜드 기본 사진 · 그림)
@@ -155,6 +156,7 @@ class AppConfig:
             "camera_index": self.camera_index >= 0,
             "subfolder_template": _template_ok(self.subfolder_template),
             "px_per_mm": self.px_per_mm >= 0,
+            "thumb_columns": self.thumb_columns in (1, 2, 3),
         }
         for name, good in ok.items():
             if not good:
