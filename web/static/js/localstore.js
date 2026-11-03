@@ -171,10 +171,15 @@
       const id = Number(seg[1]);
       const cur = await tx('captures', 'readonly', (s) => done(s.get(id)));
       if (!cur) fail('영상을 찾을 수 없습니다.');
-      if (method === 'PATCH') {
-        const note = ((json().note || '') + '').trim() || null;
-        await tx('captures', 'readwrite', (s) => done(s.put({ ...cur, note })));
-        return withUrl({ ...cur, note });
+      if (method === 'PATCH') {                  // 보낸 항목만 수정 (코멘트 note · 안구 eye)
+        const b = json(), rec = { ...cur };
+        if ('eye' in b) {
+          if (!['OD', 'OS', 'OU', 'NA'].includes(b.eye)) fail('eye 는 OD, OS, OU, NA 중 하나여야 합니다.');
+          rec.eye = b.eye;
+        }
+        if ('note' in b || !('eye' in b)) rec.note = ((b.note || '') + '').trim() || null;
+        await tx('captures', 'readwrite', (s) => done(s.put(rec)));
+        return withUrl(rec);
       }
       if (method === 'DELETE') {
         await tx(['captures', 'files'], 'readwrite', (c, f) => { c.delete(id); f.delete(id); });

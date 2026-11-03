@@ -28,7 +28,12 @@
     quadHasImg: [false, false, false, false],
     quadEyes: ['NA', 'NA', 'NA', 'NA'],
     quadRAF: null,
+    // 썸네일 선택 (멀티 창)
+    thumbItems: [],      // 마지막으로 불러온 촬영 목록 (최신순)
+    thumbSel: [],        // 선택한 capture id (선택 순서)
+    thumbSelPid: null,
   };
+  const MULTI_MAX = 16;
 
   const fmt = (d) => d.toLocaleTimeString('ko-KR', { hour12: false });
   const fmtDT = (d) => d.toLocaleString('ko-KR', { hour12: false });
@@ -67,6 +72,7 @@
     } catch (_) {}
     syncThemeIcon();
     syncStorageUI();
+    setThumbCols(parseInt(prefGet('slitlamp-tcols'), 10) || 2, false);
     applyKeyHints();
     try { if (localStorage.getItem('slitlamp-hint-closed') === '1' && !LOCAL_MODE) $('hint').style.display = 'none'; } catch (_) {}
     bindEvents();
@@ -135,6 +141,9 @@
       document.querySelectorAll('#thumb-filter .tf').forEach((x) => x.classList.toggle('on', x === b));
       renderThumbs();
     }));
+    $('btn-thumb-cols').addEventListener('click', () => setThumbCols((thumbCols() % 3) + 1));
+    $('btn-thumb-clear').addEventListener('click', () => setThumbSelection([]));
+    $('btn-multi').addEventListener('click', openMultiSelected);
     $('hint-close').addEventListener('click', () => {
       $('hint').style.display = 'none';
       try { localStorage.setItem('slitlamp-hint-closed', '1'); } catch (_) {}
@@ -249,6 +258,7 @@
   function onShortcutKey(e) {
     if (capturingKey) return;
     if (e.repeat) return;                              // 키·발판을 누르고 있어도 한 번만 실행
+    if (document.body.classList.contains('mwin-on')) return;   // 멀티 창이 떠 있으면 촬영 단축키는 쉰다
     if ((e.target instanceof Element && e.target.matches('input, textarea, select')) || document.querySelector('dialog[open]')) return;
     const name = keyName(e);
     if (!name) return;
@@ -954,7 +964,7 @@
     el.className = 'thumb pending';
     const url = URL.createObjectURL(blob);
     el.innerHTML = `<img src="${url}" alt="">
-      <span class="thumb-badges">${eye && eye !== 'NA' ? `<span class="thumb-badge e-${eye}">${eye}</span>` : ''}<span class="thumb-badge">저장 중…</span></span>
+      <span class="thumb-badges">${eyeTag(eye)}<span class="thumb-badge">저장 중…</span></span>
       <div class="thumb-caption"><span><span class="thumb-time">${hms(ts)}</span></span></div>`;
     const first = list.querySelector('.thumb-day, .thumb');
     list.insertBefore(el, first);
@@ -991,8 +1001,7 @@
         if (durationMs != null) fd.append('duration_ms', String(durationMs));
         if (note) fd.append('note', note);
         fd.append('file', upBlob, upName);
-        await api('/captures', { method: 'POST', body: fd });
-        return true;
+        return (await api('/captures', { method: 'POST', body: fd })) || true;   // 저장된 영상 정보 (멀티 창이 칸을 바꿀 때 사용)
       } catch (err) {
         toast((LOCAL_MODE ? '이 PC 저장 실패: ' : '서버 저장 실패: ') + err.message, 'error');
         return false;
@@ -1174,14 +1183,19 @@
   // ---- thumbnails ----
   const DOW = ['일', '월', '화', '수', '목', '금', '토'];
   const hms = (d) => [d.getHours(), d.getMinutes(), d.getSeconds()].map((n) => String(n).padStart(2, '0')).join(':');
+  const eyeTag = (eye) => (['OD', 'OS', 'OU'].includes(eye)
+    ? `<span class="thumb-eye e-${eye}">${eye}</span>` : '<span class="thumb-eye e-NA">미지정</span>');
   let thumbSeq = 0;
   async function renderThumbs() {
     const my = ++thumbSeq, pid = state.currentPatientId;
     const list = $('thumb-list');
     const empty = $('thumb-empty');
     const clear = () => Array.from(list.querySelectorAll('.thumb, .thumb-day')).forEach(n => n.remove());
+    if (pid !== state.thumbSelPid) { state.thumbSel = []; state.thumbSelPid = pid; }   // 환자가 바뀌면 선택 해제
     if (!pid) {
       clear();
+      state.thumbItems = [];
+      syncThumbSel();
       empty.style.display = 'block';
       empty.querySelector('div').innerHTML = '환자를 선택하세요';
       $('thumb-count').textContent = '0';
@@ -1195,6 +1209,10 @@
     }
     if (my !== thumbSeq || pid !== state.currentPatientId) return;   // 그 사이 다른 환자·필터로 바뀜 → 늦은 결과는 버림
     clear();
+    state.thumbItems = items;
+    const photoIds = new Set(items.filter((c) => c.media_type === 'photo').map((c) => c.id));
+    state.thumbSel = state.thumbSel.filter((id) => photoIds.has(id));
+    syncThumbSel();
     $('thumb-count').textContent = items.length;
     const f = state.thumbFilter || 'all';
     const shown = items.filter((c) => f === 'all' || (f === 'video' ? c.media_type === 'video' : c.eye === f));
@@ -1224,25 +1242,101 @@
       const el = document.createElement('div');
       el.className = 'thumb';
       el.tabIndex = 0;
+      el.dataset.id = String(c.id);
       const eye = c.eye && c.eye !== 'NA' ? c.eye : '';
       const isVideo = c.media_type === 'video';
       const dur = isVideo ? `▶ ${Math.round((c.duration_ms || 0) / 1000)}s` : '';
       el.innerHTML = `
         ${isVideo
           ? '<div class="tvid"><svg class="ic"><use href="#i-play"/></svg></div>'
-          : `<img src="${c.url}" alt="캡처 ${fmt(ts)}" loading="lazy">`}
+          : `<img src="${c.url}" alt="캡처 ${fmt(ts)}" loading="lazy" draggable="false">`}
         <span class="thumb-badges">
-          ${eye ? `<span class="thumb-badge e-${eye}">${eye}</span>` : ''}
+          ${eyeTag(c.eye)}
           ${dur ? `<span class="thumb-badge video">${dur}</span>` : ''}
         </span>
+        ${isVideo ? '' : '<span class="thumb-rank"></span>'}
         <div class="thumb-caption">
           <span><span class="thumb-time">${hms(ts)}</span>${c.note ? `<span class="thumb-note">${escHtml(c.note)}</span>` : ''}</span>
         </div>`;
-      el.title = [fmtDT(ts), eye, c.note].filter(Boolean).join(' · ');
-      el.addEventListener('click', () => openViewer(c, ts));
-      el.addEventListener('keydown', (e) => { if (e.key === 'Enter') openViewer(c, ts); });
+      el.title = [fmtDT(ts), eye || '안구 미지정', c.note].filter(Boolean).join(' · ')
+        + (isVideo ? '\n클릭: 재생' : '\n클릭: 선택 (멀티) · 두 번 클릭: 크게 보기 · 오른쪽 클릭: 멀티');
+      if (isVideo) {
+        el.addEventListener('click', () => openViewer(c, ts));
+        el.addEventListener('keydown', (e) => { if (e.key === 'Enter') openViewer(c, ts); });
+      } else {
+        // 윈도우·맥 앱과 같게: 한 번 클릭 = 선택(번호) · 두 번 클릭 = 크게 보기 · 오른쪽 클릭 = 멀티
+        el.addEventListener('click', () => {
+          const now = performance.now();
+          if (!(thumbClick.id === c.id && now - thumbClick.t < 500)) thumbClick = { id: c.id, t: now, before: [...state.thumbSel] };
+          toggleThumbSel(c.id);
+        });
+        el.addEventListener('dblclick', () => {
+          // 두 번 클릭은 '크게 보기' — 앞선 클릭으로 바뀐 선택은 되돌린다
+          if (thumbClick.id === c.id && thumbClick.before) { state.thumbSel = thumbClick.before; syncThumbSel(); }
+          openViewer(c, ts);
+        });
+        el.addEventListener('contextmenu', (e) => {
+          e.preventDefault();
+          if (!state.thumbSel.includes(c.id) && !toggleThumbSel(c.id)) return;   // 안 골랐으면 골라서 (최대 장수면 그대로)
+          openMultiSelected();
+        });
+        el.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') { e.preventDefault(); openViewer(c, ts); }
+          else if (e.key === ' ') { e.preventDefault(); toggleThumbSel(c.id); }
+        });
+      }
       list.appendChild(el);
     }
+    syncThumbSel();
+  }
+
+  // ---- 썸네일 선택 → 멀티 창 ----
+  let thumbClick = { id: null, t: 0, before: null };
+  const thumbCols = () => (document.body.classList.contains('tcols-1') ? 1 : document.body.classList.contains('tcols-3') ? 3 : 2);
+  function setThumbCols(n, save = true) {
+    n = [1, 2, 3].includes(n) ? n : 2;
+    document.body.classList.remove('tcols-1', 'tcols-2', 'tcols-3');
+    document.body.classList.add('tcols-' + n);
+    $('thumb-cols-n').textContent = String(n);
+    $('btn-thumb-cols').title = `한 줄에 ${n}장 (누르면 ${(n % 3) + 1}장)`;
+    if (save) prefSet('slitlamp-tcols', String(n));
+  }
+  function toggleThumbSel(id) {
+    const k = state.thumbSel.indexOf(id);
+    if (k >= 0) state.thumbSel.splice(k, 1);
+    else if (state.thumbSel.length >= MULTI_MAX) { toast(`한 번에 최대 ${MULTI_MAX}장까지 선택할 수 있습니다.`, 'error'); return false; }
+    else state.thumbSel.push(id);
+    syncThumbSel();
+    return true;
+  }
+  function setThumbSelection(ids) {
+    const photos = new Set(state.thumbItems.filter((c) => c.media_type === 'photo').map((c) => c.id));
+    state.thumbSel = [...new Set(ids)].filter((id) => photos.has(id)).slice(0, MULTI_MAX);
+    syncThumbSel();
+  }
+  function syncThumbSel() {
+    document.querySelectorAll('#thumb-list .thumb[data-id]').forEach((el) => {
+      const rank = state.thumbSel.indexOf(+el.dataset.id);
+      el.classList.toggle('sel', rank >= 0);
+      el.setAttribute('aria-selected', String(rank >= 0));
+      const r = el.querySelector('.thumb-rank');
+      if (r) r.textContent = rank >= 0 ? String(rank + 1) : '';
+    });
+    const n = state.thumbSel.length;
+    $('thumb-sel-info').innerHTML = n ? `<b>${n}장</b> 선택` : '사진 클릭 = 선택';
+    $('btn-multi-label').textContent = n ? `멀티 ${n}` : '멀티';
+    $('btn-multi').disabled = !n;
+    $('btn-thumb-clear').hidden = !n;
+  }
+  const selectedCaptures = () => state.thumbSel.map((id) => state.thumbItems.find((c) => c.id === id)).filter(Boolean);
+  function openMulti(caps) {
+    if (!window.SlitPro || !window.SlitPro.openMulti) { toast('멀티 창을 열 수 없습니다.', 'error'); return Promise.resolve(false); }
+    return window.SlitPro.openMulti(caps);
+  }
+  function openMultiSelected() {
+    const caps = selectedCaptures();
+    if (!caps.length) { toast('멀티로 볼 사진을 먼저 클릭해 선택하세요.', 'error'); return Promise.resolve(false); }
+    return openMulti(caps);
   }
 
   function openViewer(c, ts) {
@@ -1369,6 +1463,7 @@
   window.SlitApp = {
     state, api, currentPatient, persistCapture, renderThumbs, toast, setStatus,
     startCamera, openPatientDialog, parseTs, fmtDT, openViewer, sfx,
+    toggleThumbSel, setThumbSelection, openMultiSelected, setThumbCols, MULTI_MAX,
   };
 
   init();

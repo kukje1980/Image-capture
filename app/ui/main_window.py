@@ -67,7 +67,7 @@ from app.ui.ref_bar import RefBar
 from app.ui.smart_bar import SmartBar, mode_text
 from app.ui import icons
 from app.ui.theme import ICON, ICON_ACCENT, build_qss, make_app_icon
-from app.ui.thumbnail_panel import ThumbnailPanel, day_label
+from app.ui.thumbnail_panel import PANEL_WIDTH, ThumbnailPanel, day_label
 from app.ui.video_view import VideoView
 
 from app import __version__
@@ -205,10 +205,12 @@ class MainWindow(QMainWindow):
         # 긴 줄은 좁은 창에서 눌려 겹치지 않게 옆으로 밀어 보는 칸에 (app/ui/fit.py)
         left.addWidget(HScroll(self.smart_bar, on_compact=self.smart_bar.set_compact))
         left.addWidget(HScroll(self.agent_bar))
-        left.addWidget(HScroll(self.control_bar, on_compact=self.control_bar.set_compact))
+        self._dock_scroll = HScroll(self.control_bar, on_compact=self.control_bar.set_compact)
+        left.addWidget(self._dock_scroll)
 
         self.thumbnail_panel = ThumbnailPanel(self.db, newest_on_top=self.config.newest_on_top,
-                                              split_eyes=bool(getattr(self.config, "thumbs_split_eyes", False)))
+                                              split_eyes=bool(getattr(self.config, "thumbs_split_eyes", False)),
+                                              columns=int(getattr(self.config, "thumb_columns", 2) or 2))
 
         root.addLayout(left, 1)
         root.addWidget(self.thumbnail_panel)
@@ -261,6 +263,7 @@ class MainWindow(QMainWindow):
         # 오른쪽 클릭 = '멀티' (사진 목록의 사진: 그 사진도 골라서 · 라이브 영상: 고른 사진으로)
         self.thumbnail_panel.multiRequested.connect(self._safe("오른쪽 클릭 멀티", lambda: self._multi_by_right_click()))
         self.thumbnail_panel.dayDeleteRequested.connect(self._delete_day)      # 촬영일 제목 줄의 삭제: 그 날 모두
+        self.thumbnail_panel.columnsChanged.connect(self._on_thumb_columns)   # 한 줄 사진 수 (1 · 2 · 3) 저장
         self.video_view.rightClicked.connect(self._safe("오른쪽 클릭 멀티", lambda: self._multi_by_right_click()))
         self.control_bar.multiToggled.connect(self._on_multi_toggled)
         self.control_bar.saveMultiClicked.connect(self._safe("멀티 저장", lambda: self._on_save_multi()))
@@ -450,6 +453,7 @@ class MainWindow(QMainWindow):
     def eventFilter(self, obj, ev):  # noqa: N802
         if obj is getattr(self, "topbar", None) and ev.type() == QEvent.Type.Resize:
             self._fit_topbar()
+            self._fit_thumb_columns()
         return super().eventFilter(obj, ev)
 
     def _fit_topbar(self) -> None:
@@ -468,6 +472,29 @@ class MainWindow(QMainWindow):
         compact = bar.width() < self._topbar_full_w
         if compact != self._topbar_compact:
             self._set_topbar_compact(compact)
+
+    def _fit_thumb_columns(self) -> None:
+        """사진 목록 열 수(1 · 2 · 3)를 창 폭에 맞춘다 — 넓혀도 촬영 도크가 제 크기(글자 포함) 그대로 들어갈 때만.
+
+        좁은 창(1280px · 150% 배율 등)에서는 1열(예전 폭)로 돌아가 도크가 눌리지 않는다. 고른 열 수는 설정에 그대로."""
+        panel = getattr(self, "thumbnail_panel", None)
+        sc = getattr(self, "_dock_scroll", None)
+        if panel is None or sc is None or panel.isHidden():
+            return
+        full = sc._full_w if sc._full_w else (0 if self.control_bar.is_compact()
+                                              else self.control_bar.minimumSizeHint().width())
+        if not full:
+            panel.set_max_columns(1)
+            return
+        vw = sc.viewport().width()
+        if sc.isVisible() and vw > 0:                  # 여백(본문 · 칸 사이) = 창 - 패널 - 도크 칸
+            self._dock_overhead = max(24, self.width() - panel.width() - vw)
+        overhead = getattr(self, "_dock_overhead", 40)
+        fit = 1
+        for k in (2, 3):
+            if self.width() - PANEL_WIDTH[k] - overhead >= full:
+                fit = k
+        panel.set_max_columns(fit)
 
     def _set_topbar_compact(self, compact: bool) -> None:
         self._topbar_compact = compact
@@ -2026,6 +2053,11 @@ class MainWindow(QMainWindow):
             self.exam_screen.reload()
         self.control_bar.set_status("영상 삭제됨" if ok else "이미 삭제된 영상입니다")
         return ok
+
+    def _on_thumb_columns(self, n: int) -> None:
+        """사진 목록 '열' 버튼: 한 줄 사진 수(1 · 2 · 3)를 설정에 저장."""
+        self.config.thumb_columns = n
+        self._save_config_quietly()
 
     def _delete_day(self, day: str, confirm: bool = True) -> int:
         """현재 환자가 그 날('YYYY-MM-DD') 촬영한 사진 · 동영상을 모두 삭제 (검사 소견은 남김)."""

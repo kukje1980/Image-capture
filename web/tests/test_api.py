@@ -121,6 +121,20 @@ def test_patch_capture_note(client):
     assert client.patch("/api/v1/captures/99999", json={"note": "x"}).status_code == 404
 
 
+def test_patch_capture_eye_keeps_note(client):
+    """멀티 창의 안구 수정: eye 만 보내면 코멘트는 그대로, 잘못된 값은 400."""
+    p = _make_patient(client, chart="PE1")
+    png = b"\x89PNG\r\n\x1a\n" + b"0" * 16
+    cap = client.post("/api/v1/captures", files={"file": ("a.png", io.BytesIO(png), "image/png")},
+                      data={"patient_id": str(p["id"]), "media_type": "photo", "ext": "png",
+                            "eye": "OD", "note": "경과관찰"}).json()
+    r = client.patch(f"/api/v1/captures/{cap['id']}", json={"eye": "OS"})
+    assert r.status_code == 200 and r.json()["eye"] == "OS" and r.json()["note"] == "경과관찰"
+    assert client.patch(f"/api/v1/captures/{cap['id']}", json={"eye": "XX"}).status_code == 400
+    r = client.patch(f"/api/v1/captures/{cap['id']}", json={"note": "재검"})
+    assert r.json()["eye"] == "OS" and r.json()["note"] == "재검"
+
+
 def test_old_web_db_migrated(tmp_path):
     import sqlite3
     from app.db.database import Database

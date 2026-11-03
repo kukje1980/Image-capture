@@ -1,4 +1,6 @@
-"""우측 썸네일 패널: 헤더(개수) + 필터(전체/OD/OS/동영상) + 촬영일별 묶음 목록.
+"""우측 썸네일 패널: 헤더(개수) + 필터(전체/OD/OS) + 촬영일별 묶음 목록 — 여러 장을 1 · 2 · 3열 격자로 (최신 사진부터).
+
+필터 줄 오른쪽 '⊞ 2열' 버튼 = 한 줄에 보이는 사진 수 (1 → 2 → 3, 설정 thumb_columns 에 저장).
 
 한 번 클릭 = 선택(번호 표시, 다시 누르면 해제) · 두 번 클릭 = 큰 화면으로 보기(thumbnailClicked).
 선택한 사진은 제목 줄 오른쪽(OD · OS 위)의 '멀티' 로 한 번에 모아 보고 편집한다.
@@ -14,6 +16,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -23,11 +26,12 @@ from PySide6.QtWidgets import (
 )
 
 from app.ui import icons
-from app.ui.theme import ICON_ACCENT, ICON_RECORD
+from app.ui.theme import ICON, ICON_ACCENT, ICON_RECORD
 from app.ui.thumbnail_widget import ThumbnailWidget
 
 _DOW = "월화수목금토일"
 _FILTERS = [("all", "전체"), ("OD", "OD"), ("OS", "OS")]
+PANEL_WIDTH = {1: 248, 2: 320, 3: 410}       # 한 줄 사진 수별 패널 폭
 
 
 def day_label(day: str) -> str:
@@ -44,8 +48,9 @@ class ThumbnailPanel(QFrame):
     selectionChanged = Signal(list)    # 선택한 Capture 목록 (선택 순서)
     multiRequested = Signal(object)    # Capture — 오른쪽 클릭: (안 골랐으면 고르고) 멀티로 모아 보기
     dayDeleteRequested = Signal(str)   # 'YYYY-MM-DD' — 촬영일 제목 줄의 삭제 버튼: 그 날 영상 모두 삭제
+    columnsChanged = Signal(int)       # 한 줄 사진 수 (1 · 2 · 3) — 열 버튼을 눌렀을 때
 
-    def __init__(self, db, newest_on_top: bool = True, parent=None, split_eyes: bool = False):
+    def __init__(self, db, newest_on_top: bool = True, parent=None, split_eyes: bool = False, columns: int = 2):
         super().__init__(parent)
         self.db = db
         self.newest_on_top = newest_on_top
@@ -58,9 +63,13 @@ class ThumbnailPanel(QFrame):
         self._pre_click: tuple | None = None    # (capture id, 두 번 클릭 전 선택 목록)
         self._widgets: dict[int, ThumbnailWidget] = {}
         self.day_delete_buttons: dict[str, QPushButton] = {}   # 촬영일 → 삭제 버튼 (테스트 · 자동화용)
+        self._cols = columns if columns in PANEL_WIDTH else 2     # 고른 열 수 (설정에 저장)
+        self._max_cols = 3                                          # 창 폭이 허락하는 열 수 (메인 창이 정함)
+        self._grid: QGridLayout | None = None    # 지금 채우는 묶음(촬영일 · 안구)의 격자
+        self._grid_n = 0
 
         self.setObjectName("ThumbnailPanel")
-        self.setFixedWidth(248)
+        self.setFixedWidth(PANEL_WIDTH[self.effective_columns()])
         outer = QVBoxLayout(self)
         outer.setContentsMargins(12, 10, 6, 8)
         outer.setSpacing(8)
@@ -101,6 +110,14 @@ class ThumbnailPanel(QFrame):
             b.clicked.connect(lambda _=False, k=key: self.set_filter(k))
             chips.addWidget(b)
         self.filter_buttons["all"].setChecked(True)
+        self.btn_cols = QPushButton()
+        self.btn_cols.setObjectName("FilterChip")
+        self.btn_cols.setIcon(icons.icon("review", ICON, 14))
+        self.btn_cols.setIconSize(QSize(13, 13))
+        self.btn_cols.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.btn_cols.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_cols.clicked.connect(lambda: self.set_columns(self._cols % 3 + 1, emit=True))
+        chips.addWidget(self.btn_cols)
         outer.addLayout(chips)
         sep = QFrame()
         sep.setObjectName("ThumbSep")
@@ -125,8 +142,49 @@ class ThumbnailPanel(QFrame):
         self._empty.setObjectName("Muted")
         self._empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty.setWordWrap(True)
+        self._sync_cols_button()
 
     # ---- 공개 API ----
+    def columns(self) -> int:
+        """고른 열 수 (설정에 저장되는 값)."""
+        return self._cols
+
+    def effective_columns(self) -> int:
+        """지금 화면에 쓰는 열 수 — 창이 좁으면 고른 열 수보다 적을 수 있다."""
+        return max(1, min(self._cols, self._max_cols))
+
+    def set_columns(self, n: int, emit: bool = False) -> None:
+        """한 줄에 보이는 사진 수 (1 · 2 · 3). 패널 폭도 함께 바뀐다."""
+        n = n if n in PANEL_WIDTH else 2
+        before = self.effective_columns()
+        self._cols = n
+        self._apply_columns(before)
+        if emit:
+            self.columnsChanged.emit(n)
+
+    def set_max_columns(self, n: int) -> None:
+        """창 폭이 허락하는 열 수 (좁은 창에서 촬영 도크가 눌리지 않게 — 메인 창이 정한다)."""
+        n = max(1, min(3, int(n)))
+        if n != self._max_cols:
+            before = self.effective_columns()
+            self._max_cols = n
+            self._apply_columns(before)
+
+    def _apply_columns(self, before: int) -> None:
+        eff = self.effective_columns()
+        self.setFixedWidth(PANEL_WIDTH[eff])
+        self._sync_cols_button()
+        if eff != before:
+            self._rebuild()
+
+    def _sync_cols_button(self) -> None:
+        eff = self.effective_columns()
+        self.btn_cols.setText(f"{eff}열")
+        tip = f"한 줄에 사진 {self._cols}장 — 누르면 {self._cols % 3 + 1}장 (1 → 2 → 3)"
+        if eff < self._cols:
+            tip += f"\n창이 좁아 지금은 {eff}장씩 (창을 넓히면 {self._cols}장)"
+        self.btn_cols.setToolTip(tip)
+
     def set_patient(self, patient_id) -> None:
         if patient_id != self._patient_id and self._selected:
             self._selected = []
@@ -181,13 +239,30 @@ class ThumbnailPanel(QFrame):
             self.split_eyes = bool(on)
             self._rebuild()
 
+    def _begin_group(self) -> None:
+        """촬영일 · 안구 묶음 하나의 사진 격자 (한 줄에 self._cols 장)."""
+        box = QWidget()
+        grid = QGridLayout(box)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(6)
+        grid.setVerticalSpacing(6 if self.effective_columns() > 1 else 8)
+        cols = self.effective_columns()
+        for col in range(cols):
+            grid.setColumnStretch(col, 1)
+        self._lay.addWidget(box)
+        self._grid, self._grid_n = grid, 0
+
     def _add_card(self, c) -> None:
         w = ThumbnailWidget(c)
         w.clicked.connect(self._on_press)
         w.doubleClicked.connect(self._on_double)
         w.rightClicked.connect(self._on_right)
         self._widgets[c.id] = w
-        self._lay.addWidget(w)
+        if self._grid is None:
+            self._begin_group()
+        r, col = divmod(self._grid_n, self.effective_columns())
+        self._grid.addWidget(w, r, col)
+        self._grid_n += 1
 
     def _build_by_eye(self, shown: list) -> None:
         groups = [("OD", "OD · 우안", [c for c in shown if c.eye == "OD"]),
@@ -200,6 +275,7 @@ class ThumbnailPanel(QFrame):
             h.setObjectName("DayHeader")
             h.setProperty("eye", code)
             self._lay.addWidget(h)
+            self._begin_group()
             for c in caps:
                 self._add_card(c)
 
@@ -265,6 +341,7 @@ class ThumbnailPanel(QFrame):
     def _rebuild(self) -> None:
         self._widgets = {}
         self.day_delete_buttons = {}
+        self._grid, self._grid_n = None, 0
         while self._lay.count():
             w = self._lay.takeAt(0).widget()
             if w is not None and w is not self._empty:
@@ -294,5 +371,6 @@ class ThumbnailPanel(QFrame):
             if d != day:
                 day = d
                 self._lay.addWidget(self._day_header(d, per_day[d]))
+                self._begin_group()
             self._add_card(c)
         self._apply_ranks()

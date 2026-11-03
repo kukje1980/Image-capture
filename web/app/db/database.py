@@ -165,6 +165,11 @@ class Database:
         with self._lock, self._conn:
             self._conn.execute("UPDATE captures SET note=? WHERE id=?", (note, cid))
 
+    def update_capture_eye(self, cid: int, eye: str) -> None:
+        with self._lock:
+            self._conn.execute("UPDATE captures SET eye=? WHERE id=?", (eye, cid))
+            self._conn.commit()
+
     def delete_capture(self, cid: int) -> Optional[dict]:
         with self._lock, self._conn:
             r = self._conn.execute(
