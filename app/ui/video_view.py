@@ -55,10 +55,15 @@ class VideoView(QWidget):
         self._pixmap: QPixmap | None = None
         self.setMinimumSize(480, 360)
         self._placeholder = "카메라 연결 대기 중..."
+        self._placeholder_title = "카메라 대기 중"
+        self._placeholder_icon = "aperture"
+        self._hud_always = False      # 영상이 없어도 HUD 표시 (안저판: 대기 중 사진 수 등)
         self._patient = ""
         self._eye = "NA"
-        self._state = "live"          # live | paused | frozen | rec
+        self._state = "live"          # live | paused | frozen | rec | badge
         self._rec_text = ""
+        self._badge: tuple[str, str, str | None] | None = None   # (글자, 글자색, 점 색) — state="badge"
+        self._caption = ""            # 왼쪽 아래 설명 (안저판: 촬영 시각·원본 파일)
 
     def set_frame(self, frame: np.ndarray) -> None:
         self._pixmap = QPixmap.fromImage(bgr_to_qimage(frame))
@@ -68,8 +73,18 @@ class VideoView(QWidget):
         self._pixmap = None
         self.update()
 
+    def set_placeholder(self, title: str, sub: str, icon: str = "aperture", hud: bool = False) -> None:
+        self._placeholder_title, self._placeholder, self._placeholder_icon = title, sub, icon
+        self._hud_always = hud
+        self.update()
+
     def set_hud(self, patient: str | None = None, eye: str | None = None,
-                state: str | None = None, rec_text: str | None = None) -> None:
+                state: str | None = None, rec_text: str | None = None,
+                badge: tuple | None = None, caption: str | None = None) -> None:
+        if badge is not None:
+            self._badge = badge
+        if caption is not None:
+            self._caption = caption
         if patient is not None:
             self._patient = patient
         if eye is not None:
@@ -86,6 +101,8 @@ class VideoView(QWidget):
         p.fillRect(self.rect(), QColor("#000000"))
         if self._pixmap is None or self._pixmap.isNull():
             self._paint_placeholder(p)
+            if self._hud_always:
+                self._paint_hud(p, caption=False)
             return
         scaled = self._pixmap.scaled(
             self.size(),
@@ -107,15 +124,16 @@ class VideoView(QWidget):
         p.setPen(QPen(QColor("#262e3a"), 1))
         p.setBrush(QColor(51, 194, 177, 18))
         p.drawEllipse(c, r, r)
-        p.drawPixmap(int(c.x() - 17), int(c.y() - 17), icons.pixmap("aperture", "#6b7586", 34, 1.4))
+        p.drawPixmap(int(c.x() - 17), int(c.y() - 17), icons.pixmap(self._placeholder_icon, "#6b7586", 34, 1.4))
         p.setFont(scaled_font(self.font(), 1.15, True))
         p.setPen(QColor("#e7eaf0"))
-        p.drawText(QRectF(0, c.y() + r + 10, self.width(), 26), Qt.AlignmentFlag.AlignCenter, "카메라 대기 중")
+        p.drawText(QRectF(0, c.y() + r + 10, self.width(), 26), Qt.AlignmentFlag.AlignCenter,
+                   self._placeholder_title)
         p.setFont(self.font())
         p.setPen(QColor("#8a94a6"))
         p.drawText(QRectF(0, c.y() + r + 36, self.width(), 22), Qt.AlignmentFlag.AlignCenter, self._placeholder)
 
-    def _paint_hud(self, p: QPainter) -> None:
+    def _paint_hud(self, p: QPainter, caption: bool = True) -> None:
         p.setFont(scaled_font(self.font(), 0.92, True))
         x = 12.0
         if self._patient:
@@ -130,5 +148,12 @@ class VideoView(QWidget):
             draw_chip(p, right, 12, "PAUSED", fg="#ffd08a", align_right=True)
         elif self._state == "frozen":
             draw_chip(p, right, 12, "FREEZE", fg="#9ccaff", align_right=True)
+        elif self._state == "badge":
+            if self._badge:
+                text, fg, dot = self._badge
+                draw_chip(p, right, 12, text, fg=fg, dot=dot, align_right=True)
         else:
             draw_chip(p, right, 12, "LIVE", fg="#c9f5ee", dot="#3ccf7a", align_right=True)
+        if caption and self._caption:
+            p.setFont(scaled_font(self.font(), 0.88))
+            draw_chip(p, 12, self.height() - 38.0, self._caption, fg="#c3cad4")

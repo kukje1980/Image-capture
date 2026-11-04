@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app import shortcuts
+from app import brand, shortcuts
 
 
 class ShortcutsDialog(QDialog):
@@ -35,9 +35,10 @@ class ShortcutsDialog(QDialog):
         grid_w = QWidget()
         grid = QGridLayout(grid_w)
         grid.setColumnStretch(1, 1)
-        for row, (aid, name, _default, scope) in enumerate(shortcuts.ACTIONS):
+        screen = "사진 화면" if brand.is_fundus() else "촬영 화면"
+        for row, (aid, name, _default, scope) in enumerate(shortcuts.actions()):
             lbl = QLabel(f"{name}  <span style='color:#8b95a3;font-size:11px'>"
-                         f"({'촬영 화면' if scope == 'capture' else '모든 화면'})</span>")
+                         f"({screen if scope == 'capture' else '모든 화면'})</span>")
             lbl.setTextFormat(Qt.TextFormat.RichText)
             ed = QKeySequenceEdit(QKeySequence(keys.get(aid, "")))
             if hasattr(ed, "setMaximumSequenceLength"):

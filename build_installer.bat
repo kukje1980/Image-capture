@@ -4,11 +4,16 @@ cd /d "%~dp0"
 
 rem 사용:  build_installer.bat          기본 버전
 rem        build_installer.bat keeler   Keeler 전용 버전
+rem        build_installer.bat fundus   안저판 (안저카메라 사진 자동 가져오기)
 set "BRAND=%~1"
 if /i "%BRAND%"=="keeler" (
   set "SLITLAMP_BUILD_BRAND=keeler"
   set "ISS=installer\keeler.iss"
   set "OUTNAME=KeelerSlitLamp"
+) else if /i "%BRAND%"=="fundus" (
+  set "SLITLAMP_BUILD_BRAND=fundus"
+  set "ISS=installer\fundus.iss"
+  set "OUTNAME=FundusImaging"
 ) else (
   set "SLITLAMP_BUILD_BRAND=default"
   set "ISS=installer\slitlamp.iss"
@@ -16,7 +21,7 @@ if /i "%BRAND%"=="keeler" (
 )
 
 echo ====================================================
-echo  슬릿램프 영상 시스템 - Windows 설치파일 빌드 (!SLITLAMP_BUILD_BRAND!)
+echo  영상 시스템 - Windows 설치파일 빌드 (!SLITLAMP_BUILD_BRAND!)
 echo ====================================================
 echo.
 

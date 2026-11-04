@@ -128,6 +128,7 @@ class ProWorkspace(QWidget):
         self._pair = (None, None)
         self._adj = Adjust()
         self._tool = "pan"
+        self._live_available = True
         self._build()
         self._cmp_active = self.cmp_left
         for cv in self._canvases():
@@ -197,7 +198,8 @@ class ProWorkspace(QWidget):
         tl.addWidget(self.c_eye)
         tl.addWidget(self.b_capture)
         tl.addWidget(self.b_save)
-        tl.addWidget(self._sep())
+        self._live_sep = self._sep()
+        tl.addWidget(self._live_sep)
 
         self.b_prev = self._btn("PREV", "이전 영상 / 페이지 (←)", icon="chev-l")
         self.b_next = self._btn("NEXT", "다음 영상 / 페이지 (→)", icon="chev-r")
@@ -592,7 +594,17 @@ class ProWorkspace(QWidget):
         self.info.setText("&nbsp;&nbsp;·&nbsp;&nbsp;".join(bits))
 
     # ================= 모드 =================
+    def set_live_available(self, on: bool) -> None:
+        """실시간 영상이 없는 안저판에서는 LIVE·CAPTURE·SAVE 를 숨긴다 (사진은 폴더에서 자동으로 들어옴)."""
+        self._live_available = on
+        for w in (self.b_live, self.b_capture, self.b_save, self.c_eye, self._live_sep):
+            w.setVisible(on)
+        if not on and self._mode == "live":
+            self.set_mode("multi")
+
     def set_mode(self, mode: str) -> None:
+        if mode == "live" and not self._live_available:
+            mode = "multi"
         if mode == "compare" and not self._prepare_compare():
             mode = self._mode if self._mode != "compare" else "multi"
         self._mode = mode

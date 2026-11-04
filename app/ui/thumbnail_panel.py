@@ -119,6 +119,9 @@ class ThumbnailPanel(QFrame):
     def count(self) -> int:
         return len(self._items)
 
+    def all_captures(self) -> list:
+        return list(self._items)
+
     def visible_captures(self) -> list:
         f = self._filter
         return [c for c in self._items

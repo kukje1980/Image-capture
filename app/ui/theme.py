@@ -300,3 +300,72 @@ def _render_icon(size: int) -> QPixmap:
 
     p.end()
     return pm
+
+
+def _render_fundus_icon(size: int) -> QPixmap:
+    """안저판 아이콘: 어두운 배경 위 망막(주황) + 시신경유두(노랑) + 혈관 + 황반."""
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QPainterPath, QRadialGradient
+
+    pm = QPixmap(size, size)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    s = float(size)
+
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QBrush(QColor("#0b1f2a")))
+    p.drawRoundedRect(QRectF(0, 0, s, s), s * 0.14, s * 0.14)
+
+    cx, cy, rr = s / 2, s / 2, s * 0.40
+    g = QRadialGradient(QPointF(cx - s * 0.04, cy), rr)
+    g.setColorAt(0.0, QColor("#f08a4b"))
+    g.setColorAt(0.65, QColor("#d0582a"))
+    g.setColorAt(1.0, QColor("#7e2410"))
+    p.setBrush(QBrush(g))
+    p.drawEllipse(QPointF(cx, cy), rr, rr)
+
+    # 황반 (가운데 왼쪽, 어두운 점)
+    mg = QRadialGradient(QPointF(cx - s * 0.10, cy + s * 0.01), s * 0.09)
+    mg.setColorAt(0.0, QColor(110, 25, 8, 200))
+    mg.setColorAt(1.0, QColor(110, 25, 8, 0))
+    p.setBrush(QBrush(mg))
+    p.drawEllipse(QPointF(cx - s * 0.10, cy + s * 0.01), s * 0.09, s * 0.09)
+
+    # 혈관 — 시신경유두에서 위·아래로 갈라져 황반 쪽으로 휘어짐
+    dx, dy = cx + s * 0.16, cy - s * 0.01
+    pen = QPen(QColor("#7a170b"))
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    for sign in (-1, 1):
+        for w, (c1, c2, end) in (
+            (0.036, ((-0.01, 0.14), (-0.13, 0.25), (-0.33, 0.22))),     # 위·아래 혈관궁 (황반 쪽)
+            (0.022, ((-0.10, 0.20), (-0.16, 0.28), (-0.17, 0.34))),     # 가지
+            (0.024, ((0.05, 0.05), (0.10, 0.12), (0.16, 0.17))),        # 코 쪽
+        ):
+            pen.setWidthF(max(1.0, s * w))
+            p.setPen(pen)
+            path = QPainterPath(QPointF(dx, dy))
+            path.cubicTo(QPointF(dx + s * c1[0], dy + sign * s * c1[1]),
+                         QPointF(dx + s * c2[0], dy + sign * s * c2[1]),
+                         QPointF(dx + s * end[0], dy + sign * s * end[1]))
+            p.drawPath(path)
+
+    # 시신경유두
+    p.setPen(Qt.PenStyle.NoPen)
+    dg = QRadialGradient(QPointF(dx, dy), s * 0.085)
+    dg.setColorAt(0.0, QColor("#fff4cf"))
+    dg.setColorAt(0.6, QColor("#ffd27a"))
+    dg.setColorAt(1.0, QColor("#f2a44a"))
+    p.setBrush(QBrush(dg))
+    p.drawEllipse(QPointF(dx, dy), s * 0.075, s * 0.085)
+
+    # 테두리 (비네팅 느낌)
+    ring = QPen(QColor(0, 0, 0, 90))
+    ring.setWidthF(max(1.0, s * 0.02))
+    p.setPen(ring)
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    p.drawEllipse(QPointF(cx, cy), rr, rr)
+    p.end()
+    return pm
+

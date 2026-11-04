@@ -2,6 +2,7 @@
 
 %APPDATA%/SlitLampImaging (Windows), ~/Library/Application Support/SlitLampImaging (macOS),
 ~/.local/share/SlitLampImaging (그 외)를 앱 데이터 루트로 사용한다. 환자별 저장 하위 폴더 이름도 여기서 생성한다.
+안저판은 같은 위치의 FundusImaging 폴더를 쓴다 (app/brand.py 의 PRODUCTS).
 """
 from __future__ import annotations
 
@@ -10,7 +11,9 @@ import re
 import sys
 from pathlib import Path
 
-APP_DIR_NAME = "SlitLampImaging"
+from app import brand
+
+APP_DIR_NAME = "SlitLampImaging"          # 슬릿램프판 (기본·Keeler)
 
 # 폴더/파일 이름에 허용할 문자만 남기고 나머지는 '_'로 치환 (한글 허용)
 _UNSAFE = re.compile(r"[^0-9A-Za-z._가-힣-]+")
@@ -25,9 +28,14 @@ def get_appdata_dir() -> Path:
         base = Path.home() / "Library" / "Application Support"
     else:
         base = Path.home() / ".local" / "share"
-    d = base / APP_DIR_NAME
+    d = base / app_dir_name()
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def app_dir_name() -> str:
+    """지금 제품의 데이터 폴더 이름 (슬릿램프 = SlitLampImaging, 안저 = FundusImaging)."""
+    return brand.product_info()["data_dir"]
 
 
 def ensure_dir(p) -> Path:

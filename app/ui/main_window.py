@@ -103,14 +103,7 @@ class MainWindow(QMainWindow):
 
         left = QVBoxLayout()
         left.setSpacing(10)
-        self.video_view = VideoView()
-        self.quad_view = QuadView()
-        self.view_stack = QStackedWidget()
-        self.view_stack.addWidget(self.video_view)   # index 0 = 단일
-        self.view_stack.addWidget(self.quad_view)     # index 1 = 4분할
-        self.control_bar = ControlBar()
-        left.addWidget(self.view_stack, 1)
-        left.addWidget(self.control_bar)
+        self._build_capture_area(left)
 
         self.thumbnail_panel = ThumbnailPanel(self.db, newest_on_top=self.config.newest_on_top)
 
@@ -131,6 +124,26 @@ class MainWindow(QMainWindow):
         self.pro.patientUpdated.connect(self._on_pro_patient_updated)
 
         self.patient_panel.patientChanged.connect(self._on_patient_changed)
+        self.thumbnail_panel.thumbnailClicked.connect(self._on_thumbnail_clicked)
+        self._rec_timer = QTimer(self)
+        self._rec_timer.setInterval(500)
+        self._rec_timer.timeout.connect(self._update_rec_hud)
+
+        self._on_patient_changed(self.patient_panel.current_patient())
+        self._fullscreen = False
+        self._install_shortcuts()
+
+    def _build_capture_area(self, left: QVBoxLayout) -> None:
+        """촬영 화면 왼쪽: 실시간 영상(단일/4분할) + 촬영 도크. 안저판(FundusWindow)은 이 부분만 바꾼다."""
+        self.video_view = VideoView()
+        self.quad_view = QuadView()
+        self.view_stack = QStackedWidget()
+        self.view_stack.addWidget(self.video_view)   # index 0 = 단일
+        self.view_stack.addWidget(self.quad_view)     # index 1 = 4분할
+        self.control_bar = ControlBar()
+        left.addWidget(self.view_stack, 1)
+        left.addWidget(self.control_bar)
+
         self.control_bar.pauseToggled.connect(self._on_pause)
         self.control_bar.captureClicked.connect(self._on_capture)
         self.control_bar.recordToggled.connect(self._on_record_toggle)
@@ -139,15 +152,7 @@ class MainWindow(QMainWindow):
         self.control_bar.saveQuadClicked.connect(self._on_save_quad)
         self.control_bar.clearQuadClicked.connect(self._on_clear_quad)
         self.quad_view.cellClicked.connect(self._on_quad_cell_clicked)
-        self.thumbnail_panel.thumbnailClicked.connect(self._on_thumbnail_clicked)
         self.control_bar.eyeChanged.connect(lambda e: self.video_view.set_hud(eye=e))
-        self._rec_timer = QTimer(self)
-        self._rec_timer.setInterval(500)
-        self._rec_timer.timeout.connect(self._update_rec_hud)
-
-        self._on_patient_changed(self.patient_panel.current_patient())
-        self._fullscreen = False
-        self._install_shortcuts()
 
     def _build_topbar(self) -> QFrame:
         """브랜드 + 촬영/Pro 검토 전환 스위치 + 설정·재연결·테마."""
@@ -172,9 +177,9 @@ class MainWindow(QMainWindow):
         if not (self.brand_logo and b.get("logo_only")):
             brand = QVBoxLayout()
             brand.setSpacing(0)
-            t1 = QLabel("슬릿램프 영상 시스템")
+            t1 = QLabel(b.get("brand_title", "슬릿램프 영상 시스템"))
             t1.setObjectName("BrandTitle")
-            t2 = QLabel("SLIT LAMP IMAGING")
+            t2 = QLabel(b.get("brand_sub", "SLIT LAMP IMAGING"))
             t2.setObjectName("BrandSub")
             brand.addWidget(t1)
             brand.addWidget(t2)
@@ -192,7 +197,7 @@ class MainWindow(QMainWindow):
         sl = QHBoxLayout(sw)
         sl.setContentsMargins(3, 3, 3, 3)
         sl.setSpacing(2)
-        self.btn_mode_capture = QPushButton(icons.gap("촬영"))
+        self.btn_mode_capture = QPushButton(icons.gap(self._capture_mode_label()))
         self.btn_mode_pro = QPushButton(icons.gap("Pro 검토"))
         grp = QButtonGroup(self)
         for b, name in ((self.btn_mode_capture, "camera"), (self.btn_mode_pro, "review")):
@@ -223,7 +228,7 @@ class MainWindow(QMainWindow):
             lay.addWidget(b)
             return b
 
-        tool("카메라 재연결", "videocam", "캡처 장비 다시 연결", self._restart_camera)
+        self._add_source_tool(tool)
         tool("", "keyboard", "단축키 설정 (캡처·녹화·안구 등)", self._open_shortcuts)
         tool("설정", "sliders", "카메라·저장 위치·형식 설정", self._open_settings)
         self.act_theme = QAction(self)
@@ -231,6 +236,12 @@ class MainWindow(QMainWindow):
         self.btn_theme = tool("", "sun", "밝은/어두운 테마 전환", self._toggle_theme)
         self._sync_theme_button()
         return bar
+
+    def _capture_mode_label(self) -> str:
+        return "촬영"
+
+    def _add_source_tool(self, tool) -> None:
+        tool("카메라 재연결", "videocam", "캡처 장비 다시 연결", self._restart_camera)
 
     def _render_brand_logo(self) -> None:
         if self.brand_logo is None:

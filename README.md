@@ -14,6 +14,36 @@
 > 웹 앱 두 가지 버전을 모두 제공합니다. 웹 버전은 MedFix 처럼 **Render/Vercel 에 올려 인터넷 주소로** 쓸 수 있습니다
 > (`render.yaml`, `web/vercel.json` — 방법은 `web/README.md` 의 "인터넷 주소로 쓰기").
 
+## 안저판 (안저 영상 시스템 · Fundus Imaging)
+같은 프로그램의 **안저(망막) 사진용 판**입니다. 안저카메라(또는 카메라 전용 프로그램)가 촬영한 사진을
+PC·공유 폴더에 저장하면, 그 폴더를 감시하다가 **지금 선택한 환자에게 자동으로 등록**합니다.
+실시간 영상·녹화 대신 사진 폴더를 쓰고, 환자 DB·썸네일·Pro 검토·인쇄는 슬릿램프판과 같습니다.
+데이터 폴더가 따로(`FundusImaging`)라 **슬릿램프판과 한 PC에 나란히 설치**할 수 있습니다.
+
+| 기능 | 설명 |
+|------|------|
+| **사진 폴더 감시** | 설정(⚙)에서 고른 폴더(하위 폴더·네트워크 공유 폴더 포함)를 1~2초마다 확인. 카메라가 **다 쓴 새 파일만** 가져오고, 프로그램을 켜기 전부터 있던 사진은 건너뜀 |
+| **원본 화질 그대로** | JPG · PNG · TIFF · BMP 원본을 재압축 없이 환자 폴더에 복사 + 동시 저장(export) 폴더 + DB. 촬영 시각은 사진 EXIF(없으면 파일 시각) |
+| **안구 자동 지정** | 파일 이름의 `R`/`L` · `OD`/`OS` · `RIGHT`/`LEFT` · `우안`/`좌안` 으로 지정. 없으면 하단 **새 사진** 에서 고른 안구. 틀리면 **안구 수정**(파일 이름의 `_OD`/`_OS` 도 함께 바뀜) |
+| **환자 확인** | 환자를 고르기 전(프로그램 시작 때 자동 선택된 환자 포함)에 들어온 사진은 **대기**로 두고, 환자 이름을 보여 주며 등록할지 물음 — 다른 환자에게 잘못 들어가는 일 방지 |
+| **사진 가져오기** | 자동 가져오기가 꺼져 있을 때 찍은 사진, 다른 폴더의 사진을 직접 골라 지금 환자에게 등록 |
+| **원본 정리** (선택) | 가져온 원본을 사진 폴더 안 `_가져옴/날짜` 폴더로 옮겨 감시 폴더를 깔끔하게 |
+| **Pro 검토** | 슬릿램프판과 동일 — MULTI · 비교 · **Red-free**(혈관·출혈) · CLAHE · 측정 · 주석 · 인쇄/PDF ("안저 영상 보고서"). LIVE 는 없음 |
+
+**카메라 쪽 준비:** 카메라 프로그램의 *내보내기(Export) / 자동 저장 폴더* 를 이 PC의 폴더나 공유 폴더로 지정하고
+형식을 JPEG(또는 TIFF)로 둡니다 — 메뉴 이름은 기종마다 다릅니다. DICOM 으로만 보내는 카메라는 아직 지원하지 않습니다.
+
+| 받는 곳 (GitHub → Actions) | 파일 |
+|------|------|
+| **Build Windows installer** → Artifacts (main 빌드는 릴리스 `windows-latest`) | `FundusImaging-windows` (설치파일 `FundusImaging-Setup-0.1.0.exe`) |
+| **Build macOS app** → Artifacts | `FundusImaging-mac-arm64`(M1/M2/M3) · `FundusImaging-mac-x86_64`(Intel) |
+
+직접 만들기: 윈도우 `build_installer.bat fundus` · 맥 `./build_mac.sh fundus` · 소스에서 실행 `python run.py --brand fundus`
+데이터: Windows `%APPDATA%\FundusImaging\` (DB `fundus.db`) · macOS `~/Library/Application Support/FundusImaging/`
+단축키(⌨): 사진 가져오기 `I` · 자동 가져오기 켜기/끄기 `W` · 새 사진 안구 `1`/`2`/`3`/`0` · 전체 화면 `F` · Pro `F2`
+
+> 웹 버전(`web/`)은 아직 슬릿램프판만 있습니다.
+
 ## 기술 스택
 - Python 3.11+, **PySide6**(Qt6), **OpenCV**(opencv-python), **SQLite**(stdlib)
 - 동영상: **imageio-ffmpeg**(번들 ffmpeg, H.264/yuv420p) 우선, 실패 시 `cv2.VideoWriter(mp4v)` 폴백
@@ -137,10 +167,13 @@ Finder 에서 `run_mac.command` 더블클릭(처음 한 번 자동 설치). 하�
 - Windows: `%APPDATA%\SlitLampImaging\`
 - macOS: `~/Library/Application Support/SlitLampImaging/`
 - 기타(개발): `~/.local/share/SlitLampImaging/`
+- 안저판은 위 위치의 `FundusImaging` 폴더를 씁니다 (설정·DB·사진 모두 따로).
 
 `config.json` 주요 항목: `camera_index`, `source_mode`(device|file|synthetic),
 `capture_width/height`, `photo_format`(png|jpg), `media_root`(기본 저장),
 `export_root`(동시 저장 폴더), `db_path`, `subfolder_template`.
+안저판: `watch_folder`(감시할 사진 폴더), `watch_subfolders`, `watch_enabled`, `watch_eye_from_name`,
+`watch_move_imported`, `watch_interval_ms`.
 
 저장 경로 규칙(기본): `<root>/<차트번호>_<환자ID>/YYYY-MM-DD/<HHMMSS>_<OD|OS|NA>.<확장자>`
 (`export_root`에도 동일 구조로 복사)

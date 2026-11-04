@@ -4,6 +4,7 @@
     python -m app --source synthetic   # 하드웨어 없이 합성 영상으로 실행
     python -m app --source file        # 설정의 test_file_path 재생
     python -m app --brand keeler       # Keeler 전용 화면 (로고·색)
+    python -m app --brand fundus       # 안저판 (안저카메라 사진 폴더 자동 가져오기)
 """
 from __future__ import annotations
 
@@ -28,17 +29,24 @@ def _apply_cli_overrides(argv, config: AppConfig) -> None:
 
 def main(argv=None) -> int:
     argv = list(sys.argv if argv is None else argv)
+    # 제품(슬릿램프/안저)은 실행 옵션·환경변수로 먼저 정한다 — 데이터 폴더(설정·DB·로그)가 제품마다 다름
+    fixed = brand.fixed_key(argv)
+    if fixed:
+        brand.select(fixed)
     setup_logging()
     log = logging.getLogger("app")
 
     config = AppConfig.load()
     _apply_cli_overrides(argv, config)
     # 브랜드는 UI 모듈을 불러오기 전에 정한다 (아이콘 강조색 등이 import 시점에 정해짐)
-    b = brand.select(brand.key_from(argv, getattr(config, "brand", "")))
-    from app.ui.main_window import MainWindow
+    b = brand.select(brand.choose(argv, getattr(config, "brand", "")))
     from app.ui.theme import build_qss, make_app_icon
-    log.info("source_mode=%s media_root=%s export_root=%s",
-             config.source_mode, config.media_root, config.export_root)
+    if brand.is_fundus():
+        from app.ui.fundus_window import FundusWindow as MainWindow
+    else:
+        from app.ui.main_window import MainWindow
+    log.info("brand=%s source_mode=%s media_root=%s export_root=%s",
+             b["key"], config.source_mode, config.media_root, config.export_root)
 
     db = Database(config.db_path).init()
 

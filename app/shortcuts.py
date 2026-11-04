@@ -5,6 +5,8 @@ config.json 의 "shortcuts" 에 {동작 id: "키"} 로 저장한다. 키 문자�
 """
 from __future__ import annotations
 
+from app import brand
+
 # (id, 이름, 기본 키, 적용 화면: capture = 촬영 화면에서만, all = 모든 화면)
 ACTIONS: list[tuple[str, str, str, str]] = [
     ("capture", "사진 캡처", "C", "capture"),
@@ -21,12 +23,30 @@ ACTIONS: list[tuple[str, str, str, str]] = [
     ("patients", "환자 검색", "L", "all"),
     ("newPatient", "신규 환자", "N", "all"),
 ]
+# 안저판: 실시간 영상이 없으므로 캡처·녹화 대신 사진 가져오기·자동 가져오기
+FUNDUS_ACTIONS: list[tuple[str, str, str, str]] = [
+    ("import", "사진 가져오기 (파일 선택)", "I", "capture"),
+    ("watch", "자동 가져오기 켜기 / 끄기", "W", "capture"),
+    ("eyeOD", "새 사진 안구 OD (우안)", "1", "all"),
+    ("eyeOS", "새 사진 안구 OS (좌안)", "2", "all"),
+    ("eyeOU", "새 사진 안구 OU (양안)", "3", "all"),
+    ("eyeNA", "새 사진 안구 미지정", "0", "all"),
+    ("fullscreen", "전체 화면", "F", "all"),
+    ("mode", "사진 ↔ Pro 검토 전환", "F2", "all"),
+    ("patients", "환자 검색", "L", "all"),
+    ("newPatient", "신규 환자", "N", "all"),
+]
 # 화면 안에서 이미 쓰는 키 (Pro: ←/→ 이동, Ctrl+Z/Y 실행 취소, Esc 도구 해제)
 RESERVED = {"Esc", "Escape", "Left", "Right", "Ctrl+Z", "Ctrl+Y", "Ctrl+Shift+Z", "Tab"}
 
 
+def actions() -> list[tuple[str, str, str, str]]:
+    """지금 제품(슬릿램프/안저)의 동작 목록."""
+    return FUNDUS_ACTIONS if brand.is_fundus() else ACTIONS
+
+
 def defaults() -> dict[str, str]:
-    return {a[0]: a[2] for a in ACTIONS}
+    return {a[0]: a[2] for a in actions()}
 
 
 def load(config) -> dict[str, str]:
@@ -39,8 +59,8 @@ def load(config) -> dict[str, str]:
 
 
 def label(action_id: str) -> str:
-    return next((a[1] for a in ACTIONS if a[0] == action_id), action_id)
+    return next((a[1] for a in actions() if a[0] == action_id), action_id)
 
 
 def scope(action_id: str) -> str:
-    return next((a[3] for a in ACTIONS if a[0] == action_id), "all")
+    return next((a[3] for a in actions() if a[0] == action_id), "all")

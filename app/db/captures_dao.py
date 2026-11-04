@@ -46,6 +46,16 @@ class CapturesDAO:
             self._c.execute("UPDATE captures SET note=? WHERE id=?", (note, cid))
             self._c.commit()
 
+    def update_eye(self, cid: int, eye: str, file_path: str,
+                   export_path: Optional[str], thumbnail_path: Optional[str]) -> None:
+        """안구 수정 (파일 이름도 함께 바뀌므로 경로도 갱신)."""
+        with self._lock:
+            self._c.execute(
+                "UPDATE captures SET eye=?, file_path=?, export_path=?, thumbnail_path=? WHERE id=?",
+                (eye, file_path, export_path, thumbnail_path, cid),
+            )
+            self._c.commit()
+
     def delete(self, cid: int) -> Optional[dict]:
         """레코드를 지우고, 디스크 정리를 위해 관련 경로를 반환한다."""
         with self._lock:

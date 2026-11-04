@@ -1,4 +1,4 @@
-"""애플리케이션 설정. %APPDATA%/SlitLampImaging/config.json 에 JSON으로 저장."""
+"""애플리케이션 설정. %APPDATA%/SlitLampImaging/config.json 에 JSON으로 저장 (안저판은 FundusImaging)."""
 from __future__ import annotations
 
 import json
@@ -7,7 +7,7 @@ import os
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 
-from app import paths
+from app import brand, paths
 
 CONFIG_FILE = "config.json"
 log = logging.getLogger(__name__)
@@ -24,7 +24,7 @@ class AppConfig:
     test_file_path: str = ""                 # source_mode=file 일 때 재생할 파일
     media_root: str = ""                     # 기본 저장 루트 (비면 appdata/media)
     export_root: str = ""                    # 동시 저장 폴더 (비면 appdata/export)
-    db_path: str = ""                        # SQLite 경로 (비면 appdata/slitlamp.db)
+    db_path: str = ""                        # SQLite 경로 (비면 appdata/slitlamp.db, 안저판은 fundus.db)
     photo_format: str = "png"                # png | jpg
     video_fallback_fourcc: str = "mp4v"      # ffmpeg 실패 시 cv2 폴백 코덱
     subfolder_template: str = "{chart_no}_{patient_id}/{date}"
@@ -35,6 +35,13 @@ class AppConfig:
     px_per_mm: float = 0.0                   # 측정 눈금 보정 (0 = 미보정, px 단위)
     brand: str = ""                          # 화면 브랜드 (비면 기본, "keeler" = Keeler 전용)
     shortcuts: dict = field(default_factory=dict)   # 사용자 지정 단축키 {동작 id: "키"} (app/shortcuts.py)
+    # ---- 안저판: 안저카메라가 사진을 저장하는 폴더 감시 (app/capture/folder_watch.py) ----
+    watch_folder: str = ""                   # 감시할 폴더 (비면 감시 안 함)
+    watch_subfolders: bool = True            # 하위 폴더(날짜별 폴더 등)도 감시
+    watch_enabled: bool = True               # 자동 가져오기 켜기/끄기
+    watch_eye_from_name: bool = True         # 파일 이름의 R/L·OD/OS 로 안구 자동 지정
+    watch_move_imported: bool = False        # 가져온 원본을 감시 폴더의 '_가져옴' 폴더로 옮기기
+    watch_interval_ms: int = 1500            # 확인 간격
 
     @classmethod
     def config_path(cls) -> Path:
@@ -78,7 +85,7 @@ class AppConfig:
         if not self.export_root:
             self.export_root = str(base / "export")
         if not self.db_path:
-            self.db_path = str(base / "slitlamp.db")
+            self.db_path = str(base / brand.product_info()["db_name"])
         paths.ensure_dir(self.media_root)
         paths.ensure_dir(Path(self.db_path).parent)
 

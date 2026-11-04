@@ -1,6 +1,7 @@
 # PyInstaller 스펙 (Windows, one-folder).
 #   빌드:  pyinstaller build.spec                         → dist/SlitLampImaging/SlitLampImaging.exe
 #   Keeler: set SLITLAMP_BUILD_BRAND=keeler && pyinstaller build.spec → dist/KeelerSlitLamp/KeelerSlitLamp.exe
+#   안저:   set SLITLAMP_BUILD_BRAND=fundus && pyinstaller build.spec → dist/FundusImaging/FundusImaging.exe
 #
 # imageio-ffmpeg 의 ffmpeg 바이너리와 PySide6 Qt 플러그인을 함께 수집한다.
 import os
@@ -8,9 +9,13 @@ import os
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
 
 BRAND = os.environ.get("SLITLAMP_BUILD_BRAND", "default").lower()
-APP_NAME = "KeelerSlitLamp" if BRAND == "keeler" else "SlitLampImaging"
-APP_ICON = "assets/brand/keeler/app.ico" if BRAND == "keeler" else "assets/icons/app.ico"
-RTHOOKS = ["tools/rthooks/brand_keeler.py"] if BRAND == "keeler" else []
+# 브랜드 → (실행파일 이름, 아이콘, 런타임 훅)
+BUILDS = {
+    "default": ("SlitLampImaging", "assets/icons/app.ico", []),
+    "keeler": ("KeelerSlitLamp", "assets/brand/keeler/app.ico", ["tools/rthooks/brand_keeler.py"]),
+    "fundus": ("FundusImaging", "assets/brand/fundus/app.ico", ["tools/rthooks/brand_fundus.py"]),
+}
+APP_NAME, APP_ICON, RTHOOKS = BUILDS.get(BRAND, BUILDS["default"])
 
 datas = []
 binaries = []
@@ -26,7 +31,7 @@ datas += [("app/db/schema.sql", "app/db")]
 # 앱 아이콘 동봉
 datas += [("assets/icons/app.ico", "assets/icons"),
           ("assets/icons/app.png", "assets/icons")]
-# 브랜드 로고·아이콘 (Keeler 등)
+# 브랜드 로고·아이콘 (Keeler·안저 등)
 datas += [("assets/brand", "assets/brand")]
 
 block_cipher = None
