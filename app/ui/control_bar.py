@@ -1,4 +1,8 @@
-"""하단 촬영 도크: OD/OS/OU 안구 스위치 + 4분할/일시정지 + 정지영상·셔터(사진 캡처)·녹화 + 상태."""
+"""촬영 도크: OD/OS/OU 안구 스위치 + 일시정지 + 정지영상·셔터(사진 캡처)·녹화 + 상태.
+
+4분할(멀티 화면)은 영상 위 보기 막대(view_bar.ViewBar)에서 켠다. 멀티 화면일 때는
+일시정지 대신 '4분할 저장'·'비우기'가 보인다 (set_quad_mode).
+"""
 from __future__ import annotations
 
 from PySide6.QtCore import QSize, Qt, Signal
@@ -23,7 +27,6 @@ class ControlBar(QFrame):
     captureClicked = Signal()
     recordToggled = Signal(bool)
     freezeClicked = Signal()
-    quadToggled = Signal(bool)
     saveQuadClicked = Signal()
     clearQuadClicked = Signal()
     eyeChanged = Signal(str)
@@ -61,8 +64,6 @@ class ControlBar(QFrame):
         lay.addWidget(seg)
         lay.addWidget(self._sep())
 
-        self.btn_quad = self._button("4분할", "quad", "Pause", checkable=True,
-                                     tip="한 화면 4분할 정지영상")
         self.btn_pause = self._button("일시정지", "pause", "Pause", checkable=True, tip="일시정지")
         self.btn_freeze = self._button("정지영상", "freeze", "Freeze", color=ICON_ACCENT,
                                        tip="현재 프레임 정지 (4분할에서는 칸 채우기)")
@@ -74,7 +75,6 @@ class ControlBar(QFrame):
         self.btn_save_quad = self._button("4분할 저장", "save", "Primary", color=ICON_ON_ACCENT)
         self.btn_clear_quad = self._button("비우기", "eraser", "ToolBtn")
 
-        lay.addWidget(self.btn_quad)
         lay.addWidget(self.btn_pause)
         lay.addSpacing(8)
         lay.addWidget(self.btn_freeze)
@@ -91,7 +91,6 @@ class ControlBar(QFrame):
         lay.addWidget(self.status_dot)
         lay.addWidget(self.status)
 
-        self.btn_quad.toggled.connect(self._on_quad)
         self.btn_pause.toggled.connect(self._on_pause)
         self.btn_freeze.clicked.connect(self.freezeClicked.emit)
         self.btn_capture.clicked.connect(self.captureClicked.emit)
@@ -121,10 +120,6 @@ class ControlBar(QFrame):
         if tip:
             b.setToolTip(tip)
         return b
-
-    def _on_quad(self, checked: bool) -> None:
-        self.set_quad_mode(checked)
-        self.quadToggled.emit(checked)
 
     def _on_pause(self, checked: bool) -> None:
         self.btn_pause.setText(icons.gap("재개" if checked else "일시정지"))

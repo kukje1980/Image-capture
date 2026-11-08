@@ -43,6 +43,7 @@ def test_defaults_and_load(app_env):
     config, _ = app_env
     d = shortcuts.defaults()
     assert d["capture"] == "C" and d["eyeOD"] == "1" and d["mode"] == "F2"
+    assert d["quad"] == "Q" and d["view"] == "V"
     config.shortcuts = {"capture": "F9", "bogus": "Z"}
     k = shortcuts.load(config)
     assert k["capture"] == "F9" and "bogus" not in k
@@ -54,9 +55,18 @@ def test_keys_drive_actions(qapp, win):
     n0 = win.thumbnail_panel.count()
     QTest.keyClick(win, Qt.Key.Key_C)
     assert _wait(qapp, lambda: win.thumbnail_panel.count() == n0 + 1)
+    QTest.keyClick(win, Qt.Key.Key_Q)                         # Q = 멀티 화면(4분할) 켜기/끄기
+    assert win.current_view() == "multi" and win._quad and win.view_bar.buttons["multi"].isChecked()
     QTest.keyClick(win, Qt.Key.Key_Q)
-    assert win.control_bar.btn_quad.isChecked()
-    QTest.keyClick(win, Qt.Key.Key_Q)
+    assert win.current_view() == "single" and not win._quad
+    QTest.keyClick(win, Qt.Key.Key_V)                 # V = 보기 전환 (큰 → 멀티 → 확대 → 3D)
+    assert win.current_view() == "multi"
+    QTest.keyClick(win, Qt.Key.Key_V)
+    assert win.current_view() == "zoom" and win.video_view.zoom_mode()
+    QTest.keyClick(win, Qt.Key.Key_V)
+    assert win.current_view() == "3d" and win.view_stack.currentWidget() is win.surface_view
+    QTest.keyClick(win, Qt.Key.Key_V)
+    assert win.current_view() == "single" and not win.video_view.zoom_mode()
     QTest.keyClick(win, Qt.Key.Key_F2)                        # Pro 로 전환 → 촬영 전용 키는 꺼짐
     assert win.mode_stack.currentIndex() == 1
     assert not win._shortcut_objs["capture"].isEnabled() and win._shortcut_objs["eyeOD"].isEnabled()

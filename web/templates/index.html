@@ -59,6 +59,7 @@
   <symbol id="i-eraser" viewBox="0 0 24 24"><path d="M20 20H8.5l-5-5a2 2 0 010-2.8l9.2-9.2a2 2 0 012.8 0l5 5a2 2 0 010 2.8L12 20"/><path d="M6.5 10.5l7 7"/></symbol>
   <symbol id="i-fit" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 00-2 2v3M21 8V5a2 2 0 00-2-2h-3M3 16v3a2 2 0 002 2h3M16 21h3a2 2 0 002-2v-3"/></symbol>
   <symbol id="i-zin" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20.5 20.5l-4.2-4.2M11 8v6M8 11h6"/></symbol>
+  <symbol id="i-cube" viewBox="0 0 24 24"><path d="M12 2.5l8.5 4.75v9.5L12 21.5l-8.5-4.75v-9.5z"/><path d="M3.5 7.25L12 12l8.5-4.75M12 12v9.5"/></symbol>
   <symbol id="i-zout" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20.5 20.5l-4.2-4.2M8 11h6"/></symbol>
   <symbol id="i-wand" viewBox="0 0 24 24"><path d="M15 4V2M15 16v-2M8 9h2M20 9h2M17.8 11.8L19 13M17.8 6.2L19 5M12.2 6.2L11 5"/><path d="M3 21l11-11"/></symbol>
   <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1.5 14h5M9.5 8h5M17.5 16h5"/></symbol>
@@ -125,6 +126,31 @@
 
   <main class="workspace">
     <section class="video-col">
+      <!-- 화면 보기: 큰 화면 · 멀티 화면(4분할) · 확대 화면 · 3D 화면 -->
+      <div class="view-bar" role="toolbar" aria-label="화면 보기">
+        <div class="view-seg" id="view-seg" role="radiogroup" aria-label="화면 보기">
+          <button role="radio" data-view="single" id="view-single" aria-checked="true" title="큰 화면 — 실시간 영상 1화면"><svg class="ic"><use href="#i-single"/></svg>큰 화면</button>
+          <button role="radio" data-view="multi" id="view-multi" aria-checked="false" title="멀티 화면 — 4분할 정지영상, '정지영상'으로 칸을 채움"><svg class="ic"><use href="#i-quad"/></svg>멀티 화면</button>
+          <button role="radio" data-view="zoom" id="view-zoom" aria-checked="false" title="확대 화면 — 휠·＋/－로 확대, 드래그로 이동 (사진 캡처는 원본 전체 프레임 저장)"><svg class="ic"><use href="#i-zin"/></svg>확대 화면</button>
+          <button role="radio" data-view="3d" id="view-3d" aria-checked="false" title="3D 화면 — 밝기를 높이로 바꾼 입체 표면 (드래그 회전 · 휠 확대)"><svg class="ic"><use href="#i-cube"/></svg>3D 화면</button>
+        </div>
+        <div class="view-opts" id="zoom-opts" aria-label="확대 조절">
+          <button class="btn btn-tool btn-sm vo-btn" id="zoom-out" title="축소 (휠 아래)" aria-label="축소"><svg class="ic"><use href="#i-zout"/></svg></button>
+          <span class="vo-level" id="zoom-level">×2.0</span>
+          <button class="btn btn-tool btn-sm vo-btn" id="zoom-in" title="확대 (휠 위)" aria-label="확대"><svg class="ic"><use href="#i-zin"/></svg></button>
+          <button class="btn btn-tool btn-sm" id="zoom-center" title="가운데로 · 더블클릭으로도 초기화"><svg class="ic"><use href="#i-fit"/></svg>가운데</button>
+        </div>
+        <div class="view-opts" id="d3-opts" aria-label="3D 조절">
+          <label class="vo-range" title="높이(밝기 차이)를 얼마나 크게 보일지">높이 <input type="range" id="d3-height" min="0" max="100" value="40"></label>
+          <select class="select vo-select" id="d3-color" title="표면 색">
+            <option value="tex">원본 색</option>
+            <option value="map">높이 컬러맵</option>
+          </select>
+          <button class="btn btn-tool btn-sm" id="d3-reset" title="시점 초기화 (더블클릭)"><svg class="ic"><use href="#i-history"/></svg>시점</button>
+          <button class="btn btn-tool btn-sm" id="d3-save" disabled title="지금 보이는 3D 화면을 사진으로 저장 (메모 '3D')"><svg class="ic"><use href="#i-save"/></svg>3D 저장</button>
+        </div>
+        <span class="view-hint" id="view-hint"></span>
+      </div>
       <div class="video-frame" id="video-frame">
         <video id="video" autoplay muted playsinline></video>
         <canvas class="freeze" id="freeze"></canvas>
@@ -134,6 +160,9 @@
           <div class="quad-cell" data-i="2"><canvas></canvas><span class="quad-tag"></span><span class="quad-no">3</span></div>
           <div class="quad-cell" data-i="3"><canvas></canvas><span class="quad-tag"></span><span class="quad-no">4</span></div>
         </div>
+        <canvas class="d3-canvas" id="d3-canvas" aria-label="3D 표면 보기"></canvas>
+        <div class="d3-msg" id="d3-msg"></div>
+        <canvas class="zoom-map" id="zoom-map" title="클릭한 곳으로 이동" aria-label="확대 위치"></canvas>
         <div class="video-placeholder" id="video-placeholder">
           <div class="ph-ring"><svg class="ic"><use href="#i-aperture"/></svg></div>
           <div class="ph-title">카메라 대기 중</div>
@@ -144,6 +173,7 @@
         <div class="hud hud-tl">
           <span class="hud-chip" id="hud-patient">환자 미선택</span>
           <span class="hud-chip hud-meibo" id="hud-meibo">MEIBO · 상안검</span>
+          <span class="hud-chip hud-view" id="hud-view"></span>
         </div>
         <!-- 마이봄 모드 가이드: 뒤집은 눈꺼풀 검판을 이 틀 안에 맞춤 -->
         <svg class="meibo-guide" id="meibo-guide" viewBox="0 0 100 60" preserveAspectRatio="none" aria-hidden="true">
@@ -179,7 +209,6 @@
           <option value="OU">OU (양안)</option>
         </select>
         <span class="dsep"></span>
-        <button class="btn btn-tool" id="btn-quad" title="한 화면 4분할 정지영상"><svg class="ic"><use href="#i-quad"/></svg>4분할</button>
         <button class="btn btn-tool" id="btn-meibo" aria-pressed="false" title="마이봄샘 촬영 모드 (M) — 적외선(NIR) 흑백·대비 강화 화면"><svg class="ic"><use href="#i-meibo"/></svg>마이봄</button>
         <div class="mb-ctl" id="mb-ctl">
           <div class="mb-seg" id="mb-lid-seg" role="radiogroup" aria-label="안검">
@@ -203,14 +232,20 @@
       </div>
     </section>
 
-    <aside class="thumbs" aria-label="촬영 이미지 목록">
-      <div class="thumb-filter" id="thumb-filter" role="tablist" aria-label="필터">
-        <button class="tf on" data-f="all" title="촬영 이미지 전체">전체 <span class="tf-count" id="thumb-count">0</span></button><button class="tf" data-f="OD">OD</button><button class="tf" data-f="OS">OS</button><button class="tf" data-f="video">동영상</button>
+    <aside class="thumbs" id="thumbs" aria-label="촬영 이미지 목록">
+      <div class="thumbs-side">
+        <div class="thumbs-head">
+          <span class="th-title">촬영 이미지</span>
+          <button class="thumbs-fold" id="thumbs-fold" aria-expanded="true" title="목록 접기 / 펼치기" aria-label="목록 접기"><svg class="ic"><use href="#i-chev-l"/></svg></button>
+        </div>
+        <div class="thumb-filter" id="thumb-filter" role="tablist" aria-label="필터">
+          <button class="tf on" data-f="all" title="촬영 이미지 전체">전체 <span class="tf-count" id="thumb-count">0</span></button><button class="tf" data-f="OD">OD</button><button class="tf" data-f="OS">OS</button><button class="tf" data-f="video">동영상</button>
+        </div>
       </div>
       <div class="thumbs-list" id="thumb-list">
         <div class="thumbs-empty" id="thumb-empty">
           <svg class="ic"><use href="#i-image"/></svg>
-          <div>선택한 환자의<br>촬영 이미지가 없습니다</div>
+          <div>선택한 환자의 촬영 이미지가 없습니다</div>
         </div>
       </div>
     </aside>

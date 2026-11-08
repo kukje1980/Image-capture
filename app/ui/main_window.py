@@ -34,6 +34,8 @@ from app.ui.pro.pro_workspace import ProWorkspace
 from app.ui.quad_view import QuadView
 from app.ui.settings_dialog import SettingsDialog
 from app.ui.shortcuts_dialog import ShortcutsDialog
+from app.ui.surface_view import SurfaceView
+from app.ui.view_bar import VIEW_LABEL, VIEWS, ViewBar
 from app import brand as app_brand
 from app import shortcuts
 from app.ui import icons
@@ -58,6 +60,8 @@ class MainWindow(QMainWindow):
         self.resize(1280, 800)
 
         self._last_frame = None
+        self._shown = None                   # 영상 화면(큰·확대·3D)에 마지막으로 보낸 프레임
+        self._view = "single"                # single | multi | zoom | 3d
         self._paused = False
         self._quad = False
         self._single_frozen = False
@@ -96,26 +100,37 @@ class MainWindow(QMainWindow):
         body = QWidget()
         body_lay = QVBoxLayout(body)
         body_lay.setContentsMargins(12, 12, 12, 10)
-        simple = QWidget()                           # 기본(촬영) 화면
-        root = QHBoxLayout(simple)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(12)
-
-        left = QVBoxLayout()
-        left.setSpacing(10)
+        # 기본(촬영) 화면: 위 = 보기 막대(큰·멀티·확대·3D) + 영상, 아래 = 촬영 도크 + 촬영 이미지 띠
+        simple = QWidget()
+        col = QVBoxLayout(simple)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(8)
+        self.view_bar = ViewBar()
         self.video_view = VideoView()
         self.quad_view = QuadView()
+        self.surface_view = SurfaceView()
         self.view_stack = QStackedWidget()
-        self.view_stack.addWidget(self.video_view)   # index 0 = 단일
-        self.view_stack.addWidget(self.quad_view)     # index 1 = 4분할
+        self.view_stack.addWidget(self.video_view)    # 0 = 큰 화면 · 확대 화면
+        self.view_stack.addWidget(self.quad_view)     # 1 = 멀티 화면 (4분할)
+        self.view_stack.addWidget(self.surface_view)  # 2 = 3D 화면
         self.control_bar = ControlBar()
-        left.addWidget(self.view_stack, 1)
-        left.addWidget(self.control_bar)
-
         self.thumbnail_panel = ThumbnailPanel(self.db, newest_on_top=self.config.newest_on_top)
+        col.addWidget(self.view_bar)
+        col.addWidget(self.view_stack, 1)
+        col.addWidget(self.control_bar)
+        col.addWidget(self.thumbnail_panel)
 
-        root.addLayout(left, 1)
-        root.addWidget(self.thumbnail_panel)
+        # 보기 설정 복원 (확대 배율 · 3D 높이/색 · 띠 접기)
+        self.video_view.set_zoom(self.config.zoom_level)
+        self.view_bar.set_zoom_label(self.video_view.zoom)
+        self.view_bar.set_d3(self.config.d3_height, self.config.d3_color)
+        self.surface_view.set_height(self.config.d3_height / 100)
+        self.surface_view.set_colormap(self.config.d3_color == "map")
+        self.thumbnail_panel.set_folded(self.config.thumbs_folded)
+        self._save_timer = QTimer(self)               # 휠·슬라이더로 바뀌는 보기 설정은 모아서 저장
+        self._save_timer.setSingleShot(True)
+        self._save_timer.setInterval(800)
+        self._save_timer.timeout.connect(self._save_config_quiet)
 
         # Pro(전문가 검토) 화면
         self.pro = ProWorkspace(self.db, self.service, self.config, get_eye=None)
@@ -134,13 +149,21 @@ class MainWindow(QMainWindow):
         self.control_bar.pauseToggled.connect(self._on_pause)
         self.control_bar.captureClicked.connect(self._on_capture)
         self.control_bar.recordToggled.connect(self._on_record_toggle)
-        self.control_bar.quadToggled.connect(self._on_quad_toggled)
+        self.view_bar.viewChanged.connect(self._set_view)
+        self.view_bar.zoomStep.connect(self.video_view.step_zoom)
+        self.view_bar.zoomCenter.connect(self.video_view.center_zoom)
+        self.video_view.zoomChanged.connect(self._on_zoom_changed)
+        self.view_bar.d3HeightChanged.connect(self._on_d3_height)
+        self.view_bar.d3ColorChanged.connect(self._on_d3_color)
+        self.view_bar.d3Reset.connect(self.surface_view.reset_view)
+        self.view_bar.d3Save.connect(self._on_d3_save)
+        self.thumbnail_panel.foldedChanged.connect(self._on_thumbs_folded)
         self.control_bar.freezeClicked.connect(self._on_freeze)
         self.control_bar.saveQuadClicked.connect(self._on_save_quad)
         self.control_bar.clearQuadClicked.connect(self._on_clear_quad)
         self.quad_view.cellClicked.connect(self._on_quad_cell_clicked)
         self.thumbnail_panel.thumbnailClicked.connect(self._on_thumbnail_clicked)
-        self.control_bar.eyeChanged.connect(lambda e: self.video_view.set_hud(eye=e))
+        self.control_bar.eyeChanged.connect(lambda e: self._hud(eye=e))
         self._rec_timer = QTimer(self)
         self._rec_timer.setInterval(500)
         self._rec_timer.timeout.connect(self._update_rec_hud)
@@ -263,17 +286,22 @@ class MainWindow(QMainWindow):
     def _update_rec_hud(self) -> None:
         if self._recording and self._rec_started:
             s = int(time.time() - self._rec_started)
-            self.video_view.set_hud(state="rec", rec_text=f"{s // 60:02d}:{s % 60:02d}")
+            self._hud(state="rec", rec_text=f"{s // 60:02d}:{s % 60:02d}")
 
     def _refresh_hud_state(self) -> None:
         if self._recording:
             self._update_rec_hud()
         elif self._single_frozen:
-            self.video_view.set_hud(state="frozen")
+            self._hud(state="frozen")
         elif self._paused:
-            self.video_view.set_hud(state="paused")
+            self._hud(state="paused")
         else:
-            self.video_view.set_hud(state="live")
+            self._hud(state="live")
+
+    def _hud(self, **kw) -> None:
+        """영상 위 HUD (환자·안구·LIVE/정지/REC) — 큰·확대 화면과 3D 화면에 같이."""
+        self.video_view.set_hud(**kw)
+        self.surface_view.set_hud(**kw)
 
     # ---- 단축키 (사용자 지정) ----
     def _install_shortcuts(self) -> None:
@@ -308,7 +336,8 @@ class MainWindow(QMainWindow):
     def _apply_key_hints(self) -> None:
         cb = self.control_bar
         hints = {"capture": cb.btn_capture, "record": cb.btn_record, "pause": cb.btn_pause,
-                 "freeze": cb.btn_freeze, "quad": cb.btn_quad, "mode": self.btn_mode_pro}
+                 "freeze": cb.btn_freeze, "quad": self.view_bar.buttons["multi"],
+                 "mode": self.btn_mode_pro}
         for aid, w in hints.items():
             base = w.property("tipBase")
             if base is None:
@@ -345,7 +374,9 @@ class MainWindow(QMainWindow):
         elif aid == "freeze" and cb.btn_freeze.isEnabled():
             self._on_freeze()
         elif aid == "quad":
-            cb.btn_quad.toggle()
+            self._set_view("single" if self._view == "multi" else "multi")
+        elif aid == "view":
+            self._set_view(VIEWS[(VIEWS.index(self._view) + 1) % len(VIEWS)])
         elif aid == "fullscreen":
             self._set_fullscreen(not self._fullscreen)
         elif aid == "mode":
@@ -362,7 +393,8 @@ class MainWindow(QMainWindow):
         if on == self._fullscreen:
             return
         self._fullscreen = on
-        for w in (self.topbar, self.patient_panel, self.thumbnail_panel, self.statusBar()):
+        for w in (self.topbar, self.patient_panel, self.view_bar, self.thumbnail_panel,
+                  self.statusBar()):
             w.setVisible(not on)
         if on:
             self._was_maximized = self.isMaximized()
@@ -469,6 +501,8 @@ class MainWindow(QMainWindow):
             self._stop_recording()
         self._stop_camera()
         self.video_view.clear()
+        self.surface_view.clear()
+        self._shown = None
         self._start_camera()
 
     # ---- 카메라 신호 처리 ----
@@ -488,7 +522,12 @@ class MainWindow(QMainWindow):
         if self._quad:
             self.quad_view.set_live_frame(frame)
         elif not self._paused and not self._single_frozen:
-            self.video_view.set_frame(frame)
+            self._show(frame)
+
+    def _show(self, frame) -> None:
+        """지금 보기(큰·확대 = 영상, 3D = 표면)에 프레임을 보낸다."""
+        self._shown = frame
+        (self.surface_view if self._view == "3d" else self.video_view).set_frame(frame)
 
     def _on_camera_error(self, msg: str) -> None:
         self.control_bar.set_status(f"오류: {msg}")
@@ -511,8 +550,9 @@ class MainWindow(QMainWindow):
         self.control_bar.set_capture_enabled(patient is not None)
         if self._recording:                  # 녹화 중에는 언제든 멈출 수 있어야 한다
             self.control_bar.btn_record.setEnabled(True)
-        self.video_view.set_hud(patient=(f"{patient.name}  ·  {patient.chart_no}" if patient and patient.chart_no
-                                         else (patient.name if patient else "환자 미선택")))
+        self._hud(patient=(f"{patient.name}  ·  {patient.chart_no}" if patient and patient.chart_no
+                           else (patient.name if patient else "환자 미선택")))
+        self.view_bar.btn_d3_save.setEnabled(patient is not None)
         self.thumbnail_panel.set_patient(patient.id if patient else None)
         self.pro.set_patient(patient)
 
@@ -539,15 +579,83 @@ class MainWindow(QMainWindow):
     def _on_pro_patient_updated(self, patient) -> None:
         self._current_patient = patient
         self.patient_panel.refresh_current(patient)
-        self.video_view.set_hud(patient=f"{patient.name}  ·  {patient.chart_no}" if patient.chart_no else patient.name)
+        self._hud(patient=f"{patient.name}  ·  {patient.chart_no}" if patient.chart_no else patient.name)
 
     # ---- 컨트롤 ----
     def _on_pause(self, checked: bool) -> None:
         self._paused = checked
         self._refresh_hud_state()
 
+    # ---- 화면 보기: 큰 · 멀티(4분할) · 확대 · 3D ----
+    def _set_view(self, view: str) -> None:
+        if view not in VIEWS:
+            view = "single"
+        self.view_bar.set_view(view)
+        if view == self._view:
+            return
+        prev, self._view = self._view, view
+        if prev == "multi":
+            self._on_quad_toggled(False)
+        if view == "multi":
+            self._on_quad_toggled(True)
+        self.video_view.set_zoom_mode(view == "zoom")
+        if self._shown is not None and view in ("single", "zoom", "3d"):
+            (self.surface_view if view == "3d" else self.video_view).set_frame(self._shown)
+        self.view_stack.setCurrentIndex({"single": 0, "zoom": 0, "multi": 1, "3d": 2}[view])
+        if view != "multi":
+            note = " · 저장은 원본 전체 프레임" if view in ("zoom", "3d") else ""
+            self.control_bar.set_status(VIEW_LABEL[view] + note)
+
+    def current_view(self) -> str:
+        return self._view
+
+    def _on_zoom_changed(self, z: float) -> None:
+        self.view_bar.set_zoom_label(z)
+        self.config.zoom_level = round(z, 2)
+        self._save_timer.start()
+
+    def _on_d3_height(self, v: int) -> None:
+        self.surface_view.set_height(v / 100)
+        self.config.d3_height = int(v)
+        self._save_timer.start()
+
+    def _on_d3_color(self, c: str) -> None:
+        self.surface_view.set_colormap(c == "map")
+        self.config.d3_color = "map" if c == "map" else "tex"
+        self._save_timer.start()
+
+    def _on_thumbs_folded(self, on: bool) -> None:
+        self.config.thumbs_folded = bool(on)
+        self._save_timer.start()
+
+    def _save_config_quiet(self) -> None:
+        try:
+            self.config.save()
+        except Exception:  # noqa: BLE001
+            log.warning("view settings save failed", exc_info=True)
+
+    def _on_d3_save(self) -> None:
+        """지금 보이는 3D 화면을 사진으로 저장 (메모 '3D' — 원본 프레임은 사진 캡처로)."""
+        if self._current_patient is None:
+            QMessageBox.information(self, "확인", "환자를 먼저 선택하세요.")
+            return
+        img = self.surface_view.snapshot()
+        if img is None:
+            QMessageBox.information(self, "확인", "3D 화면이 아직 준비되지 않았습니다.")
+            return
+        try:
+            cap = self.service.save_photo(img, self._current_patient,
+                                          eye=self.control_bar.current_eye(), note="3D")
+        except Exception as e:  # noqa: BLE001
+            log.exception("3d save failed")
+            QMessageBox.warning(self, "오류", f"3D 화면 저장 실패: {e}")
+            return
+        self.thumbnail_panel.add_capture(cap)
+        self.control_bar.set_status("3D 화면 저장됨")
+
     def _on_quad_toggled(self, on: bool) -> None:
         self._quad = on
+        self.control_bar.set_quad_mode(on)
         self.view_stack.setCurrentIndex(1 if on else 0)
         # 모드 전환 시 단일-정지 상태/버튼 초기화
         self._single_frozen = False
@@ -577,7 +685,7 @@ class MainWindow(QMainWindow):
         self._single_frozen = not self._single_frozen
         if self._single_frozen:
             self._freeze_frame = self._last_frame
-            self.video_view.set_frame(self._freeze_frame)
+            self._show(self._freeze_frame)
             self.control_bar.set_freeze_state(True)
             self.control_bar.set_status("정지영상 (▶라이브로 복귀 · 사진 캡처로 저장)")
         else:

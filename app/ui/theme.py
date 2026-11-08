@@ -90,7 +90,29 @@ def build_qss(mode: str = "dark") -> str:
     QLabel#CountBadge {{ background: {c['accent_soft']}; color: {c['accent_hover'] if mode == 'dark' else c['accent']};
         border-radius: 9px; padding: 1px 8px; font-size: 11px; font-weight: 700; }}
     QLabel#ThumbTitle {{ font-weight: 700; font-size: 13px; }}
-    QLabel#DayHeader {{ color: {c['ink_muted']}; font-size: 11px; font-weight: 700; padding: 6px 2px 0; }}
+    QLabel#DayHeader {{ color: {c['ink_soft']}; background: {c['panel']}; border-right: 1px solid {c['rule']};
+        font-size: 11px; font-weight: 700; }}
+    QWidget#ThumbList, #ThumbnailPanel QScrollArea, #ThumbnailPanel QWidget#qt_scrollarea_viewport, QFrame#ThumbSide {{ background: {c['panel']}; }}
+    QFrame#ThumbSide {{ border: none; border-radius: 12px; }}
+    QPushButton#ThumbFold {{ background: transparent; border: 1px solid {c['rule']}; border-radius: 6px; padding: 0; min-height: 0; }}
+    QPushButton#ThumbFold:hover {{ border-color: {c['rule_strong']}; background: {c['panel2']}; }}
+
+    /* 보기 막대 (큰 · 멀티 · 확대 · 3D) */
+    QFrame#ViewBar {{ background: {c['panel']}; border: 1px solid {c['rule']}; border-radius: 12px; }}
+    QFrame#ViewBar QLabel, QWidget#ViewOpts {{ background: transparent; }}
+    QFrame#ViewSeg {{ background: {c['bg']}; border: 1px solid {c['rule']}; border-radius: 10px; }}
+    QPushButton#ViewBtn {{
+        background: transparent; border: 1px solid transparent; border-radius: 7px; padding: 5px 14px;
+        color: {c['ink_soft']}; font-weight: 600; min-height: 20px;
+    }}
+    QPushButton#ViewBtn:hover {{ color: {c['ink']}; }}
+    QPushButton#ViewBtn:checked {{ background: {c['raised']}; color: {c['accent_hover'] if mode == 'dark' else c['accent']}; border: 1px solid {c['rule_strong']}; }}
+    QPushButton#ViewOpt {{ background: transparent; border: 1px solid transparent; color: {c['ink_soft']}; padding: 5px 9px; min-height: 18px; }}
+    QPushButton#ViewOpt:hover {{ background: {c['panel2']}; border-color: {c['rule']}; color: {c['ink']}; }}
+    QPushButton#ViewOpt:disabled {{ color: {c['disabled']}; background: transparent; border-color: transparent; }}
+    QLabel#ZoomLevel {{ font-family: Menlo, Consolas, "JetBrains Mono", monospace; font-weight: 700; }}
+    QLabel#ViewOptLabel {{ color: {c['ink_soft']}; font-weight: 600; }}
+    QLabel#ViewHint {{ color: {c['ink_muted']}; font-size: 12px; }}
 
     /* 입력/콤보 */
     QLineEdit, QComboBox, QSpinBox, QPlainTextEdit, QTextEdit, QDateEdit, QDoubleSpinBox {{

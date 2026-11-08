@@ -69,6 +69,7 @@
     try { if (localStorage.getItem('slitlamp-hint-closed') === '1' && !LOCAL_MODE) $('hint').style.display = 'none'; } catch (_) {}
     bindEvents();
     syncEye();
+    syncViewUI();
     if (!('showDirectoryPicker' in window)) {
       $('btn-folder').disabled = true;
       $('btn-folder').title = '이 브라우저는 폴더 저장을 지원하지 않습니다 (Chrome/Edge 사용)';
@@ -138,7 +139,29 @@
     $('btn-pause').addEventListener('click', togglePause);
     $('btn-capture').addEventListener('click', capturePhoto);
     $('btn-record').addEventListener('click', toggleRecord);
-    $('btn-quad').addEventListener('click', toggleQuad);
+    // 화면 보기 (큰 · 멀티 · 확대 · 3D)
+    document.querySelectorAll('#view-seg [data-view]').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
+    $('zoom-in').addEventListener('click', () => stepZoom(1));
+    $('zoom-out').addEventListener('click', () => stepZoom(-1));
+    $('zoom-center').addEventListener('click', () => { view.cx = 0.5; view.cy = 0.5; applyZoom(); });
+    bindZoomPointer();
+    $('d3-height').addEventListener('input', (e) => { D3.setScale(+e.target.value / 100); prefSet('slitlamp-d3h', e.target.value); });
+    $('d3-color').addEventListener('change', (e) => { D3.setMode(e.target.value); prefSet('slitlamp-d3c', e.target.value); });
+    $('d3-reset').addEventListener('click', () => D3.reset());
+    $('d3-save').addEventListener('click', saveD3);
+    { const h = prefGet('slitlamp-d3h'), c = prefGet('slitlamp-d3c');
+      if (h !== null && h !== '' && !isNaN(+h)) $('d3-height').value = h;
+      if (c === 'tex' || c === 'map') $('d3-color').value = c;
+      D3.setScale(+$('d3-height').value / 100); D3.setMode($('d3-color').value); }
+    $('video').addEventListener('loadedmetadata', applyZoom);
+    if (window.ResizeObserver) new ResizeObserver(() => { applyZoom(); D3.touch(); }).observe($('video-frame'));
+    // 하단 촬영 이미지 띠: 세로 휠로 가로 이동 · 접기
+    $('thumb-list').addEventListener('wheel', (e) => {
+      const l = $('thumb-list');
+      if (Math.abs(e.deltaY) > Math.abs(e.deltaX) && l.scrollWidth > l.clientWidth) { e.preventDefault(); l.scrollBy({ left: e.deltaY, behavior: 'auto' }); }
+    }, { passive: false });
+    $('thumbs-fold').addEventListener('click', () => setThumbsFolded(!$('thumbs').classList.contains('folded')));
+    setThumbsFolded(prefGet('slitlamp-thumbs-folded') === '1');
     $('btn-meibo').addEventListener('click', () => setMeibo(!meibo.on));
     $('btn-mb-enh').addEventListener('click', () => { meibo.enh = !meibo.enh; saveMeibo(); syncMeibo(); });
     $('btn-mb-inv').addEventListener('click', () => { meibo.inv = !meibo.inv; saveMeibo(); syncMeibo(); });
@@ -178,7 +201,10 @@
     { id: 'pause', label: '일시정지 / 재개', def: 'Space', scope: 'capture', btns: ['btn-pause'], run: () => togglePause() },
     { id: 'freeze', label: '정지영상 (4분할 칸 채우기)', def: 'X', scope: 'capture', btns: ['btn-freeze', 'btn-fs-freeze'],
       run: () => { if (!$('btn-freeze').disabled) freezeFrame(); } },
-    { id: 'quad', label: '4분할 켜기 / 끄기', def: 'Q', scope: 'capture', btns: ['btn-quad'], run: () => toggleQuad() },
+    { id: 'quad', label: '멀티 화면 (4분할) 켜기 / 끄기', def: 'Q', scope: 'capture', btns: ['view-multi'],
+      run: () => setView(view.mode === 'multi' ? 'single' : 'multi') },
+    { id: 'view', label: '화면 보기 전환 (큰 → 멀티 → 확대 → 3D)', def: 'V', scope: 'capture',
+      run: () => setView(VIEWS[(VIEWS.indexOf(view.mode) + 1) % VIEWS.length]) },
     { id: 'meibo', label: '마이봄샘 촬영 모드 켜기 / 끄기', def: 'M', scope: 'capture', btns: ['btn-meibo'], run: () => setMeibo(!meibo.on) },
     { id: 'lid', label: '마이봄 상안검 ↔ 하안검', def: 'U', scope: 'capture', run: () => { if (meibo.on) setLid(meibo.lid === 'upper' ? 'lower' : 'upper'); } },
     { id: 'eyeOD', label: '안구 OD (우안)', def: '1', scope: 'all', run: () => setEyeAny('OD') },
@@ -695,6 +721,8 @@
       state.isPaused = false;
       $('btn-pause').innerHTML = '<svg class="ic"><use href="#i-pause"/></svg>일시정지';
     }
+    D3.touch(true);
+    drawZoomMap();
   }
 
   // ---- capture ----
@@ -705,7 +733,7 @@
     const stamp = `${ts.getFullYear()}${pad(ts.getMonth() + 1)}${pad(ts.getDate())}_` +
       `${pad(ts.getHours())}${pad(ts.getMinutes())}${pad(ts.getSeconds())}${pad(ts.getMilliseconds(), 3)}`;
     const seq = pad((_fnSeq++) % 1000, 3);
-    const tag = note === '4분할 합성' ? '_quad' : (note === '4분할' ? '_q' : '');
+    const tag = { '4분할 합성': '_quad', '4분할': '_q', '3D': '_3d' }[note] || '';
     return `${chart}_${stamp}_${seq}_${eye || 'NA'}${tag}.${ext}`;
   }
 
@@ -728,7 +756,7 @@
     $('hud-meibo').textContent = `MEIBO · ${LID_KO[meibo.lid]}`;
   }
   function setMeibo(on) {
-    if (on && state.quad) toggleQuad();             // 마이봄은 1화면으로
+    if (on && view.mode === 'multi') setView('single');   // 마이봄은 4분할을 쓰지 않음
     meibo.on = !!on; syncMeibo();
     toast(meibo.on ? `마이봄 촬영 모드 · ${LID_KO[meibo.lid]} (눈꺼풀을 뒤집어 틀에 맞추세요)` : '마이봄 촬영 모드 끔', 'success');
   }
@@ -910,9 +938,9 @@
   function toggleQuad() {
     if (!state.quad && meibo.on) setMeibo(false);
     state.quad = !state.quad;
+    if (state.quad && state.isPaused) togglePause();   // 4분할에서는 일시정지 버튼이 숨겨지므로 라이브로
     const frame = $('video-frame');
     frame.classList.toggle('quad', state.quad);
-    $('btn-quad').classList.toggle('active', state.quad);
     $('btn-pause').style.display = state.quad ? 'none' : '';
     $('btn-save-quad').style.display = state.quad ? '' : 'none';
     $('btn-clear-quad').style.display = state.quad ? '' : 'none';
@@ -922,7 +950,6 @@
       setStatus("4분할 · '정지영상'으로 각 칸을 채우세요", 'ready');
     } else {
       stopQuadLoop();
-      setStatus('단일 모드', 'ready');
     }
   }
 
@@ -1041,6 +1068,395 @@
     toast(`4분할 저장 완료 (${saved}장)`, 'success');
   }
 
+  // ---- 화면 보기: 큰 화면 · 멀티 화면(4분할) · 확대 화면 · 3D 화면 ----
+  // 확대·3D 는 보기 전용이다. 사진 캡처·녹화는 어느 화면에서든 원본 전체 프레임을 저장한다.
+  const VIEWS = ['single', 'multi', 'zoom', '3d'];
+  const VIEW_NAME = { single: '큰 화면', multi: '멀티 화면', zoom: '확대 화면', '3d': '3D 화면' };
+  const VIEW_HINT = {
+    single: '',
+    multi: "'정지영상'으로 칸 채우기 · 칸 클릭으로 교체",
+    zoom: '휠 확대 · 드래그 이동 · 더블클릭 가운데 · 저장은 원본 전체',
+    '3d': '밝을수록 높게 · 드래그 회전 · 휠 확대 · 저장은 원본 전체',
+  };
+  const ZOOM_STEPS = [1.5, 2, 3, 4, 6, 8];
+  const view = { mode: 'single', z: 2, cx: 0.5, cy: 0.5 };
+  { const z = parseFloat(prefGet('slitlamp-zoom')); if (z >= 1.25 && z <= 8) view.z = z; }
+  let zoomMapTimer = null;
+
+  function setView(mode) {
+    if (!VIEWS.includes(mode)) mode = 'single';
+    if (mode === view.mode) return;
+    if (view.mode === 'multi' && state.quad) toggleQuad();
+    if (view.mode === '3d') D3.stop();
+    view.mode = mode;
+    const frame = $('video-frame');
+    frame.classList.toggle('zoom', mode === 'zoom');
+    frame.classList.toggle('d3', mode === '3d');
+    if (mode === 'multi' && !state.quad) toggleQuad();
+    if (mode === '3d') D3.start();
+    clearInterval(zoomMapTimer);
+    zoomMapTimer = mode === 'zoom' ? setInterval(drawZoomMap, 150) : null;
+    applyZoom();
+    syncViewUI();
+    if (mode !== 'multi') setStatus(VIEW_NAME[mode], state.stream ? 'ready' : 'idle', true);
+  }
+  function syncViewUI() {
+    document.body.dataset.view = view.mode;
+    document.querySelectorAll('#view-seg [data-view]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.view === view.mode)));
+    $('view-hint').textContent = VIEW_HINT[view.mode] || '';
+    $('zoom-level').textContent = '×' + view.z.toFixed(1);
+    $('hud-view').textContent = view.mode === 'zoom' ? `확대 ×${view.z.toFixed(1)}` : (view.mode === '3d' ? '3D' : '');
+    $('d3-save').disabled = !(view.mode === '3d' && state.stream && state.currentPatientId && D3.ok());
+  }
+
+  // 확대: 영상 좌표(0~1)의 (cx, cy) 를 화면 가운데에 두고 z 배로 키운다
+  function zoomGeom() {
+    const frame = $('video-frame'), v = $('video');
+    const W = frame.clientWidth, H = frame.clientHeight, vw = v.videoWidth, vh = v.videoHeight;
+    if (!W || !H || !vw || !vh) return null;
+    const k = Math.min(W / vw, H / vh), dw = vw * k, dh = vh * k;
+    return { W, H, ox: (W - dw) / 2, oy: (H - dh) / 2, dw, dh };
+  }
+  function applyZoom() {
+    const els = [$('video'), $('freeze')];
+    const g = view.mode === 'zoom' ? zoomGeom() : null;
+    if (!g) { els.forEach((e) => { e.style.transform = ''; }); return; }
+    const z = view.z;
+    const hx = g.W / 2 / (z * g.dw), hy = g.H / 2 / (z * g.dh);   // 보이는 반폭·반높이 (영상 좌표)
+    view.cx = hx >= 0.5 ? 0.5 : Math.min(1 - hx, Math.max(hx, view.cx));
+    view.cy = hy >= 0.5 ? 0.5 : Math.min(1 - hy, Math.max(hy, view.cy));
+    const tx = g.W / 2 - z * (g.ox + view.cx * g.dw), ty = g.H / 2 - z * (g.oy + view.cy * g.dh);
+    const t = `translate(${tx.toFixed(1)}px, ${ty.toFixed(1)}px) scale(${z})`;
+    els.forEach((e) => { e.style.transform = t; });
+    drawZoomMap();
+  }
+  function setZoom(z, anchor) {
+    z = Math.min(8, Math.max(1.25, z));
+    const g = zoomGeom();
+    if (g && anchor) {                                   // 커서 아래 지점이 그대로 있게
+      const qx = view.cx + (anchor.x - g.W / 2) / (view.z * g.dw), qy = view.cy + (anchor.y - g.H / 2) / (view.z * g.dh);
+      view.cx = qx - (anchor.x - g.W / 2) / (z * g.dw);
+      view.cy = qy - (anchor.y - g.H / 2) / (z * g.dh);
+    }
+    view.z = z;
+    prefSet('slitlamp-zoom', String(Math.round(z * 100) / 100));
+    applyZoom();
+    syncViewUI();
+  }
+  function stepZoom(dir) {
+    const z = dir > 0 ? (ZOOM_STEPS.find((s) => s > view.z + 0.01) || 8) : ([...ZOOM_STEPS].reverse().find((s) => s < view.z - 0.01) || 1.25);
+    setZoom(z);
+  }
+  function bindZoomPointer() {
+    const frame = $('video-frame');
+    let drag = null;
+    const inZoom = (e) => view.mode === 'zoom' && state.stream && !e.target.closest('button, .fs-bar, .zoom-map');
+    frame.addEventListener('pointerdown', (e) => {
+      if (!inZoom(e) || e.button !== 0) return;
+      drag = { x: e.clientX, y: e.clientY, id: e.pointerId };
+      frame.setPointerCapture(e.pointerId);
+      frame.classList.add('dragging');
+    });
+    frame.addEventListener('pointermove', (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const g = zoomGeom(); if (!g) return;
+      view.cx -= (e.clientX - drag.x) / (view.z * g.dw);
+      view.cy -= (e.clientY - drag.y) / (view.z * g.dh);
+      drag.x = e.clientX; drag.y = e.clientY;
+      applyZoom();
+    });
+    const end = () => { drag = null; frame.classList.remove('dragging'); };
+    frame.addEventListener('pointerup', end);
+    frame.addEventListener('pointercancel', end);
+    frame.addEventListener('wheel', (e) => {
+      if (!inZoom(e)) return;
+      e.preventDefault();
+      const r = frame.getBoundingClientRect();
+      setZoom(view.z * Math.exp(-e.deltaY * 0.0015), { x: e.clientX - r.left, y: e.clientY - r.top });
+    }, { passive: false });
+    frame.addEventListener('dblclick', (e) => { if (inZoom(e)) { view.cx = 0.5; view.cy = 0.5; applyZoom(); } });
+    // 미니맵: 누르거나 끌어서 그 위치로
+    const map = $('zoom-map');
+    let mapDrag = false;
+    const goto = (e) => {
+      const r = map.getBoundingClientRect();
+      view.cx = (e.clientX - r.left) / r.width; view.cy = (e.clientY - r.top) / r.height;
+      applyZoom();
+    };
+    map.addEventListener('pointerdown', (e) => { e.stopPropagation(); mapDrag = true; map.setPointerCapture(e.pointerId); goto(e); });
+    map.addEventListener('pointermove', (e) => { if (mapDrag) goto(e); });
+    map.addEventListener('pointerup', () => { mapDrag = false; });
+    map.addEventListener('dblclick', (e) => e.stopPropagation());
+  }
+  function drawZoomMap() {
+    if (view.mode !== 'zoom') return;
+    const v = $('video'), c = $('zoom-map'), g = zoomGeom();
+    if (!g) return;
+    const src = state.isPaused ? $('freeze') : v;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const cw = 168, ch = Math.round(cw * v.videoHeight / v.videoWidth);
+    if (c.width !== cw * dpr || c.height !== ch * dpr) { c.width = cw * dpr; c.height = ch * dpr; c.style.height = ch + 'px'; }
+    const x = c.getContext('2d');
+    if (meibo.on) x.filter = 'grayscale(1)'; else x.filter = 'none';
+    x.drawImage(src, 0, 0, c.width, c.height);
+    x.filter = 'none';
+    const hw = Math.min(0.5, g.W / 2 / (view.z * g.dw)), hh = Math.min(0.5, g.H / 2 / (view.z * g.dh));
+    const rx = (view.cx - hw) * c.width, ry = (view.cy - hh) * c.height, rw = 2 * hw * c.width, rh = 2 * hh * c.height;
+    x.fillStyle = 'rgba(0,0,0,.5)';
+    x.beginPath(); x.rect(0, 0, c.width, c.height); x.rect(rx, ry, rw, rh); x.fill('evenodd');
+    x.strokeStyle = '#33c2b1'; x.lineWidth = 2 * dpr;
+    x.strokeRect(rx + dpr, ry + dpr, rw - 2 * dpr, rh - 2 * dpr);
+  }
+
+  // 3D: 영상 밝기를 높이로 바꾼 표면을 WebGL 로 그린다 (색 = 원본 영상 또는 높이 컬러맵)
+  const D3 = (() => {
+    const MAXG = 200;                                    // 격자 긴 변 꼭짓점 수 (200×113 ≈ 2.3만)
+    let gl = null, prog = null, failed = '';
+    const loc = {}, buf = {};
+    let tex = null, GW = 0, GH = 0, aspect = 0, nIdx = 0;
+    let Hr = null, Hs = null, N = null, tmp = null;
+    let small = null, sctx = null, texC = null, tctx = null;
+    let running = false, raf = 0, dirty = true, lastData = -1e9, forceData = false, opaque = false;
+    const DEF = { yaw: -0.42, pitch: 0.98, k: 1 };
+    const cam = { ...DEF };
+    const ui = { scale: 0.4, map: false };
+
+    const VS = `
+      attribute vec2 a_xy; attribute vec2 a_uv; attribute float a_h; attribute vec3 a_n;
+      uniform mat4 u_mvp; uniform float u_scale;
+      varying vec2 v_uv; varying vec3 v_n; varying float v_h;
+      void main() { v_uv = a_uv; v_n = a_n; v_h = a_h; gl_Position = u_mvp * vec4(a_xy, a_h * u_scale, 1.0); }`;
+    const FS = `
+      precision mediump float;
+      uniform sampler2D u_tex; uniform float u_map; uniform float u_gray;
+      varying vec2 v_uv; varying vec3 v_n; varying float v_h;
+      vec3 cmap(float t) {   // 낮음 파랑 → 청록 → 초록 → 노랑 → 높음 빨강
+        t = clamp(t, 0.0, 1.0);
+        return clamp(vec3(1.5 - abs(4.0 * t - 3.0), 1.5 - abs(4.0 * t - 2.0), 1.5 - abs(4.0 * t - 1.0)), 0.0, 1.0);
+      }
+      void main() {
+        vec3 c = texture2D(u_tex, v_uv).rgb;
+        if (u_gray > 0.5) c = vec3(dot(c, vec3(0.299, 0.587, 0.114)));
+        if (u_map > 0.5) c = cmap(v_h);
+        float d = max(dot(normalize(v_n), normalize(vec3(-0.35, 0.45, 0.82))), 0.0);
+        gl_FragColor = vec4(c * (0.42 + 0.7 * d), 1.0);
+      }`;
+
+    function init() {
+      if (gl) return true;
+      if (failed) return false;
+      const c = $('d3-canvas');
+      const opts = { antialias: true, preserveDrawingBuffer: true };
+      gl = c.getContext('webgl', opts) || c.getContext('experimental-webgl', opts);
+      if (!gl) { failed = '이 브라우저(그래픽)에서는 3D 화면을 쓸 수 없습니다 — WebGL 미지원'; return false; }
+      const sh = (type, src) => {
+        const o = gl.createShader(type); gl.shaderSource(o, src); gl.compileShader(o);
+        if (!gl.getShaderParameter(o, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(o) || 'shader');
+        return o;
+      };
+      try {
+        prog = gl.createProgram();
+        gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS));
+        gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS));
+        gl.linkProgram(prog);
+        if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog) || 'link');
+      } catch (e) { failed = '3D 화면을 시작하지 못했습니다: ' + e.message; gl = null; return false; }
+      for (const a of ['a_xy', 'a_uv', 'a_h', 'a_n']) loc[a] = gl.getAttribLocation(prog, a);
+      for (const u of ['u_mvp', 'u_scale', 'u_tex', 'u_map', 'u_gray']) loc[u] = gl.getUniformLocation(prog, u);
+      tex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      small = document.createElement('canvas'); sctx = small.getContext('2d', { willReadFrequently: true });
+      texC = document.createElement('canvas'); tctx = texC.getContext('2d');
+      if (!c.dataset.bound) { bindPointer(c); c.dataset.bound = '1'; }
+      c.addEventListener('webglcontextlost', (e) => { e.preventDefault(); gl = null; GW = GH = 0; aspect = 0; for (const k in buf) delete buf[k]; }, { once: true });
+      c.addEventListener('webglcontextrestored', () => { if (running) start(); }, { once: true });
+      return true;
+    }
+    function upload(name, target, data, usage) {
+      if (!buf[name]) buf[name] = gl.createBuffer();
+      gl.bindBuffer(target, buf[name]);
+      gl.bufferData(target, data, usage);
+    }
+    function buildMesh(vw, vh) {
+      aspect = vw / vh;
+      if (aspect >= 1) { GW = MAXG; GH = Math.max(2, Math.round(MAXG / aspect)); } else { GH = MAXG; GW = Math.max(2, Math.round(MAXG * aspect)); }
+      const n = GW * GH, xy = new Float32Array(n * 2), uv = new Float32Array(n * 2);
+      for (let j = 0; j < GH; j++) for (let i = 0; i < GW; i++) {
+        const k = j * GW + i, u = i / (GW - 1), v = j / (GH - 1);
+        xy[2 * k] = (u - 0.5) * aspect; xy[2 * k + 1] = 0.5 - v;
+        uv[2 * k] = u; uv[2 * k + 1] = v;
+      }
+      const idx = new Uint16Array((GW - 1) * (GH - 1) * 6);
+      let q = 0;
+      for (let j = 0; j < GH - 1; j++) for (let i = 0; i < GW - 1; i++) {
+        const a = j * GW + i, b = a + 1, c = a + GW, d = c + 1;
+        idx[q++] = a; idx[q++] = c; idx[q++] = b; idx[q++] = b; idx[q++] = c; idx[q++] = d;
+      }
+      nIdx = q;
+      Hr = new Float32Array(n); Hs = new Float32Array(n); tmp = new Float32Array(n); N = new Float32Array(n * 3);
+      upload('xy', gl.ARRAY_BUFFER, xy, gl.STATIC_DRAW);
+      upload('uv', gl.ARRAY_BUFFER, uv, gl.STATIC_DRAW);
+      upload('idx', gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
+      upload('h', gl.ARRAY_BUFFER, Hs, gl.DYNAMIC_DRAW);
+      upload('n', gl.ARRAY_BUFFER, N, gl.DYNAMIC_DRAW);
+      small.width = GW; small.height = GH;
+      texC.width = Math.min(1024, vw); texC.height = Math.max(1, Math.round(texC.width / aspect));
+    }
+    function updateData(src, vw, vh) {
+      if (!GW || Math.abs(vw / vh - aspect) > 1e-3 || texC.width !== Math.min(1024, vw)) buildMesh(vw, vh);
+      sctx.drawImage(src, 0, 0, GW, GH);
+      const d = sctx.getImageData(0, 0, GW, GH).data;
+      const n = GW * GH;
+      for (let k = 0; k < n; k++) Hr[k] = (0.299 * d[4 * k] + 0.587 * d[4 * k + 1] + 0.114 * d[4 * k + 2]) / 255;
+      // 3×3 평균 (센서 잡티로 표면이 거칠어지지 않게) — 가로 → 세로
+      for (let j = 0; j < GH; j++) {
+        const r = j * GW;
+        for (let i = 0; i < GW; i++) tmp[r + i] = (Hr[r + Math.max(0, i - 1)] + Hr[r + i] + Hr[r + Math.min(GW - 1, i + 1)]) / 3;
+      }
+      for (let j = 0; j < GH; j++) {
+        const up = Math.max(0, j - 1) * GW, dn = Math.min(GH - 1, j + 1) * GW, r = j * GW;
+        for (let i = 0; i < GW; i++) Hs[r + i] = (tmp[up + i] + tmp[r + i] + tmp[dn + i]) / 3;
+      }
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf.h);
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, Hs);
+      normals();
+      tctx.filter = meibo.on ? 'grayscale(1)' : 'none';
+      tctx.drawImage(src, 0, 0, texC.width, texC.height);
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, texC);
+    }
+    function normals() {
+      if (!gl || !GW) return;
+      const s = ui.scale, sx = s / (2 * aspect / (GW - 1)), sy = s / (2 / (GH - 1));
+      for (let j = 0; j < GH; j++) {
+        const up = Math.max(0, j - 1) * GW, dn = Math.min(GH - 1, j + 1) * GW, r = j * GW;
+        for (let i = 0; i < GW; i++) {
+          const nx = -(Hs[r + Math.min(GW - 1, i + 1)] - Hs[r + Math.max(0, i - 1)]) * sx;
+          const ny = -(Hs[up + i] - Hs[dn + i]) * sy;          // 영상 위쪽(j 작음)이 +y
+          const l = Math.hypot(nx, ny, 1), k = 3 * (r + i);
+          N[k] = nx / l; N[k + 1] = ny / l; N[k + 2] = 1 / l;
+        }
+      }
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf.n);
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, N);
+    }
+    // 열 우선(column-major) 4×4 행렬
+    const mul = (a, b) => {
+      const o = new Array(16);
+      for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) {
+        let v = 0; for (let k = 0; k < 4; k++) v += a[k * 4 + r] * b[c * 4 + k];
+        o[c * 4 + r] = v;
+      }
+      return o;
+    };
+    function matrix(ar) {
+      const f = 1 / Math.tan((38 * Math.PI / 180) / 2), near = 0.05, far = 60;
+      const P = [f / ar, 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) / (near - far), -1, 0, 0, (2 * far * near) / (near - far), 0];
+      const fit = Math.max(1.05, 0.62 * aspect / ar + 0.55, 1.3 * Math.sin(cam.pitch) + 0.55);   // 표면 전체가 보이는 거리
+      const dist = fit * 1.55 * cam.k;
+      const cy = Math.cos(cam.yaw), sy = Math.sin(cam.yaw), a = -cam.pitch, ca = Math.cos(a), sa = Math.sin(a);
+      const T = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0.04, -dist, 1];
+      const Rx = [1, 0, 0, 0, 0, ca, sa, 0, 0, -sa, ca, 0, 0, 0, 0, 1];
+      const Rz = [cy, sy, 0, 0, -sy, cy, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+      const Z = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -0.3 * ui.scale, 1];
+      return mul(P, mul(T, mul(Rx, mul(Rz, Z))));
+    }
+    function attr(name, size) {
+      const l = loc[name]; if (l < 0) return;
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf[name.slice(2)]);
+      gl.enableVertexAttribArray(l);
+      gl.vertexAttribPointer(l, size, gl.FLOAT, false, 0, 0);
+    }
+    function render() {
+      if (!gl || !GW) return;
+      const c = $('d3-canvas'), dpr = Math.min(2, window.devicePixelRatio || 1);
+      const w = Math.max(1, Math.round(c.clientWidth * dpr)), h = Math.max(1, Math.round(c.clientHeight * dpr));
+      if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+      gl.viewport(0, 0, w, h);
+      if (opaque) gl.clearColor(0.035, 0.045, 0.06, 1); else gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      gl.enable(gl.DEPTH_TEST);
+      gl.useProgram(prog);
+      attr('a_xy', 2); attr('a_uv', 2); attr('a_h', 1); attr('a_n', 3);
+      gl.uniformMatrix4fv(loc.u_mvp, false, new Float32Array(matrix(w / h)));
+      gl.uniform1f(loc.u_scale, ui.scale);
+      gl.uniform1f(loc.u_map, ui.map ? 1 : 0);
+      gl.uniform1f(loc.u_gray, meibo.on ? 1 : 0);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.uniform1i(loc.u_tex, 0);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.idx);
+      gl.drawElements(gl.TRIANGLES, nIdx, gl.UNSIGNED_SHORT, 0);
+    }
+    function source() {
+      const fr = $('freeze'), v = $('video');
+      if (!state.stream) return null;
+      if (state.isPaused) return fr.width ? { el: fr, w: fr.width, h: fr.height } : null;
+      return v.videoWidth ? { el: v, w: v.videoWidth, h: v.videoHeight } : null;
+    }
+    function loop(t) {
+      if (!running) return;
+      raf = requestAnimationFrame(loop);
+      if (!gl || document.hidden || document.body.classList.contains('pro-on')) return;   // Pro 화면·숨은 탭에서는 쉼
+      const src = source();
+      if (src && (forceData || t - lastData > (state.isPaused ? 500 : 50))) {   // 라이브 약 20 fps 로 표면 갱신
+        updateData(src.el, src.w, src.h);
+        lastData = t; forceData = false; dirty = true;
+      }
+      if (dirty) { render(); dirty = false; }
+    }
+    function bindPointer(c) {
+      let drag = null;
+      c.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0) return;
+        drag = { x: e.clientX, y: e.clientY }; c.setPointerCapture(e.pointerId); c.classList.add('dragging');
+      });
+      c.addEventListener('pointermove', (e) => {
+        if (!drag) return;
+        cam.yaw += (e.clientX - drag.x) * 0.008;
+        cam.pitch = Math.min(1.45, Math.max(0, cam.pitch + (e.clientY - drag.y) * 0.006));
+        drag = { x: e.clientX, y: e.clientY }; dirty = true;
+      });
+      const end = () => { drag = null; c.classList.remove('dragging'); };
+      c.addEventListener('pointerup', end);
+      c.addEventListener('pointercancel', end);
+      c.addEventListener('wheel', (e) => { e.preventDefault(); cam.k = Math.min(3, Math.max(0.35, cam.k * Math.exp(e.deltaY * 0.0012))); dirty = true; }, { passive: false });
+      c.addEventListener('dblclick', reset);
+    }
+    function start() {
+      if (!init()) { $('d3-msg').textContent = failed; return; }
+      $('d3-msg').textContent = '드래그: 회전 · 휠: 확대 · 더블클릭: 시점 초기화';
+      running = true; dirty = true; forceData = true;
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(loop);
+    }
+    function stop() { running = false; cancelAnimationFrame(raf); }
+    function reset() { Object.assign(cam, DEF); dirty = true; }
+    function setScale(v) { ui.scale = Math.max(0, Math.min(1, v)); normals(); dirty = true; }
+    function setMode(m) { ui.map = m === 'map'; dirty = true; }
+    function touch(data) { dirty = true; if (data) forceData = true; }
+    async function snapshot() {
+      if (!gl || !GW) return null;
+      opaque = true; render(); opaque = false;
+      const blob = await new Promise((res) => $('d3-canvas').toBlob(res, 'image/png'));
+      dirty = true;
+      return blob;
+    }
+    return { start, stop, reset, setScale, setMode, touch, snapshot, ok: () => !failed };
+  })();
+
+  async function saveD3() {
+    const patient = currentPatient();
+    if (!patient) { toast('환자를 먼저 선택하세요.', 'error'); return; }
+    const blob = await D3.snapshot();
+    if (!blob) { toast('3D 화면이 아직 준비되지 않았습니다.', 'error'); return; }
+    await persistCapture(patient, 'photo', blob, 'png', $('eye-select').value, null, '3D');
+  }
+
   // ---- thumbnails ----
   const DOW = ['일', '월', '화', '수', '목', '금', '토'];
   const hms = (d) => [d.getHours(), d.getMinutes(), d.getSeconds()].map((n) => String(n).padStart(2, '0')).join(':');
@@ -1052,7 +1468,7 @@
     const clear = () => Array.from(list.querySelectorAll('.thumb, .thumb-day')).forEach(n => n.remove());
     if (!pid) {
       clear();
-      empty.style.display = 'block';
+      empty.style.display = '';
       empty.querySelector('div').innerHTML = '환자를 선택하세요';
       $('thumb-count').textContent = '0';
       return;
@@ -1069,8 +1485,8 @@
     const f = state.thumbFilter || 'all';
     const shown = items.filter((c) => f === 'all' || (f === 'video' ? c.media_type === 'video' : c.eye === f));
     if (shown.length === 0) {
-      empty.style.display = 'block';
-      empty.querySelector('div').innerHTML = items.length ? '조건에 맞는 영상이 없습니다' : '선택한 환자의<br>촬영 이미지가 없습니다';
+      empty.style.display = '';
+      empty.querySelector('div').innerHTML = items.length ? '조건에 맞는 영상이 없습니다' : '선택한 환자의 촬영 이미지가 없습니다';
       return;
     }
     empty.style.display = 'none';
@@ -1085,7 +1501,8 @@
         day = d;
         const h = document.createElement('div');
         h.className = 'thumb-day';
-        h.innerHTML = `<span>${d.replace(/-/g, '.')} (${DOW[ts.getDay()] || ''})</span><span>${perDay[d]}장</span>`;
+        h.title = `${d.replace(/-/g, '.')} (${DOW[ts.getDay()] || ''}) · ${perDay[d]}장`;
+        h.innerHTML = `<span class="td-y">${d.slice(0, 4)}</span><span class="td-date">${d.slice(5).replace('-', '.')}</span><span class="td-n">${DOW[ts.getDay()] || ''} · ${perDay[d]}장</span>`;
         list.appendChild(h);
       }
       const el = document.createElement('div');
@@ -1110,6 +1527,16 @@
       el.addEventListener('keydown', (e) => { if (e.key === 'Enter') openViewer(c, ts); });
       list.appendChild(el);
     }
+    list.scrollLeft = 0;                    // 최신 촬영(왼쪽)부터
+  }
+
+  function setThumbsFolded(on) {
+    $('thumbs').classList.toggle('folded', on);
+    const b = $('thumbs-fold');
+    b.setAttribute('aria-expanded', String(!on));
+    b.setAttribute('aria-label', on ? '목록 펼치기' : '목록 접기');
+    b.title = on ? '촬영 이미지 목록 펼치기' : '촬영 이미지 목록 접기 (영상을 더 크게)';
+    prefSet('slitlamp-thumbs-folded', on ? '1' : '0');
   }
 
   function openViewer(c, ts) {
@@ -1141,6 +1568,7 @@
     $('video-frame').classList.toggle('live', !!state.stream);
     $('btn-freeze').disabled = !has;
     $('btn-save-quad').disabled = !has;
+    syncViewUI();
   }
   function syncCamChip() {
     const v = $('video'), track = state.stream && state.stream.getVideoTracks()[0];

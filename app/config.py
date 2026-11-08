@@ -30,6 +30,10 @@ class AppConfig:
     subfolder_template: str = "{chart_no}_{patient_id}/{date}"
     thumbnail_max_side: int = 120
     newest_on_top: bool = True
+    thumbs_folded: bool = False              # 아래 촬영 이미지 띠 접기
+    zoom_level: float = 2.0                  # 확대 화면 배율
+    d3_height: int = 40                      # 3D 화면 높이 (0~100)
+    d3_color: str = "tex"                    # 3D 화면 색: tex(원본) | map(높이 컬러맵)
     theme: str = "dark"                      # dark(기본, 영상 작업 공간) | light
     clinic_name: str = ""                    # 인쇄 보고서 머리말 기관명
     px_per_mm: float = 0.0                   # 측정 눈금 보정 (0 = 미보정, px 단위)

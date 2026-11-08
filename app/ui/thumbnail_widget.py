@@ -1,9 +1,9 @@
-"""썸네일 패널의 단일 항목 (클릭 가능): 4:3 영상 + 안구 배지 + 시각·코멘트 오버레이."""
+"""썸네일 띠의 단일 항목 (클릭 가능): 4:3 영상 + 안구 배지 + 시각·코멘트 오버레이."""
 from __future__ import annotations
 
 from PySide6.QtCore import QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap
-from PySide6.QtWidgets import QSizePolicy, QWidget
+from PySide6.QtWidgets import QWidget
 
 from app.models.capture import Capture
 from app.ui import icons
@@ -30,6 +30,9 @@ def _load_pixmap(capture: Capture) -> QPixmap | None:
     return pm
 
 
+CARD_W, CARD_H = 150, 112                 # 하단 가로 띠의 카드 크기 (4:3)
+
+
 class ThumbnailWidget(QWidget):
     clicked = Signal(object)  # Capture
 
@@ -39,21 +42,10 @@ class ThumbnailWidget(QWidget):
         self.setObjectName("ThumbCard")
         self._pm = _load_pixmap(capture)
         self._hover = False
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.setMinimumHeight(120)
+        self.setFixedSize(CARD_W, CARD_H)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         eye = capture.eye if capture.eye and capture.eye != "NA" else ""
         self.setToolTip(" · ".join(x for x in (capture.captured_at, eye, capture.note or "") if x))
-
-    def heightForWidth(self, w: int) -> int:  # noqa: N802
-        return int(w * 3 / 4)
-
-    def hasHeightForWidth(self) -> bool:  # noqa: N802
-        return True
-
-    def resizeEvent(self, e) -> None:  # noqa: N802
-        self.setFixedHeight(self.heightForWidth(self.width()))
-        super().resizeEvent(e)
 
     def enterEvent(self, e) -> None:  # noqa: N802
         self._hover = True

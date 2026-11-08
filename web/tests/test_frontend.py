@@ -46,3 +46,31 @@ def test_meibo_mode_wired():
     assert "100 / 3" in PRO_JS and "200 / 3" in PRO_JS
     for cat in ("'0%'", "'<25%'", "'25–50%'", "'51–75%'", "'>75%'"):
         assert cat in PRO_JS
+
+
+def test_app_js_ids_exist_in_template():
+    app_js = (WEB / "static" / "js" / "app.js").read_text(encoding="utf-8")
+    used = set(re.findall(r"\$\('([a-z0-9-]+)'\)", app_js))
+    missing = sorted(used - HTML_IDS)
+    assert not missing, f"템플릿에 없는 id: {missing}"
+
+
+def test_capture_views_and_bottom_strip():
+    """촬영 화면: 위 = 큰·멀티·확대·3D 화면 전환, 아래 = 촬영 이미지 가로 띠."""
+    app_js = (WEB / "static" / "js" / "app.js").read_text(encoding="utf-8")
+    css = (WEB / "static" / "css" / "app.css").read_text(encoding="utf-8")
+    views = re.findall(r'role="radio" data-view="(\w+)"', HTML)
+    assert views == ["single", "multi", "zoom", "3d"]
+    assert "const VIEWS = ['single', 'multi', 'zoom', '3d'];" in app_js
+    for el in ("view-bar", "zoom-opts", "d3-opts", "d3-canvas", "zoom-map", "hud-view",
+               "thumbs-fold"):
+        assert f'id="{el}"' in HTML or f'class="{el}"' in HTML, el
+    # 4분할은 도크가 아니라 '멀티 화면' 탭으로, 단축키 Q(멀티) · V(보기 전환)
+    assert 'id="btn-quad"' not in HTML and "btn-quad" not in app_js
+    assert "id: 'view'" in app_js and "btns: ['view-multi']" in app_js
+    # 촬영 이미지 띠가 영상 열(video-col) 뒤 = 화면 아래쪽, 가로 스크롤
+    assert HTML.index('class="video-col"') < HTML.index('id="thumbs"')
+    assert re.search(r"\.thumbs-list \{[^}]*flex-direction: row[^}]*overflow-x: auto", css)
+    assert re.search(r"\.workspace \{[^}]*flex-direction: column", css)
+    # 3D 저장은 메모 '3D', 파일 이름 꼬리표 _3d
+    assert "'3D': '_3d'" in app_js and "null, '3D')" in app_js
