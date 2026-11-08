@@ -1,4 +1,8 @@
-"""촬영 화면 위쪽 보기 막대: 큰 화면 · 멀티 화면(4분할) · 확대 화면 · 3D 화면 + 보기별 조절.
+"""촬영 화면 위쪽 보기 막대 + 보기별 조절.
+
+보기: 모두 보기 · 큰 화면 · 멀티 화면(4분할) · 확대 화면 · 3D 화면.
+
+모두 보기 = 왼쪽 큰 화면 + 오른쪽 작은 화면 3개(멀티 · 확대 · 3D) — 확대·3D 조절이 함께 보인다.
 
 확대: －/배율/＋/가운데,  3D: 높이 슬라이더 · 색(원본/높이 컬러맵) · 시점 초기화 · 3D 저장.
 """
@@ -12,6 +16,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QSlider,
     QWidget,
 )
@@ -19,16 +24,19 @@ from PySide6.QtWidgets import (
 from app.ui import icons
 from app.ui.theme import ICON, ICON_ACCENT
 
-VIEWS = ("single", "multi", "zoom", "3d")
-VIEW_LABEL = {"single": "큰 화면", "multi": "멀티 화면", "zoom": "확대 화면", "3d": "3D 화면"}
-_VIEW_ICON = {"single": "single", "multi": "quad", "zoom": "zin", "3d": "cube"}
+VIEWS = ("all", "single", "multi", "zoom", "3d")
+VIEW_LABEL = {"all": "모두 보기", "single": "큰 화면", "multi": "멀티 화면",
+              "zoom": "확대 화면", "3d": "3D 화면"}
+_VIEW_ICON = {"all": "review", "single": "single", "multi": "quad", "zoom": "zin", "3d": "cube"}
 _VIEW_TIP = {
+    "all": "모두 보기 — 큰 화면 옆에 멀티·확대·3D 작은 화면을 한 번에",
     "single": "큰 화면 — 실시간 영상 1화면",
     "multi": "멀티 화면 — 4분할 정지영상, '정지영상'으로 칸을 채움",
     "zoom": "확대 화면 — 휠·＋/－로 확대, 드래그로 이동 (사진 캡처는 원본 전체 프레임 저장)",
     "3d": "3D 화면 — 밝기를 높이로 바꾼 입체 표면 (드래그 회전 · 휠 확대)",
 }
 _HINT = {
+    "all": "큰 화면을 누르면 그 곳을 확대 · 작은 화면 제목을 누르면 크게",
     "single": "",
     "multi": "'정지영상'으로 칸 채우기 · 칸 클릭으로 교체",
     "zoom": "휠 확대 · 드래그 이동 · 더블클릭 가운데 · 저장은 원본 전체",
@@ -126,9 +134,9 @@ class ViewBar(QFrame):
         lay.addWidget(self.d3_box)
 
         lay.addStretch(1)
-        self.hint = QLabel("")
+        self.hint = _ElidedLabel()
         self.hint.setObjectName("ViewHint")
-        lay.addWidget(self.hint)
+        lay.addWidget(self.hint, 1)
         self.set_view("single")
 
     def _tool(self, text: str, icon_name: str, tip: str) -> QPushButton:
@@ -146,9 +154,9 @@ class ViewBar(QFrame):
         if view not in self.buttons:
             view = "single"
         self.buttons[view].setChecked(True)
-        self.zoom_box.setVisible(view == "zoom")
-        self.d3_box.setVisible(view == "3d")
-        self.hint.setText(_HINT[view])
+        self.zoom_box.setVisible(view in ("zoom", "all"))
+        self.d3_box.setVisible(view in ("3d", "all"))
+        self.hint.set_full_text(_HINT[view])
 
     def current(self) -> str:
         return next((v for v, b in self.buttons.items() if b.isChecked()), "single")
@@ -163,3 +171,29 @@ class ViewBar(QFrame):
         self.cb_color.setCurrentIndex(1 if color == "map" else 0)
         for w in (self.sl_height, self.cb_color):
             w.blockSignals(False)
+
+
+class _ElidedLabel(QLabel):
+    """좁으면 '…' 로 줄여 보이는 안내 문구 (창 최소 폭을 늘리지 않음)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._full = ""
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
+    def set_full_text(self, text: str) -> None:
+        self._full = text
+        self.setToolTip(text)
+        self._elide()
+
+    def full_text(self) -> str:
+        return self._full
+
+    def resizeEvent(self, e) -> None:  # noqa: N802
+        super().resizeEvent(e)
+        self._elide()
+
+    def _elide(self) -> None:
+        fm = self.fontMetrics()
+        self.setText(fm.elidedText(self._full, Qt.TextElideMode.ElideRight, max(0, self.width())))

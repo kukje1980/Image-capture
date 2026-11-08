@@ -159,7 +159,8 @@ body:not(.pro-on) #btn-mode-capture .ic, body.pro-on #btn-pro .ic { color: var(-
 .view-seg button:focus-visible { outline: none; box-shadow: var(--ring); }
 .view-seg button[aria-checked="true"] { background: var(--raised); color: var(--accent-strong); box-shadow: 0 1px 2px rgba(0,0,0,.25), inset 0 0 0 1px var(--rule-strong); }
 .view-opts { display: none; align-items: center; gap: 4px; }
-body[data-view="zoom"] #zoom-opts, body[data-view="3d"] #d3-opts { display: inline-flex; }
+body[data-view="zoom"] #zoom-opts, body[data-view="3d"] #d3-opts,
+body[data-view="all"] #zoom-opts, body[data-view="all"] #d3-opts { display: inline-flex; }
 .view-opts .btn { height: 30px; padding: 0 9px; font-size: 12.5px; }
 .view-opts .vo-btn { width: 30px; padding: 0; }
 .vo-level { min-width: 44px; text-align: center; font-family: var(--font-mono); font-size: 13px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
@@ -186,6 +187,36 @@ body[data-view="zoom"] #zoom-opts, body[data-view="3d"] #d3-opts { display: inli
 .video-frame.d3.live .d3-msg { display: block; }
 .hud-chip.hud-view { display: none; font-family: var(--font-mono); color: #c9f5ee; box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), .55); }
 .video-frame.zoom .hud-view, .video-frame.d3 .hud-view { display: inline-flex; }
+
+/* 모두 보기: 왼쪽 큰 화면 + 오른쪽 작은 화면 3개 (멀티 · 확대 · 3D) */
+.stage { flex: 1 1 auto; display: flex; gap: 8px; min-height: 320px; }
+.stage > .video-frame { flex: 1 1 auto; min-width: 0; }
+.side-panes { display: none; flex: none; flex-direction: column; gap: 8px; width: var(--side-w, 300px); min-height: 0; }
+body[data-view="all"] .side-panes { display: flex; }
+.pane { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; border-radius: var(--radius); background: #000;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.06), var(--shadow); }
+.pane-head { flex: none; display: flex; align-items: center; gap: 7px; height: 28px; padding: 0 10px; border: 0; background: #11161d; color: #c7cdd8;
+  font: inherit; font-size: 12px; font-weight: 700; text-align: left; cursor: pointer; transition: background .15s, color .15s; }
+.pane-head:hover { background: #18202a; color: #fff; }
+.pane-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.pane-head .ic { width: 14px; height: 14px; }
+.pane-head .pane-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pane-head b { margin-left: 4px; font-family: var(--font-mono); font-weight: 700; color: var(--accent-strong); }
+.pane-head .pane-x { opacity: .5; }
+.pane-head:hover .pane-x { opacity: 1; }
+.pane-body { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; background: #000; }
+.pane-body .quad-grid { display: grid; gap: 2px; padding: 2px; }
+.pane-body .quad-tag { top: 4px; left: 4px; padding: 1px 6px; font-size: 10px; }
+.pane-body .quad-no { bottom: 2px; right: 6px; font-size: 10px; }
+.pane-body .d3-canvas { display: block; }
+#zoom-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; transform-origin: 0 0; will-change: transform; }
+#pane-zoom { cursor: grab; touch-action: none; }
+#pane-zoom.dragging { cursor: grabbing; }
+/* 큰 화면 위: 오른쪽 확대 칸이 보여 주는 곳 (누르거나 끌어서 옮김) */
+.zoom-roi { position: absolute; z-index: 2; display: none; pointer-events: none; border: 2px solid var(--accent); border-radius: 3px;
+  background: rgba(var(--accent-rgb), .08); box-shadow: 0 0 0 1px rgba(0,0,0,.5); }
+body[data-view="all"] .video-frame.live .zoom-roi { display: block; }
+body[data-view="all"] .video-frame.live { cursor: crosshair; touch-action: none; }
 
 .video-frame { position: relative; background: #000; border-radius: var(--radius); overflow: hidden; flex: 1; min-height: 320px;
   box-shadow: inset 0 0 0 1px rgba(255,255,255,.06), var(--shadow); }
@@ -400,7 +431,10 @@ dialog::backdrop { background: rgba(3, 6, 10, .62); backdrop-filter: blur(4px); 
   .search, .search .input { width: 100%; }
   .workspace { padding: 12px; }
   .video-frame { min-height: 260px; }
+  .stage { flex-direction: column; }
+  .side-panes { width: auto !important; height: 128px; flex-direction: row; }
   .thumbs-side { width: 108px; }
+  .view-seg { flex-wrap: wrap; max-width: 100%; }
   .view-seg button { padding: 0 10px; }
   .view-hint { display: none; }
   .dock-center { order: -1; width: 100%; justify-content: center; }

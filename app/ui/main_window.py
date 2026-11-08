@@ -34,6 +34,7 @@ from app.ui.pro.pro_workspace import ProWorkspace
 from app.ui.quad_view import QuadView
 from app.ui.settings_dialog import SettingsDialog
 from app.ui.shortcuts_dialog import ShortcutsDialog
+from app.ui.stage import Stage
 from app.ui.surface_view import SurfaceView
 from app.ui.view_bar import VIEW_LABEL, VIEWS, ViewBar
 from app import brand as app_brand
@@ -61,7 +62,7 @@ class MainWindow(QMainWindow):
 
         self._last_frame = None
         self._shown = None                   # 영상 화면(큰·확대·3D)에 마지막으로 보낸 프레임
-        self._view = "single"                # single | multi | zoom | 3d
+        self._view = "single"                # all | single | multi | zoom | 3d (시작 시 설정값으로)
         self._paused = False
         self._quad = False
         self._single_frozen = False
@@ -100,29 +101,30 @@ class MainWindow(QMainWindow):
         body = QWidget()
         body_lay = QVBoxLayout(body)
         body_lay.setContentsMargins(12, 12, 12, 10)
-        # 기본(촬영) 화면: 위 = 보기 막대(큰·멀티·확대·3D) + 영상, 아래 = 촬영 도크 + 촬영 이미지 띠
+        # 기본(촬영) 화면: 위 = 보기 막대(모두·큰·멀티·확대·3D) + 영상,
+        #                 아래 = 촬영 도크 + 촬영 이미지 띠
         simple = QWidget()
         col = QVBoxLayout(simple)
         col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(8)
         self.view_bar = ViewBar()
-        self.video_view = VideoView()
-        self.quad_view = QuadView()
-        self.surface_view = SurfaceView()
-        self.view_stack = QStackedWidget()
-        self.view_stack.addWidget(self.video_view)    # 0 = 큰 화면 · 확대 화면
-        self.view_stack.addWidget(self.quad_view)     # 1 = 멀티 화면 (4분할)
-        self.view_stack.addWidget(self.surface_view)  # 2 = 3D 화면
+        self.video_view = VideoView()                 # 큰 화면 (모두 보기의 왼쪽)
+        self.quad_view = QuadView()                   # 멀티 화면 (4분할)
+        self.zoom_view = VideoView()                  # 확대 화면
+        self.zoom_view.set_zoom_mode(True)
+        self.surface_view = SurfaceView()             # 3D 화면
+        self.stage = Stage(self.video_view, self.quad_view, self.zoom_view, self.surface_view)
         self.control_bar = ControlBar()
         self.thumbnail_panel = ThumbnailPanel(self.db, newest_on_top=self.config.newest_on_top)
         col.addWidget(self.view_bar)
-        col.addWidget(self.view_stack, 1)
+        col.addWidget(self.stage, 1)
         col.addWidget(self.control_bar)
         col.addWidget(self.thumbnail_panel)
 
         # 보기 설정 복원 (확대 배율 · 3D 높이/색 · 띠 접기)
-        self.video_view.set_zoom(self.config.zoom_level)
-        self.view_bar.set_zoom_label(self.video_view.zoom)
+        self.zoom_view.set_zoom(self.config.zoom_level)
+        self.view_bar.set_zoom_label(self.zoom_view.zoom)
+        self.stage.set_pane_title("zoom", f"확대 화면  ×{self.zoom_view.zoom:.1f}")
         self.view_bar.set_d3(self.config.d3_height, self.config.d3_color)
         self.surface_view.set_height(self.config.d3_height / 100)
         self.surface_view.set_colormap(self.config.d3_color == "map")
@@ -150,9 +152,13 @@ class MainWindow(QMainWindow):
         self.control_bar.captureClicked.connect(self._on_capture)
         self.control_bar.recordToggled.connect(self._on_record_toggle)
         self.view_bar.viewChanged.connect(self._set_view)
-        self.view_bar.zoomStep.connect(self.video_view.step_zoom)
-        self.view_bar.zoomCenter.connect(self.video_view.center_zoom)
-        self.video_view.zoomChanged.connect(self._on_zoom_changed)
+        self.stage.expandRequested.connect(self._set_view)          # 작은 화면 제목 → 그 화면 크게
+        self.view_bar.zoomStep.connect(self.zoom_view.step_zoom)
+        self.view_bar.zoomCenter.connect(self.zoom_view.center_zoom)
+        self.zoom_view.zoomChanged.connect(self._on_zoom_changed)
+        self.zoom_view.regionChanged.connect(self._update_roi)
+        # 모두 보기: 큰 화면을 누른 곳을 확대 칸에
+        self.video_view.pointed.connect(self.zoom_view.set_center)
         self.view_bar.d3HeightChanged.connect(self._on_d3_height)
         self.view_bar.d3ColorChanged.connect(self._on_d3_color)
         self.view_bar.d3Reset.connect(self.surface_view.reset_view)
@@ -168,6 +174,7 @@ class MainWindow(QMainWindow):
         self._rec_timer.setInterval(500)
         self._rec_timer.timeout.connect(self._update_rec_hud)
 
+        self._set_view(self.config.capture_view)
         self._on_patient_changed(self.patient_panel.current_patient())
         self._fullscreen = False
         self._install_shortcuts()
@@ -301,6 +308,7 @@ class MainWindow(QMainWindow):
     def _hud(self, **kw) -> None:
         """영상 위 HUD (환자·안구·LIVE/정지/REC) — 큰·확대 화면과 3D 화면에 같이."""
         self.video_view.set_hud(**kw)
+        self.zoom_view.set_hud(**kw)
         self.surface_view.set_hud(**kw)
 
     # ---- 단축키 (사용자 지정) ----
@@ -501,6 +509,7 @@ class MainWindow(QMainWindow):
             self._stop_recording()
         self._stop_camera()
         self.video_view.clear()
+        self.zoom_view.clear()
         self.surface_view.clear()
         self._shown = None
         self._start_camera()
@@ -508,6 +517,8 @@ class MainWindow(QMainWindow):
     # ---- 카메라 신호 처리 ----
     def _on_camera_opened(self, w: int, h: int, fps: float) -> None:
         self._frame_size = (w, h)
+        if h > 0:
+            self.stage.set_aspect(w / h)
         self.control_bar.set_status(f"카메라 {w}x{h} @ {fps:.0f}fps")
 
     def _on_frame_ready(self, frame) -> None:
@@ -521,13 +532,20 @@ class MainWindow(QMainWindow):
             self.pro.set_live_frame(frame)
         if self._quad:
             self.quad_view.set_live_frame(frame)
-        elif not self._paused and not self._single_frozen:
+        if self._view != "multi" and not self._paused and not self._single_frozen:
             self._show(frame)
 
     def _show(self, frame) -> None:
-        """지금 보기(큰·확대 = 영상, 3D = 표면)에 프레임을 보낸다."""
+        """지금 보기에 보이는 화면(큰 · 확대 · 3D, 모두 보기면 셋 다)에 프레임을 보낸다."""
         self._shown = frame
-        (self.surface_view if self._view == "3d" else self.video_view).set_frame(frame)
+        v = self._view
+        pm = self.video_view.set_frame(frame) if v in ("single", "all") else None
+        if v in ("zoom", "all"):
+            self.zoom_view.set_frame(frame, pm)        # 같은 프레임은 한 번만 변환
+        if v in ("3d", "all"):
+            self.surface_view.set_frame(frame)
+        if v == "all" and self.video_view._roi is None:
+            self._update_roi()
 
     def _on_camera_error(self, msg: str) -> None:
         self.control_bar.set_status(f"오류: {msg}")
@@ -586,31 +604,41 @@ class MainWindow(QMainWindow):
         self._paused = checked
         self._refresh_hud_state()
 
-    # ---- 화면 보기: 큰 · 멀티(4분할) · 확대 · 3D ----
+    # ---- 화면 보기: 모두 · 큰 · 멀티(4분할) · 확대 · 3D ----
     def _set_view(self, view: str) -> None:
         if view not in VIEWS:
-            view = "single"
+            view = "all"
         self.view_bar.set_view(view)
         if view == self._view:
             return
-        prev, self._view = self._view, view
-        if prev == "multi":
-            self._on_quad_toggled(False)
-        if view == "multi":
-            self._on_quad_toggled(True)
-        self.video_view.set_zoom_mode(view == "zoom")
-        if self._shown is not None and view in ("single", "zoom", "3d"):
-            (self.surface_view if view == "3d" else self.video_view).set_frame(self._shown)
-        self.view_stack.setCurrentIndex({"single": 0, "zoom": 0, "multi": 1, "3d": 2}[view])
-        if view != "multi":
+        self._view = view
+        need_quad = view in ("multi", "all")             # 모두 보기에서도 멀티 칸을 채운다
+        if self._quad != need_quad:
+            self._on_quad_toggled(need_quad)
+        self.stage.set_mode(view)
+        self.video_view.set_roi_mode(view == "all")
+        if self._shown is not None:
+            self._show(self._shown)                     # 새로 보이는 화면도 바로 채움
+        self._update_roi()
+        if self.config.capture_view != view:
+            self.config.capture_view = view
+            self._save_timer.start()
+        if view == "all":
+            self.control_bar.set_status("모두 보기 · '정지영상'은 멀티 화면 칸 채우기")
+        elif view != "multi":
             note = " · 저장은 원본 전체 프레임" if view in ("zoom", "3d") else ""
             self.control_bar.set_status(VIEW_LABEL[view] + note)
 
     def current_view(self) -> str:
         return self._view
 
+    def _update_roi(self) -> None:
+        """모두 보기: 큰 화면 위에 오른쪽 확대 칸이 보여 주는 곳을 표시."""
+        self.video_view.set_roi(self.zoom_view.visible_rect() if self._view == "all" else None)
+
     def _on_zoom_changed(self, z: float) -> None:
         self.view_bar.set_zoom_label(z)
+        self.stage.set_pane_title("zoom", f"확대 화면  ×{z:.1f}")
         self.config.zoom_level = round(z, 2)
         self._save_timer.start()
 
@@ -656,7 +684,6 @@ class MainWindow(QMainWindow):
     def _on_quad_toggled(self, on: bool) -> None:
         self._quad = on
         self.control_bar.set_quad_mode(on)
-        self.view_stack.setCurrentIndex(1 if on else 0)
         # 모드 전환 시 단일-정지 상태/버튼 초기화
         self._single_frozen = False
         self._freeze_frame = None

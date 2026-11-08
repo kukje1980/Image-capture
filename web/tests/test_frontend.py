@@ -56,12 +56,12 @@ def test_app_js_ids_exist_in_template():
 
 
 def test_capture_views_and_bottom_strip():
-    """촬영 화면: 위 = 큰·멀티·확대·3D 화면 전환, 아래 = 촬영 이미지 가로 띠."""
+    """촬영 화면: 위 = 모두·큰·멀티·확대·3D 화면 전환, 아래 = 촬영 이미지 가로 띠."""
     app_js = (WEB / "static" / "js" / "app.js").read_text(encoding="utf-8")
     css = (WEB / "static" / "css" / "app.css").read_text(encoding="utf-8")
     views = re.findall(r'role="radio" data-view="(\w+)"', HTML)
-    assert views == ["single", "multi", "zoom", "3d"]
-    assert "const VIEWS = ['single', 'multi', 'zoom', '3d'];" in app_js
+    assert views == ["all", "single", "multi", "zoom", "3d"]
+    assert "const VIEWS = ['all', 'single', 'multi', 'zoom', '3d'];" in app_js
     for el in ("view-bar", "zoom-opts", "d3-opts", "d3-canvas", "zoom-map", "hud-view",
                "thumbs-fold"):
         assert f'id="{el}"' in HTML or f'class="{el}"' in HTML, el
@@ -74,3 +74,20 @@ def test_capture_views_and_bottom_strip():
     assert re.search(r"\.workspace \{[^}]*flex-direction: column", css)
     # 3D 저장은 메모 '3D', 파일 이름 꼬리표 _3d
     assert "'3D': '_3d'" in app_js and "null, '3D')" in app_js
+
+
+def test_all_view_side_panes():
+    """모두 보기: 큰 화면 옆 작은 화면 3개(멀티·확대·3D), 기본 보기, 큰 화면에 확대 위치 표시."""
+    app_js = (WEB / "static" / "js" / "app.js").read_text(encoding="utf-8")
+    panes = re.findall(r'class="pane" data-pane="(\w+)"', HTML)
+    assert panes == ["multi", "zoom", "3d"]
+    heads = re.findall(r'class="pane-head" data-view="(\w+)"', HTML)      # 제목 = 그 화면 크게
+    assert heads == panes
+    for el in ("stage", "side-panes", "pane-multi", "pane-zoom", "pane-3d", "zoom-video",
+               "zoom-roi"):
+        assert f'id="{el}"' in HTML, el
+    # 큰 화면(video-frame) 과 작은 화면들이 같은 stage 안, 순서대로
+    assert HTML.index('id="stage"') < HTML.index('id="video-frame"') < HTML.index('id="side-panes"')
+    assert "setView(prefGet('slitlamp-view') || 'all'" in app_js      # 기본 = 모두 보기, 마지막 기억
+    assert "$('zoom-video').srcObject = stream" in app_js             # 확대 칸 = 같은 카메라 스트림
+    assert "const usesQuad = (m) => m === 'multi' || m === 'all';" in app_js

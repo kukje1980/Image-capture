@@ -126,9 +126,10 @@
 
   <main class="workspace">
     <section class="video-col">
-      <!-- 화면 보기: 큰 화면 · 멀티 화면(4분할) · 확대 화면 · 3D 화면 -->
+      <!-- 화면 보기: 모두 보기(큰 화면 + 작은 화면 3개) · 큰 화면 · 멀티 화면(4분할) · 확대 화면 · 3D 화면 -->
       <div class="view-bar" role="toolbar" aria-label="화면 보기">
         <div class="view-seg" id="view-seg" role="radiogroup" aria-label="화면 보기">
+          <button role="radio" data-view="all" id="view-all" aria-checked="false" title="모두 보기 — 큰 화면 옆에 멀티·확대·3D 작은 화면을 한 번에"><svg class="ic"><use href="#i-review"/></svg>모두 보기</button>
           <button role="radio" data-view="single" id="view-single" aria-checked="true" title="큰 화면 — 실시간 영상 1화면"><svg class="ic"><use href="#i-single"/></svg>큰 화면</button>
           <button role="radio" data-view="multi" id="view-multi" aria-checked="false" title="멀티 화면 — 4분할 정지영상, '정지영상'으로 칸을 채움"><svg class="ic"><use href="#i-quad"/></svg>멀티 화면</button>
           <button role="radio" data-view="zoom" id="view-zoom" aria-checked="false" title="확대 화면 — 휠·＋/－로 확대, 드래그로 이동 (사진 캡처는 원본 전체 프레임 저장)"><svg class="ic"><use href="#i-zin"/></svg>확대 화면</button>
@@ -151,6 +152,7 @@
         </div>
         <span class="view-hint" id="view-hint"></span>
       </div>
+      <div class="stage" id="stage">
       <div class="video-frame" id="video-frame">
         <video id="video" autoplay muted playsinline></video>
         <canvas class="freeze" id="freeze"></canvas>
@@ -163,6 +165,7 @@
         <canvas class="d3-canvas" id="d3-canvas" aria-label="3D 표면 보기"></canvas>
         <div class="d3-msg" id="d3-msg"></div>
         <canvas class="zoom-map" id="zoom-map" title="클릭한 곳으로 이동" aria-label="확대 위치"></canvas>
+        <div class="zoom-roi" id="zoom-roi" aria-hidden="true"></div>
         <div class="video-placeholder" id="video-placeholder">
           <div class="ph-ring"><svg class="ic"><use href="#i-aperture"/></svg></div>
           <div class="ph-title">카메라 대기 중</div>
@@ -193,6 +196,22 @@
           <button class="btn btn-tool btn-record" id="btn-fs-record" title="녹화 (R)"><svg class="ic"><use href="#i-rec"/></svg><span id="fs-rec-label">녹화</span></button>
           <button class="btn btn-tool" id="btn-fs-exit" title="전체 화면 끝내기 (F / Esc)"><svg class="ic"><use href="#i-shrink"/></svg>나가기</button>
         </div>
+      </div>
+      <!-- 모두 보기: 오른쪽 작은 화면 3개 (제목을 누르면 그 화면을 크게) -->
+      <div class="side-panes" id="side-panes" aria-label="작은 화면">
+        <div class="pane" data-pane="multi">
+          <button class="pane-head" data-view="multi" title="멀티 화면을 크게 보기"><svg class="ic"><use href="#i-quad"/></svg><span class="pane-name">멀티 화면</span><svg class="ic pane-x"><use href="#i-expand"/></svg></button>
+          <div class="pane-body" id="pane-multi"></div>
+        </div>
+        <div class="pane" data-pane="zoom">
+          <button class="pane-head" data-view="zoom" title="확대 화면을 크게 보기"><svg class="ic"><use href="#i-zin"/></svg><span class="pane-name">확대 화면 <b id="pane-zoom-level">×2.0</b></span><svg class="ic pane-x"><use href="#i-expand"/></svg></button>
+          <div class="pane-body" id="pane-zoom" title="휠: 확대 · 드래그: 이동 · 왼쪽 큰 화면을 누르면 그 곳으로"><video id="zoom-video" autoplay muted playsinline></video></div>
+        </div>
+        <div class="pane" data-pane="3d">
+          <button class="pane-head" data-view="3d" title="3D 화면을 크게 보기"><svg class="ic"><use href="#i-cube"/></svg><span class="pane-name">3D 화면</span><svg class="ic pane-x"><use href="#i-expand"/></svg></button>
+          <div class="pane-body" id="pane-3d" title="드래그: 회전 · 휠: 확대 · 더블클릭: 시점 초기화"></div>
+        </div>
+      </div>
       </div>
 
       <div class="controls dock">

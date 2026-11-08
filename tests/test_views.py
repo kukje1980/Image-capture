@@ -155,16 +155,16 @@ def win(qapp, app_env):
 def test_layout_strip_below_video(qapp, win):
     """보기 막대 → 영상 → 도크 → 촬영 이미지 띠 (위에서 아래로)."""
     qapp.processEvents()
-    parts = (win.view_bar, win.view_stack, win.control_bar, win.thumbnail_panel)
+    parts = (win.view_bar, win.stage, win.control_bar, win.thumbnail_panel)
     y = [w.mapTo(win, w.rect().topLeft()).y() for w in parts]
     assert y == sorted(y)
-    assert win.thumbnail_panel.width() > win.view_stack.width() * 0.9      # 띠가 화면 폭 전체
+    assert win.thumbnail_panel.width() > win.stage.width() * 0.9           # 띠가 화면 폭 전체
 
 
 def test_views_capture_and_3d_save(qapp, win):
     n0 = win.thumbnail_panel.count()
     win._set_view("zoom")
-    win.video_view.set_zoom(4.0)
+    win.zoom_view.set_zoom(4.0)
     win._on_capture()                                 # 확대 화면에서도 원본 전체 프레임 저장
     assert _wait(qapp, lambda: win.thumbnail_panel.count() == n0 + 1)
     cap = win.thumbnail_panel._items[0]
@@ -180,3 +180,37 @@ def test_views_capture_and_3d_save(qapp, win):
     assert win._quad and win.control_bar.btn_save_quad.isVisible()
     win._set_view("single")
     assert not win._quad and win.control_bar.btn_pause.isVisible()
+
+
+def test_all_view_big_plus_three_panes(qapp, win):
+    """모두 보기: 왼쪽 큰 화면(라이브) + 오른쪽 작은 화면 3개(멀티 · 확대 · 3D)가 함께."""
+    win._set_view("all")
+    assert _wait(qapp, lambda: win.surface_view.has_image()
+                 and win.zoom_view.current_frame() is not None)
+    qapp.processEvents()
+    for w in (win.video_view, win.quad_view, win.zoom_view, win.surface_view):
+        assert w.isVisible()
+    big = win.video_view.mapTo(win, win.video_view.rect().topLeft())
+    panes = (win.quad_view, win.zoom_view, win.surface_view)
+    for w in panes:                                       # 작은 화면은 오른쪽에, 위에서 아래로
+        assert w.mapTo(win, w.rect().topLeft()).x() > big.x() + win.video_view.width() * 0.9
+        assert w.width() < win.video_view.width()
+    ys = [w.mapTo(win, w.rect().topLeft()).y() for w in panes]
+    assert ys == sorted(ys)
+    assert win._quad and not win._paused              # 멀티 칸 채우기 + 큰 화면은 라이브
+    # 큰 화면을 누른 곳이 확대 칸의 가운데로, 큰 화면에는 그 영역 표시
+    win.zoom_view.set_zoom(4.0)
+    win.video_view.pointed.emit(0.8, 0.3)
+    x0, y0, x1, y1 = win.zoom_view.visible_rect()
+    assert (x0 + x1) / 2 == pytest.approx(0.8, abs=0.02)
+    assert (y0 + y1) / 2 == pytest.approx(0.3, abs=0.02)
+    assert win.video_view._roi == pytest.approx((x0, y0, x1, y1))
+    # 작은 화면 제목 → 그 화면 크게, 내용(4분할)은 이어짐
+    win._on_freeze()
+    filled = list(win.quad_view._frozen)
+    win.stage.pane_head("multi").click()
+    assert win.current_view() == "multi" and win.quad_view._frozen == filled
+    win._set_view("all")
+    assert win.config.capture_view == "all"
+    win._set_view("single")
+    assert win.video_view._roi is None and not win.quad_view.isVisible()

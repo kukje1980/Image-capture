@@ -69,6 +69,7 @@
     try { if (localStorage.getItem('slitlamp-hint-closed') === '1' && !LOCAL_MODE) $('hint').style.display = 'none'; } catch (_) {}
     bindEvents();
     syncEye();
+    setView(prefGet('slitlamp-view') || 'all', { quiet: true });
     syncViewUI();
     if (!('showDirectoryPicker' in window)) {
       $('btn-folder').disabled = true;
@@ -140,7 +141,7 @@
     $('btn-capture').addEventListener('click', capturePhoto);
     $('btn-record').addEventListener('click', toggleRecord);
     // 화면 보기 (큰 · 멀티 · 확대 · 3D)
-    document.querySelectorAll('#view-seg [data-view]').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
+    document.querySelectorAll('#view-seg [data-view], .pane-head[data-view]').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
     $('zoom-in').addEventListener('click', () => stepZoom(1));
     $('zoom-out').addEventListener('click', () => stepZoom(-1));
     $('zoom-center').addEventListener('click', () => { view.cx = 0.5; view.cy = 0.5; applyZoom(); });
@@ -153,8 +154,11 @@
       if (h !== null && h !== '' && !isNaN(+h)) $('d3-height').value = h;
       if (c === 'tex' || c === 'map') $('d3-color').value = c;
       D3.setScale(+$('d3-height').value / 100); D3.setMode($('d3-color').value); }
-    $('video').addEventListener('loadedmetadata', applyZoom);
-    if (window.ResizeObserver) new ResizeObserver(() => { applyZoom(); D3.touch(); }).observe($('video-frame'));
+    $('video').addEventListener('loadedmetadata', () => { fitPanes(); applyZoom(); });
+    if (window.ResizeObserver) {
+      const ro = new ResizeObserver(() => { fitPanes(); applyZoom(); D3.touch(); });
+      ro.observe($('video-frame')); ro.observe($('stage')); ro.observe($('pane-zoom'));
+    }
     // 하단 촬영 이미지 띠: 세로 휠로 가로 이동 · 접기
     $('thumb-list').addEventListener('wheel', (e) => {
       const l = $('thumb-list');
@@ -203,7 +207,7 @@
       run: () => { if (!$('btn-freeze').disabled) freezeFrame(); } },
     { id: 'quad', label: '멀티 화면 (4분할) 켜기 / 끄기', def: 'Q', scope: 'capture', btns: ['view-multi'],
       run: () => setView(view.mode === 'multi' ? 'single' : 'multi') },
-    { id: 'view', label: '화면 보기 전환 (큰 → 멀티 → 확대 → 3D)', def: 'V', scope: 'capture',
+    { id: 'view', label: '화면 보기 전환 (모두 → 큰 → 멀티 → 확대 → 3D)', def: 'V', scope: 'capture',
       run: () => setView(VIEWS[(VIEWS.indexOf(view.mode) + 1) % VIEWS.length]) },
     { id: 'meibo', label: '마이봄샘 촬영 모드 켜기 / 끄기', def: 'M', scope: 'capture', btns: ['btn-meibo'], run: () => setMeibo(!meibo.on) },
     { id: 'lid', label: '마이봄 상안검 ↔ 하안검', def: 'U', scope: 'capture', run: () => { if (meibo.on) setLid(meibo.lid === 'upper' ? 'lower' : 'upper'); } },
@@ -662,6 +666,8 @@
       }
       state.stream = stream;
       video.srcObject = stream;
+      $('zoom-video').srcObject = stream;                // 모두 보기의 확대 칸 (같은 스트림)
+      if (view.mode !== 'all') $('zoom-video').pause();
       const track = stream.getVideoTracks()[0];
       const set = track && track.getSettings ? track.getSettings() : {};
       if (set.deviceId) prefSet('slitlamp-cam', set.deviceId);
@@ -675,6 +681,7 @@
     } catch (err) {
       if (gen !== camGen) return;
       $('video').srcObject = null;                     // 멈춘 이전 영상으로 촬영되지 않게 버튼도 끈다
+      $('zoom-video').srcObject = null;
       updateCaptureButtons();
       showHintError(`카메라 접근 실패: ${err.message || err.name} (HTTPS/localhost 필요)`);
       $('video-placeholder').style.display = 'flex';
@@ -756,7 +763,7 @@
     $('hud-meibo').textContent = `MEIBO · ${LID_KO[meibo.lid]}`;
   }
   function setMeibo(on) {
-    if (on && view.mode === 'multi') setView('single');   // 마이봄은 4분할을 쓰지 않음
+    if (on && usesQuad(view.mode)) setView('single');   // 마이봄은 4분할을 쓰지 않음
     meibo.on = !!on; syncMeibo();
     toast(meibo.on ? `마이봄 촬영 모드 · ${LID_KO[meibo.lid]} (눈꺼풀을 뒤집어 틀에 맞추세요)` : '마이봄 촬영 모드 끔', 'success');
   }
@@ -940,7 +947,7 @@
     state.quad = !state.quad;
     if (state.quad && state.isPaused) togglePause();   // 4분할에서는 일시정지 버튼이 숨겨지므로 라이브로
     const frame = $('video-frame');
-    frame.classList.toggle('quad', state.quad);
+    frame.classList.toggle('quad', state.quad && view.mode === 'multi');
     $('btn-pause').style.display = state.quad ? 'none' : '';
     $('btn-save-quad').style.display = state.quad ? '' : 'none';
     $('btn-clear-quad').style.display = state.quad ? '' : 'none';
@@ -1068,11 +1075,13 @@
     toast(`4분할 저장 완료 (${saved}장)`, 'success');
   }
 
-  // ---- 화면 보기: 큰 화면 · 멀티 화면(4분할) · 확대 화면 · 3D 화면 ----
+  // ---- 화면 보기: 모두 보기 · 큰 화면 · 멀티 화면(4분할) · 확대 화면 · 3D 화면 ----
+  // 모두 보기 = 왼쪽 큰 화면(라이브) + 오른쪽 작은 화면 3개(멀티 · 확대 · 3D)를 한 번에.
   // 확대·3D 는 보기 전용이다. 사진 캡처·녹화는 어느 화면에서든 원본 전체 프레임을 저장한다.
-  const VIEWS = ['single', 'multi', 'zoom', '3d'];
-  const VIEW_NAME = { single: '큰 화면', multi: '멀티 화면', zoom: '확대 화면', '3d': '3D 화면' };
+  const VIEWS = ['all', 'single', 'multi', 'zoom', '3d'];
+  const VIEW_NAME = { all: '모두 보기', single: '큰 화면', multi: '멀티 화면', zoom: '확대 화면', '3d': '3D 화면' };
   const VIEW_HINT = {
+    all: '큰 화면을 누르면 그 곳을 확대 · 작은 화면 제목을 누르면 크게',
     single: '',
     multi: "'정지영상'으로 칸 채우기 · 칸 클릭으로 교체",
     zoom: '휠 확대 · 드래그 이동 · 더블클릭 가운데 · 저장은 원본 전체',
@@ -1082,53 +1091,104 @@
   const view = { mode: 'single', z: 2, cx: 0.5, cy: 0.5 };
   { const z = parseFloat(prefGet('slitlamp-zoom')); if (z >= 1.25 && z <= 8) view.z = z; }
   let zoomMapTimer = null;
+  const usesQuad = (m) => m === 'multi' || m === 'all';
+  const usesD3 = (m) => m === '3d' || m === 'all';
 
-  function setView(mode) {
-    if (!VIEWS.includes(mode)) mode = 'single';
+  function setView(mode, opts = {}) {
+    if (!VIEWS.includes(mode)) mode = 'all';
     if (mode === view.mode) return;
-    if (view.mode === 'multi' && state.quad) toggleQuad();
-    if (view.mode === '3d') D3.stop();
+    const prev = view.mode;
     view.mode = mode;
+    if (state.quad !== usesQuad(mode)) toggleQuad();
+    if (usesD3(prev) && !usesD3(mode)) D3.stop();
+    placeViews();
     const frame = $('video-frame');
+    frame.classList.toggle('quad', mode === 'multi');
     frame.classList.toggle('zoom', mode === 'zoom');
     frame.classList.toggle('d3', mode === '3d');
-    if (mode === 'multi' && !state.quad) toggleQuad();
-    if (mode === '3d') D3.start();
+    if (usesD3(mode) && !usesD3(prev)) D3.start(); else D3.touch();
+    const zv = $('zoom-video');                          // 확대 칸 영상은 모두 보기에서만 재생
+    if (mode === 'all' && zv.srcObject) zv.play().catch(() => {}); else zv.pause();
     clearInterval(zoomMapTimer);
     zoomMapTimer = mode === 'zoom' ? setInterval(drawZoomMap, 150) : null;
+    fitPanes();
     applyZoom();
     syncViewUI();
-    if (mode !== 'multi') setStatus(VIEW_NAME[mode], state.stream ? 'ready' : 'idle', true);
+    prefSet('slitlamp-view', mode);
+    if (!opts.quiet && mode !== 'multi') {
+      setStatus(mode === 'all' ? "모두 보기 · '정지영상'은 멀티 화면 칸 채우기" : VIEW_NAME[mode], state.stream ? 'ready' : 'idle', true);
+    }
+  }
+  /** 모두 보기: 4분할 격자·3D 캔버스를 오른쪽 작은 화면으로, 아니면 큰 화면 안으로 */
+  function placeViews() {
+    const frame = $('video-frame'), q = $('quad-grid'), c = $('d3-canvas');
+    if (view.mode === 'all') {
+      if (q.parentElement !== $('pane-multi')) $('pane-multi').appendChild(q);
+      if (c.parentElement !== $('pane-3d')) $('pane-3d').appendChild(c);
+    } else if (q.parentElement !== frame) {
+      frame.insertBefore(q, $('d3-msg'));
+      frame.insertBefore(c, $('d3-msg'));
+    }
+  }
+  /** 작은 화면 3개가 영상 비율에 맞게 — 오른쪽 열 폭을 높이에서 계산 */
+  function fitPanes() {
+    if (view.mode !== 'all') return;
+    const st = $('stage'), v = $('video');
+    if (!st.clientHeight) return;
+    const ar = v.videoWidth && v.videoHeight ? v.videoWidth / v.videoHeight : 16 / 9;
+    const paneH = (st.clientHeight - 16) / 3 - 28;
+    const w = Math.max(200, Math.min(st.clientWidth * 0.36, paneH * ar));
+    $('side-panes').style.width = Math.round(w) + 'px';
   }
   function syncViewUI() {
     document.body.dataset.view = view.mode;
     document.querySelectorAll('#view-seg [data-view]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.view === view.mode)));
     $('view-hint').textContent = VIEW_HINT[view.mode] || '';
     $('zoom-level').textContent = '×' + view.z.toFixed(1);
+    $('pane-zoom-level').textContent = '×' + view.z.toFixed(1);
     $('hud-view').textContent = view.mode === 'zoom' ? `확대 ×${view.z.toFixed(1)}` : (view.mode === '3d' ? '3D' : '');
-    $('d3-save').disabled = !(view.mode === '3d' && state.stream && state.currentPatientId && D3.ok());
+    $('d3-save').disabled = !(usesD3(view.mode) && state.stream && state.currentPatientId && D3.ok());
   }
 
   // 확대: 영상 좌표(0~1)의 (cx, cy) 를 화면 가운데에 두고 z 배로 키운다
-  function zoomGeom() {
-    const frame = $('video-frame'), v = $('video');
-    const W = frame.clientWidth, H = frame.clientHeight, vw = v.videoWidth, vh = v.videoHeight;
+  // 확대 화면 = 큰 영상 자체를, 모두 보기 = 오른쪽 확대 칸(별도 video)을 키운다
+  function zoomTarget() {
+    if (view.mode === 'zoom') return { box: $('video-frame'), media: [$('video'), $('freeze')] };
+    if (view.mode === 'all') return { box: $('pane-zoom'), media: [$('zoom-video')] };
+    return null;
+  }
+  function zoomGeom(box) {
+    box = box || (zoomTarget() || {}).box;
+    const v = $('video');
+    if (!box) return null;
+    const W = box.clientWidth, H = box.clientHeight, vw = v.videoWidth, vh = v.videoHeight;
     if (!W || !H || !vw || !vh) return null;
     const k = Math.min(W / vw, H / vh), dw = vw * k, dh = vh * k;
     return { W, H, ox: (W - dw) / 2, oy: (H - dh) / 2, dw, dh };
   }
   function applyZoom() {
-    const els = [$('video'), $('freeze')];
-    const g = view.mode === 'zoom' ? zoomGeom() : null;
-    if (!g) { els.forEach((e) => { e.style.transform = ''; }); return; }
+    const t = zoomTarget();
+    for (const e of [$('video'), $('freeze'), $('zoom-video')]) if (!t || !t.media.includes(e)) e.style.transform = '';
+    const g = t ? zoomGeom(t.box) : null;
+    if (!g) return;
     const z = view.z;
     const hx = g.W / 2 / (z * g.dw), hy = g.H / 2 / (z * g.dh);   // 보이는 반폭·반높이 (영상 좌표)
     view.cx = hx >= 0.5 ? 0.5 : Math.min(1 - hx, Math.max(hx, view.cx));
     view.cy = hy >= 0.5 ? 0.5 : Math.min(1 - hy, Math.max(hy, view.cy));
     const tx = g.W / 2 - z * (g.ox + view.cx * g.dw), ty = g.H / 2 - z * (g.oy + view.cy * g.dh);
-    const t = `translate(${tx.toFixed(1)}px, ${ty.toFixed(1)}px) scale(${z})`;
-    els.forEach((e) => { e.style.transform = t; });
+    const tr = `translate(${tx.toFixed(1)}px, ${ty.toFixed(1)}px) scale(${z})`;
+    t.media.forEach((e) => { e.style.transform = tr; });
     drawZoomMap();
+    if (view.mode === 'all') {                           // 큰 화면 위에 확대 칸이 보여 주는 곳 표시
+      const b = zoomGeom($('video-frame')), roi = $('zoom-roi');
+      if (b) {
+        const rx = Math.min(0.5, hx), ry = Math.min(0.5, hy);
+        roi.style.left = (b.ox + (view.cx - rx) * b.dw).toFixed(1) + 'px';
+        roi.style.top = (b.oy + (view.cy - ry) * b.dh).toFixed(1) + 'px';
+        roi.style.width = (2 * rx * b.dw).toFixed(1) + 'px';
+        roi.style.height = (2 * ry * b.dh).toFixed(1) + 'px';
+      }
+    }
   }
   function setZoom(z, anchor) {
     z = Math.min(8, Math.max(1.25, z));
@@ -1149,32 +1209,55 @@
   }
   function bindZoomPointer() {
     const frame = $('video-frame');
-    let drag = null;
-    const inZoom = (e) => view.mode === 'zoom' && state.stream && !e.target.closest('button, .fs-bar, .zoom-map');
-    frame.addEventListener('pointerdown', (e) => {
-      if (!inZoom(e) || e.button !== 0) return;
-      drag = { x: e.clientX, y: e.clientY, id: e.pointerId };
-      frame.setPointerCapture(e.pointerId);
-      frame.classList.add('dragging');
-    });
-    frame.addEventListener('pointermove', (e) => {
-      if (!drag || e.pointerId !== drag.id) return;
-      const g = zoomGeom(); if (!g) return;
-      view.cx -= (e.clientX - drag.x) / (view.z * g.dw);
-      view.cy -= (e.clientY - drag.y) / (view.z * g.dh);
-      drag.x = e.clientX; drag.y = e.clientY;
+    const live = (e) => state.stream && !e.target.closest('button, .fs-bar, .zoom-map');
+    // 끌어서 이동 · 휠 확대 · 더블클릭 가운데 (확대 화면 = 큰 영상, 모두 보기 = 오른쪽 확대 칸)
+    const panOn = (el, active) => {
+      let drag = null;
+      el.addEventListener('pointerdown', (e) => {
+        if (!active() || !live(e) || e.button !== 0) return;
+        drag = { x: e.clientX, y: e.clientY, id: e.pointerId };
+        el.setPointerCapture(e.pointerId);
+        el.classList.add('dragging');
+      });
+      el.addEventListener('pointermove', (e) => {
+        if (!drag || e.pointerId !== drag.id) return;
+        const g = zoomGeom(); if (!g) return;
+        view.cx -= (e.clientX - drag.x) / (view.z * g.dw);
+        view.cy -= (e.clientY - drag.y) / (view.z * g.dh);
+        drag.x = e.clientX; drag.y = e.clientY;
+        applyZoom();
+      });
+      const end = () => { drag = null; el.classList.remove('dragging'); };
+      el.addEventListener('pointerup', end);
+      el.addEventListener('pointercancel', end);
+      el.addEventListener('wheel', (e) => {
+        if (!active() || !live(e)) return;
+        e.preventDefault();
+        const r = el.getBoundingClientRect();
+        setZoom(view.z * Math.exp(-e.deltaY * 0.0015), { x: e.clientX - r.left, y: e.clientY - r.top });
+      }, { passive: false });
+      el.addEventListener('dblclick', (e) => { if (active() && live(e)) { view.cx = 0.5; view.cy = 0.5; applyZoom(); } });
+    };
+    panOn(frame, () => view.mode === 'zoom');
+    panOn($('pane-zoom'), () => view.mode === 'all');
+    // 모두 보기: 큰 화면을 누르거나 끌면 그 곳을 오른쪽 확대 칸에
+    let aim = false;
+    const aimAt = (e) => {
+      const b = zoomGeom(frame), r = frame.getBoundingClientRect();
+      if (!b) return;
+      view.cx = (e.clientX - r.left - b.ox) / b.dw;
+      view.cy = (e.clientY - r.top - b.oy) / b.dh;
       applyZoom();
+    };
+    frame.addEventListener('pointerdown', (e) => {
+      if (view.mode !== 'all' || !live(e) || e.button !== 0) return;
+      aim = true;
+      frame.setPointerCapture(e.pointerId);
+      aimAt(e);
     });
-    const end = () => { drag = null; frame.classList.remove('dragging'); };
-    frame.addEventListener('pointerup', end);
-    frame.addEventListener('pointercancel', end);
-    frame.addEventListener('wheel', (e) => {
-      if (!inZoom(e)) return;
-      e.preventDefault();
-      const r = frame.getBoundingClientRect();
-      setZoom(view.z * Math.exp(-e.deltaY * 0.0015), { x: e.clientX - r.left, y: e.clientY - r.top });
-    }, { passive: false });
-    frame.addEventListener('dblclick', (e) => { if (inZoom(e)) { view.cx = 0.5; view.cy = 0.5; applyZoom(); } });
+    frame.addEventListener('pointermove', (e) => { if (aim) aimAt(e); });
+    frame.addEventListener('pointerup', () => { aim = false; });
+    frame.addEventListener('pointercancel', () => { aim = false; });
     // 미니맵: 누르거나 끌어서 그 위치로
     const map = $('zoom-map');
     let mapDrag = false;

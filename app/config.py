@@ -30,6 +30,7 @@ class AppConfig:
     subfolder_template: str = "{chart_no}_{patient_id}/{date}"
     thumbnail_max_side: int = 120
     newest_on_top: bool = True
+    capture_view: str = "all"                # 촬영 화면 보기: all(모두) | single | multi | zoom | 3d
     thumbs_folded: bool = False              # 아래 촬영 이미지 띠 접기
     zoom_level: float = 2.0                  # 확대 화면 배율
     d3_height: int = 40                      # 3D 화면 높이 (0~100)

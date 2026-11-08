@@ -114,6 +114,15 @@ def build_qss(mode: str = "dark") -> str:
     QLabel#ViewOptLabel {{ color: {c['ink_soft']}; font-weight: 600; }}
     QLabel#ViewHint {{ color: {c['ink_muted']}; font-size: 12px; }}
 
+    /* 모두 보기: 오른쪽 작은 화면 3개 */
+    QWidget#SidePanes {{ background: transparent; }}
+    QFrame#Pane {{ background: #000000; border: 1px solid #1d242f; border-radius: 10px; }}
+    QPushButton#PaneHead {{
+        background: #11161d; color: #c7cdd8; border: none; border-radius: 0; text-align: left;
+        padding: 0 10px; font-size: 12px; font-weight: 700; min-height: 0;
+    }}
+    QPushButton#PaneHead:hover {{ background: #18202a; color: #ffffff; }}
+
     /* 입력/콤보 */
     QLineEdit, QComboBox, QSpinBox, QPlainTextEdit, QTextEdit, QDateEdit, QDoubleSpinBox {{
         background: {c['field']}; border: 1px solid {c['rule']}; border-radius: 8px;

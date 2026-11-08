@@ -321,6 +321,8 @@ class SurfaceView(VideoView):
             p.drawImage(QRectF(self.rect()), self._img)
         else:
             p.fillRect(self.rect(), QColor("#06080b"))
+        if self._compact:                          # 모두 보기의 작은 화면: 표면만
+            return
         self._paint_hud(p)
         p.setFont(scaled_font(self.font(), 0.9))
         p.setPen(QColor("#a3acba"))

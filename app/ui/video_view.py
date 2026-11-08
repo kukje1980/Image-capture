@@ -2,6 +2,9 @@
 
 확대 모드(set_zoom_mode): 휠 = 커서 기준 확대, 드래그 = 이동, 더블클릭 = 가운데, 오른쪽 아래 미니맵.
 확대는 보기 전용이다 — 사진 캡처는 원본 전체 프레임을 저장한다.
+가리키기 모드(set_roi_mode, 모두 보기의 큰 화면): 확대 칸이 보여 주는 곳을 사각형으로 표시하고,
+누르거나 끌면 pointed(cx, cy) 로 그 위치를 알린다.
+작게 모드(set_compact, 모두 보기의 작은 화면): HUD·미니맵 없이 영상만.
 """
 from __future__ import annotations
 
@@ -61,6 +64,8 @@ ZOOM_STEPS = (1.5, 2.0, 3.0, 4.0, 6.0, 8.0)
 
 class VideoView(QWidget):
     zoomChanged = Signal(float)
+    regionChanged = Signal()           # 확대로 보이는 영역이 바뀜 (visible_rect)
+    pointed = Signal(float, float)     # 가리키기 모드에서 누른 곳 (영상 좌표 0~1)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -71,6 +76,9 @@ class VideoView(QWidget):
         self.zoom = 2.0
         self.cx = self.cy = 0.5                     # 확대 중심 (영상 좌표 0~1)
         self._pan = None
+        self._compact = False
+        self._roi_mode = False
+        self._roi: tuple | None = None              # 큰 화면에 표시할 영역 (x0, y0, x1, y1)
         self.setMinimumSize(480, 360)
         self._placeholder = "카메라 연결 대기 중..."
         self._patient = ""
@@ -78,9 +86,25 @@ class VideoView(QWidget):
         self._state = "live"          # live | paused | frozen | rec
         self._rec_text = ""
 
-    def set_frame(self, frame: np.ndarray) -> None:
+    def set_frame(self, frame: np.ndarray, pixmap: QPixmap | None = None) -> QPixmap:
+        """프레임 표시 (같은 프레임을 여러 화면에 보낼 때는 만든 pixmap 을 넘겨 다시 쓴다)."""
         self._frame = frame
-        self._pixmap = QPixmap.fromImage(bgr_to_qimage(frame))
+        self._pixmap = pixmap if pixmap is not None else QPixmap.fromImage(bgr_to_qimage(frame))
+        self.update()
+        return self._pixmap
+
+    def set_compact(self, on: bool) -> None:
+        self._compact = bool(on)
+        self.update()
+
+    def set_roi_mode(self, on: bool) -> None:
+        self._roi_mode = bool(on)
+        c = Qt.CursorShape
+        self.setCursor(c.CrossCursor if on else (c.OpenHandCursor if self._zoom_on else c.ArrowCursor))
+        self.update()
+
+    def set_roi(self, roi: tuple | None) -> None:
+        self._roi = roi
         self.update()
 
     def current_frame(self) -> np.ndarray | None:
@@ -117,6 +141,7 @@ class VideoView(QWidget):
         self.update()
         if changed:
             self.zoomChanged.emit(z)
+        self.regionChanged.emit()
 
     def step_zoom(self, direction: int) -> None:
         if direction > 0:
@@ -126,8 +151,26 @@ class VideoView(QWidget):
         self.set_zoom(z)
 
     def center_zoom(self) -> None:
-        self.cx = self.cy = 0.5
+        self.set_center(0.5, 0.5)
+
+    def set_center(self, cx: float, cy: float) -> None:
+        """확대 중심 (영상 좌표 0~1) — 가장자리 밖으로는 나가지 않게 맞춘다."""
+        self.cx, self.cy = float(cx), float(cy)
+        g = self._geom()
+        if g is not None:
+            self._clamp_center(g)
         self.update()
+        self.regionChanged.emit()
+
+    def visible_rect(self) -> tuple | None:
+        """확대로 지금 보이는 영역 (x0, y0, x1, y1), 영상 좌표."""
+        g = self._geom()
+        if g is None:
+            return None
+        self._clamp_center(g)
+        W, H, dw, dh = g[0], g[1], g[4], g[5]
+        hx, hy = min(0.5, W / 2 / (self.zoom * dw)), min(0.5, H / 2 / (self.zoom * dh))
+        return (self.cx - hx, self.cy - hy, self.cx + hx, self.cy + hy)
 
     def _sync_view_chip(self) -> None:
         if self._zoom_on:
@@ -155,7 +198,7 @@ class VideoView(QWidget):
 
     def _minimap_rect(self) -> QRectF | None:
         g = self._geom()
-        if not self._zoom_on or g is None:
+        if not self._zoom_on or self._compact or g is None:
             return None
         mw = min(168.0, self.width() * 0.22)
         mh = mw * self._pixmap.height() / self._pixmap.width()
@@ -194,7 +237,24 @@ class VideoView(QWidget):
             x = (self.width() - scaled.width()) // 2
             y = (self.height() - scaled.height()) // 2
             p.drawPixmap(x, y, scaled)
-        self._paint_hud(p)
+            self._paint_roi(p)
+        if not self._compact:
+            self._paint_hud(p)
+
+    def _paint_roi(self, p: QPainter) -> None:
+        """가리키기 모드: 확대 칸이 보여 주는 곳."""
+        g = self._geom()
+        if not self._roi_mode or self._roi is None or g is None:
+            return
+        _W, _H, ox, oy, dw, dh = g
+        x0, y0, x1, y1 = self._roi
+        r = QRectF(ox + x0 * dw, oy + y0 * dh, (x1 - x0) * dw, (y1 - y0) * dh)
+        p.fillRect(r, QColor(51, 194, 177, 20))
+        p.setPen(QPen(QColor(0, 0, 0, 130), 3))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRect(r)
+        p.setPen(QPen(QColor("#33c2b1"), 2))
+        p.drawRect(r)
 
     def _paint_zoomed(self, p: QPainter) -> None:
         g = self._geom()
@@ -238,8 +298,20 @@ class VideoView(QWidget):
         p.setPen(QPen(QColor(255, 255, 255, 70), 1))
         p.drawRoundedRect(r, 6, 6)
 
-    # ---- 확대 화면 마우스 ----
+    # ---- 확대 화면 · 가리키기 마우스 ----
+    def _point(self, pos: QPointF) -> None:
+        g = self._geom()
+        if g is None:
+            return
+        _W, _H, ox, oy, dw, dh = g
+        self.pointed.emit(min(1.0, max(0.0, (pos.x() - ox) / dw)),
+                          min(1.0, max(0.0, (pos.y() - oy) / dh)))
+
     def mousePressEvent(self, e) -> None:  # noqa: N802
+        if self._roi_mode and not self._zoom_on and e.button() == Qt.MouseButton.LeftButton:
+            self._pan = "roi"
+            self._point(e.position())
+            return
         if not self._zoom_on or e.button() != Qt.MouseButton.LeftButton:
             return super().mousePressEvent(e)
         r = self._minimap_rect()
@@ -251,6 +323,9 @@ class VideoView(QWidget):
         self.setCursor(Qt.CursorShape.ClosedHandCursor)
 
     def mouseMoveEvent(self, e) -> None:  # noqa: N802
+        if self._pan == "roi":
+            self._point(e.position())
+            return
         if not self._zoom_on or self._pan is None:
             return super().mouseMoveEvent(e)
         if self._pan == "map":
@@ -263,20 +338,24 @@ class VideoView(QWidget):
             return
         d = e.position() - self._pan
         self._pan = QPointF(e.position())
-        self.cx -= d.x() / (self.zoom * g[4])
-        self.cy -= d.y() / (self.zoom * g[5])
-        self.update()
+        self.set_center(self.cx - d.x() / (self.zoom * g[4]), self.cy - d.y() / (self.zoom * g[5]))
 
     def mouseReleaseEvent(self, e) -> None:  # noqa: N802
+        if self._pan == "roi":
+            self._pan = None
+            return
         if self._zoom_on:
             self._pan = None
             self.setCursor(Qt.CursorShape.OpenHandCursor)
         return super().mouseReleaseEvent(e)
 
     def _goto_minimap(self, pos: QPointF, r: QRectF) -> None:
-        self.cx = (pos.x() - r.x()) / r.width()
-        self.cy = (pos.y() - r.y()) / r.height()
-        self.update()
+        self.set_center((pos.x() - r.x()) / r.width(), (pos.y() - r.y()) / r.height())
+
+    def resizeEvent(self, e) -> None:  # noqa: N802
+        super().resizeEvent(e)
+        if self._zoom_on:
+            self.regionChanged.emit()
 
     def wheelEvent(self, e) -> None:  # noqa: N802
         if not self._zoom_on:
