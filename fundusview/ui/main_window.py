@@ -13,12 +13,12 @@ from pathlib import Path
 import numpy as np
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QActionGroup, QBrush, QColor, QCursor, QDesktopServices, QFont, QIcon, QImage, \
-    QKeySequence, QPainter, QPixmap
+    QKeySequence, QPainter, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox, QDockWidget, QDoubleSpinBox, QFileDialog,
     QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMenu,
-    QMessageBox, QPushButton, QRadioButton, QSlider, QSplitter, QStatusBar, QTableWidget, QTableWidgetItem,
-    QTabWidget, QToolBar, QToolButton, QVBoxLayout, QWidget,
+    QMessageBox, QPushButton, QRadioButton, QSizePolicy, QSlider, QSplitter, QStatusBar, QTableWidget,
+    QTableWidgetItem, QTabWidget, QToolBar, QToolButton, QVBoxLayout, QWidget,
 )
 
 from .. import APP_TITLE, __version__, autosetup, discpair, imaging, measure
@@ -36,12 +36,26 @@ from .histogram import HistogramDialog
 from .image_view import TOOL_HINTS, TOOLS, ImageView, from_qimage
 from .keys import IS_MAC, keys
 from .multi_view import MultiView
+from .slit_scan import ScanPhotoView, SlitScanShow, ViewTween
 from .toolbars import CHECKABLE, COMMANDS, MENUS, PROCESSING, SliderPopup, icon_for
 
 UNASSIGNED = -1
 SEX_LABEL = {"M": "남", "F": "여", "O": "기타"}
 THUMB_TEXT = Qt.ItemDataRole.UserRole + 1    # thumbnail caption without the ② mark
 SECOND_PICK = QColor(168, 104, 28)           # background of the second picked photo (②)
+
+
+class _FullScreen3D(QWidget):
+    """Top-level window that holds the 3D eye (and the photo) on the whole screen."""
+    closed = Signal()
+
+    def __init__(self):
+        super().__init__(None, Qt.WindowType.Window)
+        self.setStyleSheet("background: #000;")
+
+    def closeEvent(self, e) -> None:
+        self.closed.emit()
+        super().closeEvent(e)
 
 
 class Bridge(QObject):
@@ -474,10 +488,23 @@ class MainWindow(QMainWindow):
         grp.addButton(self.r_out)
         grp.addButton(self.r_in)
         self.r_out.toggled.connect(self._on_3d_mode)
+        # how the eye is opened (outside): the front cut, or cut along the photo's vertical meridian
+        # and seen from the side; the slider sets the depth of either (right end = closed eye)
+        self.c_view3d = QComboBox()
+        for label, key, tip in (("앞쪽 절개", "front", "앞부분을 잘라 안쪽 망막을 봅니다 (슬라이더: 자르는 깊이)"),
+                                ("세로 단면", "section", "사진의 세로 자오선을 따라 안구를 잘라 옆에서 봅니다 — "
+                                                     "공막·맥락막·망막 층, 홍채·수정체·각막 단면과 화각 "
+                                                     "(슬라이더 왼쪽 끝 = 정확히 반)")):
+            self.c_view3d.addItem(label, key)
+            self.c_view3d.setItemData(self.c_view3d.count() - 1, tip, Qt.ItemDataRole.ToolTipRole)
+        self.c_view3d.setToolTip("안구를 여는 방식")
+        self.c_view3d.currentIndexChanged.connect(lambda _: self._set_3d_view(self.c_view3d.currentData()))
+        self._cut_values = {"front": 25, "section": 0}
         self.s_cut = QSlider(Qt.Orientation.Horizontal)
         self.s_cut.setRange(-30, 100)
         self.s_cut.setValue(25)
         self.s_cut.setFixedWidth(120)
+        self.s_cut.setToolTip("자르는 깊이 (오른쪽 끝 = 닫힌 안구)")
         self.s_cut.valueChanged.connect(self._on_cut)
         self.sp_fov = QDoubleSpinBox()
         self.sp_fov.setRange(10, 240)
@@ -497,8 +524,7 @@ class MainWindow(QMainWindow):
         self.sp_roll.setSuffix("°")
         self.sp_roll.valueChanged.connect(self._on_mapping)
         row1 = QHBoxLayout()
-        for item in (self.b_simple, self.b_detailed, QLabel("  "), self.r_out, self.r_in, QLabel("  앞쪽 절개"),
-                     self.s_cut, QLabel("  화각"), self.sp_fov,
+        for item in (self.b_simple, self.b_detailed, QLabel("  "), self.r_out, self.r_in, QLabel("  화각"), self.sp_fov,
                      self.c_fovtype, QLabel("  투영"), self.c_proj, QLabel("  회전"), self.sp_roll):
             row1.addWidget(item)
         row1.addStretch()
@@ -508,13 +534,38 @@ class MainWindow(QMainWindow):
         self.c_muscle = QCheckBox("외안근")
         self.c_muscle.setToolTip("네 곧은근과 두 빗근의 부착부(절단면)를 함께 표시")
         self.c_muscle.toggled.connect(lambda on: (setattr(self.eye3d, "show_muscles", on), self.eye3d.update()))
-        self.c_grid = QCheckBox("각도 격자(10°)")
+        self.c_grid = QCheckBox("각도 격자")
+        self.c_grid.setToolTip("후극에서 10°마다 링 (30°마다 진하게)")
         self.c_grid.toggled.connect(lambda on: (setattr(self.eye3d, "show_grid", on), self.eye3d.update()))
         self.c_adj3d = QCheckBox("영상 처리 적용")
         self.c_adj3d.setChecked(True)
         self.c_adj3d.toggled.connect(lambda _: self._mark_3d_dirty())
+        # 슬릿 스캔: the photo flat next to the eye and the scan presentation
+        self.b_scan = QPushButton("▶ 슬릿 스캔")
+        self.b_scan.setObjectName("scan3d")
+        self.b_scan.setToolTip("안구를 옆에서 반으로 자른 단면에 화각을 보이고, 슬릿이 사진을 위에서 아래로 훑는 동안 "
+                               "빛이 동공을 지나 같은 망막 위치에 닿는 모습을 보여 준 뒤, 사진을 입힌 3D 안구로 "
+                               "돌려 보여 줍니다 (사진 나란히). 안구를 누르거나 돌리면 멈춥니다.")
+        self.b_scan.clicked.connect(self._toggle_scan)
+        self.c_side3d = QCheckBox("사진 나란히")
+        self.c_side3d.setToolTip("3D 안구 오른쪽에 사진을 평면으로 함께 보여 줍니다 (검은 바탕)")
+        self.c_side3d.toggled.connect(self._on_side_photo)
+        self.c_fov3d = QCheckBox("화각 표시")
+        self.c_fov3d.setToolTip("세로 단면에는 안구 중심에서 잰 화각(선·각도), 다른 보기에는 망막 위 촬영 범위의 경계")
+        self.c_fov3d.toggled.connect(self._on_fov_marks)
+        self.c_xray3d = QCheckBox("망막 투시")
+        self.c_xray3d.setToolTip("공막·맥락막을 투명하게 해 사진을 입힌 망막을 안구 바깥에서도 봅니다 "
+                                 "(바깥에서 보므로 좌우가 뒤집혀 보입니다)")
+        self.c_xray3d.toggled.connect(self._on_xray)
+        self.b_full3d = QPushButton("크게 보기")
+        self.b_full3d.setToolTip("3D 안구와 사진을 화면 전체로 (Esc: 돌아가기 · Space: 슬릿 스캔)")
+        self.b_full3d.clicked.connect(self._toggle_full_3d)
+        row3 = QHBoxLayout()
+        for c in (self.b_scan, self.c_side3d, self.c_fov3d, self.c_xray3d, self.b_full3d):
+            row3.addWidget(c)
+        row3.addStretch()
         row2 = QHBoxLayout()
-        for c in (self.c_nerve, self.c_muscle, self.c_grid, self.c_adj3d):
+        for c in (self.c_view3d, self.s_cut, QLabel(" "), self.c_nerve, self.c_muscle, self.c_grid, self.c_adj3d):
             row2.addWidget(c)
         self.eye3d = EyeView()
         self.eye3d.setToolTip("드래그: 회전 · 휠: 커서 쪽으로 확대 · 오른쪽 드래그: 확대 · "
@@ -532,13 +583,29 @@ class MainWindow(QMainWindow):
             row2.addWidget(b)
         self.lbl_3d = QLabel("")
         self.lbl_3d.setObjectName("hint3d")
+        self.lbl_3d.setMinimumWidth(0)       # may shrink: never widen the window
+        self.lbl_3d.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         row2.addWidget(self.lbl_zoom3d)
         row2.addWidget(self.lbl_3d, 1)
+        self.scan_photo = ScanPhotoView()
+        self.scan_photo.hide()
+        self.split3d = QSplitter(Qt.Orientation.Horizontal)
+        self.split3d.setChildrenCollapsible(False)
+        self.split3d.addWidget(self.eye3d)
+        self.split3d.addWidget(self.scan_photo)
+        self.split3d.setStyleSheet("QSplitter::handle { background: #000; }")
+        self._show = SlitScanShow(self.eye3d, self.scan_photo, self)
+        self._show.finished.connect(self._on_scan_finished)
+        self._show.stopped.connect(self._on_scan_stopped)
+        self._tween = ViewTween(self.eye3d, self)
+        self._full3d: QWidget | None = None
         self._set_3d_detail(self.settings.view3d_detail, save=False)
         g.addLayout(row1, 0, 0)
         g.addLayout(row2, 1, 0)
+        g.addLayout(row3, 2, 0)
         lay.addWidget(bar)
-        lay.addWidget(self.eye3d, 1)
+        self._lay3d = lay
+        lay.addWidget(self.split3d, 1)
         return w
 
     def _reset_toolbars(self) -> None:
@@ -559,6 +626,9 @@ class MainWindow(QMainWindow):
             "오른쪽 클릭: 메뉴 (시신경 위치 지정, 돋보기 배율, 미니맵)<br><br>"
             "<b>3D 안구</b><br>"
             "간단히 / 자세히: 가벼운 기본 모형 / 실제 해부 구조<br>"
+            "앞쪽 절개 / 세로 단면 + 슬라이더: 안구를 여는 방식과 깊이 · 망막 투시: 망막을 바깥에서 보기<br>"
+            "▶ 슬릿 스캔: 단면에 화각 → 슬릿이 사진을 위에서 아래로 → 사진을 입힌 3D 안구 (누르면 멈춤) · "
+            "크게 보기: 화면 전체 (Space 재생, Esc 돌아가기)<br>"
             "드래그: 회전 · 휠: 커서가 가리키는 곳으로 확대 · 가운데 버튼 또는 Shift+드래그: 이동<br>"
             "+/−: 확대·축소 · 더블클릭 또는 0: 처음 보기<br><br>"
             "<b>단축키</b><br>"
@@ -1436,8 +1506,162 @@ class MainWindow(QMainWindow):
         self.lbl_status.setText("이 영상의 화각·투영을 저장했습니다")
 
     def _on_cut(self, v: int) -> None:
-        self.eye3d.cut = v / 100.0 if v < 100 else 1.0
+        if self._show.active():               # the user takes over from the presentation
+            self._show.stop()
+            self.s_cut.blockSignals(True)
+            self.s_cut.setValue(v)
+            self.s_cut.blockSignals(False)
+        mode = self.c_view3d.currentData()
+        self._cut_values[mode] = v
+        if mode == "section":                 # 0: through the axis (half) … 100: closed
+            self._tween._finish()
+            self.eye3d.half = 1.0 - v / 100.0
+        else:
+            self.eye3d.cut = v / 100.0 if v < 100 else 1.0
         self.eye3d.update()
+
+    # -- 세로 단면 · 망막 투시 · 슬릿 스캔 -------------------------------------------------
+    def _sync_view_combo(self, mode: str) -> None:
+        """Show ``mode`` in the selector and its depth on the slider (no signals)."""
+        for w in (self.c_view3d, self.s_cut):
+            w.blockSignals(True)
+        self.c_view3d.setCurrentIndex(max(0, self.c_view3d.findData(mode)))
+        self.s_cut.setRange(*((0, 100) if mode == "section" else (-30, 100)))
+        self.s_cut.setValue(self._cut_values[mode])
+        for w in (self.c_view3d, self.s_cut):
+            w.blockSignals(False)
+        self.s_cut.setEnabled(self.r_out.isChecked())
+
+    def _set_3d_view(self, mode: str, animate: bool = True) -> None:
+        """앞쪽 절개 (front) or 세로 단면 (section), gliding to a fitting camera."""
+        self._show.stop()
+        self._sync_view_combo(mode)
+        eye = self.eye3d
+        # the front stays closed while the section plane moves; the front cut opens at the end
+        eye.cut = 1.0
+        if mode == "section":
+            goal, half, done = eye.section_pose(), 1.0 - self._cut_values["section"] / 100.0, None
+        else:
+            goal = None if eye.half < 0.5 else {
+                "yaw": 38.0, "pitch": 18.0, "dist": eye.DIST0, "target": (0.0, 0.0, 0.0)}
+            half, done = 0.0, lambda: self._on_cut(self.s_cut.value())
+        if not self.r_out.isChecked():       # 내부: applies when going back outside
+            goal = None
+        self._tween.go(goal, half, eye.xray, duration=0.9 if animate else 0.0, done=done)
+        self._apply_fov_marks()
+
+    def _on_xray(self, on: bool) -> None:
+        if self._show.active():               # stopping syncs the box to the eye: keep the user's choice
+            self._show.stop()
+            self.c_xray3d.blockSignals(True)
+            self.c_xray3d.setChecked(on)
+            self.c_xray3d.blockSignals(False)
+        self._tween.go(None, self.eye3d.half, 1.0 if on else 0.0, duration=0.6)
+
+    def _apply_fov_marks(self, *_) -> None:
+        on = self.c_fov3d.isChecked()
+        self._show.show_fov = on
+        if self._show.playing:                # the presentation draws its own
+            return
+        eye = self.eye3d
+        eye.fov_sweep = eye.fov_alpha = eye.fov_ring = 1.0 if on else 0.0
+        eye.update()
+
+    def _on_fov_marks(self, on: bool) -> None:
+        self._apply_fov_marks()
+
+    def _on_side_photo(self, on: bool) -> None:
+        self.scan_photo.setVisible(on)
+        self.eye3d.black = on or self._full3d is not None
+        if on:
+            total = max(2, self.split3d.width())
+            self.split3d.setSizes([total // 2, total - total // 2])
+        self.eye3d.update()
+
+    def _toggle_scan(self) -> None:
+        if self._show.playing:
+            self._show.stop()
+            return
+        self._show.xray_after = self.c_xray3d.isChecked()
+        if self.current is None:
+            self.lbl_status.setText("사진을 먼저 고르세요")
+            return
+        if self.tabs.currentIndex() != 1:
+            self.tabs.setCurrentIndex(1)
+        if not self.r_out.isChecked():
+            self.r_out.setChecked(True)
+        if not self.c_side3d.isChecked():
+            self.c_side3d.setChecked(True)
+        self._tween._finish()
+        if self.eye3d.detail != "detailed":   # the presentation shows the realistic eye (not saved as the look)
+            self._set_3d_detail("detailed", save=False)
+        self._show.show_fov = self.c_fov3d.isChecked()
+        self.eye3d.cut = 1.0                  # it ends in 세로 단면: no front cut
+        self._cut_values["section"] = 0
+        self._sync_view_combo("section")
+        self._show.start()
+        self.b_scan.setText("■ 멈춤")
+        self.eye3d.setFocus()
+        self.lbl_status.setText("슬릿 스캔 — 안구를 누르거나 돌리면 멈춥니다")
+
+    def _sync_from_eye(self) -> None:
+        """After the presentation: 세로 단면 at the eye's depth, 망막 투시 as the eye shows it."""
+        self._cut_values["section"] = round(100.0 * (1.0 - self.eye3d.half))
+        self._sync_view_combo("section")
+        self.c_xray3d.blockSignals(True)
+        self.c_xray3d.setChecked(self.eye3d.xray > 0.5)
+        self.c_xray3d.blockSignals(False)
+
+    def _on_scan_finished(self) -> None:
+        """The presentation is over; the eye keeps turning until the user takes over."""
+        self.b_scan.setText("▶ 슬릿 스캔")
+        self._sync_from_eye()
+
+    def _on_scan_stopped(self) -> None:
+        self.b_scan.setText("▶ 슬릿 스캔")
+        self._sync_from_eye()
+        self._apply_fov_marks()
+
+    def _toggle_full_3d(self) -> None:
+        """The 3D eye (and the photo) on the whole screen, e.g. to explain a photo to a patient."""
+        if self._full3d is not None:
+            self._exit_full_3d()
+            return
+        win = _FullScreen3D()
+        win.setWindowTitle("3D 안구")
+        win.closed.connect(self._exit_full_3d)
+        lay = QVBoxLayout(win)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(self.split3d)           # re-parented: the 3D view makes its GL context again
+        for key, fn in (("Esc", self._exit_full_3d), ("F11", self._exit_full_3d), ("Space", self._toggle_scan)):
+            QShortcut(QKeySequence(key), win, activated=fn)
+        self._full3d = win
+        self._full3d_note = QLabel("3D 안구를 화면 전체로 보고 있습니다 — Esc 또는 [돌아가기]")
+        self._full3d_note.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._full3d_note.setObjectName("hint3d")
+        self._lay3d.addWidget(self._full3d_note, 1)
+        self.scan_photo.hint = "Space: 슬릿 스캔 · Esc: 돌아가기"
+        self.eye3d.black = True
+        self.b_full3d.setText("돌아가기")
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is not None:
+            win.setGeometry(screen.geometry())
+        win.showFullScreen()
+        self.eye3d.setFocus()
+
+    def _exit_full_3d(self) -> None:
+        win, self._full3d = self._full3d, None
+        if win is None:
+            return
+        self._full3d_note.deleteLater()
+        self._lay3d.addWidget(self.split3d, 1)
+        self.split3d.show()
+        win.closed.disconnect(self._exit_full_3d)
+        win.hide()
+        win.deleteLater()
+        self.scan_photo.hint = ""
+        self.eye3d.black = self.c_side3d.isChecked()
+        self.b_full3d.setText("크게 보기")
 
     # -- 2D zoom ---------------------------------------------------------------------
     def _show_zoom(self, z: float) -> None:
@@ -1481,7 +1705,10 @@ class MainWindow(QMainWindow):
             self.settings.save()
 
     def _on_3d_mode(self, outside: bool) -> None:
+        self._show.stop()
+        self._tween._finish()
         self.s_cut.setEnabled(outside)
+        self.c_view3d.setEnabled(outside)
         self.eye3d.set_mode("outside" if outside else "inside")
 
     def _mark_3d_dirty(self) -> None:
@@ -1491,21 +1718,42 @@ class MainWindow(QMainWindow):
 
     def _update_3d(self) -> None:
         self._3d_dirty = False
+        self._show.stop()                     # another photo: the presentation was about the last one
         row = self.current
         if row is None:
             self.eye3d.set_image(None)
+            self.scan_photo.set_image(None)
             return
         rgb = self._load(row)
         if rgb is None:
             return
         circle = (row["circle_cx"], row["circle_cy"], row["circle_r"]) if row["circle_r"] else imaging.detect_circle(rgb)
         tex = self._display_rgb(row) if self.c_adj3d.isChecked() else rgb
-        self.eye3d.set_image(tex, imaging.fundus_alpha(rgb, circle), circle)
+        alpha = imaging.fundus_alpha(rgb, circle)
+        self.eye3d.set_image(tex, alpha, circle)
+        self.scan_photo.set_image(tex, alpha, circle)
+
+    def grab_3d(self) -> QImage:
+        """The 3D view as on the screen: with 사진 나란히 the eye and the photo side by side.
+        (The eye comes from its framebuffer — QWidget.grab would lose the drawn field of view.)"""
+        eye = self.eye3d.grabFramebuffer()
+        if not self.scan_photo.isVisible():
+            return eye
+        dpr = eye.devicePixelRatio()
+        out = QImage(round(self.split3d.width() * dpr), round(self.split3d.height() * dpr),
+                     QImage.Format.Format_RGB32)
+        out.setDevicePixelRatio(dpr)
+        out.fill(QColor(0, 0, 0))
+        p = QPainter(out)
+        p.drawImage(self.eye3d.geometry().topLeft(), eye)
+        p.drawPixmap(self.scan_photo.geometry().topLeft(), self.scan_photo.grab())
+        p.end()
+        return out
 
     def _save_3d(self) -> None:
         if self.tabs.currentIndex() != 1:
             self.tabs.setCurrentIndex(1)
-        img = self.eye3d.grabFramebuffer()
+        img = self.grab_3d()
         path, _ = QFileDialog.getSaveFileName(self, "3D 화면 저장", "eye3d.png", "PNG (*.png)")
         if path:
             img.save(path)
@@ -1526,6 +1774,9 @@ class MainWindow(QMainWindow):
             self._push_mapping()
 
     def _on_tab(self, i: int) -> None:
+        if i != 1:
+            self._show.stop()
+            self._tween._finish()
         if i == 1 and self._3d_dirty:
             self._update_3d()
         if i == 2:
@@ -1706,6 +1957,8 @@ class MainWindow(QMainWindow):
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(it.text()).parent)))
 
     def closeEvent(self, e):
+        self._show.stop()
+        self._exit_full_3d()
         try:
             self.settings.save()
         except OSError:
