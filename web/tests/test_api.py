@@ -19,7 +19,7 @@ def test_health(client):
 def test_index_page(client):
     r = client.get("/")
     assert r.status_code == 200
-    assert "슬릿램프" in r.text
+    assert "안저" in r.text
 
 
 def test_favicon(client):

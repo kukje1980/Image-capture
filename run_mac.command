@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 슬릿램프 영상 시스템 (macOS) - 소스에서 바로 실행 (Finder 에서 더블클릭)
+# 안저 영상 시스템 (macOS) - 소스에서 바로 실행 (Finder 에서 더블클릭)
 #   처음 한 번은 가상환경을 만들고 의존성을 설치한다.
 #   하드웨어 없이 확인하려면 터미널에서:  ./run_mac.command --source synthetic
 cd "$(dirname "$0")" || exit 1

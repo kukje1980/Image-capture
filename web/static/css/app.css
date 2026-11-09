@@ -1,4 +1,4 @@
-/* 슬릿램프 영상 시스템 — "Clinical Graphite" 디자인
+/* 안저 영상 시스템 — "Clinical Graphite" 디자인
  * 안과 영상 프로그램(VK-2, EyeSuite, IMAGEnet 등)처럼 어두운 그래파이트 작업 공간을 기본으로
  * 영상에 시선이 모이게 하고, 밝은 테마는 상단 테마 버튼으로 전환한다. */
 :root {
@@ -220,7 +220,8 @@ body[data-view="all"] .video-frame.live { cursor: crosshair; touch-action: none;
 
 .video-frame { position: relative; background: #000; border-radius: var(--radius); overflow: hidden; flex: 1; min-height: 320px;
   box-shadow: inset 0 0 0 1px rgba(255,255,255,.06), var(--shadow); }
-/* 마이봄 촬영 모드 */
+/* 마이봄 촬영 모드 — 안저 전용판에서는 숨김 (app.js FEATURES.meibo) */
+body:not(.feat-meibo) #btn-meibo, body:not(.feat-meibo) .ptab[data-tab="meibo"] { display: none !important; }
 .hud-chip.hud-meibo, .meibo-guide, .mb-ctl { display: none; }   /* .hud-chip 보다 우선 */
 body.meibo-on .hud-meibo { display: inline-flex; color: #a5f3fc; box-shadow: inset 0 0 0 1px rgba(34,211,238,.6); }
 body.meibo-on .video-frame video, body.meibo-on .video-frame canvas.freeze { filter: grayscale(1); }

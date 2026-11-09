@@ -44,7 +44,7 @@ async def lifespan(app: FastAPI):
     app.state.db = None
 
 
-app = FastAPI(title="슬릿램프 영상 시스템", lifespan=lifespan)
+app = FastAPI(title="안저 영상 시스템", lifespan=lifespan)
 
 # ---------------- 접속 비밀번호 (선택) ----------------
 AUTH_COOKIE = "slitlamp_auth"

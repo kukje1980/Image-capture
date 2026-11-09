@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 슬릿램프 영상 시스템 - macOS 앱(.app) + 설치 디스크 이미지(.dmg) 빌드
+# 안저 영상 시스템 - macOS 앱(.app) + 설치 디스크 이미지(.dmg) 빌드
 #   사용:  ./build_mac.sh            (기본)      → dist/SlitLampImaging.app + .dmg
 #          ./build_mac.sh keeler     (Keeler 전용) → dist/KeelerSlitLamp.app + .dmg
 # 필요:   macOS 11 이상, Python 3.11 이상 (python.org 설치본 또는 Homebrew)
@@ -29,7 +29,7 @@ VERSION="$("$PY" -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "
 ARCH="$(uname -m)"
 
 echo "===================================================="
-echo " 슬릿램프 영상 시스템 - macOS 빌드  ($BRAND, v$VERSION, $ARCH, $("$PY" --version))"
+echo " 안저 영상 시스템 - macOS 빌드  ($BRAND, v$VERSION, $ARCH, $("$PY" --version))"
 echo "===================================================="
 
 echo "[1/4] 빌드용 가상환경 + 의존성 설치..."

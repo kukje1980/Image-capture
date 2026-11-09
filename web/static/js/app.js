@@ -1,4 +1,4 @@
-/* 슬릿램프 영상 시스템 웹앱 프런트엔드.
+/* 안저 영상 시스템 웹앱 프런트엔드.
  * - navigator.mediaDevices.getUserMedia 로 캡처 장비 라이브
  * - canvas.toBlob (사진) / MediaRecorder (동영상)
  * - 저장: (a) 서버 POST /api/v1/captures  (b) File System Access API 로 지정 폴더에도 동시 write
@@ -6,6 +6,9 @@
 (() => {
   const $ = (id) => document.getElementById(id);
   const API = '/api/v1';
+  // 안저 촬영 전용: 마이봄샘(눈꺼풀) 모드는 숨김 — 다시 쓰려면 true (body.feat-meibo 로 버튼·Pro 탭이 보임)
+  const FEATURES = { meibo: false };
+  document.body.classList.toggle('feat-meibo', FEATURES.meibo);
 
   const state = {
     patients: [],
@@ -220,6 +223,10 @@
     { id: 'patients', label: '환자 목록', def: 'L', scope: 'all', btns: ['btn-patients'], run: () => openPatientList() },
     { id: 'newPatient', label: '신규 환자', def: 'N', scope: 'all', btns: ['btn-new-patient'], run: () => openPatientDialog(null) },
   ];
+  // 숨긴 기능의 단축키는 빼고 쓴다 (단축키 설정 창에도 나오지 않음)
+  for (let i = KEY_ACTIONS.length - 1; i >= 0; i--) {
+    if (!FEATURES.meibo && (KEY_ACTIONS[i].id === 'meibo' || KEY_ACTIONS[i].id === 'lid')) KEY_ACTIONS.splice(i, 1);
+  }
   const RESERVED = new Set(['Escape', 'Tab', 'Ctrl+Z', 'Ctrl+Y', 'Ctrl+Shift+Z', 'Meta+Z', 'Meta+Y', 'ArrowLeft', 'ArrowRight']);
   const defaultKeymap = () => Object.fromEntries(KEY_ACTIONS.map((a) => [a.id, a.def]));
   let keymap = defaultKeymap();

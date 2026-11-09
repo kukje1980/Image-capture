@@ -2,7 +2,7 @@
 
 같은 코드로 여러 브랜드 버전을 배포한다. 환경변수 SLITLAMP_BRAND 로 고른다.
     SLITLAMP_BRAND=keeler   → Keeler 전용 화면
-    (없거나 default)         → 기본 슬릿램프 영상 시스템
+    (없거나 default)         → 기본 안저 영상 시스템
 
 브랜드별 파일은 static/brand/<키>/ 에 둔다.
     theme.css   색 테마 (app.css 의 색 변수를 덮어씀)
@@ -18,19 +18,19 @@ STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 BRANDS: dict[str, dict] = {
     "default": {
-        "app_name": "슬릿램프 영상 시스템",
-        "sub": "Slit Lamp Imaging",
+        "app_name": "안저 영상 시스템",
+        "sub": "Fundus Imaging",
         "badge": "Web",
         "wordmark": "",
-        "report_title": "슬릿램프 영상 보고서",
+        "report_title": "안저 영상 보고서",
         "theme_color": "#0b0e13",
     },
     "keeler": {
-        "app_name": "Keeler 슬릿램프 영상 시스템",
-        "sub": "Slit Lamp Imaging",
+        "app_name": "Keeler 안저 영상 시스템",
+        "sub": "Fundus Imaging",
         "badge": "Keeler",
         "wordmark": "Keeler",
-        "report_title": "Keeler 슬릿램프 영상 보고서",
+        "report_title": "Keeler 안저 영상 보고서",
         "theme_color": "#052133",
         "logo_only": True,          # 로고가 있으면 옆의 프로그램 이름·배지를 숨김
     },

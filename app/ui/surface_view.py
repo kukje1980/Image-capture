@@ -101,7 +101,7 @@ def render_surface(model: SurfaceModel, width: int, height: int, yaw: float = DE
     """표면을 width×height BGR 영상으로 그린다 (웹 WebGL 화면과 같은 카메라·조명).
 
     격자 칸마다 화면에서 차지하는 크기만큼 칸 안을 촘촘히 표본(쌍선형 보간)으로 채운 뒤
-    z-버퍼(np.minimum.at)로 가까운 표본만 남긴다 → 가파른 벽(슬릿 빔)도 빈틈 없이 그려진다.
+    z-버퍼(np.minimum.at)로 가까운 표본만 남긴다 → 가파른 벽(밝은 띠)도 빈틈 없이 그려진다.
     """
     w, h = max(8, int(width)), max(8, int(height))
     if background is None or background.shape[:2] != (h, w):

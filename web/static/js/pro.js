@@ -1,4 +1,4 @@
-/* 슬릿램프 영상 시스템 — Pro 모드 (전문가용 영상 검토, VK-2 스타일 워크플로)
+/* 안저 영상 시스템 — Pro 모드 (전문가용 영상 검토, VK-2 스타일 워크플로)
  *
  *  LIVE     실시간 영상. CAPTURE(Space)로 정지/재개, SAVE로 환자 DB 저장
  *  1화면    단일 영상. PREV/NEXT(←/→), 휠 확대·드래그 이동
@@ -46,7 +46,7 @@
   };
   try { P.pxmm = Math.max(0, parseFloat(localStorage.getItem('slitlamp-pxmm')) || 0); } catch (_) { /* 저장소 차단 */ }
 
-  const BRAND = { report_title: '슬릿램프 영상 보고서', logo: null, ...(window.SLIT_BRAND || {}) };
+  const BRAND = { report_title: '안저 영상 보고서', logo: null, ...(window.SLIT_BRAND || {}) };
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const clamp = (x, lo, hi) => (x < lo ? lo : x > hi ? hi : x);
 

@@ -4,7 +4,7 @@
     1) 실행 옵션  --brand keeler
     2) 환경변수  SLITLAMP_BRAND=keeler   (Keeler 전용 설치본은 빌드 때 이 값이 들어감)
     3) 설정 파일 config.json 의 "brand"
-    4) 기본 (슬릿램프 영상 시스템)
+    4) 기본 (안저 영상 시스템)
 
 UI 모듈이 처음 import 되기 전에 select() 로 정해야 아이콘 색 등이 반영된다 (app/__main__.py 참고).
 """
@@ -18,18 +18,18 @@ ENV_KEY = "SLITLAMP_BRAND"
 
 BRANDS: dict[str, dict] = {
     "default": {
-        "app_name": "슬릿램프 영상 시스템",
-        "window_title": "슬릿램프 디지털 영상 시스템",
-        "report_title": "슬릿램프 영상 보고서",
+        "app_name": "안저 영상 시스템",
+        "window_title": "안저 디지털 영상 시스템",
+        "report_title": "안저 영상 보고서",
         "logo": None, "logo_dark": None, "icon": None,
         "logo_only": False,
         "palette": {},
     },
     # Keeler 공식 홈페이지의 로고·브랜드 색 (assets/brand/keeler/SOURCE.md)
     "keeler": {
-        "app_name": "Keeler 슬릿램프 영상 시스템",
-        "window_title": "Keeler 슬릿램프 영상 시스템",
-        "report_title": "Keeler 슬릿램프 영상 보고서",
+        "app_name": "Keeler 안저 영상 시스템",
+        "window_title": "Keeler 안저 영상 시스템",
+        "report_title": "Keeler 안저 영상 보고서",
         "logo": "brand/keeler/logo.svg",            # 밝은 화면용 (네이비 글자)
         "logo_dark": "brand/keeler/logo-dark.svg",  # 어두운 화면용 (흰 글자, 원본)
         "icon": "brand/keeler/app.png",

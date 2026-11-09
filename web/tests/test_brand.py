@@ -34,14 +34,14 @@ def _restore(monkeypatch):
 
 def test_default_brand_unchanged(monkeypatch, tmp_path):
     html = _client(monkeypatch, tmp_path, None).get("/").text
-    assert "<title>슬릿램프 영상 시스템</title>" in html
+    assert "<title>안저 영상 시스템</title>" in html
     assert 'class="brand-default"' in html and "brand/keeler" not in html
 
 
 def test_keeler_brand(monkeypatch, tmp_path):
     c = _client(monkeypatch, tmp_path, "keeler")
     html = c.get("/").text
-    assert "<title>Keeler 슬릿램프 영상 시스템</title>" in html
+    assert "<title>Keeler 안저 영상 시스템</title>" in html
     assert 'class="brand-keeler"' in html
     assert "/static/brand/keeler/theme.css" in html
     assert '"key": "keeler"' in html and "report_title" in html
@@ -67,8 +67,8 @@ def test_keeler_path_on_default_deployment(monkeypatch, tmp_path):
     """기본 배포에서도 /keeler 주소로 Keeler 화면이 열린다."""
     c = _client(monkeypatch, tmp_path, None)
     html = c.get("/keeler").text
-    assert "<title>Keeler 슬릿램프 영상 시스템</title>" in html and 'class="brand-keeler"' in html
-    assert "<title>슬릿램프 영상 시스템</title>" in c.get("/").text
+    assert "<title>Keeler 안저 영상 시스템</title>" in html and 'class="brand-keeler"' in html
+    assert "<title>안저 영상 시스템</title>" in c.get("/").text
 
 
 def test_keeler_login_branding(monkeypatch, tmp_path):
@@ -115,4 +115,4 @@ def test_keeler_header_shows_logo_only(monkeypatch, tmp_path):
 def test_default_header_keeps_title(monkeypatch, tmp_path):
     html = _client(monkeypatch, tmp_path, None).get("/").text
     header = html[html.index('<header class="topbar">'):html.index("</header>")]
-    assert "brand-title" in header and "슬릿램프 영상 시스템" in header
+    assert "brand-title" in header and "안저 영상 시스템" in header

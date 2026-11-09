@@ -16,7 +16,7 @@ if /i "%BRAND%"=="keeler" (
 )
 
 echo ====================================================
-echo  슬릿램프 영상 시스템 - Windows 설치파일 빌드 (!SLITLAMP_BUILD_BRAND!)
+echo  안저 영상 시스템 - Windows 설치파일 빌드 (!SLITLAMP_BUILD_BRAND!)
 echo ====================================================
 echo.
 

@@ -1,4 +1,4 @@
-﻿; Inno Setup 스크립트 — 슬릿램프 영상 시스템 Windows 설치 마법사
+﻿; Inno Setup 스크립트 — 안저 영상 시스템 Windows 설치 마법사
 ;
 ; 사용 전제: 먼저 PyInstaller로 dist\SlitLampImaging\ 폴더가 생성되어 있어야 합니다.
 ;   pyinstaller --noconfirm build.spec
@@ -6,7 +6,7 @@
 ;   "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\slitlamp.iss
 ; (repo 루트의 build_installer.bat 를 실행하면 위 과정을 한 번에 수행합니다.)
 
-#define MyAppName "슬릿램프 영상 시스템"
+#define MyAppName "안저 영상 시스템"
 #define MyAppNameEn "SlitLampImaging"
 #define MyAppVersion "0.1.0"
 #define MyAppPublisher "Kukje"

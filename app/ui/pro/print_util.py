@@ -36,7 +36,7 @@ def patient_line(patient) -> str:
     return "  ·  ".join(parts)
 
 
-def render_report(printer, patient, items: list, title: str = "슬릿램프 영상 보고서",
+def render_report(printer, patient, items: list, title: str = "안저 영상 보고서",
                   clinic: str = "", rule_color: str = "#0d9488") -> int:
     """items: [(bgr ndarray, caption str), ...]. 반환값: 출력 페이지 수."""
     if not items:

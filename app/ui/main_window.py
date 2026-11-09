@@ -202,9 +202,9 @@ class MainWindow(QMainWindow):
         if not (self.brand_logo and b.get("logo_only")):
             brand = QVBoxLayout()
             brand.setSpacing(0)
-            t1 = QLabel("슬릿램프 영상 시스템")
+            t1 = QLabel("안저 영상 시스템")
             t1.setObjectName("BrandTitle")
-            t2 = QLabel("SLIT LAMP IMAGING")
+            t2 = QLabel("FUNDUS IMAGING")
             t2.setObjectName("BrandSub")
             brand.addWidget(t1)
             brand.addWidget(t2)

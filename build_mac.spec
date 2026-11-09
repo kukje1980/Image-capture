@@ -11,7 +11,7 @@ APP_VERSION = "0.1.0"
 BRAND = os.environ.get("SLITLAMP_BUILD_BRAND", "default").lower()
 KEELER = BRAND == "keeler"
 APP_NAME = "KeelerSlitLamp" if KEELER else "SlitLampImaging"
-DISPLAY_NAME = "Keeler 슬릿램프 영상 시스템" if KEELER else "슬릿램프 영상 시스템"
+DISPLAY_NAME = "Keeler 안저 영상 시스템" if KEELER else "안저 영상 시스템"
 APP_ICON = "assets/brand/keeler/app.icns" if KEELER else "assets/icons/app.icns"
 BUNDLE_ID = "com.kukjemd.keelerslitlamp" if KEELER else "com.kukjemd.slitlampimaging"
 
