@@ -110,6 +110,7 @@
     <button class="btn btn-sm" id="btn-patients" title="환자 목록 (검색·선택·수정)"><svg class="ic"><use href="#i-list"/></svg>환자 목록</button>
     <button class="btn btn-sm btn-primary" id="btn-new-patient" title="신규 환자 등록"><svg class="ic"><use href="#i-plus"/></svg>신규 환자</button>
     <div class="top-actions">
+      <button class="btn btn-sm btn-quiet imp-btn" id="btn-import" hidden title="안저 카메라 폴더에서 사진 가져오기"><svg class="ic"><use href="#i-folder"/></svg><span id="imp-btn-label">가져오기</span></button>
       <span class="cam-chip" id="cam-chip" title="현재 카메라 · 해상도 (설정에서 변경)"><span class="status-dot" id="cam-chip-dot"></span><span id="cam-chip-text">카메라 꺼짐</span></span>
       <button class="btn btn-icon btn-quiet" id="btn-settings" title="설정 (카메라·해상도·저장·단축키·테마)" aria-label="설정"><svg class="ic"><use href="#i-gear"/></svg></button>
     </div>
@@ -554,6 +555,24 @@
       <div class="set-row"><span>PC 저장 폴더</span>
         <span class="set-inline"><span class="folder-status" id="folder-status" title="브라우저가 직접 저장할 로컬 폴더"><span class="dot"></span> 폴더 미지정</span>
         <button class="btn btn-sm" id="btn-folder"><svg class="ic"><use href="#i-folder"/></svg>폴더 지정</button></span></div>
+    </section>
+    <section class="set-sec" id="imp-sec">
+      <h4><svg class="ic"><use href="#i-folder"/></svg>폴더 가져오기 · 안저 카메라</h4>
+      <p class="set-note" id="imp-note">안저 카메라가 사진을 넣는 <b>서버 PC 의 폴더</b>를 지켜보다가, 파일 이름의 아이디·이름·날짜·좌우로 환자에게 등록하고 원본은 지웁니다.</p>
+      <label class="set-check"><input type="checkbox" id="imp-on"> 폴더에 들어온 사진을 자동으로 가져오기</label>
+      <label class="set-row"><span>폴더</span><input class="input" id="imp-dir" placeholder="예: C:\FundusExport" autocomplete="off" spellcheck="false"></label>
+      <label class="set-row"><span>파일 이름 형식</span><input class="input" id="imp-tpl" placeholder="비우면 자동 · 예: {id}_{name}_{date}_{eye}" autocomplete="off" spellcheck="false"
+        title="{id} 아이디(차트번호) · {name} 이름 · {date} 날짜 · {time} 시각 · {eye} 좌우 · {*} 무시 — 뒤에 붙는 순번은 무시"></label>
+      <label class="set-row"><span>확인용 이름</span><input class="input" id="imp-sample" placeholder="12345_홍길동_20261109_R.jpg" autocomplete="off" spellcheck="false"></label>
+      <div class="set-preview" id="imp-preview">카메라 사진 파일 이름을 넣으면 읽은 결과를 보여 줍니다.</div>
+      <label class="set-check"><input type="checkbox" id="imp-delete" checked> 등록한 뒤 원본 사진 지우기 <small>(끄면 '_가져옴' 폴더로)</small></label>
+      <label class="set-check"><input type="checkbox" id="imp-recursive" checked> 하위 폴더도 살펴보기</label>
+      <label class="set-check"><input type="checkbox" id="imp-switch" checked> 가져오면 그 환자로 바꾸기</label>
+      <div class="set-inline">
+        <button class="btn btn-sm btn-primary" id="imp-save"><svg class="ic"><use href="#i-save"/></svg>저장</button>
+        <button class="btn btn-sm" id="imp-run"><svg class="ic"><use href="#i-download"/></svg>지금 가져오기</button>
+      </div>
+      <div class="imp-status" id="imp-status"></div>
     </section>
     <section class="set-sec">
       <h4><svg class="ic"><use href="#i-keyboard"/></svg>단축키 · 화면</h4>

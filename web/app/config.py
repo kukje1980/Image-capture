@@ -39,6 +39,13 @@ def now():
         tz = timezone(timedelta(hours=9))
     return datetime.now(tz).replace(tzinfo=None)
 
+# 폴더 가져오기 (안저 카메라가 사진을 넣는 폴더 → 환자 DB). 서버 PC 의 폴더를 보므로
+# 인터넷 호스팅(Vercel)·'PC에만 저장' 정책에서는 쓰지 않는다. 설정은 DATA_DIR/import_settings.json.
+IMPORT_SETTINGS_PATH = DATA_DIR / "import_settings.json"
+IMPORT_AVAILABLE = not os.environ.get("VERCEL") and STORAGE_POLICY != "local"
+# 폴더 설정 변경은 서버 PC 에서만 (다른 PC 에서 바꾸면 서버의 다른 폴더 사진을 지울 수 있음) — 1 이면 어디서나
+IMPORT_REMOTE_EDIT = os.environ.get("SLITLAMP_IMPORT_REMOTE", "") == "1"
+
 # 사진 저장 경로 규칙: <media>/<chart_no>_<patient_id>/<YYYY-MM-DD>/<파일>
 SUBFOLDER_TEMPLATE = "{chart_no}_{patient_id}/{date}"
 

@@ -20,7 +20,8 @@ from fastapi.templating import Jinja2Templates
 
 from app import brands, config
 from app.db.database import Database
-from app.routers import captures, patients
+from app.folder_import import WebImporter
+from app.routers import captures, imports, patients
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
@@ -34,12 +35,16 @@ def _ensure_db(app: FastAPI) -> None:
     if getattr(app.state, "db", None) is None:
         config.ensure_dirs()
         app.state.db = Database(config.DB_PATH).init()
+        app.state.importer = WebImporter(app.state.db)      # 폴더 가져오기 (안저 카메라)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _ensure_db(app)
+    app.state.importer.start()                              # 서버 PC 폴더 감시 (인터넷 호스팅에서는 꺼짐)
     yield
+    app.state.importer.stop()
+    app.state.importer = None
     app.state.db.close()
     app.state.db = None
 
@@ -140,6 +145,7 @@ def logout():
 
 app.include_router(patients.router)
 app.include_router(captures.router)
+app.include_router(imports.router)
 
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 # 저장된 미디어 제공 (서버에 남긴 원본/영상)

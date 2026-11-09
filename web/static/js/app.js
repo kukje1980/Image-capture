@@ -81,6 +81,7 @@
     await loadPatients();
     updateCaptureButtons();
     setStatus('대기 중', 'idle');
+    loadImport();
   }
 
   function bindEvents() {
@@ -193,6 +194,13 @@
     $('cam-chip').addEventListener('click', () => $('settings-dialog').showModal());
     // 바깥(배경) 클릭으로 설정 창 닫기
     $('settings-dialog').addEventListener('click', (e) => { if (e.target === $('settings-dialog')) $('settings-dialog').close(); });
+    // 폴더 가져오기 (안저 카메라)
+    $('imp-save').addEventListener('click', saveImport);
+    $('imp-run').addEventListener('click', runImport);
+    $('btn-import').addEventListener('click', runImport);
+    const previewSoon = debounce(previewImport, 250);
+    $('imp-sample').addEventListener('input', previewSoon);
+    $('imp-tpl').addEventListener('input', previewSoon);
     $('keys-x').addEventListener('click', () => $('keys-dialog').close());
     $('keys-ok').addEventListener('click', () => $('keys-dialog').close());
     $('keys-reset').addEventListener('click', () => { keymap = defaultKeymap(); saveKeymap(); renderKeysTable(); applyKeyHints(); });
@@ -1545,6 +1553,96 @@
     const blob = await D3.snapshot();
     if (!blob) { toast('3D 화면이 아직 준비되지 않았습니다.', 'error'); return; }
     await persistCapture(patient, 'photo', blob, 'png', $('eye-select').value, null, '3D');
+  }
+
+  // ---- 폴더 가져오기: 안저 카메라가 사진을 넣는 서버 PC 폴더 → 파일 이름으로 환자 DB 등록 ----
+  const imp = { seq: null, timer: null, st: null };
+  async function loadImport() {
+    const sec = $('imp-sec');
+    if (LOCAL_MODE) {                                    // 브라우저에만 저장하는 모드: 서버가 폴더를 볼 수 없음
+      sec.classList.add('off');
+      $('imp-note').textContent = "'이 PC에만 저장' 모드에서는 폴더 가져오기를 쓸 수 없습니다. 서버 저장 또는 윈도우·맥 앱을 쓰세요.";
+      $('imp-run').disabled = true;
+      return;
+    }
+    try { renderImport(await api('/import'), true); } catch (_) { sec.hidden = true; }
+  }
+  function renderImport(st, fill) {
+    imp.st = st;
+    const s = st.settings || {};
+    if (fill) {
+      $('imp-on').checked = !!s.enabled; $('imp-dir').value = s.dir || ''; $('imp-tpl').value = s.template || '';
+      $('imp-delete').checked = s.delete !== false; $('imp-recursive').checked = s.recursive !== false;
+      $('imp-switch').checked = s.switch_patient !== false;
+    }
+    const editable = st.available && st.can_edit;
+    $('imp-sec').classList.toggle('off', !editable);
+    $('imp-run').disabled = !st.available || !s.dir;
+    if (!st.available) $('imp-note').textContent = '이 서버(인터넷 호스팅 · PC에만 저장)에서는 폴더 가져오기를 쓸 수 없습니다. 클리닉 PC 에서 실행한 서버나 윈도우·맥 앱을 쓰세요.';
+    else if (!st.can_edit) $('imp-note').innerHTML = '폴더 설정은 <b>서버를 실행한 PC</b> 에서만 바꿀 수 있습니다. 여기서는 상태 확인과 지금 가져오기만 됩니다.';
+    const lines = [];
+    lines.push(st.running ? `<b>켜짐</b> · ${escHtml(s.dir)}` : (s.enabled && !st.folder_ok ? `폴더가 없습니다: ${escHtml(s.dir)}` : '꺼짐'));
+    lines.push(`가져온 사진 <b>${st.total_ok}</b>장 · 확인 필요 <b>${st.total_review}</b>장 (서버를 켠 뒤)`);
+    if (st.last_error) lines.push(`<span style="color:var(--record)">${escHtml(st.last_error)}</span>`);
+    const recent = (st.recent || []).slice(0, 4);
+    $('imp-status').innerHTML = lines.join('<br>') + (recent.length ? '<ul>' + recent.map((r) =>
+      `<li class="${r.ok ? '' : 'bad'}">${escHtml(r.time)} ${escHtml(r.file)} — ${escHtml(r.message)}</li>`).join('') + '</ul>' : '');
+    const b = $('btn-import');
+    b.hidden = !st.available || !s.dir;
+    b.classList.toggle('on', !!st.running);
+    $('imp-btn-label').textContent = st.running ? '가져오기 켜짐' : '가져오기';
+    b.title = (st.running ? `자동 가져오기 켜짐 — ${s.dir}` : '자동 가져오기 꺼짐') + ` · 가져온 ${st.total_ok}장 · 확인 필요 ${st.total_review}장 · 누르면 지금 가져오기`;
+    if (imp.seq !== null && st.seq !== imp.seq) onImported(st, st.seq - imp.seq);
+    imp.seq = st.seq;
+    clearInterval(imp.timer);
+    imp.timer = st.running ? setInterval(pollImport, 4000) : null;
+  }
+  async function pollImport() {
+    if (document.hidden) return;
+    try { renderImport(await api('/import'), false); } catch (_) { /* 잠시 끊김 */ }
+  }
+  /** 서버가 새 사진을 가져옴 → 환자 목록·사진 목록 새로 고치고, 설정하면 그 환자로 */
+  async function onImported(st, n) {
+    const last = (st.recent || []).find((r) => r.ok);
+    await loadPatients();
+    if (last && st.settings.switch_patient && !state.isRecording && last.patient_id && last.patient_id !== state.currentPatientId) {
+      if (!state.patients.find((p) => p.id === last.patient_id)) {
+        try { state.patients.unshift(await api(`/patients/${last.patient_id}`)); } catch (_) { /* 목록에 없음 */ }
+        await loadPatients();
+      }
+      selectPatient(last.patient_id);
+    }
+    document.dispatchEvent(new CustomEvent('slit:captures'));
+    if (last) toast(`안저 사진 ${Math.max(1, n)}장 가져옴 · ${last.patient_name} (${last.chart_no})`, 'success');
+  }
+  function importBody() {
+    return { enabled: $('imp-on').checked, dir: $('imp-dir').value.trim(), template: $('imp-tpl').value.trim(),
+      delete: $('imp-delete').checked, recursive: $('imp-recursive').checked, switch_patient: $('imp-switch').checked, interval_sec: 3 };
+  }
+  async function saveImport() {
+    try {
+      renderImport(await api('/import', { method: 'PUT', body: JSON.stringify(importBody()) }), true);
+      toast($('imp-on').checked ? '폴더 가져오기를 켰습니다' : '폴더 가져오기 설정을 저장했습니다', 'success');
+    } catch (e) { toast('저장하지 못했습니다: ' + e.message, 'error'); }
+  }
+  async function runImport() {
+    try {
+      const r = await api('/import/run', { method: 'POST' });
+      const ok = r.items.filter((i) => i.ok).length, bad = r.items.length - ok;
+      renderImport(r, false);
+      if (!r.items.length) toast(r.last_error || '가져올 새 사진이 없습니다', r.last_error ? 'error' : undefined);
+      else if (bad) toast(`가져옴 ${ok}장 · 확인 필요 ${bad}장 ('_확인필요' 폴더)`, 'error');
+    } catch (e) { toast('가져오지 못했습니다: ' + e.message, 'error'); }
+  }
+  async function previewImport() {
+    const name = $('imp-sample').value.trim(), box = $('imp-preview');
+    box.classList.remove('ok', 'bad');
+    if (!name) { box.textContent = '카메라 사진 파일 이름을 넣으면 읽은 결과를 보여 줍니다.'; return; }
+    try {
+      const r = await api('/import/preview', { method: 'POST', body: JSON.stringify({ filename: name, template: $('imp-tpl').value }) });
+      box.textContent = '→ ' + r.summary;
+      box.classList.add(r.ok ? 'ok' : 'bad');
+    } catch (e) { box.textContent = '확인하지 못했습니다: ' + e.message; box.classList.add('bad'); }
   }
 
   // ---- thumbnails ----

@@ -54,6 +54,19 @@ class Database:
                 ).fetchall()
         return [dict(r) for r in rows]
 
+    def find_patient_by_code(self, code: str) -> Optional[dict]:
+        """차트번호(우선) 또는 환자ID 가 정확히 같은 환자 (폴더 가져오기)."""
+        code = (code or "").strip()
+        if not code:
+            return None
+        with self._lock:
+            r = self._conn.execute(
+                """SELECT * FROM patients WHERE chart_no=? OR patient_id=?
+                   ORDER BY (chart_no=?) DESC, id LIMIT 1""",
+                (code, code, code),
+            ).fetchone()
+        return dict(r) if r else None
+
     def get_patient(self, pid: int) -> Optional[dict]:
         with self._lock:
             r = self._conn.execute("SELECT * FROM patients WHERE id=?", (pid,)).fetchone()
