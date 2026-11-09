@@ -141,9 +141,9 @@ def test_polling_folder_and_unchanged_dirs(tmp_path, demo_dir):
     try:
         assert svc.scan_folder(s.watch_folders[0], full=True) == 2
         deadline = time.time() + 10
-        while svc.queued and time.time() < deadline:
+        while not svc.idle and time.time() < deadline:
             time.sleep(0.05)
-        time.sleep(0.3)
+        assert svc.idle
         assert svc.scan_folder(s.watch_folders[0]) == 0      # nothing new
         (drop / "b").mkdir()
         shutil.copy(demo_dir / "기타" / "IMG_0001.jpg", drop / "b" / "new.jpg")

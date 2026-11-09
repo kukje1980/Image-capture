@@ -94,6 +94,7 @@ class ImportService:
         self.on_status = on_status or (lambda s: None)
         self._q: queue.Queue = queue.Queue()
         self._pending: set[str] = set()
+        self._busy = False                 # the worker is importing a file it took off the queue
         self._lock = threading.Lock()
         self._known: dict[str, tuple[int, float]] = db.seen_index()
         self._dir_mtime: dict[str, tuple[float, float]] = {}  # dir -> (mtime, listed at)
@@ -120,6 +121,13 @@ class ImportService:
         with self._lock:
             return len(self._pending)
 
+    @property
+    def idle(self) -> bool:
+        """Nothing queued and no file being imported (``queued`` drops when the worker takes a
+        file, before it is imported). Its result may still be on its way to ``on_result``'s receiver."""
+        with self._lock:
+            return not self._pending and not self._busy
+
     def _run(self) -> None:
         while not self._stop.is_set():
             try:
@@ -130,6 +138,7 @@ class ImportService:
                 break
             with self._lock:
                 self._pending.discard(p)
+                self._busy = True
             try:
                 self.on_status(f"가져오는 중: {os.path.basename(p)} (대기 {self.queued})")
                 res = self.importer.import_file(p, folder, force=force)
@@ -143,6 +152,9 @@ class ImportService:
                     self.on_result(res)
             except Exception as exc:  # never let the worker die
                 self.on_result(ImportResult("error", p, str(exc)))
+            finally:
+                with self._lock:
+                    self._busy = False
             if self.queued == 0:
                 self.on_status("대기 중")
 

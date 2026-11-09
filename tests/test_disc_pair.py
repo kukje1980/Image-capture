@@ -1,7 +1,6 @@
 """디스크 2장: disc crops sized in disc diameters, OD/OS order, the sheet and the main-window flow."""
 import math
 import os
-import time
 
 import numpy as np
 import pytest
@@ -87,7 +86,7 @@ def app():
     return QApplication.instance() or QApplication([])
 
 
-def test_disc_pair_from_two_picked_photos(app, tmp_path, demo_dir):
+def test_disc_pair_from_two_picked_photos(app, tmp_path, demo_dir, wait_imports):
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest
 
@@ -102,15 +101,7 @@ def test_disc_pair_from_two_picked_photos(app, tmp_path, demo_dir):
     try:
         w.show()
         w.service.import_paths([str(demo_dir / "PatientCapture"), str(demo_dir / "RetiCam")])
-        deadline = time.time() + 30
-        while (db.find_patient("20260115001") is None or db.find_patient("PID20260310-0A1B2C3D") is None) \
-                and time.time() < deadline:
-            app.processEvents()
-            time.sleep(0.02)
-        settle = time.time() + 1.0          # results are coalesced on a 300 ms timer
-        while time.time() < settle:
-            app.processEvents()
-            time.sleep(0.02)
+        wait_imports(app, w)
         ref = db.find_patient("20260115001")["id"]       # 김민수: APOLLO OD + OS
         w._select_patient_ref(ref)
         assert w.thumbs.count() == 2
