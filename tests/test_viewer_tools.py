@@ -212,12 +212,12 @@ def test_main_window_tools(app, tmp_path, demo_dir, import_and_wait):
         assert w.current["id"] != first
         w._on_action("prev")
         assert w.current["id"] == first
-        w.tabs.setCurrentIndex(2)            # multi view
+        w._go("multi")                       # multi view
         w.multi.set_count(4)
         app.processEvents()
         assert sum(1 for c in w.multi.cells if c.image_id is not None and c.isVisible()) == 2
         assert all(c.view.tool == "zoom" for c in w.multi.cells)
-        w.tabs.setCurrentIndex(0)
+        w._go("2d")
         w._on_action("op:sharpen")
         new_id = w.service.importer.add_derived(w.current, w.view2d._rgb, "편집 영상 (테스트)")
         assert db.get_image(new_id)["patient_ref"] == w.current["patient_ref"]

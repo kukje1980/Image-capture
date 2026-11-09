@@ -117,7 +117,7 @@ def test_disc_pair_from_two_picked_photos(app, tmp_path, demo_dir, import_and_wa
 
         ctrl_click(other)                               # Ctrl+click: second photo, the shown one stays
         assert w.current["id"] == shown and w.compare["id"] == other_id
-        assert other.text().startswith("②") and w.tabs.currentIndex() == 3
+        assert other.text().startswith("②") and w._tab() == "cmp"
         assert all(v.has_image() for v in w.cmp_views)
         ctrl_click(other)                               # again: unpicked
         assert w.compare is None and not other.text().startswith("②")
