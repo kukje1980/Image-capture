@@ -135,7 +135,8 @@ class FolderImporter:
             return self._review(path, parsed, str(e))
         when = captured_at(parsed, photo_datetime(path))
         try:
-            cap = self.service.import_photo(path, patient, eye=parsed.eye, captured_at=when)
+            cap = self.service.import_photo(path, patient, eye=parsed.eye, captured_at=when,
+                                            note=parsed.field or "")
         except Exception as e:  # noqa: BLE001
             log.exception("import failed: %s", path)
             self.last_error = f"{path.name}: {e}"

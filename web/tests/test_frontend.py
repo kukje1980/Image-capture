@@ -21,7 +21,8 @@ def test_edit_tabs_and_tools_present():
     panes = re.findall(r'class="ppane[^"]*"\s+data-pane="(\w+)"', HTML)
     assert tabs == ["adj", "flt", "edit", "meibo"] and panes == tabs
     tools = re.findall(r'data-tool="(\w+)"', HTML)
-    assert set(tools) == {"pan", "magnify", "crop", "text", "arrow", "circle", "length", "angle", "calibrate", "tarsus", "dropout"}
+    assert set(tools) == {"pan", "magnify", "crop", "text", "arrow", "circle", "length", "angle", "calibrate", "cdr",
+                          "tarsus", "dropout"}
     for t in tools:                                 # 모든 도구에 사용 가능 모드 정의
         assert re.search(rf"\b{t}: \[", PRO_JS), t
 
@@ -91,3 +92,18 @@ def test_all_view_side_panes():
     assert "setView(prefGet('slitlamp-view') || 'all'" in app_js      # 기본 = 모두 보기, 마지막 기억
     assert "$('zoom-video').srcObject = stream" in app_js             # 확대 칸 = 같은 카메라 스트림
     assert "const usesQuad = (m) => m === 'multi' || m === 'all';" in app_js
+
+
+def test_fundus_features_wired():
+    """안저 전용: 마이봄 숨김, 촬영 부위 · Red-free · 원형 가이드, Pro C/D 비 · 좌우 비교."""
+    app_js = (WEB / "static" / "js" / "app.js").read_text(encoding="utf-8")
+    css = (WEB / "static" / "css" / "app.css").read_text(encoding="utf-8")
+    assert "const FEATURES = { meibo: false };" in app_js
+    assert 'body:not(.feat-meibo) #btn-meibo' in css and '.ptab[data-tab="meibo"]' in css
+    fields = re.findall(r'data-field="([^"]*)"', HTML)
+    assert fields == ["시신경유두 중심", "황반 중심", "주변부", ""]
+    for el in ("btn-redfree", "btn-fguide", "fundus-guide", "f-redfree", "hud-rf", "pro-pair"):
+        assert f'id="{el}"' in HTML, el
+    assert "id: 'redfree'" in app_js and "url(#f-redfree)" in css
+    assert "(field || null)" in app_js                          # 촬영 부위는 사진 메모로
+    assert "cdrRatios" in PRO_JS and "C/D 수직" in PRO_JS and "pairEyes" in PRO_JS

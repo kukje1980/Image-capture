@@ -209,7 +209,7 @@ class WebImporter:
             patient, created = self.db.get_patient(pid), True
         when = captured_at(parsed, photo_datetime(path))
         try:
-            cap = self._store(path, patient, parsed.eye, when)
+            cap = self._store(path, patient, parsed.eye, when, parsed.field)
         except Exception as e:  # noqa: BLE001
             log.exception("import failed: %s", path)
             self.last_error = f"{path.name}: {e}"
@@ -220,7 +220,7 @@ class WebImporter:
         return self._record(path, True, f"{patient['name']}({patient['chart_no']}) · {parsed.eye} · {when}",
                             patient, cap, created)
 
-    def _store(self, src: Path, patient: dict, eye: str, when: str) -> dict:
+    def _store(self, src: Path, patient: dict, eye: str, when: str, field: str | None = None) -> dict:
         from app.routers.captures import _target_paths
         ts = datetime.strptime(when, "%Y-%m-%d %H:%M:%S")
         ext = src.suffix.lower()
@@ -245,7 +245,7 @@ class WebImporter:
                 "patient_id": patient["id"], "media_type": "photo",
                 "file_path": str(rel_path).replace("\\", "/"), "url": url,
                 "captured_at": when, "eye": eye if eye in ("OD", "OS", "OU", "NA") else "NA",
-                "duration_ms": None, "note": None,
+                "duration_ms": None, "note": field or None,
             })
         except BaseException:
             abs_path.unlink(missing_ok=True)

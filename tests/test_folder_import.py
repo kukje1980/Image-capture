@@ -55,6 +55,15 @@ def test_captured_at_fallbacks():
     assert captured_at(parse_filename("12345_홍길동_R.jpg"), fb) == "2026-11-09 10:20:30"
 
 
+def test_field_from_filename():
+    assert parse_filename("12345_홍길동_20261109_R_MAC.jpg").field == "황반 중심"
+    assert parse_filename("12345_홍길동_20261109_L_disc.jpg").field == "시신경유두 중심"
+    assert parse_filename("12345_홍길동_20261109_L.jpg").field is None
+    r = parse_filename("12345_황반_홍길동_20261109_R.jpg")              # 부위 단어를 이름으로 읽지 않음
+    assert r.name == "홍길동" and r.field == "황반 중심"
+    assert parse_filename("12345_홍길동_20261109_R_황반.jpg", "{id}_{name}_{date}_{eye}").field == "황반 중심"
+
+
 def test_parser_same_in_web_and_desktop():
     a = (ROOT / "app" / "services" / "fundus_filename.py").read_text(encoding="utf-8")
     b = (ROOT / "web" / "app" / "fundus_filename.py").read_text(encoding="utf-8")

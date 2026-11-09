@@ -10,6 +10,8 @@
        {id}-{eye}-{date}            → A0123-L-2026.11.09.jpg
   형식 뒤에 붙는 순번·기타 글자(_001, (2) 등)는 무시한다.
 좌우: R·RE·RT·RIGHT·OD·우·우안 → OD,  L·LE·LT·LEFT·OS·좌·좌안 → OS,  B·BOTH·OU·양안 → OU
+촬영 부위(어느 형식이든 이름 안에 있으면): DISC·ONH·유두 → 시신경유두 중심, MAC·MACULA·황반 → 황반 중심,
+  PERI·주변 → 주변부
 """
 from __future__ import annotations
 
@@ -30,6 +32,9 @@ _NOISE = {
     "안저", "사진", "촬영", "컬러", "적색", "무적색",
 }
 TOKENS = ("id", "name", "date", "time", "eye")
+FIELDS = {"DISC": "시신경유두 중심", "ONH": "시신경유두 중심", "유두": "시신경유두 중심",
+          "시신경유두": "시신경유두 중심", "MAC": "황반 중심", "MACULA": "황반 중심", "황반": "황반 중심",
+          "PERI": "주변부", "주변": "주변부", "주변부": "주변부"}
 _SEP = r"[_\-\s.,()\[\]^~+]+"
 
 _DATE_RE = (r"(?P<y>(?:19|20)\d{2})[-._]?(?P<m>0[1-9]|1[0-2])[-._]?(?P<d>0[1-9]|[12]\d|3[01])")
@@ -45,6 +50,7 @@ class ParsedName:
     date: str | None = None          # 'YYYY-MM-DD'
     time: str | None = None          # 'HH:MM:SS'
     eye: str = "NA"                  # OD | OS | OU | NA
+    field: str | None = None         # 촬영 부위 (시신경유두 중심 · 황반 중심 · 주변부)
     error: str = ""
 
     @property
@@ -58,6 +64,8 @@ class ParsedName:
         if self.time:
             bits.append(f"시각 {self.time}")
         bits.append(f"좌우 {self.eye if self.eye != 'NA' else '-'}")
+        if self.field:
+            bits.append(self.field)
         return " · ".join(bits)
 
 
@@ -137,12 +145,21 @@ def template_regex(template: str) -> re.Pattern:
     return re.compile(r"^" + rx + r"(?:[_\-\s.(\[~+].*)?$", re.IGNORECASE)
 
 
+def field_of(stem: str) -> str | None:
+    for t in re.split(_SEP, stem):
+        f = FIELDS.get(t.upper()) or FIELDS.get(t)
+        if f:
+            return f
+    return None
+
+
 def parse_filename(filename: str, template: str = "") -> ParsedName:
     """파일 이름 → ParsedName. template 이 비어 있으면 자동 인식."""
     stem = stem_of(filename)
-    if (template or "").strip():
-        return _parse_template(stem, template)
-    return _parse_auto(stem)
+    r = _parse_template(stem, template) if (template or "").strip() else _parse_auto(stem)
+    if r.ok:
+        r.field = field_of(stem)
+    return r
 
 
 def _parse_template(stem: str, template: str) -> ParsedName:
@@ -202,7 +219,7 @@ def _parse_auto(stem: str) -> ParsedName:
             break
     # 이름: 한글 토큰이 먼저, 없으면 이어진 영문 토큰들
     words = [t for t in tokens if re.fullmatch(r"[A-Za-z가-힣]+", t) and t.upper() not in _NOISE
-             and t.upper() not in EYE_WORDS]
+             and t.upper() not in EYE_WORDS and t not in FIELDS and t.upper() not in FIELDS]
     hangul = [t for t in words if re.search(r"[가-힣]", t)]
     if hangul:
         r.name = hangul[0]

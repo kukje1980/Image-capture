@@ -36,7 +36,9 @@
     text: ['single', 'compare'], arrow: ['single', 'compare'], circle: ['single', 'compare'],
     length: ['single', 'compare'], angle: ['single', 'compare'], calibrate: ['single'],
     tarsus: ['single'], dropout: ['single'],               // 마이봄: 검판 영역 / 소실 영역 (다각형)
+    cdr: ['single', 'compare'],                            // 안저: 시신경유두 함몰비 (유두 → 함몰 두 번 드래그)
   };
+  const CDR_DISC = '#a3e635', CDR_CUP = '#fb923c';
   const POLY_TOOLS = new Set(['tarsus', 'dropout']);
 
   const P = {
@@ -232,7 +234,13 @@
     ctx2d(o).drawImage(c, x0, y0, w, h, 0, 0, w, h);
     return o;
   }
-  const PT_KEYS = [['x', 'y'], ['x1', 'y1'], ['x2', 'y2'], ['x3', 'y3']];
+  const PT_KEYS = [['x', 'y'], ['x1', 'y1'], ['x2', 'y2'], ['x3', 'y3'], ['x4', 'y4']];
+  /** C/D 비: (x1,y1)-(x2,y2) = 시신경유두 타원 상자, (x3,y3)-(x4,y4) = 함몰 타원 상자 */
+  function cdrRatios(a) {
+    const dv = Math.abs(a.y2 - a.y1), dh = Math.abs(a.x2 - a.x1);
+    return { v: dv ? Math.abs(a.y4 - a.y3) / dv : 0, h: dh ? Math.abs(a.x4 - a.x3) / dh : 0 };
+  }
+  const cdrLabel = (a) => { const r = cdrRatios(a); return `C/D 수직 ${r.v.toFixed(2)} · 수평 ${r.h.toFixed(2)}`; };
   function mapAnn(list, f) {
     return list.map((a) => {
       const b = { ...a };
@@ -312,6 +320,14 @@
       ctx.beginPath(); ctx.arc(a.x2, a.y2, r, t1, t1 + d, d < 0); ctx.stroke();
       const bis = t1 + d / 2;
       boxedLabel(ctx, `${angleDeg(a).toFixed(1)}°`, a.x2 + Math.cos(bis) * (r + 30 * s), a.y2 + Math.sin(bis) * (r + 30 * s), s, MEAS_COLOR);
+    } else if (a.type === 'cdr') {
+      const ell = (x1, y1, x2, y2) => { ctx.beginPath(); ctx.ellipse((x1 + x2) / 2, (y1 + y2) / 2, Math.abs(x2 - x1) / 2, Math.abs(y2 - y1) / 2, 0, 0, Math.PI * 2); ctx.stroke(); };
+      ctx.lineWidth = 2.5 * s;
+      ctx.strokeStyle = CDR_DISC; ell(a.x1, a.y1, a.x2, a.y2);
+      if (a.x3 == null) return;
+      ctx.setLineDash([8 * s, 5 * s]); ctx.strokeStyle = CDR_CUP; ell(a.x3, a.y3, a.x4, a.y4); ctx.setLineDash([]);
+      if (Math.abs(a.x4 - a.x3) < 3 && Math.abs(a.y4 - a.y3) < 3) return;
+      boxedLabel(ctx, cdrLabel(a), (a.x1 + a.x2) / 2, Math.min(a.y1, a.y2) - 22 * s, s, CDR_DISC);
     } else if (a.type === 'tarsus' || a.type === 'dropout') {
       // 마이봄: 검판(관심 영역) = 하늘색 점선, 소실 영역 = 붉은 채움
       const pts = a.pts || [];
@@ -442,8 +458,8 @@
       return true;
     }
     measurements() {
-      return this.ann.filter((a) => a.type === 'length' || a.type === 'angle')
-        .map((a) => [a.type, a.type === 'length' ? lengthLabel(lengthPx(a)) : `${angleDeg(a).toFixed(1)}°`]);
+      return this.ann.filter((a) => a.type === 'length' || a.type === 'angle' || a.type === 'cdr')
+        .map((a) => [a.type, a.type === 'length' ? lengthLabel(lengthPx(a)) : a.type === 'cdr' ? cdrLabel(a) : `${angleDeg(a).toFixed(1)}°`]);
     }
     // ---- 보기 ----
     resize() {
@@ -515,6 +531,12 @@
         return;
       }
       this.cv.setPointerCapture(e.pointerId);
+      if (tool === 'cdr') {                              // 1) 시신경유두 둘레 드래그 → 2) 함몰 드래그
+        const d = this.cdrDisc;
+        this.drag = { shape: 'cdr', cup: !!d };
+        this.temp = d ? { type: 'cdr', ...d, x3: p.x, y3: p.y, x4: p.x, y4: p.y } : { type: 'cdr', x1: p.x, y1: p.y, x2: p.x, y2: p.y };
+        return;
+      }
       if (tool === 'magnify') { this.drag = { lens: true }; this.lens = { sx: p.sx, sy: p.sy }; this.draw(); return; }
       if (DRAG_TOOLS.has(tool)) { this.drag = { shape: tool }; this.temp = { type: tool, x1: p.x, y1: p.y, x2: p.x, y2: p.y }; return; }
       this.drag = { sx: p.sx, sy: p.sy };
@@ -547,12 +569,35 @@
       if (!this.drag) { if (P.tool === 'angle' && this.apts.length) this.anglePreview(this.toImg(e)); return; }
       const p = this.toImg(e);
       if (this.drag.lens) { this.lens = { sx: p.sx, sy: p.sy }; this.draw(); return; }
+      if (this.drag.shape === 'cdr' && this.temp) {
+        if (this.drag.cup) { this.temp.x4 = p.x; this.temp.y4 = p.y; } else { this.temp.x2 = p.x; this.temp.y2 = p.y; }
+        this.draw(); return;
+      }
       if (this.drag.shape) { if (this.temp) { this.temp.x2 = p.x; this.temp.y2 = p.y; this.draw(); } return; }
       this.pan(p.sx - this.drag.sx, p.sy - this.drag.sy);
       this.drag = { sx: p.sx, sy: p.sy };
     }
     onUp() {
       if (!this.drag) return;
+      if (this.drag.shape === 'cdr') {
+        const t = this.temp, cup = this.drag.cup;
+        this.drag = null;
+        if (!cup) {                                      // 시신경유두를 그림 → 함몰을 기다림 (유두는 계속 보임)
+          if (t && Math.abs(t.x2 - t.x1) > 6 && Math.abs(t.y2 - t.y1) > 6) {
+            this.cdrDisc = { x1: t.x1, y1: t.y1, x2: t.x2, y2: t.y2 };
+            this.temp = { type: 'cdr', ...this.cdrDisc };
+            App.toast('이제 함몰(유두 안쪽의 밝은 부분)을 드래그하세요', 'success');
+          } else this.temp = null;
+          this.draw(); return;
+        }
+        this.temp = null;
+        if (t && Math.abs(t.x4 - t.x3) > 3 && Math.abs(t.y4 - t.y3) > 3) {
+          this.cdrDisc = null;
+          const { type, ...pts } = t;
+          this.addAnn({ type, ...pts });
+        } else { this.temp = { type: 'cdr', ...this.cdrDisc }; this.draw(); }
+        return;
+      }
       const t = this.temp, shape = this.drag.shape;
       this.drag = null; this.temp = null; this.lens = null;
       this.cv.style.cursor = cursorFor(P.tool);
@@ -565,7 +610,7 @@
       }
       this.draw();
     }
-    cancelTemp() { this.apts = []; this.poly = null; this.temp = null; this.lens = null; this.drag = null; this.draw(); }
+    cancelTemp() { this.apts = []; this.poly = null; this.cdrDisc = null; this.temp = null; this.lens = null; this.drag = null; this.draw(); }
     // ---- 그리기 ----
     annScale() { return Math.max(1, Math.max(this.iw, this.ih) / 900); }
     drawAnn(ctx, s, withTemp = true) {
@@ -823,9 +868,20 @@
   }
 
   // ================= 비교 =================
+  /** 좌우 비교: 가장 최근 우안(OD) · 좌안(OS) 사진을 나란히 (관례대로 우안이 왼쪽) */
+  async function pairEyes() {
+    const last = (eye) => { for (let k = P.caps.length - 1; k >= 0; k--) if (P.caps[k].eye === eye) return k; return -1; };
+    const i = last('OD'), j = last('OS');
+    if (i < 0 || j < 0) { App.toast('우안(OD)과 좌안(OS) 사진이 모두 있어야 합니다.', 'error'); return; }
+    P.sel = [i, j]; P.eyePair = true;
+    await setMode('compare');
+    refreshSel();
+  }
   async function prepareCompare() {
     let i, j;
-    if (P.sel.length === 2) [i, j] = [...P.sel].sort((a, b) => a - b);
+    const eyePair = P.eyePair;
+    P.eyePair = false;
+    if (P.sel.length === 2) [i, j] = eyePair ? P.sel : [...P.sel].sort((a, b) => a - b);   // 좌우 비교는 우안이 왼쪽
     else if (P.mode === 'single' && P.idx > 0) { i = P.idx - 1; j = P.idx; }
     else { App.toast('MULTI에서 비교할 영상 2장을 클릭해 선택하세요.', 'error'); return false; }
     const a = P.caps[i], b = P.caps[j];
@@ -1195,6 +1251,7 @@
       const kinds = new Set(v.ann.map((a) => a.type));
       const mb = kinds.has('tarsus') ? mbResult(v) : null;
       const note = mb ? mbNote(mb)
+        : kinds.has('cdr') ? 'C/D 측정'
         : kinds.has('length') || kinds.has('angle') ? '측정'
         : kinds.size ? '주석' : v.geometryChanged() ? '편집본' : '보정본';
       const blob = await new Promise((r) => v.renderFull().toBlob(r, 'image/png'));
@@ -1307,6 +1364,7 @@
   $('btn-pro').addEventListener('click', () => setPro(!P.on));
   $('btn-mode-capture').addEventListener('click', () => { if (P.on) setPro(false); });
   document.querySelectorAll('#pro-modes .pbtn').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
+  $('pro-pair').addEventListener('click', pairEyes);
   document.querySelectorAll('.pro-side [data-tool]').forEach((b) => b.addEventListener('click', () => setTool(b.dataset.tool)));
   $('pro-capture').addEventListener('click', toggleCapture);
   $('pro-save').addEventListener('click', saveLive);

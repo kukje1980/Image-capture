@@ -697,6 +697,21 @@ dialog.settings-pop { margin: 64px 14px auto auto; width: min(420px, 94vw); }
 .set-row > .btn, .set-inline { justify-self: start; }
 .set-inline { display: inline-flex; align-items: center; gap: 10px; }
 .set-link { justify-self: start; color: var(--accent-strong); }
+/* 안저: 촬영 부위 · Red-free 보기 · 원형 가이드 */
+.field-seg { display: inline-flex; padding: 3px; gap: 2px; background: var(--bg); border: 1px solid var(--rule); border-radius: 10px; }
+.field-seg button { height: 30px; padding: 0 9px; border: 0; border-radius: 7px; background: transparent; color: var(--ink-soft); font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.field-seg button:hover { color: var(--ink); }
+.field-seg button[aria-checked="true"] { background: var(--raised); color: var(--accent-strong); box-shadow: inset 0 0 0 1px var(--rule-strong); }
+#btn-redfree[aria-pressed="true"], #btn-fguide[aria-pressed="true"] { color: var(--accent-strong); background: var(--accent-soft); box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), .5); }
+body.redfree .video-frame video, body.redfree .video-frame canvas.freeze, body.redfree #zoom-video, body.redfree .quad-cell canvas, body.redfree .zoom-map { filter: url(#f-redfree); }
+.fundus-guide { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 2; pointer-events: none; display: none; }
+.fundus-guide circle, .fundus-guide path { fill: none; stroke: rgba(var(--accent-rgb), .8); stroke-width: 2.5; vector-effect: non-scaling-stroke; }
+.fundus-guide circle { stroke-dasharray: 10 8; }
+body.fguide .video-frame.live:not(.quad):not(.d3):not(.zoom) .fundus-guide { display: block; }
+.hud-chip.hud-rf { display: none; color: #b6f5c8; box-shadow: inset 0 0 0 1px rgba(60,207,122,.55); }
+body.redfree .hud-chip.hud-rf { display: inline-flex; }
+@media (max-width: 1500px) { #btn-redfree, #btn-fguide { font-size: 0; gap: 0; padding: 0 10px; } }
+
 /* 폴더 가져오기 (안저 카메라) */
 dialog.settings-pop { max-height: calc(100vh - 80px); }
 dialog.settings-pop .set-body { max-height: calc(100vh - 150px); }

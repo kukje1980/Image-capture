@@ -144,6 +144,13 @@
     $('btn-pause').addEventListener('click', togglePause);
     $('btn-capture').addEventListener('click', capturePhoto);
     $('btn-record').addEventListener('click', toggleRecord);
+    // 안저: 촬영 부위 · Red-free 보기 · 원형 가이드
+    document.querySelectorAll('#field-seg [data-field]').forEach((b) => b.addEventListener('click', () => setField(b.dataset.field)));
+    $('btn-redfree').addEventListener('click', () => setFundusView({ redfree: !fv.redfree }));
+    $('btn-fguide').addEventListener('click', () => setFundusView({ guide: !fv.guide }));
+    $('video').addEventListener('loadedmetadata', fitGuide);
+    setField(prefGet('slitlamp-field') || '');
+    setFundusView({});
     // 화면 보기 (큰 · 멀티 · 확대 · 3D)
     document.querySelectorAll('#view-seg [data-view], .pane-head[data-view]').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
     $('zoom-in').addEventListener('click', () => stepZoom(1));
@@ -222,6 +229,7 @@
       run: () => setView(VIEWS[(VIEWS.indexOf(view.mode) + 1) % VIEWS.length]) },
     { id: 'meibo', label: '마이봄샘 촬영 모드 켜기 / 끄기', def: 'M', scope: 'capture', btns: ['btn-meibo'], run: () => setMeibo(!meibo.on) },
     { id: 'lid', label: '마이봄 상안검 ↔ 하안검', def: 'U', scope: 'capture', run: () => { if (meibo.on) setLid(meibo.lid === 'upper' ? 'lower' : 'upper'); } },
+    { id: 'redfree', label: 'Red-free(무적색광) 보기 켜기 / 끄기', def: 'G', scope: 'capture', btns: ['btn-redfree'], run: () => setFundusView({ redfree: !fv.redfree }) },
     { id: 'eyeOD', label: '안구 OD (우안)', def: '1', scope: 'all', run: () => setEyeAny('OD') },
     { id: 'eyeOS', label: '안구 OS (좌안)', def: '2', scope: 'all', run: () => setEyeAny('OS') },
     { id: 'eyeOU', label: '안구 OU (양안)', def: '3', scope: 'all', run: () => setEyeAny('OU') },
@@ -759,6 +767,34 @@
     return `${chart}_${stamp}_${seq}_${eye || 'NA'}${tag}.${ext}`;
   }
 
+  // ---- 안저: 촬영 부위(사진 메모) · Red-free 보기 · 원형 가이드 ----
+  let field = '';
+  const fv = { redfree: false, guide: true };
+  try { Object.assign(fv, JSON.parse(localStorage.getItem('slitlamp-fview') || '{}')); } catch (_) { /* 기본값 */ }
+  function setField(f) {
+    field = ['시신경유두 중심', '황반 중심', '주변부'].includes(f) ? f : '';
+    prefSet('slitlamp-field', field);
+    document.querySelectorAll('#field-seg [data-field]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.field === field)));
+  }
+  function setFundusView(ch) {
+    Object.assign(fv, ch);
+    prefSet('slitlamp-fview', JSON.stringify(fv));
+    document.body.classList.toggle('redfree', !!fv.redfree);
+    document.body.classList.toggle('fguide', !!fv.guide);
+    $('btn-redfree').setAttribute('aria-pressed', String(!!fv.redfree));
+    $('btn-fguide').setAttribute('aria-pressed', String(!!fv.guide));
+    if (typeof D3 !== 'undefined') D3.touch(true);
+  }
+  /** 원형 가이드를 영상 비율에 맞춤 (안저 카메라의 원형 시야 지름 ≈ 짧은 변의 92%) */
+  function fitGuide() {
+    const v = $('video'), w = v.videoWidth, h = v.videoHeight;
+    if (!w || !h) return;
+    $('fundus-guide').setAttribute('viewBox', `0 0 ${w} ${h}`);
+    const c = $('fg-circle'), r = Math.min(w, h) * 0.46, k = Math.min(w, h) * 0.025;
+    c.setAttribute('cx', w / 2); c.setAttribute('cy', h / 2); c.setAttribute('r', r);
+    $('fg-cross').setAttribute('d', `M${w / 2} ${h / 2 - k}v${2 * k}M${w / 2 - k} ${h / 2}h${2 * k}`);
+  }
+
   // ---- 마이봄샘 촬영 모드 ----
   // 근적외선(NIR, 850nm 권장) 조명 + 뒤집은 눈꺼풀. 화면은 흑백·대비 강화, 저장은 흑백 원본(PNG) + 메모 '마이봄 상안검/하안검'
   const meibo = { on: false, lid: 'upper', enh: true, inv: false };
@@ -799,7 +835,7 @@
     const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
     if (!blob) return;
     const eye = $('eye-select').value;
-    await persistCapture(patient, 'photo', blob, 'png', eye, null, meibo.on ? `마이봄 ${LID_KO[meibo.lid]}` : null);
+    await persistCapture(patient, 'photo', blob, 'png', eye, null, meibo.on ? `마이봄 ${LID_KO[meibo.lid]}` : (field || null));
   }
 
   function toggleRecord() {
