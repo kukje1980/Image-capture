@@ -137,6 +137,23 @@ class PatientPanel(QFrame):
             return self._patients[idx]
         return None
 
+    def select_patient(self, pid) -> bool:
+        """목록을 새로 읽고 그 환자를 선택 (폴더 가져오기로 새 환자가 생겼을 때)."""
+        self.search.blockSignals(True)
+        self.search.setText("")
+        self.search.blockSignals(False)
+        self._reload()
+        for i, pp in enumerate(self._patients):
+            if pp.id == pid:
+                if i != self.combo.currentIndex():
+                    self.combo.setCurrentIndex(i)
+                return True
+        return False
+
+    def reload_keep(self) -> None:
+        """지금 선택은 그대로 두고 목록만 새로 (새 환자 반영)."""
+        self._reload()
+
     def refresh_current(self, patient) -> None:
         """현재 선택된 환자 정보만 갱신 (선택 유지)."""
         idx = self.combo.currentIndex()

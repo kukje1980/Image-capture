@@ -31,6 +31,14 @@ class AppConfig:
     thumbnail_max_side: int = 120
     newest_on_top: bool = True
     capture_view: str = "all"                # 촬영 화면 보기: all(모두) | single | multi | zoom | 3d
+    # 폴더 가져오기 — 안저 카메라가 사진을 넣는 폴더를 지켜보다 파일 이름으로 환자 DB 에 등록
+    import_enabled: bool = False
+    import_dir: str = ""
+    import_template: str = ""                # 비우면 자동 인식 · 예: {id}_{name}_{date}_{eye}
+    import_delete: bool = True               # 등록한 원본 사진은 지움 (끄면 '_가져옴' 폴더로 옮김)
+    import_recursive: bool = True            # 하위 폴더까지
+    import_switch_patient: bool = True       # 가져오면 그 환자로 바꿈
+    import_interval_sec: int = 3
     thumbs_folded: bool = False              # 아래 촬영 이미지 띠 접기
     zoom_level: float = 2.0                  # 확대 화면 배율
     d3_height: int = 40                      # 3D 화면 높이 (0~100)

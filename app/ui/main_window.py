@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 from collections import deque
 
-from PySide6.QtCore import QSize, Qt, QThread, QTimer
+from PySide6.QtCore import QObject, QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -27,6 +28,7 @@ from app.capture.frame_utils import device_names, find_sony_index
 from app.capture.sources import DeviceSource, FileSource, SyntheticSource
 from app.capture.video_recorder import VideoRecorder
 from app.services.capture_service import CaptureService
+from app.services.folder_import import FolderImporter
 from app.ui.control_bar import ControlBar
 from app.ui.image_viewer import ImageViewerDialog
 from app.ui.patient_panel import PatientPanel
@@ -47,6 +49,11 @@ from app.ui.video_view import VideoView
 from PySide6.QtWidgets import QApplication
 
 log = logging.getLogger(__name__)
+
+
+class _ImportBridge(QObject):
+    """폴더 가져오기 작업 스레드 → 화면 스레드로 결과 전달."""
+    done = Signal(object, bool)         # (가져온 항목들, 지금 가져오기 버튼으로 시작했는지)
 
 
 class MainWindow(QMainWindow):
@@ -84,6 +91,7 @@ class MainWindow(QMainWindow):
         self.recorder.error.connect(self._on_recorder_error)
 
         self._build_ui()
+        self._setup_import()
         self._pick_camera()
         self._start_camera()
 
@@ -253,6 +261,7 @@ class MainWindow(QMainWindow):
             lay.addWidget(b)
             return b
 
+        self.btn_import = tool("가져오기", "folder", "안저 카메라 폴더에서 사진 가져오기", self._import_now)
         tool("카메라 재연결", "videocam", "캡처 장비 다시 연결", self._restart_camera)
         tool("", "keyboard", "단축키 설정 (캡처·녹화·안구 등)", self._open_shortcuts)
         tool("설정", "sliders", "카메라·저장 위치·형식 설정", self._open_settings)
@@ -857,7 +866,99 @@ class MainWindow(QMainWindow):
         if dlg.exec():
             dlg.apply_to_config()
             self.thumbnail_panel.newest_on_top = self.config.newest_on_top
+            self._sync_import()
             self._restart_camera()
+
+    # ---- 폴더 가져오기 (안저 카메라 → 환자 DB) ----
+    def _setup_import(self) -> None:
+        self.importer = FolderImporter(self.db, self.service, self.config)
+        self._import_bridge = _ImportBridge(self)
+        self._import_bridge.done.connect(self._on_import_done)
+        self._import_thread: threading.Thread | None = None
+        self._import_timer = QTimer(self)
+        self._import_timer.timeout.connect(self._import_tick)
+        self._sync_import()
+
+    def _import_active(self) -> bool:
+        return bool(self.config.import_enabled and (self.config.import_dir or "").strip())
+
+    def _sync_import(self) -> None:
+        self._import_timer.setInterval(max(2, int(self.config.import_interval_sec or 3)) * 1000)
+        if self._import_active():
+            self._import_timer.start()
+        else:
+            self._import_timer.stop()
+        self._update_import_button()
+
+    def _import_tick(self, force: bool = False) -> None:
+        """폴더 검사는 작업 스레드에서 (큰 사진 복사·썸네일로 화면이 멈추지 않게)."""
+        if self._import_thread is not None and self._import_thread.is_alive():
+            return
+
+        def work():
+            try:
+                items = self.importer.scan(force=force)
+            except Exception:  # noqa: BLE001
+                log.exception("folder import failed")
+                items = []
+            self._import_bridge.done.emit(items, force)
+
+        self._import_thread = threading.Thread(target=work, name="folder-import", daemon=True)
+        self._import_thread.start()
+
+    def _import_now(self) -> None:
+        if not (self.config.import_dir or "").strip():
+            QMessageBox.information(self, "폴더 가져오기",
+                                    "설정에서 안저 카메라가 사진을 넣는 폴더를 먼저 정하세요.")
+            self._open_settings()
+            return
+        self.statusBar().showMessage("폴더를 살펴보는 중…", 2000)
+        self._import_tick(force=True)
+
+    def _on_import_done(self, items, forced: bool) -> None:
+        ok = [i for i in items if i.ok]
+        bad = [i for i in items if not i.ok]
+        if ok:
+            cur = self._current_patient
+            target = ok[-1].patient
+            if (self.config.import_switch_patient and not self._recording
+                    and (cur is None or cur.id != target.id)):
+                self.patient_panel.select_patient(target.id)           # 새 환자도 목록에 넣고 선택
+            elif any(i.new_patient for i in ok):
+                self.patient_panel.reload_keep()                        # 지금 환자 그대로, 사진 목록도 새로
+            elif cur is not None:
+                for i in ok:
+                    if i.capture.patient_id == cur.id:
+                        self.thumbnail_panel.add_capture(i.capture)
+                if self.mode_stack.currentIndex() == 1:
+                    self.pro.reload(select_last=False)
+            names = sorted({f"{i.patient.name}({i.patient.chart_no})" for i in ok})
+            msg = f"안저 사진 {len(ok)}장 가져옴 · {', '.join(names[:3])}{' 외' if len(names) > 3 else ''}"
+            self.control_bar.set_status(msg)
+            self.statusBar().showMessage(msg, 8000)
+        if bad:
+            self.statusBar().showMessage(
+                f"가져오기 확인 필요 {len(bad)}장 — {bad[0].message}", 15000)
+        if forced and not items:
+            self.statusBar().showMessage(self.importer.last_error or "가져올 새 사진이 없습니다", 4000)
+        self._update_import_button()
+
+    def _update_import_button(self) -> None:
+        b = getattr(self, "btn_import", None)
+        if b is None:
+            return
+        on = self._import_active()
+        imp = getattr(self, "importer", None)
+        b.setText(icons.gap("가져오기 켜짐" if on else "가져오기"))
+        b.setIcon(icons.icon("folder", ICON_ACCENT if on else ICON, 16))
+        tip = [f"폴더: {self.config.import_dir or '(정하지 않음)'}",
+               "자동 가져오기 켜짐" if on else "자동 가져오기 꺼짐 — 누르면 지금 한 번 가져옴",
+               "형식: " + (self.config.import_template or "자동 인식")]
+        if imp is not None:
+            tip.append(f"가져온 사진 {imp.total_ok}장 · 확인 필요 {imp.total_review}장")
+            if imp.last_error:
+                tip.append("문제: " + imp.last_error)
+        b.setToolTip("\n".join(tip))
 
     # ---- 종료 ----
     def closeEvent(self, event) -> None:  # noqa: N802
@@ -867,6 +968,9 @@ class MainWindow(QMainWindow):
         except Exception:  # noqa: BLE001
             log.warning("stop recording on close failed", exc_info=True)
         self._stop_camera()
+        self._import_timer.stop()
+        if self._import_thread is not None:
+            self._import_thread.join(timeout=5)        # 복사 중인 사진은 마치고 닫기
         try:
             self.db.close()
         except Exception:  # noqa: BLE001

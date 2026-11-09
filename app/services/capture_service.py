@@ -27,6 +27,18 @@ except ImportError:
 log = logging.getLogger(__name__)
 
 
+def read_image(path) -> Optional[np.ndarray]:
+    """한글 경로에서도 읽히게 (cv2.imread 는 윈도우에서 한글 경로를 못 읽음)."""
+    if cv2 is None:
+        return None
+    try:
+        data = np.fromfile(str(path), dtype=np.uint8)
+        return cv2.imdecode(data, cv2.IMREAD_COLOR) if data.size else None
+    except Exception:  # noqa: BLE001
+        log.warning("image read failed: %s", path, exc_info=True)
+        return None
+
+
 class CaptureService:
     def __init__(self, db, config):
         self.db = db
@@ -58,6 +70,46 @@ class CaptureService:
         )
         cap.id = self.db.captures.insert(cap)
         log.info("photo saved id=%s path=%s export=%s", cap.id, primary_path, export_path)
+        return cap
+
+    # ---- 폴더 가져오기 (안저 카메라 사진 원본 그대로) ----
+    def import_photo(self, src, patient: Patient, eye: str = "NA", captured_at: str = "",
+                     note: str = "") -> Capture:
+        """다른 프로그램이 만든 사진 파일을 다시 인코딩하지 않고 그대로 복사해 등록한다.
+
+        저장 위치·이름 규칙은 촬영 사진과 같다 (<root>/<환자>/<날짜>/<시각>_<안구>.<확장자>).
+        복사한 크기가 원본과 다르면 실패로 보고 등록하지 않는다 (원본은 호출한 쪽이 지운다).
+        """
+        src = Path(src)
+        ts = datetime.strptime(captured_at, "%Y-%m-%d %H:%M:%S") if captured_at else datetime.now()
+        ext = src.suffix.lower().lstrip(".") or "jpg"
+        primary_dir = self._patient_dir(self.config.media_root, patient, ts)
+        paths.ensure_dir(primary_dir)
+        dest = primary_dir / self._filename(ts, eye, ext)
+        n = 2
+        while dest.exists():                                   # 같은 초에 찍힌 사진
+            dest = primary_dir / f"{Path(self._filename(ts, eye, ext)).stem}_{n}.{ext}"
+            n += 1
+        tmp = dest.with_name(dest.name + ".part")
+        shutil.copyfile(src, tmp)
+        if tmp.stat().st_size != src.stat().st_size:
+            tmp.unlink(missing_ok=True)
+            raise OSError(f"복사한 크기가 원본과 다릅니다: {src.name}")
+        tmp.replace(dest)
+
+        frame = read_image(dest)
+        thumb_path = self._write_thumbnail(primary_dir, dest.stem, frame) if frame is not None else None
+        export_path = self._export(dest, patient, ts, dest.name)
+        cap = Capture(
+            patient_id=patient.id, media_type="photo",
+            file_path=str(dest),
+            export_path=(str(export_path) if export_path else None),
+            thumbnail_path=(str(thumb_path) if thumb_path else None),
+            captured_at=ts.strftime("%Y-%m-%d %H:%M:%S"),
+            eye=eye or "NA", duration_ms=None, note=note or None,
+        )
+        cap.id = self.db.captures.insert(cap)
+        log.info("photo imported id=%s src=%s path=%s", cap.id, src, dest)
         return cap
 
     # ---- 동영상 ----

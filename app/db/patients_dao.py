@@ -59,6 +59,19 @@ class PatientsDAO:
             ).fetchall()
         return [self._row(r) for r in rows]
 
+    def find_by_code(self, code: str) -> Optional[Patient]:
+        """차트번호(우선) 또는 환자ID 가 정확히 같은 환자 — 폴더 가져오기에서 파일 이름의 아이디로 찾는다."""
+        code = (code or "").strip()
+        if not code:
+            return None
+        with self._lock:
+            r = self._c.execute(
+                """SELECT * FROM patients WHERE chart_no=? OR patient_id=?
+                   ORDER BY (chart_no=?) DESC, id LIMIT 1""",
+                (code, code, code),
+            ).fetchone()
+        return self._row(r)
+
     def list_all(self, limit: int = 500, offset: int = 0) -> List[Patient]:
         with self._lock:
             rows = self._c.execute(
