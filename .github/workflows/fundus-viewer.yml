@@ -1,0 +1,133 @@
+name: fundus-viewer
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# a newer push replaces the build (and the published download) of an older one
+concurrency:
+  group: fundus-viewer-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: >-
+          sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libxkbcommon-x11-0
+          xvfb libgl1-mesa-dri libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0
+          libxcb-xinerama0 libxcb-randr0 libxcb-render-util0 libxcb-image0
+      - run: pip install -r requirements.txt pytest
+      - run: python -m pytest -q tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+      # the offscreen platform has no OpenGL: render the 3D eye once more on Mesa (llvmpipe),
+      # which also checks that every shader compiles
+      - name: 3D eye on OpenGL (Xvfb + Mesa)
+        run: xvfb-run -a -s "-screen 0 1280x1024x24" python -m pytest -q -rs tests/test_eye3d_gl.py
+        env:
+          QT_QPA_PLATFORM: xcb
+          FUNDUSVIEW_REQUIRE_GL: "1"
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt pyinstaller pytest
+      - run: python -m pytest -q tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+      - run: pyinstaller fundus_viewer.spec --noconfirm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FundusViewer-windows
+          path: dist/FundusViewer
+      - name: Zip for the release
+        shell: bash
+        run: (cd dist && 7z a -tzip ../FundusViewer-windows.zip FundusViewer > /dev/null)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: FundusViewer-windows.zip
+
+  build-mac:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15          # Apple Silicon (M1, M2, M3, M4 …)
+            label: AppleSilicon
+          - runner: macos-15-intel    # Intel Macs
+            label: Intel
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Tests, app bundle, ad-hoc signature and dmg
+        run: ./build_mac.sh
+      - name: Start the bundled app (demo photos)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          HOME_DIR="$RUNNER_TEMP/fv-home"
+          dist/FundusViewer.app/Contents/MacOS/FundusViewer --demo --home "$HOME_DIR" &
+          PID=$!
+          for i in $(seq 1 30); do
+            n=$(sqlite3 "$HOME_DIR/Library/fundus.db" "select count(*) from images" 2>/dev/null || echo 0)
+            [ "$n" -gt 0 ] && break
+            sleep 1
+          done
+          kill -0 $PID            # still running
+          kill $PID || true
+          echo "imported demo photos: $n"
+          [ "$n" -gt 0 ]
+      # render the 3D eye with Apple's OpenGL (the runner's window server
+      # provides a context), which also checks that every shader compiles there
+      - name: 3D eye on macOS OpenGL
+        env:
+          FUNDUSVIEW_REQUIRE_GL: "1"
+        run: python -m pytest -q -rs tests/test_eye3d_gl.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-mac-${{ matrix.label }}
+          path: dist/FundusViewer-mac-${{ matrix.label }}.dmg
+          if-no-files-found: error
+
+  # Fixed download addresses for the newest builds:
+  # https://github.com/<owner>/<repo>/releases/download/fundus-viewer-latest/FundusViewer-windows.zip
+  # https://github.com/<owner>/<repo>/releases/download/fundus-viewer-latest/FundusViewer-mac-AppleSilicon.dmg
+  # https://github.com/<owner>/<repo>/releases/download/fundus-viewer-latest/FundusViewer-mac-Intel.dmg
+  publish:
+    if: github.event_name != 'pull_request'
+    needs: [test-linux, build-windows, build-mac]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # publish the builds as a release (download without logging in)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: out
+      - name: Publish latest builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          ls -l out
+          gh release delete fundus-viewer-latest --yes --cleanup-tag || true
+          gh release create fundus-viewer-latest out/* \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "안저 사진 뷰어 (Windows · Mac 최신 빌드)" \
+            --notes-file docs/release_notes.md
