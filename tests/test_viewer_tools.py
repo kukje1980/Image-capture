@@ -1,7 +1,6 @@
 """VK-2 style viewer tools: drag zoom, measurements, processing stack, multi view."""
 import math
 import os
-import time
 
 import numpy as np
 import pytest
@@ -163,7 +162,7 @@ def test_levels():
     assert out[0, 0, 0] == 128
 
 
-def test_main_window_tools(app, tmp_path, demo_dir):
+def test_main_window_tools(app, tmp_path, demo_dir, import_and_wait):
     from fundusview.config import Settings, WatchFolder
     from fundusview.db import Database
     from fundusview.ui.main_window import MainWindow
@@ -174,15 +173,7 @@ def test_main_window_tools(app, tmp_path, demo_dir):
     w = MainWindow(s, db)
     try:
         w.show()
-        w.service.import_paths([str(demo_dir / "RetiCam")])
-        deadline = time.time() + 20
-        while db.find_patient("PID20260310-0A1B2C3D") is None and time.time() < deadline:
-            app.processEvents()
-            time.sleep(0.02)
-        time.sleep(0.5)
-        for _ in range(60):
-            app.processEvents()
-            time.sleep(0.01)
+        import_and_wait(app, w, [demo_dir / "RetiCam"])
         w._select_patient_ref(db.find_patient("PID20260310-0A1B2C3D")["id"])
         assert w.thumbs.count() == 3
         w.f_mod.setCurrentIndex(w.f_mod.findData("color"))   # the two single shots (no montage)

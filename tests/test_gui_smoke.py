@@ -1,6 +1,5 @@
 """Headless smoke test of the main window (no OpenGL: the 3D tab is never shown)."""
 import os
-import time
 
 import pytest
 
@@ -8,7 +7,7 @@ pytest.importorskip("PySide6")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
-def test_main_window_imports_and_lists(tmp_path, demo_dir):
+def test_main_window_imports_and_lists(tmp_path, demo_dir, import_and_wait):
     from PySide6.QtWidgets import QApplication
 
     from fundusview.config import Settings, WatchFolder
@@ -22,15 +21,7 @@ def test_main_window_imports_and_lists(tmp_path, demo_dir):
     w = MainWindow(s, db)
     try:
         w.show()
-        w.service.import_paths([str(demo_dir)])
-        deadline = time.time() + 30
-        while (len(db.list_patients()) < 6 or db.count_unassigned() < 2) and time.time() < deadline:
-            app.processEvents()
-            time.sleep(0.02)
-        settle = time.time() + 1.0  # results are coalesced on a 300 ms timer
-        while time.time() < settle:
-            app.processEvents()
-            time.sleep(0.02)
+        import_and_wait(app, w, [demo_dir])
         assert w.patients.rowCount() == 7  # 6 patients + 미분류
         ref = db.find_patient("20260115001")["id"]
         w._select_patient_ref(ref)
