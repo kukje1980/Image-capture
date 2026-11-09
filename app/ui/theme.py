@@ -164,6 +164,13 @@ def build_qss(mode: str = "dark") -> str:
         color: {c['ink_soft']}; font-family: Menlo, Consolas, "JetBrains Mono", monospace; font-size: 13px; font-weight: 700;
     }}
     QPushButton#EyeBtn:hover {{ color: {c['ink']}; }}
+    QPushButton#FieldBtn {{
+        background: transparent; border: 1px solid transparent; border-radius: 7px; padding: 2px 9px; min-height: 34px;
+        color: {c['ink_soft']}; font-size: 12px; font-weight: 600;
+    }}
+    QPushButton#FieldBtn:hover {{ color: {c['ink']}; }}
+    QPushButton#FieldBtn:checked {{ background: {c['raised']}; border: 1px solid {c['rule_strong']};
+        color: {c['accent_hover'] if mode == 'dark' else c['accent']}; }}
     QPushButton#EyeBtn:checked {{ background: {c['raised']}; border: 1px solid {c['rule_strong']}; color: {c['ink']}; }}
     QPushButton#EyeBtn[eye="OD"]:checked {{ color: {c['od']}; border: 1px solid {c['od']}; }}
     QPushButton#EyeBtn[eye="OS"]:checked {{ color: {c['os']}; border: 1px solid {c['os']}; }}

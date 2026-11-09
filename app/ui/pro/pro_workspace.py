@@ -73,10 +73,12 @@ _TOOLS = [
     ("circle", "원", "드래그해 원·타원 표시", ("single", "compare")),
     ("length", "길이", "드래그해 길이 측정 (눈금 보정 시 mm)", ("single", "compare")),
     ("angle", "각도", "세 점 클릭 — 두 번째 점이 꼭짓점", ("single", "compare")),
+    ("cdr", "C/D 비", "시신경유두 함몰비 — ① 유두 둘레를 드래그 ② 안쪽 함몰을 드래그 → 수직·수평 C/D",
+     ("single", "compare")),
     ("calibrate", "눈금", "실제 길이를 아는 선을 그어 mm 단위 보정", ("single",)),
 ]
 _TOOL_ICONS = {"pan": "hand", "magnify": "lens", "crop": "crop", "text": "type", "arrow": "arrow",
-               "circle": "circle", "length": "ruler", "angle": "angle", "calibrate": "calib"}
+               "circle": "circle", "length": "ruler", "angle": "angle", "cdr": "cdr", "calibrate": "calib"}
 
 
 def _icon(name: str, color: str = ICON, on: str | None = None) -> QIcon:
@@ -126,6 +128,7 @@ class ProWorkspace(QWidget):
         self._frozen = False
         self._frozen_frame = None
         self._pair = (None, None)
+        self._eye_pair = None                     # 좌우 비교: (우안 번호, 좌안 번호)
         self._adj = Adjust()
         self._tool = "pan"
         self._build()
@@ -187,6 +190,10 @@ class ProWorkspace(QWidget):
             b.clicked.connect(lambda _=False, m=m: self.set_mode(m))
             sgl.addWidget(b)
         tl.addWidget(seg)
+        self.b_pair = self._btn("좌우 비교", "좌우 비교 — 가장 최근 우안(OD)·좌안(OS) 사진을 나란히 (우안이 왼쪽)",
+                                icon="pair")
+        self.b_pair.clicked.connect(self.pair_eyes)
+        tl.addWidget(self.b_pair)
         tl.addWidget(self._sep())
 
         self.b_capture = self._btn("CAPTURE", "라이브 정지/재개 (Space)", True, "ProCapture", "freeze", ICON_ACCENT)
@@ -684,9 +691,26 @@ class ProWorkspace(QWidget):
         self._update_side()
 
     # ================= 비교 =================
+    def pair_eyes(self) -> bool:
+        """좌우 비교: 가장 최근 우안·좌안 사진을 나란히 (관례대로 우안이 왼쪽)."""
+        def last(eye):
+            return next((k for k in range(len(self._caps) - 1, -1, -1) if self._caps[k].eye == eye), -1)
+        i, j = last("OD"), last("OS")
+        if i < 0 or j < 0:
+            if self.isVisible():
+                QMessageBox.information(self, "좌우 비교", "우안(OD)과 좌안(OS) 사진이 모두 있어야 합니다.")
+            return False
+        self._eye_pair = (i, j)
+        self.multi.set_selection([i, j])
+        self.set_mode("compare")
+        return True
+
     def _prepare_compare(self) -> bool:
         sel = self.multi.selection()
-        if len(sel) == 2:
+        eye_pair, self._eye_pair = self._eye_pair, None
+        if eye_pair is not None:
+            i, j = eye_pair
+        elif len(sel) == 2:
             i, j = sorted(sel)
         elif self._mode == "single" and self._idx > 0:
             i, j = self._idx - 1, self._idx
@@ -977,7 +1001,9 @@ class ProWorkspace(QWidget):
             if not cv.is_modified():
                 continue
             kinds = cv.annotation_kinds()
-            if any(k in ("length", "angle") for k in kinds):
+            if "cdr" in kinds:
+                note = "C/D 측정"
+            elif any(k in ("length", "angle") for k in kinds):
                 note = "측정"
             elif kinds:
                 note = "주석"

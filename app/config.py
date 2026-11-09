@@ -31,6 +31,9 @@ class AppConfig:
     thumbnail_max_side: int = 120
     newest_on_top: bool = True
     capture_view: str = "all"                # 촬영 화면 보기: all(모두) | single | multi | zoom | 3d
+    capture_field: str = ""                  # 촬영 부위 (시신경유두 중심 · 황반 중심 · 주변부) → 사진 메모
+    redfree_view: bool = False               # Red-free(무적색광) 보기 (보기 전용)
+    fundus_guide: bool = True                # 안저 원형 가이드
     # 폴더 가져오기 — 안저 카메라가 사진을 넣는 폴더를 지켜보다 파일 이름으로 환자 DB 에 등록
     import_enabled: bool = False
     import_dir: str = ""

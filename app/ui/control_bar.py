@@ -1,4 +1,4 @@
-"""촬영 도크: OD/OS/OU 안구 스위치 + 일시정지 + 정지영상·셔터(사진 캡처)·녹화 + 상태.
+"""촬영 도크: OD/OS/OU 안구 스위치 + 촬영 부위 + Red-free·가이드 + 일시정지 + 정지영상·셔터·녹화 + 상태.
 
 4분할(멀티 화면)은 영상 위 보기 막대(view_bar.ViewBar)에서 켠다. 멀티 화면일 때는
 일시정지 대신 '4분할 저장'·'비우기'가 보인다 (set_quad_mode).
@@ -20,6 +20,9 @@ from app.ui.theme import ICON, ICON_ACCENT, ICON_ON_ACCENT, ICON_RECORD
 
 _EYE_CODES = ["NA", "OD", "OS", "OU"]
 _EYE_BUTTONS = [("OD", "OD", "우안"), ("OS", "OS", "좌안"), ("OU", "OU", "양안"), ("NA", "—", "미지정")]
+# 촬영 부위 (사진 메모로 저장): (값, 버튼, 설명)
+FIELDS = [("시신경유두 중심", "유두", "시신경유두 중심"), ("황반 중심", "황반", "황반 중심"),
+          ("주변부", "주변", "주변부"), ("", "—", "부위 표시 안 함")]
 
 
 class ControlBar(QFrame):
@@ -30,6 +33,9 @@ class ControlBar(QFrame):
     saveQuadClicked = Signal()
     clearQuadClicked = Signal()
     eyeChanged = Signal(str)
+    fieldChanged = Signal(str)
+    redfreeToggled = Signal(bool)
+    guideToggled = Signal(bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -62,6 +68,36 @@ class ControlBar(QFrame):
             b.clicked.connect(lambda _=False, c=code: self.set_eye(c))
         self.eye_buttons["NA"].setChecked(True)
         lay.addWidget(seg)
+        lay.addWidget(self._sep())
+
+        # 촬영 부위 — 사진 메모로 함께 저장
+        fseg = QFrame()
+        fseg.setObjectName("EyeSeg")
+        fl = QHBoxLayout(fseg)
+        fl.setContentsMargins(3, 3, 3, 3)
+        fl.setSpacing(2)
+        self.field_group = QButtonGroup(self)
+        self.field_buttons = {}
+        for code, text, tip in FIELDS:
+            b = QPushButton(text)
+            b.setObjectName("FieldBtn")
+            b.setCheckable(True)
+            b.setToolTip(f"촬영 부위: {tip} — 사진 메모로 저장" if code else tip)
+            b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            self.field_group.addButton(b)
+            self.field_buttons[code] = b
+            fl.addWidget(b)
+            b.clicked.connect(lambda _=False, c=code: self.set_field(c, emit=True))
+        self.field_buttons[""].setChecked(True)
+        lay.addWidget(fseg)
+        self.btn_redfree = self._button("Red-free", "drop", "Pause", checkable=True,
+                                        tip="Red-free(무적색광) 보기 — 혈관·출혈이 잘 보임. 보기 전용, 저장은 원본 컬러")
+        self.btn_guide = self._button("가이드", "target", "Pause", checkable=True,
+                                      tip="안저 원형 가이드 — 시야를 가운데 맞추기")
+        self.btn_redfree.toggled.connect(self.redfreeToggled.emit)
+        self.btn_guide.toggled.connect(self.guideToggled.emit)
+        lay.addWidget(self.btn_redfree)
+        lay.addWidget(self.btn_guide)
         lay.addWidget(self._sep())
 
         self.btn_pause = self._button("일시정지", "pause", "Pause", checkable=True, tip="일시정지")
@@ -135,6 +171,15 @@ class ControlBar(QFrame):
         """단일 모드 정지영상 상태에 맞춰 버튼 표시 (정지영상 ↔ 라이브)."""
         self.btn_freeze.setText(icons.gap("라이브" if frozen else "정지영상"))
         self.btn_freeze.setIcon(icons.icon("play" if frozen else "freeze", ICON_ACCENT, 18))
+
+    def current_field(self) -> str:
+        return next((c for c, b in self.field_buttons.items() if b.isChecked()), "")
+
+    def set_field(self, code: str, emit: bool = False) -> None:
+        code = code if code in self.field_buttons else ""
+        self.field_buttons[code].setChecked(True)
+        if emit:
+            self.fieldChanged.emit(code)
 
     def current_eye(self) -> str:
         return _EYE_CODES[self.eye_combo.currentIndex()]

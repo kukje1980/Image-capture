@@ -31,6 +31,8 @@ from app.capture.frame_utils import bgr_to_qimage
 from app.capture.image_process import Adjust, apply_adjust
 
 ANN_COLOR = QColor("#facc15")    # 주석: 노랑
+CDR_DISC = QColor("#a3e635")     # C/D: 시신경유두 (연두)
+CDR_CUP = QColor("#fb923c")      # C/D: 함몰 (주황)
 MEAS_COLOR = QColor("#22d3ee")   # 측정: 시안
 HISTORY_MAX = 20
 MEASURE_KINDS = ("length", "angle")
@@ -49,6 +51,19 @@ def length_px(a: dict) -> float:
     return math.hypot(a["x2"] - a["x1"], a["y2"] - a["y1"])
 
 
+def cdr_ratios(a: dict) -> tuple[float, float]:
+    """(수직, 수평) C/D — (x1,y1)-(x2,y2) 시신경유두 타원 상자, (x3,y3)-(x4,y4) 함몰 타원 상자."""
+    dv, dh = abs(a["y2"] - a["y1"]), abs(a["x2"] - a["x1"])
+    v = abs(a["y4"] - a["y3"]) / dv if dv else 0.0
+    h = abs(a["x4"] - a["x3"]) / dh if dh else 0.0
+    return v, h
+
+
+def cdr_label(a: dict) -> str:
+    v, h = cdr_ratios(a)
+    return f"C/D 수직 {v:.2f} · 수평 {h:.2f}"
+
+
 def angle_deg(a: dict) -> float:
     """(x2,y2)가 꼭짓점인 각도(0~180°)."""
     v1 = (a["x1"] - a["x2"], a["y1"] - a["y2"])
@@ -64,7 +79,7 @@ def _map_points(ann: list, f) -> list:
     out = []
     for a in ann:
         b = dict(a)
-        for kx, ky in (("x", "y"), ("x1", "y1"), ("x2", "y2"), ("x3", "y3")):
+        for kx, ky in (("x", "y"), ("x1", "y1"), ("x2", "y2"), ("x3", "y3"), ("x4", "y4")):
             if kx in b:
                 b[kx], b[ky] = f(b[kx], b[ky])
         out.append(b)
@@ -97,6 +112,7 @@ class ImageCanvas(QGraphicsView):
         self._tool = "pan"
         self._drag: QPointF | None = None
         self._angle_pts: list = []
+        self._cdr_disc: dict | None = None             # C/D 비: 그려 둔 시신경유두 (함몰을 기다리는 중)
         self._lens: QPointF | None = None
         self.lens_zoom = 2.5
         self.lens_radius = 90
@@ -343,6 +359,8 @@ class ImageCanvas(QGraphicsView):
                 out.append(("length", self.length_label(a)))
             elif a["kind"] == "angle":
                 out.append(("angle", f"{angle_deg(a):.1f}°"))
+            elif a["kind"] == "cdr" and "x3" in a:
+                out.append(("cdr", cdr_label(a)))
         return out
 
     def _label(self, text: str, x: float, y: float, color: QColor, px: float) -> QGraphicsSimpleTextItem:
@@ -419,6 +437,21 @@ class ImageCanvas(QGraphicsView):
             d = 34 * s
             items.extend(self._boxed_label(f"{angle_deg(a):.1f}°", v.x() + bx / nb * d - 18 * s,
                                            v.y() + by / nb * d - 10 * s, MEAS_COLOR, 20 * s))
+        elif kind == "cdr":
+            def ell(x1, y1, x2, y2, col, dash):
+                p = QPen(col)
+                p.setWidthF(2.5 * s)
+                if dash or temp:
+                    p.setStyle(Qt.PenStyle.DashLine)
+                r = QRectF(QPointF(min(x1, x2), min(y1, y2)), QPointF(max(x1, x2), max(y1, y2)))
+                return self._scene.addEllipse(r, p)
+            items.append(ell(a["x1"], a["y1"], a["x2"], a["y2"], CDR_DISC, False))
+            if "x3" in a:
+                items.append(ell(a["x3"], a["y3"], a["x4"], a["y4"], CDR_CUP, True))
+                if abs(a["x4"] - a["x3"]) > 3 and abs(a["y4"] - a["y3"]) > 3:
+                    lx = min(a["x1"], a["x2"])
+                    ly = min(a["y1"], a["y2"]) - 34 * s
+                    items.extend(self._boxed_label(cdr_label(a), lx, ly, CDR_DISC, 20 * s))
         elif kind == "poly":
             pts = a["pts"]
             for p, q in zip(pts, pts[1:]):
@@ -463,6 +496,10 @@ class ImageCanvas(QGraphicsView):
     def add_length(self, p1: QPointF, p2: QPointF) -> None:
         self._add_ann({"kind": "length", "x1": p1.x(), "y1": p1.y(), "x2": p2.x(), "y2": p2.y()})
 
+    def add_cdr(self, disc: dict, cup: dict) -> None:
+        """C/D 비 — disc·cup = {"x1","y1","x2","y2"} (타원을 감싸는 상자, 영상 좌표)."""
+        self._add_ann({"kind": "cdr", **disc, "x3": cup["x1"], "y3": cup["y1"], "x4": cup["x2"], "y4": cup["y2"]})
+
     def add_angle(self, a: QPointF, vertex: QPointF, c: QPointF) -> None:
         self._add_ann({"kind": "angle", "x1": a.x(), "y1": a.y(), "x2": vertex.x(), "y2": vertex.y(),
                        "x3": c.x(), "y3": c.y()})
@@ -500,6 +537,7 @@ class ImageCanvas(QGraphicsView):
         self._temp = []
         self._drag = None
         self._angle_pts = []
+        self._cdr_disc = None
         self._lens = None
 
     def _show_temp(self, a: dict) -> None:
@@ -519,7 +557,7 @@ class ImageCanvas(QGraphicsView):
             text, ok = QInputDialog.getText(self, "텍스트 주석", "내용:")
             if ok and text.strip():
                 self.add_text(pos.x(), pos.y(), text.strip())
-        elif self._tool in _DRAG_TOOLS:
+        elif self._tool in _DRAG_TOOLS or self._tool == "cdr":
             self._drag = pos
         elif self._tool == "angle":
             self._angle_pts.append(pos)
@@ -537,6 +575,12 @@ class ImageCanvas(QGraphicsView):
             self.viewport().update()
             return
         pos = self.mapToScene(event.position().toPoint())
+        if self._drag is not None and self._tool == "cdr":
+            box = {"x1": self._drag.x(), "y1": self._drag.y(), "x2": pos.x(), "y2": pos.y()}
+            d = self._cdr_disc
+            self._show_temp({"kind": "cdr", **box} if d is None else
+                            {"kind": "cdr", **d, "x3": box["x1"], "y3": box["y1"], "x4": box["x2"], "y4": box["y2"]})
+            return
         if self._drag is not None and self._tool in _DRAG_TOOLS:
             self._show_temp({"kind": _DRAG_TOOLS[self._tool], "x1": self._drag.x(), "y1": self._drag.y(),
                              "x2": pos.x(), "y2": pos.y()})
@@ -555,6 +599,26 @@ class ImageCanvas(QGraphicsView):
         if self._tool == "magnify":
             self._lens = None
             self.viewport().update()
+            return
+        if self._drag is not None and self._tool == "cdr":
+            start, end = self._drag, self.mapToScene(event.position().toPoint())
+            self._drag = None
+            box = {"x1": start.x(), "y1": start.y(), "x2": end.x(), "y2": end.y()}
+            big = abs(box["x2"] - box["x1"]) > 6 and abs(box["y2"] - box["y1"]) > 6
+            if self._cdr_disc is None:                  # ① 시신경유두 → ② 함몰을 기다림 (유두는 계속 보임)
+                if big:
+                    self._cdr_disc = box
+                    self._show_temp({"kind": "cdr", **box})
+                else:
+                    self._remove(self._temp)
+                    self._temp = []
+                return
+            disc = self._cdr_disc
+            if abs(box["x2"] - box["x1"]) > 3 and abs(box["y2"] - box["y1"]) > 3:
+                self._cancel_temp()
+                self.add_cdr(disc, box)
+            else:
+                self._show_temp({"kind": "cdr", **disc})
             return
         if self._drag is not None and self._tool in _DRAG_TOOLS:
             start, end = self._drag, self.mapToScene(event.position().toPoint())
@@ -580,7 +644,8 @@ class ImageCanvas(QGraphicsView):
         super().mouseReleaseEvent(event)
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
-        if event.key() == Qt.Key.Key_Escape and (self._temp or self._angle_pts or self._drag is not None):
+        if event.key() == Qt.Key.Key_Escape and (self._temp or self._angle_pts or self._drag is not None
+                                                 or self._cdr_disc is not None):
             self._cancel_temp()
             return
         super().keyPressEvent(event)

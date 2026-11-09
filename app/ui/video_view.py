@@ -77,6 +77,8 @@ class VideoView(QWidget):
         self.cx = self.cy = 0.5                     # 확대 중심 (영상 좌표 0~1)
         self._pan = None
         self._compact = False
+        self._redfree = False                       # Red-free(무적색광) 보기 — 녹색 채널만 (보기 전용)
+        self._guide = False                         # 안저 원형 가이드
         self._roi_mode = False
         self._roi: tuple | None = None              # 큰 화면에 표시할 영역 (x0, y0, x1, y1)
         self.setMinimumSize(480, 360)
@@ -89,9 +91,26 @@ class VideoView(QWidget):
     def set_frame(self, frame: np.ndarray, pixmap: QPixmap | None = None) -> QPixmap:
         """프레임 표시 (같은 프레임을 여러 화면에 보낼 때는 만든 pixmap 을 넘겨 다시 쓴다)."""
         self._frame = frame
-        self._pixmap = pixmap if pixmap is not None else QPixmap.fromImage(bgr_to_qimage(frame))
+        self._pixmap = pixmap if pixmap is not None else QPixmap.fromImage(bgr_to_qimage(self._display(frame)))
         self.update()
         return self._pixmap
+
+    def _display(self, frame: np.ndarray) -> np.ndarray:
+        if not self._redfree or frame is None or frame.ndim != 3:
+            return frame
+        g = frame[..., 1].astype(np.float32) * 1.15 - 10      # 녹색 채널 + 약간의 대비
+        g = np.clip(g, 0, 255).astype(np.uint8)
+        return np.repeat(g[..., None], 3, axis=2)
+
+    def set_redfree(self, on: bool) -> None:
+        self._redfree = bool(on)
+        if self._frame is not None:                             # 멈춘 화면도 바로 다시 그림
+            self._pixmap = QPixmap.fromImage(bgr_to_qimage(self._display(self._frame)))
+        self.update()
+
+    def set_guide(self, on: bool) -> None:
+        self._guide = bool(on)
+        self.update()
 
     def set_compact(self, on: bool) -> None:
         self._compact = bool(on)
@@ -237,9 +256,27 @@ class VideoView(QWidget):
             x = (self.width() - scaled.width()) // 2
             y = (self.height() - scaled.height()) // 2
             p.drawPixmap(x, y, scaled)
+            self._paint_guide(p)
             self._paint_roi(p)
         if not self._compact:
             self._paint_hud(p)
+
+    def _paint_guide(self, p: QPainter) -> None:
+        """안저 원형 가이드 — 원형 시야(짧은 변의 92%)와 가운데 십자."""
+        g = self._geom()
+        if not self._guide or self._compact or g is None:
+            return
+        _W, _H, ox, oy, dw, dh = g
+        cx, cy, r = ox + dw / 2, oy + dh / 2, min(dw, dh) * 0.46
+        pen = QPen(QColor(51, 194, 177, 210), 2)
+        pen.setStyle(Qt.PenStyle.DashLine)
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawEllipse(QPointF(cx, cy), r, r)
+        k = min(dw, dh) * 0.025
+        p.setPen(QPen(QColor(51, 194, 177, 210), 2))
+        p.drawLine(QPointF(cx - k, cy), QPointF(cx + k, cy))
+        p.drawLine(QPointF(cx, cy - k), QPointF(cx, cy + k))
 
     def _paint_roi(self, p: QPainter) -> None:
         """가리키기 모드: 확대 칸이 보여 주는 곳."""
@@ -397,7 +434,9 @@ class VideoView(QWidget):
         x = draw_chip(p, x, 12, _EYE_TEXT.get(self._eye, self._eye), fg=col or "#a3acba",
                       border=col)
         if self._view:
-            draw_chip(p, x, 12, self._view, fg="#c9f5ee", border="#2c8d82")
+            x = draw_chip(p, x, 12, self._view, fg="#c9f5ee", border="#2c8d82")
+        if self._redfree:
+            draw_chip(p, x, 12, "RED-FREE", fg="#b6f5c8", border="#2f9e5c")
         right = self.width() - 12.0
         if self._state == "rec":
             draw_chip(p, right, 12, f"REC {self._rec_text}".strip(), dot="#ff6b6b", bg="#7a1414", align_right=True)

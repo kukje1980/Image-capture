@@ -13,6 +13,7 @@ ACTIONS: list[tuple[str, str, str, str]] = [
     ("freeze", "정지영상 (4분할 칸 채우기)", "X", "capture"),
     ("quad", "멀티 화면 (4분할) 켜기 / 끄기", "Q", "capture"),
     ("view", "화면 보기 전환 (모두 → 큰 → 멀티 → 확대 → 3D)", "V", "capture"),
+    ("redfree", "Red-free(무적색광) 보기 켜기 / 끄기", "G", "capture"),
     ("eyeOD", "안구 OD (우안)", "1", "all"),
     ("eyeOS", "안구 OS (좌안)", "2", "all"),
     ("eyeOU", "안구 OU (양안)", "3", "all"),

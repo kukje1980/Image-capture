@@ -178,6 +178,15 @@ class MainWindow(QMainWindow):
         self.quad_view.cellClicked.connect(self._on_quad_cell_clicked)
         self.thumbnail_panel.thumbnailClicked.connect(self._on_thumbnail_clicked)
         self.control_bar.eyeChanged.connect(lambda e: self._hud(eye=e))
+        # 안저: 촬영 부위(사진 메모) · Red-free 보기 · 원형 가이드 (설정에 기억)
+        self.control_bar.set_field(self.config.capture_field)
+        self.control_bar.btn_redfree.setChecked(bool(self.config.redfree_view))
+        self.control_bar.btn_guide.setChecked(bool(self.config.fundus_guide))
+        self._on_redfree(bool(self.config.redfree_view))
+        self.video_view.set_guide(bool(self.config.fundus_guide))
+        self.control_bar.fieldChanged.connect(self._on_field)
+        self.control_bar.redfreeToggled.connect(self._on_redfree)
+        self.control_bar.guideToggled.connect(self._on_guide)
         self._rec_timer = QTimer(self)
         self._rec_timer.setInterval(500)
         self._rec_timer.timeout.connect(self._update_rec_hud)
@@ -353,7 +362,7 @@ class MainWindow(QMainWindow):
     def _apply_key_hints(self) -> None:
         cb = self.control_bar
         hints = {"capture": cb.btn_capture, "record": cb.btn_record, "pause": cb.btn_pause,
-                 "freeze": cb.btn_freeze, "quad": self.view_bar.buttons["multi"],
+                 "freeze": cb.btn_freeze, "quad": self.view_bar.buttons["multi"], "redfree": cb.btn_redfree,
                  "mode": self.btn_mode_pro}
         for aid, w in hints.items():
             base = w.property("tipBase")
@@ -394,6 +403,8 @@ class MainWindow(QMainWindow):
             self._set_view("single" if self._view == "multi" else "multi")
         elif aid == "view":
             self._set_view(VIEWS[(VIEWS.index(self._view) + 1) % len(VIEWS)])
+        elif aid == "redfree":
+            cb.btn_redfree.toggle()
         elif aid == "fullscreen":
             self._set_fullscreen(not self._fullscreen)
         elif aid == "mode":
@@ -641,6 +652,24 @@ class MainWindow(QMainWindow):
     def current_view(self) -> str:
         return self._view
 
+    def _on_field(self, f: str) -> None:
+        self.config.capture_field = f
+        self._save_timer.start()
+        self.statusBar().showMessage(f"촬영 부위: {f or '표시 안 함'}", 2000)
+
+    def _on_redfree(self, on: bool) -> None:
+        for v in (self.video_view, self.zoom_view):
+            v.set_redfree(on)
+        if self.config.redfree_view != on:
+            self.config.redfree_view = on
+            self._save_timer.start()
+
+    def _on_guide(self, on: bool) -> None:
+        self.video_view.set_guide(on)
+        if self.config.fundus_guide != on:
+            self.config.fundus_guide = on
+            self._save_timer.start()
+
     def _update_roi(self) -> None:
         """모두 보기: 큰 화면 위에 오른쪽 확대 칸이 보여 주는 곳을 표시."""
         self.video_view.set_roi(self.zoom_view.visible_rect() if self._view == "all" else None)
@@ -769,7 +798,8 @@ class MainWindow(QMainWindow):
             return
         eye = self.control_bar.current_eye()
         try:
-            cap = self.service.save_photo(frame, self._current_patient, eye=eye)
+            cap = self.service.save_photo(frame, self._current_patient, eye=eye,
+                                          note=self.control_bar.current_field())      # 촬영 부위 → 메모
         except Exception as e:  # noqa: BLE001
             log.exception("photo save failed")
             QMessageBox.warning(self, "오류", f"저장 실패: {e}")
