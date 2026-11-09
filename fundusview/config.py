@@ -77,6 +77,8 @@ class Settings:
     # Extra user-defined filename regexes tried before the profile patterns.
     custom_filename_patterns: list[str] = field(default_factory=list)
     last_patient: str = ""
+    # Thumbnail strip: rows of photos above the views (1–3, newest first)
+    thumb_rows: int = 2
     # Automatic import (autosetup.py): an always-watched inbox folder and
     # detection of the capture software's folders at every start.
     inbox_dir: str = ""
