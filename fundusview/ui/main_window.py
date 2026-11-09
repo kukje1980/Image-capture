@@ -37,12 +37,15 @@ from .image_view import TOOL_HINTS, TOOLS, ImageView, from_qimage
 from .keys import IS_MAC, keys
 from .multi_view import MultiView
 from .slit_scan import ScanPhotoView, SlitScanShow, ViewTween
+from .thumbs import EYE_ROLE, PICK_ROLE, ThumbDelegate, eye_badge_html
 from .toolbars import CHECKABLE, COMMANDS, MENUS, PROCESSING, SliderPopup, icon_for
 
 UNASSIGNED = -1
 SEX_LABEL = {"M": "남", "F": "여", "O": "기타"}
 THUMB_TEXT = Qt.ItemDataRole.UserRole + 1    # thumbnail caption without the ② mark
 SECOND_PICK = QColor(168, 104, 28)           # background of the second picked photo (②)
+MAX_PICKS = 16                               # photos picked for the multi view (4×4)
+MULTI_SIZES = (1, 2, 4, 6, 9, 16)
 
 
 class _FullScreen3D(QWidget):
@@ -95,6 +98,9 @@ class MainWindow(QMainWindow):
         self._channel, self._auto, self._invert = "rgb", False, False
         self._history: list[dict] = []       # undo snapshots
         self._multi_lock = False
+        self._picks: list[int] = []          # photos picked for the multi view (plain click), in order
+        self._pick_pre: tuple | None = None  # (image id, picks before the click) — a double click undoes it
+        self._per_photo: dict[int, dict] = {}  # processing of each picked photo {"state", "history"}
         self._3d_dirty = True
         self.setWindowTitle(f"{APP_TITLE}  v{__version__}")
         self.resize(1600, 960)
@@ -311,6 +317,24 @@ class MainWindow(QMainWindow):
         for w, tip in ((self.f_date, "검사일"), (self.f_eye, "눈"), (self.f_mod, "촬영 종류")):
             w.setToolTip(tip)
             top.addWidget(w)
+        # thumbnail rows · multi view of the picked photos (VK-2: pick photos, then MULTI)
+        self.btn_rows = QToolButton()
+        self.btn_rows.setAutoRaise(True)
+        self.btn_rows.clicked.connect(lambda: self._set_thumb_rows(self._thumb_rows % 3 + 1, save=True))
+        self.lbl_picks = QLabel("")
+        self.lbl_picks.setStyleSheet("color:#facc15; font-weight:600")
+        self.btn_clear_picks = QToolButton()
+        self.btn_clear_picks.setText("선택 해제")
+        self.btn_clear_picks.setAutoRaise(True)
+        self.btn_clear_picks.setToolTip("멀티로 고른 사진을 모두 해제")
+        self.btn_clear_picks.clicked.connect(self.clear_picks)
+        self.btn_multi = QPushButton("멀티")
+        self.btn_multi.setObjectName("multiButton")
+        self.btn_multi.setToolTip("고른 사진을 다중 보기에 모아 보고, 칸을 눌러 그 사진만 보정합니다\n"
+                                  "(사진 클릭 = 고르기 · 다시 클릭 = 빼기 · 더블클릭 = 2D로 크게)")
+        self.btn_multi.clicked.connect(self.open_picks)
+        for w in (self.btn_rows, self.lbl_picks, self.btn_clear_picks, self.btn_multi):
+            top.addWidget(w)
         cl.addLayout(top)
         self.thumbs = QListWidget()
         self.thumbs.setViewMode(QListWidget.ViewMode.IconMode)
@@ -321,13 +345,19 @@ class MainWindow(QMainWindow):
         self.thumbs.setFixedHeight(182)
         self.thumbs.setMovement(QListWidget.Movement.Static)
         self.thumbs.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.thumbs.setToolTip(keys("Ctrl+클릭: 두 번째 사진(②) 선택/해제 — 비교 · 디스크 2장 · "
+        self.thumbs.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self.thumbs.setItemDelegate(ThumbDelegate(self.thumbs))
+        self.thumbs.setToolTip(keys("클릭: 멀티로 고르기(번호) · 다시 클릭: 빼기 · 더블클릭: 2D로 크게 보기\n"
+                               "Ctrl+클릭: 두 번째 사진(②) 선택/해제 — 비교 · 디스크 2장 · "
                                "오른쪽 클릭: 환자 지정·다시 분석"))
         self.thumbs.viewport().installEventFilter(self)
         self.thumbs.currentItemChanged.connect(lambda cur, _: cur and self._show_image(cur.data(Qt.ItemDataRole.UserRole)))
         self.thumbs.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.thumbs.customContextMenuRequested.connect(self._thumb_menu)
         cl.addWidget(self.thumbs)
+        self._thumb_rows = 0
+        self._set_thumb_rows(getattr(self.settings, "thumb_rows", 2) or 2)
+        self._sync_picks_ui()
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
         self.view2d = ImageView()
@@ -635,8 +665,12 @@ class MainWindow(QMainWindow):
             "PageUp / PageDown: 이전 / 다음 사진 · Ctrl+1~4: 2D / 3D / 다중 / 비교<br>"
             "Ctrl+Z: 처리 실행 취소 · Delete: 마지막 측정 지우기 · Ctrl+C: 화면 복사<br>"
             "Ctrl+F: 환자 검색 · Ctrl+P: 인쇄<br><br>"
+            "<b>사진 목록 · 멀티</b><br>"
+            "최신 사진부터, 사진마다 왼쪽 위에 눈(OD 파랑 · OS 주황) · ▤ 버튼: 1·2·3줄<br>"
+            "클릭: 멀티로 고르기(번호, 다시 클릭하면 빼기) · 더블클릭: 2D로 크게 보기<br>"
+            "[멀티]: 고른 사진을 다중 보기에 — 칸을 누르면 그 사진만 보정 (밝기·대비·감마·Red-free·선명하게 …)<br><br>"
             "<b>두 사진 고르기 · 디스크 2장</b><br>"
-            "사진을 클릭하고 두 번째 사진을 Ctrl+클릭(②, 다시 Ctrl+클릭하면 해제) → 비교 탭<br>"
+            "사진을 더블클릭해 열고 두 번째 사진을 Ctrl+클릭(②, 다시 Ctrl+클릭하면 해제) → 비교 탭<br>"
             "[디스크 2장]: 두 사진의 시신경 유두만 확대해 한 장으로 (OD 왼쪽 · OS 오른쪽, 보험 청구용)<br><br>"
             "<b>사진 가져오기</b><br>"
             f"자동입니다. 레티캠 등 장비 폴더와 [문서{os.sep}안저사진 가져오기] 폴더를 감시해 "
@@ -825,6 +859,7 @@ class MainWindow(QMainWindow):
         ref = self._row_ref(rows[0].row())
         if ref != self._patient_ref:
             self.compare = None          # the second pick belongs to the previous patient
+            self._picks, self._per_photo, self._pick_pre = [], {}, None   # so do the multi picks
         self._patient_ref = ref
         if ref == UNASSIGNED:
             self.banner.setText("미분류 영상 — 사진을 선택하고 오른쪽 [정보 수정] 버튼으로 환자를 지정하세요")
@@ -910,6 +945,7 @@ class MainWindow(QMainWindow):
             it = QListWidgetItem(QIcon(QPixmap(r["thumb_path"] or "")), text)
             it.setData(Qt.ItemDataRole.UserRole, r["id"])
             it.setData(THUMB_TEXT, text)
+            it.setData(EYE_ROLE, r["laterality"] or "")
             it.setToolTip(f"{r['exam_date'] or ''} {r['exam_time'] or ''}\n{r['device'] or ''}\n"
                           f"{Path(r['original_path'] or r['file_path']).name}")
             self.thumbs.addItem(it)
@@ -924,8 +960,133 @@ class MainWindow(QMainWindow):
         else:
             self._show_image(None)
         self._mark_pair()
+        self._fit_thumb_height()
+        known = {r["id"] for r in self._images()}          # removed photos leave the picks
+        if any(i not in known for i in self._picks):
+            self._picks = [i for i in self._picks if i in known]
+            self._per_photo = {k: v for k, v in self._per_photo.items() if k in known}
+        self._mark_picks()
+
+    # -- multi picks (VK-2: click the photos, then MULTI) ------------------------------------
+    def picks(self) -> list[int]:
+        return list(self._picks)
+
+    def _set_thumb_rows(self, n: int, save: bool = False) -> None:
+        """Rows of thumbnails above the views: 1 = one scrolling line (old strip), 2–3 = wrapped."""
+        n = n if n in (1, 2, 3) else 2
+        self._thumb_rows = n
+        self.thumbs.setWrapping(n > 1)
+        self.thumbs.setFlow(QListWidget.Flow.LeftToRight)
+        self.thumbs.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded if n == 1
+                                                 else Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._fit_thumb_height()
+        self.btn_rows.setText(f"▤ {n}줄")
+        self.btn_rows.setToolTip(f"사진 목록을 {n}줄로 보기 — 누르면 {n % 3 + 1}줄 (1 → 2 → 3)")
+        cur = self.thumbs.currentItem()
+        if cur is not None:
+            self.thumbs.scrollToItem(cur)
+        if save:
+            self.settings.thumb_rows = n
+            try:
+                self.settings.save()
+            except OSError:
+                pass
+
+    def _fit_thumb_height(self) -> None:
+        """As many rows as the photos need, at most the chosen number (few photos: no empty band)."""
+        n = self._thumb_rows
+        if n == 1:
+            self.thumbs.setFixedHeight(182)
+            return
+        per_row = max(1, self.thumbs.viewport().width() // self.thumbs.gridSize().width())
+        need = max(1, -(-self.thumbs.count() // per_row))
+        self.thumbs.setFixedHeight(min(n, need) * self.thumbs.gridSize().height() + 12)
+
+    def _toggle_pick(self, image_id: int) -> bool:
+        if image_id in self._picks:
+            self._picks.remove(image_id)
+        elif len(self._picks) >= MAX_PICKS:
+            self.lbl_status.setText(f"멀티는 한 번에 {MAX_PICKS}장까지 고를 수 있습니다")
+            return False
+        else:
+            self._picks.append(image_id)
+        self._mark_picks()
+        if self._picks:
+            self.lbl_status.setText(f"{len(self._picks)}장 골랐습니다 — [멀티]를 누르면 한 화면에 모아 보고 보정합니다")
+        if self.tabs.currentIndex() == 2:
+            self._fill_multi()
+        return True
+
+    def clear_picks(self) -> None:
+        self._picks, self._per_photo, self._pick_pre = [], {}, None
+        self._mark_picks()
+        if self.tabs.currentIndex() == 2:
+            self._fill_multi()
+
+    def open_picks(self) -> None:
+        """[멀티]: the picked photos in the multi view, one cell each, the first one selected."""
+        if not self._picks:
+            self.lbl_status.setText("사진을 클릭해 고른 뒤 [멀티]를 누르세요 (다시 클릭하면 빠집니다)")
+            return
+        n = len(self._picks)
+        self.multi.set_count(next((k for k in MULTI_SIZES if k >= n), MULTI_SIZES[-1]))
+        if self.current is None or self.current["id"] not in self._picks:
+            self._select_from_multi(self._picks[0])
+        if self.tabs.currentIndex() == 2:
+            self._fill_multi()
+        else:
+            self.tabs.setCurrentIndex(2)      # -> _on_tab -> _fill_multi
+        self.lbl_status.setText(f"고른 사진 {n}장 — 칸을 누르면 그 사진만 보정됩니다 (밝기·대비·Red-free·선명하게 …)")
+
+    def _mark_picks(self) -> None:
+        for i in range(self.thumbs.count()):
+            it = self.thumbs.item(i)
+            iid = it.data(Qt.ItemDataRole.UserRole)
+            it.setData(PICK_ROLE, self._picks.index(iid) + 1 if iid in self._picks else 0)
+        self._sync_picks_ui()
+
+    def _sync_picks_ui(self) -> None:
+        n = len(self._picks)
+        self.btn_multi.setText(f"멀티 {n}" if n else "멀티")
+        self.lbl_picks.setText(f"{n}장 선택" if n else "")
+        self.btn_clear_picks.setVisible(n > 0)
+
+    @staticmethod
+    def _adjusted_with(rgb: np.ndarray, st: dict) -> np.ndarray:
+        """``imaging.adjust`` with a saved processing state (see ``_snapshot``)."""
+        return imaging.adjust(rgb, brightness=st.get("bright", 0) / 200.0, contrast=st.get("contrast", 100) / 100.0,
+                              gamma=st.get("gamma", 100) / 100.0, channel=st.get("channel", "rgb"),
+                              invert=st.get("invert", False), auto=st.get("auto", False),
+                              levels=tuple(st.get("levels", (0, 255))))
+
+    def _photo_state(self, image_id: int) -> dict:
+        """Processing of a picked photo: live for the one on screen, saved for the others."""
+        if self.current is not None and self.current["id"] == image_id:
+            return self._snapshot()
+        return self._per_photo.get(image_id, {}).get("state", {})
+
+    def _load_state(self, st: dict, history: list | None = None) -> None:
+        """Put a saved processing state on the toolbar without redrawing (the caller shows the photo)."""
+        sliders = (self.s_bright, self.s_contrast, self.s_gamma)
+        for w in sliders:
+            w.blockSignals(True)
+        self._ops = list(st.get("ops", []))
+        self._levels = tuple(st.get("levels", (0, 255)))
+        self.s_bright.setValue(st.get("bright", 0))
+        self.s_contrast.setValue(st.get("contrast", 100))
+        self.s_gamma.setValue(st.get("gamma", 100))
+        self._channel = st.get("channel", "rgb")
+        self._auto = st.get("auto", False)
+        self._invert = st.get("invert", False)
+        self._history = list(history or [])
+        for w in sliders:
+            w.blockSignals(False)
+        for pop in (self.pop_gamma, self.pop_contrast, self.pop_bright):
+            pop._show(pop.slider.value())
 
     def eventFilter(self, obj, e):
+        if obj is self.thumbs.viewport() and e.type() == QEvent.Type.Resize and e.size().width() != e.oldSize().width():
+            QTimer.singleShot(0, self._fit_thumb_height)       # wider strip: more photos per row
         # Ctrl+click on a thumbnail picks the second photo (②) and leaves the shown one alone
         if (e.type() in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease,
                          QEvent.Type.MouseButtonDblClick)
@@ -935,6 +1096,31 @@ class MainWindow(QMainWindow):
             item = self.thumbs.itemAt(e.position().toPoint())
             if e.type() == QEvent.Type.MouseButtonPress and item is not None:
                 self._pick_second(item.data(Qt.ItemDataRole.UserRole))
+            return True
+        # plain click = pick for the multi view (numbered), double click = open in 2D
+        if (e.type() in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease,
+                         QEvent.Type.MouseButtonDblClick)
+                and obj is self.thumbs.viewport()
+                and e.button() == Qt.MouseButton.LeftButton
+                and not e.modifiers() & (Qt.KeyboardModifier.ShiftModifier | Qt.KeyboardModifier.AltModifier)):
+            item = self.thumbs.itemAt(e.position().toPoint())
+            if item is None:
+                return super().eventFilter(obj, e)
+            iid = item.data(Qt.ItemDataRole.UserRole)
+            if e.type() == QEvent.Type.MouseButtonPress:
+                self._stop_slideshow()
+                self._pick_pre = (iid, list(self._picks))
+                self._toggle_pick(iid)
+            elif e.type() == QEvent.Type.MouseButtonDblClick:
+                pre = self._pick_pre
+                if pre is not None and pre[0] == iid and pre[1] != self._picks:
+                    self._picks = list(pre[1])           # the first click of the double click
+                    self._mark_picks()
+                    if self.tabs.currentIndex() == 2:
+                        self._fill_multi()
+                self._pick_pre = None
+                self.thumbs.setCurrentItem(item)       # -> _show_image
+                self.tabs.setCurrentIndex(0)
             return True
         return super().eventFilter(obj, e)
 
@@ -967,6 +1153,10 @@ class MainWindow(QMainWindow):
             return
         iid = item.data(Qt.ItemDataRole.UserRole)
         menu = QMenu(self)
+        menu.addAction("멀티에서 빼기" if iid in self._picks else "멀티로 고르기", lambda: self._toggle_pick(iid))
+        if self._picks:
+            menu.addAction(f"멀티로 보기 ({len(self._picks)}장)", self.open_picks)
+        menu.addSeparator()
         menu.addAction("환자 지정/정보 수정…", lambda: (self._show_image(iid), self._edit_image()))
         cur = self.current["id"] if self.current else None
         if iid != cur:
@@ -1025,6 +1215,9 @@ class MainWindow(QMainWindow):
             return
         # processing steps (sharpen, enhance ...) belong to the photo on screen
         self._ops, self._levels, self._history = [], (0, 255), []
+        if row["id"] in self._picks:          # a picked photo keeps its own processing (multi view)
+            saved = self._per_photo.get(row["id"], {})
+            self._load_state(saved.get("state", {}), saved.get("history"))
         self.view2d.set_rgb(self._display_rgb(row))
         self._sync_palette()
         circle = (row["circle_cx"], row["circle_cy"], row["circle_r"]) if row["circle_r"] else None
@@ -1118,8 +1311,16 @@ class MainWindow(QMainWindow):
             self.view2d.set_rgb(rgb, keep_view=True)
             if self.c_adj3d.isChecked():
                 self._mark_3d_dirty()
+        cid = self.current["id"]
+        if cid in self._picks:                # this photo's own processing, kept for the multi view
+            self._per_photo[cid] = {"state": self._snapshot(), "history": list(self._history)}
         if self.tabs.currentIndex() == 2:
-            self._fill_multi()
+            if cid in self._picks:            # only this cell changes (keeps every cell's zoom)
+                small = self._multi_small(self.current, self._snapshot())
+                if small is None or not self.multi.update_cell(cid, small):
+                    self._fill_multi()
+            else:
+                self._fill_multi()
         if self.tabs.currentIndex() == 3:
             self._fill_compare()
 
@@ -1430,7 +1631,36 @@ class MainWindow(QMainWindow):
         self.lbl_status.setText("인쇄를 보냈습니다")
 
     # -- multi view (VK-2 multiple images) ------------------------------------------------------
+    def _multi_label(self, row, rank: int = 0) -> str:
+        mod = MODALITY_LABELS.get(row["modality"] or "", "")
+        num = f"<b style='color:#facc15'>{rank}</b>&nbsp; " if rank else ""
+        return (f"{num}{eye_badge_html(row['laterality'])}&nbsp; "
+                f"{row['exam_date'] or ''} {row['exam_time'] or ''}&nbsp; {mod}")
+
+    def _multi_small(self, row, st: dict, n: int | None = None) -> np.ndarray | None:
+        """Down-scaled photo for a multi cell with the processing state ``st``."""
+        rgb = self._load(row)
+        if rgb is None:
+            return None
+        n = self.multi.count if n is None else n
+        small = imaging.downscale(rgb, 1400 if n <= 4 else 900)
+        ops = st.get("ops", [])
+        return self._adjusted_with(imaging.apply_ops(small, ops) if ops else small, st)
+
     def _fill_multi(self) -> None:
+        if self._picks:                       # the photos picked in the strip, each with its own processing
+            n = self.multi.count
+            items = []
+            for k, iid in enumerate(self._picks[:n]):
+                row = self.db.get_image(iid)
+                small = self._multi_small(row, self._photo_state(iid), n) if row else None
+                if small is not None:
+                    items.append((iid, self._multi_label(row, k + 1), small))
+            more = f" (화면에 {n}장 — 화면 분할을 늘리세요)" if len(self._picks) > n else ""
+            self.multi.set_mode_text(f"고른 사진 {len(self._picks)}장{more}")
+            self.multi.populate(items, self.current["id"] if self.current else None)
+            return
+        self.multi.set_mode_text("")
         ids = [self.thumbs.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.thumbs.count())]
         if not ids:
             self.multi.populate([], None)
@@ -1447,9 +1677,7 @@ class MainWindow(QMainWindow):
                 continue
             small = imaging.downscale(rgb, 1400 if n <= 4 else 900)
             small = self._adjusted(imaging.apply_ops(small, self._ops) if self._ops else small)
-            mod = MODALITY_LABELS.get(row["modality"] or "", "")
-            items.append((iid, f"{row['exam_date'] or ''} {row['exam_time'] or ''}  {row['laterality'] or ''}  {mod}",
-                          small))
+            items.append((iid, self._multi_label(row), small))
         self.multi.populate(items, cur)
 
     def _select_from_multi(self, image_id: int) -> None:
@@ -1459,8 +1687,11 @@ class MainWindow(QMainWindow):
                 if self.thumbs.item(i).data(Qt.ItemDataRole.UserRole) == image_id:
                     self.thumbs.setCurrentRow(i)
                     break
+            else:                              # a picked photo hidden by the strip filters
+                self._show_image(image_id)
         finally:
             self._multi_lock = False
+        self.multi.mark_selected(self.current["id"] if self.current else None)
 
     # -- 3D ----------------------------------------------------------------------
     def _load_mapping(self, row) -> None:

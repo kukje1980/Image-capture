@@ -1,9 +1,11 @@
 """Multi-image view (VK-2 "Multiple Images": 1 / 2 / 4 / 6 / 9 / 16 on screen).
 
-Cells show consecutive photos of the current patient starting at the selected
-one (down-scaled for speed). Click a cell to select it (the info panel and
-the other tabs follow), double-click to open it in the 2D tab. Each cell can
-be zoomed (drag up/down, wheel) and panned on its own.
+Cells show the photos picked in the thumbnail strip (plain click, in pick order) — or, with
+nothing picked, consecutive photos of the current patient starting at the shown one
+(down-scaled for speed). Click a cell to select it: the info panel, the other tabs and the
+image-processing toolbar follow, and with picked photos the processing applies to that photo
+only. Double-click opens it in the 2D tab. Each cell can be zoomed (drag up/down, wheel) and
+panned on its own.
 """
 from __future__ import annotations
 
@@ -51,6 +53,9 @@ class MultiView(QWidget):
         self.combo.setCurrentIndex(2)
         self.combo.currentIndexChanged.connect(lambda _: self.layoutChanged.emit(self.count))
         top.addWidget(self.combo)
+        self.mode_label = QLabel("")
+        self.mode_label.setStyleSheet("color:#facc15; font-weight:600; padding-left:6px")
+        top.addWidget(self.mode_label)
         hint = QLabel("위/아래 드래그: 확대·축소 · 클릭: 선택 · 더블클릭: 2D로 열기")
         hint.setStyleSheet("color:#889")
         top.addWidget(hint, 1)
@@ -101,6 +106,22 @@ class MultiView(QWidget):
             self.grid.setRowStretch(r, 1 if r < rows else 0)
         for c in range(4):
             self.grid.setColumnStretch(c, 1 if c < cols else 0)
+
+    def set_mode_text(self, text: str) -> None:
+        """'고른 사진 3장' (picked photos) or '' (consecutive photos from the shown one)."""
+        self.mode_label.setText(text)
+
+    def update_cell(self, image_id: int, rgb) -> bool:
+        """Show new pixels for one photo, keeping that cell's zoom and position."""
+        for cell in self.cells:
+            if cell.image_id == image_id and cell.isVisible():
+                cell.view.set_rgb(rgb, keep_view=True)
+                return True
+        return False
+
+    def mark_selected(self, image_id: int | None) -> None:
+        for c in self.cells:
+            c.select(c.image_id is not None and c.image_id == image_id)
 
     def _select(self, cell: _Cell) -> None:
         if cell.image_id is None:
