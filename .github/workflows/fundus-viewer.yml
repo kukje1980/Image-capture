@@ -107,8 +107,13 @@ jobs:
   # https://github.com/<owner>/<repo>/releases/download/fundus-viewer-latest/FundusViewer-windows.zip
   # https://github.com/<owner>/<repo>/releases/download/fundus-viewer-latest/FundusViewer-mac-AppleSilicon.dmg
   # https://github.com/<owner>/<repo>/releases/download/fundus-viewer-latest/FundusViewer-mac-Intel.dmg
+  # Only main publishes: pushes to other branches (and pull requests) still build and test,
+  # but must not replace the public download with unmerged work. A manual run on main
+  # (workflow_dispatch) republishes.
   publish:
-    if: github.event_name != 'pull_request'
+    if: >-
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      && github.ref == 'refs/heads/main'
     needs: [test-linux, build-windows, build-mac]
     runs-on: ubuntu-latest
     permissions:
