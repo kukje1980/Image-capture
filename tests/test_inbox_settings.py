@@ -18,23 +18,35 @@ def _images(db):
 
 
 @pytest.fixture
-def window(tmp_path):
-    from PySide6.QtWidgets import QApplication
+def window(tmp_path, monkeypatch):
+    """The viewer as it starts up: it begins watching the inbox by itself.
+
+    Message boxes are recorded instead of shown — a modal box would wait forever for a
+    click on a headless CI runner — and every test checks that none appeared.
+    """
+    from PySide6.QtWidgets import QApplication, QMessageBox
 
     from fundusview import autosetup
     from fundusview.config import Settings
     from fundusview.db import Database
     from fundusview.ui.main_window import MainWindow
 
+    shown = []
+    for name in ("warning", "information", "critical", "question"):
+        monkeypatch.setattr(QMessageBox, name, staticmethod(
+            lambda *a, _n=name, **k: shown.append((_n, a[2] if len(a) > 2 else "")) or QMessageBox.StandardButton.No))
     app = QApplication.instance() or QApplication([])
     s = Settings(library_dir=str(tmp_path / "lib"), inbox_dir=str(tmp_path / "inbox"), auto_detect=False,
-                 stable_seconds=0.05, rescan_seconds=1)   # rescan: safety net for slow change events (macOS)
-    autosetup.apply(s, [])                              # what the start-up does: watch the inbox
+                 stable_seconds=0.2, rescan_seconds=1)   # rescan: safety net for slow change events (macOS)
+    autosetup.apply(s, [])                              # the inbox, as at every start
     db = Database(tmp_path / "lib" / "fundus.db")
     w = MainWindow(s, db)
     w.show()
-    w.act_watch.setChecked(True)
-    yield app, w, db
+    # start-up turns watching on by itself; let it settle before anything restarts it
+    assert _wait(app, lambda: w.act_watch.isChecked(), timeout=10)
+    _wait(app, lambda: False, timeout=1.0)
+    yield app, w, db, shown
+    _wait(app, lambda: False, timeout=0.5)
     w.close()
     db.close()
 
@@ -58,7 +70,7 @@ def _wait(app, cond, timeout=20.0):
 
 
 def test_new_inbox_imports_at_once_and_old_one_stops(window, tmp_path, demo_dir, monkeypatch):
-    app, w, db = window
+    app, w, db, shown = window
     new = tmp_path / "새 가져오기 폴더"
     _settings_ok(w, monkeypatch, lambda d: d.inbox.setText(str(new)))
     assert [os.path.basename(f.path) for f in w.settings.watch_folders] == ["새 가져오기 폴더"]
@@ -75,17 +87,15 @@ def test_new_inbox_imports_at_once_and_old_one_stops(window, tmp_path, demo_dir,
 
     from fundusview.config import Settings
     assert Settings.load().inbox == new                 # remembered
+    assert shown == []
 
 
-def test_inbox_inside_library_is_refused(window, monkeypatch):
-    from PySide6.QtWidgets import QMessageBox
-
+def test_inbox_inside_library_is_refused(window):
     from fundusview.ui.dialogs import SettingsDialog
 
-    app, w, _ = window
-    warned = []
-    monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda *a, **k: warned.append(a[2])))
+    app, w, _, shown = window
     dlg = SettingsDialog(w.settings, w)
     dlg.inbox.setText(str(w.settings.library / "in"))
     dlg.accept()
-    assert warned and "라이브러리" in warned[0] and dlg.result() != SettingsDialog.DialogCode.Accepted
+    assert [k for k, _ in shown] == ["warning"] and "라이브러리" in shown[0][1]
+    assert dlg.result() != SettingsDialog.DialogCode.Accepted

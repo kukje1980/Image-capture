@@ -122,6 +122,26 @@ def test_watcher_picks_up_new_files(tmp_path, demo_dir):
         db.close()
 
 
+def test_restarting_right_after_start_does_not_block(tmp_path):
+    """The settings dialog restarts watching; stopping an observer that has only just started
+    must never wait for it (on Windows watchdog's reader can then block until the folder
+    changes), or the window freezes."""
+    drop = tmp_path / "watched"
+    drop.mkdir()
+    s = Settings(library_dir=str(tmp_path / "lib"), rescan_seconds=0, watch_folders=[WatchFolder(path=str(drop))])
+    db = Database(tmp_path / "lib" / "fundus.db")
+    svc = ImportService(db, s)
+    try:
+        t = time.time()
+        for _ in range(5):
+            assert svc.start_watching() == []
+        svc.stop_watching()
+        assert time.time() - t < 5
+    finally:
+        svc.shutdown()
+        db.close()
+
+
 def test_same_id_different_name_is_logged(env):
     s, db, drop = env
     from fundusview.models import ExtractedMeta
