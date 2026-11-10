@@ -1114,6 +1114,7 @@ class MontageDialog(QDialog):
             self._lbl3d.setText(f"3D 안구를 열 수 없습니다: {exc}")
             return
         self.eye.set_detail("detailed")
+        self.eye.relief = 0.6                 # 입체 조명, as in the main window
         self._lay3d.removeWidget(self._lbl3d)
         self._lbl3d.hide()
         self._lay3d.addWidget(self.eye, 1)

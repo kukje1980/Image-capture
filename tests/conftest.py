@@ -9,6 +9,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 # Keep settings / inbox / library of every test out of the real home folder.
 os.environ["FUNDUSVIEW_HOME"] = tempfile.mkdtemp(prefix="fundusview-test-")
+# Animations finish at once (the same end state, no waiting); tests of the motion itself switch
+# it on and step the clock by hand (``motion`` fixture in test_motion.py).
+os.environ["FUNDUSVIEW_NO_MOTION"] = "1"
 
 
 @pytest.fixture(scope="session")

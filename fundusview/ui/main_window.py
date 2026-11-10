@@ -40,6 +40,7 @@ from .dialogs import ImageDialog, PatientDialog, SettingsDialog, source_label
 from .disc_pair import DiscPairDialog
 from .eye3d import EyeView
 from .histogram import HistogramDialog
+from . import motion
 from .image_view import TOOL_HINTS, TOOLS, ImageView, from_qimage
 from .montage_dialog import MontageDialog, MontageSource, confirm_sources
 from .keys import IS_MAC, keys
@@ -94,6 +95,38 @@ class _FullScreen3D(QWidget):
         super().closeEvent(e)
 
 
+class Preloader(QObject):
+    """Decodes photos ahead of time on a worker thread — the next and the previous photo of the
+    strip — so stepping through an exam never waits for a file (a 24-megapixel JPEG takes 0.3 s)."""
+    loaded = Signal(int, object)          # image id, RGB array (None: could not be read)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        from concurrent.futures import ThreadPoolExecutor
+
+        self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="fundus-preload")
+        self._busy: set[int] = set()
+        self.loaded.connect(lambda image_id, _: self._busy.discard(image_id))
+
+    def request(self, image_id: int, path: str) -> None:
+        if image_id not in self._busy:
+            self._busy.add(image_id)
+            self._pool.submit(self._run, image_id, path)
+
+    def _run(self, image_id: int, path: str) -> None:
+        try:
+            rgb = imaging.load_rgb(path)
+        except Exception:                  # shown (with the reason) when the photo is opened
+            rgb = None
+        try:
+            self.loaded.emit(image_id, rgb)
+        except RuntimeError:               # the window is gone
+            pass
+
+    def shutdown(self) -> None:
+        self._pool.shutdown(wait=False, cancel_futures=True)
+
+
 class Bridge(QObject):
     """Carries worker-thread callbacks into the GUI thread (queued signals)."""
     result = Signal(object)
@@ -115,6 +148,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.settings = settings
         self.db = db
+        if not settings.smooth_motion:        # 보기 → 부드러운 움직임 (off: everything changes at once)
+            motion.set_enabled(False)
         self.bridge = Bridge()
         self.service = ImportService(db, settings, on_result=self.bridge.result.emit,
                                      on_status=self.bridge.status.emit)
@@ -125,6 +160,9 @@ class MainWindow(QMainWindow):
         self.compare = None
         self._patient_ref: int | None = None  # UNASSIGNED / patient id / None
         self._cache: OrderedDict[int, np.ndarray] = OrderedDict()
+        self._preloader = Preloader(self)
+        self._preloader.loaded.connect(self._on_preloaded)
+        self._preload_timer = QTimer(self, singleShot=True, timeout=self._preload_neighbours)
         self._proc_cache: OrderedDict[tuple, np.ndarray] = OrderedDict()
         self._ops: list[str] = []            # processing stack (VK-2 image processing toolbar)
         self._levels: tuple[int, int] = (0, 255)
@@ -258,6 +296,12 @@ class MainWindow(QMainWindow):
         m.addAction(A["captions"])
         m.addAction(A["overlay"])
         m.addSeparator()
+        self.act_smooth = m.addAction("부드러운 움직임")
+        self.act_smooth.setCheckable(True)
+        self.act_smooth.setChecked(bool(self.settings.smooth_motion))
+        self.act_smooth.setToolTip("확대·회전·화면 전환이 미끄러지듯 이어집니다 (원격 접속 등 느린 화면에서는 끄세요)")
+        self.act_smooth.toggled.connect(self._on_smooth)
+        m.addSeparator()
         for a in self.menus["fit"].actions():
             m.addAction(a)
         m.addAction("툴바 기본 위치로", self._reset_toolbars)
@@ -388,6 +432,9 @@ class MainWindow(QMainWindow):
                                "Ctrl+클릭: 두 번째 사진(②) 선택/해제 — 비교 · 디스크 2장 · "
                                "오른쪽 클릭: 환자 지정·다시 분석"))
         self.thumbs.viewport().installEventFilter(self)
+        self.thumbs.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.thumbs.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self._thumb_wheel = motion.SmoothWheel(self.thumbs)      # the wheel glides through the photos
         self.thumbs.currentItemChanged.connect(lambda cur, _: cur and self._show_image(cur.data(Qt.ItemDataRole.UserRole)))
         self.thumbs.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.thumbs.customContextMenuRequested.connect(self._thumb_menu)
@@ -397,6 +444,7 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
         self.view2d = ImageView()
+        self.view2d.crossfade = True            # the next photo fades in over the last
         self.view2d.toggle_captions(True)
         self.view2d.discPicked.connect(self._on_disc_picked)
         self.view2d.measured.connect(self._on_measured)
@@ -656,8 +704,23 @@ class MainWindow(QMainWindow):
         self.b_full3d = QPushButton("크게 보기")
         self.b_full3d.setToolTip("3D 안구와 사진을 화면 전체로 (Esc: 돌아가기 · Space: 슬릿 스캔)")
         self.b_full3d.clicked.connect(self._toggle_full_3d)
+        # 효과: the photo lifting off the retina, relief lighting, a slow turntable
+        self.b_unwrap = QPushButton("사진 펼치기")
+        self.b_unwrap.setToolTip("망막에 입힌 사진이 떠올라 평면 사진으로 펴지고, 다시 누르면 망막에 감깁니다 — "
+                                 "평면 사진과 안구 속 위치가 어떻게 이어지는지 보여 줍니다")
+        self.b_unwrap.clicked.connect(self._toggle_unwrap)
+        self.c_relief3d = QCheckBox("입체 조명")
+        self.c_relief3d.setToolTip("사진의 밝기를 높낮이로 읽어 혈관과 시신경 유두가 도드라져 보이게 비춥니다 "
+                                   "(안구를 돌리면 빛이 따라 움직입니다)")
+        self.c_relief3d.setChecked(bool(self.settings.relief3d))
+        self.c_relief3d.toggled.connect(self._on_relief)
+        self.c_spin3d = QCheckBox("자동 회전")
+        self.c_spin3d.setToolTip("손을 떼고 있으면 안구가 천천히 돕니다 (만지면 멈췄다가 다시 돕니다)")
+        self.c_spin3d.setChecked(bool(self.settings.auto_rotate3d))
+        self.c_spin3d.toggled.connect(self._on_spin)
         row3 = QHBoxLayout()
-        for c in (self.b_scan, self.c_side3d, self.c_fov3d, self.c_xray3d, self.b_full3d):
+        for c in (self.b_scan, self.c_side3d, self.c_fov3d, self.c_xray3d, self.b_full3d, QLabel("  "),
+                  self.b_unwrap, self.c_relief3d, self.c_spin3d):
             row3.addWidget(c)
         row3.addStretch()
         row2 = QHBoxLayout()
@@ -671,11 +734,14 @@ class MainWindow(QMainWindow):
         self.lbl_zoom3d.setToolTip("처음 보기 대비 확대 배율 · 더블클릭 또는 0: 처음 보기")
         self.eye3d.zoomChanged.connect(lambda m: self.lbl_zoom3d.setText(f"배율 ×{m:.1f}"))
         self.eye3d.glError.connect(self._on_gl_error)
-        for label, fn in (("정면 보기", self.eye3d.front_view), ("시점 초기화", self.eye3d.reset_view),
+        for label, fn in (("정면 보기", lambda: self.eye3d.front_view(animate=True)),
+                          ("시점 초기화", lambda: self.eye3d.reset_view(animate=True)),
                           ("화각·투영 저장", self._save_mapping), ("화면 저장…", self._save_3d)):
             b = QPushButton(label)
             b.clicked.connect(fn)
             row2.addWidget(b)
+        self.eye3d.relief = self.RELIEF if self.settings.relief3d else 0.0
+        self.eye3d.set_auto_rotate(self.SPIN if self.settings.auto_rotate3d else 0.0)
         self.lbl_3d = QLabel("")
         self.lbl_3d.setObjectName("hint3d")
         self.lbl_3d.setMinimumWidth(0)       # may shrink: never widen the window
@@ -724,8 +790,13 @@ class MainWindow(QMainWindow):
             "앞쪽 절개 / 세로 단면 + 슬라이더: 안구를 여는 방식과 깊이 · 망막 투시: 망막을 바깥에서 보기<br>"
             "▶ 슬릿 스캔: 단면에 화각 → 슬릿이 사진을 위에서 아래로 → 사진을 입힌 3D 안구 (누르면 멈춤) · "
             "크게 보기: 화면 전체 (Space 재생, Esc 돌아가기)<br>"
-            "드래그: 회전 · 휠: 커서가 가리키는 곳으로 확대 · 가운데 버튼 또는 Shift+드래그: 이동<br>"
-            "+/−: 확대·축소 · 더블클릭 또는 0: 처음 보기<br><br>"
+            "드래그: 회전 (돌리다 놓으면 관성으로 더 돕니다) · 휠: 커서가 가리키는 곳으로 확대 · "
+            "가운데 버튼 또는 Shift+드래그: 이동<br>"
+            "+/−: 확대·축소 · 더블클릭 또는 0: 처음 보기<br>"
+            "사진 펼치기: 망막의 사진이 평면 사진으로 펴졌다가 다시 감김 · 입체 조명: 혈관·유두가 도드라져 보임 · "
+            "자동 회전<br>"
+            "내부 (망막 시점)를 누르면 동공을 지나 안으로 들어갑니다<br>"
+            "보기 → 부드러운 움직임: 끄면 확대·회전·전환이 바로 바뀝니다 (원격 접속 등 느린 화면)<br><br>"
             "<b>단축키</b><br>"
             "PageUp / PageDown: 이전 / 다음 사진 · Ctrl+1~4: 2D / 3D / 다중 / 비교 · Ctrl+5: 모두 보기<br>"
             "Ctrl+Z: 처리 실행 취소 · Delete: 마지막 측정 지우기 · Ctrl+C: 화면 복사<br>"
@@ -1274,14 +1345,19 @@ class MainWindow(QMainWindow):
     # =====================================================================
     # image display
     # =====================================================================
-    def _load(self, row) -> np.ndarray | None:
-        if row["id"] in self._cache:
-            self._cache.move_to_end(row["id"])
-            return self._cache[row["id"]]
+    @staticmethod
+    def _image_path(row) -> str | None:
         path = row["display_path"] or row["file_path"]
         if not path or not os.path.exists(path):
             alt = row["original_path"]
             path = alt if alt and os.path.exists(alt) else None
+        return path
+
+    def _load(self, row) -> np.ndarray | None:
+        if row["id"] in self._cache:
+            self._cache.move_to_end(row["id"])
+            return self._cache[row["id"]]
+        path = self._image_path(row)
         if path is None:
             return None
         try:
@@ -1289,10 +1365,35 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self.lbl_status.setText(f"영상을 열 수 없음: {exc}")
             return None
-        self._cache[row["id"]] = rgb
+        self._cache_put(row["id"], rgb)
+        return rgb
+
+    def _cache_put(self, image_id: int, rgb: np.ndarray) -> None:
+        self._cache[image_id] = rgb
         while len(self._cache) > 6:
             self._cache.popitem(last=False)
-        return rgb
+
+    def _preload_neighbours(self) -> None:
+        """Read the next and the previous photo of the strip in the background."""
+        i = self.thumbs.currentRow()
+        if i < 0 or self.current is None:
+            return
+        for j in (i + 1, i - 1):
+            item = self.thumbs.item(j) if 0 <= j < self.thumbs.count() else None
+            iid = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+            if iid is None or iid in self._cache:
+                continue
+            row = self.db.get_image(iid)
+            path = self._image_path(row) if row is not None else None
+            if path is not None:
+                self._preloader.request(iid, path)
+
+    def _on_preloaded(self, image_id: int, rgb) -> None:
+        if rgb is None or image_id in self._cache:
+            return
+        self._cache_put(image_id, rgb)
+        if self.current is not None and self.current["id"] in self._cache:
+            self._cache.move_to_end(self.current["id"])     # the photo on screen stays the newest
 
     def _show_image(self, image_id: int | None) -> None:
         row = self.db.get_image(image_id) if image_id is not None else None
@@ -1330,6 +1431,7 @@ class MainWindow(QMainWindow):
             self._fill_multi()
         if self._tab() == "all":
             self._fill_overview(multi=not self._multi_lock)
+        self._preload_timer.start(180)        # once the browsing pauses: read the neighbours ahead
 
     def _fill_info(self, row) -> None:
         meta = json.loads(row["meta_json"] or "{}")
@@ -1545,9 +1647,9 @@ class MainWindow(QMainWindow):
         elif key == "histogram":
             self._histogram()
         elif key == "fit":
-            v.fit()
+            v.fit(animate=True)
         elif key in ("actual", "zoom2", "zoom4", "zoom8"):
-            v.zoom_to({"actual": 1.0, "zoom2": 2.0, "zoom4": 4.0, "zoom8": 8.0}[key])
+            v.zoom_to({"actual": 1.0, "zoom2": 2.0, "zoom4": 4.0, "zoom8": 8.0}[key], animate=True)
         elif key.startswith("region:"):
             self._zoom_region(key[7:])
         elif key in ("rot_cw", "rot_ccw"):
@@ -1879,6 +1981,8 @@ class MainWindow(QMainWindow):
     def _set_3d_view(self, mode: str, animate: bool = True) -> None:
         """앞쪽 절개 (front) or 세로 단면 (section), gliding to a fitting camera."""
         self._show.stop()
+        if mode == "section":
+            self._end_unwrap()
         self._sync_view_combo(mode)
         eye = self.eye3d
         # the front stays closed while the section plane moves; the front cut opens at the end
@@ -1940,6 +2044,7 @@ class MainWindow(QMainWindow):
         if self.eye3d.detail != "detailed":   # the presentation shows the realistic eye (not saved as the look)
             self._set_3d_detail("detailed", save=False)
         self._show.show_fov = self.c_fov3d.isChecked()
+        self._end_unwrap()
         self.eye3d.cut = 1.0                  # it ends in 세로 단면: no front cut
         self._cut_values["section"] = 0
         self._sync_view_combo("section")
@@ -2051,9 +2156,67 @@ class MainWindow(QMainWindow):
     def _on_3d_mode(self, outside: bool) -> None:
         self._show.stop()
         self._tween._finish()
+        self._end_unwrap()
         self.s_cut.setEnabled(outside)
         self.c_view3d.setEnabled(outside)
-        self.eye3d.set_mode("outside" if outside else "inside")
+        # 들어가기: in through the pupil / back out (at once when 부드러운 움직임 is off)
+        self.eye3d.enter("outside" if outside else "inside")
+
+    # -- 효과: 사진 펼치기 · 입체 조명 · 자동 회전 ---------------------------------------------
+    RELIEF = 0.6            # strength of 입체 조명
+    SPIN = 12.0             # 자동 회전, degrees per second
+
+    def _toggle_unwrap(self) -> None:
+        """사진 펼치기 ↔ 망막에 감기: the photo between the retina and a flat sheet at the eye's opening."""
+        eye = self.eye3d
+        if self.current is None:
+            self.lbl_status.setText("사진을 먼저 고르세요")
+            return
+        self._show.stop()
+        self._tween._finish()
+        eye.stop_motion()
+        if eye.unwrap < 0.5:
+            if not self.r_out.isChecked():        # it happens outside the opened eye
+                self.r_out.setChecked(True)
+                eye.stop_motion()
+            if self.c_view3d.currentData() != "front" or eye.half > 0.0:
+                self._set_3d_view("front", animate=False)
+                self._tween._finish()             # the section is closed now, before the photo lifts off
+            if self.s_cut.value() > 45:           # too closed to see into: open to the usual depth
+                self.s_cut.setValue(25)
+            self._on_cut(self.s_cut.value())
+            eye.glide_to({"yaw": 0.0, "pitch": 0.0, "dist": eye._fit(eye.DIST0, 1.1), "target": (0.0, 0.0, 0.0)},
+                         duration=1.25, extra={"unwrap": 1.0})
+            self.b_unwrap.setText("망막에 감기")
+            self.lbl_status.setText("사진 펼치기 — 망막의 사진이 평면 사진으로 펴졌습니다 (다시 누르면 망막에 감깁니다)")
+        else:
+            eye.glide_to(dict(eye.HOME), duration=1.25, extra={"unwrap": 0.0})
+            self.b_unwrap.setText("사진 펼치기")
+            self.lbl_status.setText("사진을 망막에 감았습니다")
+
+    def _end_unwrap(self) -> None:
+        """Another view takes over: the photo is back on the retina."""
+        if self.eye3d.unwrap > 0.0:
+            self.eye3d.stop_motion()
+            self.eye3d.unwrap = 0.0
+            self.eye3d.update()
+        self.b_unwrap.setText("사진 펼치기")
+
+    def _on_relief(self, on: bool) -> None:
+        self.settings.relief3d = bool(on)
+        self.eye3d.relief = self.RELIEF if on else 0.0
+        self.eye3d.update()
+
+    def _on_spin(self, on: bool) -> None:
+        self.settings.auto_rotate3d = bool(on)
+        self.eye3d.set_auto_rotate(self.SPIN if on else 0.0)
+
+    def _on_smooth(self, on: bool) -> None:
+        self.settings.smooth_motion = bool(on)
+        motion.set_enabled(on)
+        self.eye3d.set_auto_rotate(self.SPIN if self.c_spin3d.isChecked() else 0.0)
+        self.lbl_status.setText("부드러운 움직임을 켰습니다" if on else
+                                "부드러운 움직임을 껐습니다 — 확대·회전·전환이 바로 바뀝니다")
 
     def _mark_3d_dirty(self) -> None:
         self._3d_dirty = True
@@ -2293,7 +2456,7 @@ class MainWindow(QMainWindow):
         h = w * vh / vw
         self._ov_busy = True                       # the scroll bars move: keep the asked-for centre
         try:
-            self.ov_zoom.zoom_to_rect(QRectF(x - w / 2, y - h / 2, w, h))
+            self.ov_zoom.zoom_to_rect(QRectF(x - w / 2, y - h / 2, w, h), animate=False)
         finally:
             self._ov_busy = False
         self._ov_sync_roi()
@@ -2596,5 +2759,7 @@ class MainWindow(QMainWindow):
             self.settings.save()
         except OSError:
             pass
+        self._preload_timer.stop()
+        self._preloader.shutdown()
         self.service.shutdown()
         super().closeEvent(e)
