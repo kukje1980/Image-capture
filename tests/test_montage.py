@@ -57,7 +57,8 @@ def test_rotations():
     assert np.allclose(mt.rotation_between(a, b) @ a, b)
     r = demo.gaze_rotation(20.0, -10.0, 5.0)
     src = mt._unit(np.random.default_rng(0).normal(size=(30, 3)))
-    assert rot_err(mt.kabsch(src, src @ r.T), r) < 1e-9
+    # matrices compared directly: rot_err (an arccos) cannot resolve less than ~1e-6°
+    assert np.allclose(mt.kabsch(src, src @ r.T), r, atol=1e-12)
     # 수동 회전: counter-clockwise on the map
     s = mt.Shot(np.zeros((10, 10, 3), np.uint8), None, (5.0, 5.0, 5.0), fov_deg=60.0, fov_type="internal")
     right = s.dirs(np.array([[9.0, 5.0]]))
@@ -189,7 +190,7 @@ def test_picking_recentring_and_saving(series):
     assert mt.shot_at(shots, np.array([0.0, 0.0, 1.0])) is None
     assert mt.most_central(shots) == 0
     mt.recentre(shots, 1)
-    assert np.allclose(shots[1].R, np.eye(3)) and rot_err(shots[0].R, truth[1].T) < 1e-9
+    assert np.allclose(shots[1].R, np.eye(3)) and np.allclose(shots[0].R, truth[1].T, atol=1e-12)
     d = mt.definition(shots, 1)
     fresh = shots_of(photos)
     for s, j in zip(fresh, d["shots"]):
