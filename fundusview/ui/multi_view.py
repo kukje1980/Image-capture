@@ -6,6 +6,8 @@ nothing picked, consecutive photos of the current patient starting at the shown 
 image-processing toolbar follow, and with picked photos the processing applies to that photo
 only. Double-click opens it in the 2D tab. Each cell can be zoomed (drag up/down, wheel) and
 panned on its own.
+
+``compact=True`` (모두 보기의 작은 화면): no layout row, always 4 photos (2 × 2).
 """
 from __future__ import annotations
 
@@ -42,9 +44,10 @@ class MultiView(QWidget):
     opened = Signal(int)
     layoutChanged = Signal(int)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, compact: bool = False):
         super().__init__(parent)
-        top = QHBoxLayout()
+        self.topbar = QWidget()
+        top = QHBoxLayout(self.topbar)
         top.setContentsMargins(4, 4, 4, 0)
         top.addWidget(QLabel("화면 분할"))
         self.combo = QComboBox()
@@ -63,8 +66,11 @@ class MultiView(QWidget):
         self.grid.setSpacing(3)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.addLayout(top)
+        lay.addWidget(self.topbar)
         lay.addLayout(self.grid, 1)
+        if compact:
+            self.grid.setSpacing(2)
+            self.topbar.hide()
         self.cells: list[_Cell] = []
 
     @property

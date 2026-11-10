@@ -45,3 +45,12 @@ QPushButton#detail3d:checked { background: #1f6f8b; border-color: #1f6f8b; color
 QLabel#imageInfo { color: #2a3138; padding: 0 8px; border-left: 1px solid #c8cec8; border-right: 1px solid #c8cec8; }
 QLabel#measure { background: #20262c; color: #ffd640; padding: 1px 8px; border-radius: 3px; }
 QTabWidget::pane { border: 0; background: #000000; }
+/* 모두 보기: the small panes next to the big photo */
+QSplitter#ovSide { background: #000000; }
+QSplitter#ovSide::handle { background: #000000; }
+QFrame#ovPane { background: #111316; border: 1px solid #2a3138; }
+QPushButton#ovHead { background: #20262c; color: #e6ebef; border: 0; border-radius: 0; padding: 3px 8px;
+                     text-align: left; font-size: 12px; }
+QPushButton#ovHead:hover { background: #1f6f8b; color: #ffffff; }
+QPushButton#ovOpen3d { background: #111316; color: #9fd0e0; border: 1px dashed #3a444d; font-size: 13px; }
+QPushButton#ovOpen3d:hover { background: #1f2a33; color: #ffffff; }
