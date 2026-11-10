@@ -1,30 +1,11 @@
-## 안저 사진 뷰어 — 최신 빌드 (Windows · Mac)
+## 안저 사진 뷰어 — 최신 빌드 (Windows)
 
-아래 **Assets** 에서 내 컴퓨터에 맞는 파일을 눌러 내려받으세요 (로그인 필요 없음).
-
-| 컴퓨터 | 파일 |
-|---|---|
-| Windows 10 / 11 | **FundusViewer-windows.zip** |
-| Mac — Apple Silicon (M1 · M2 · M3 · M4 …) | **FundusViewer-mac-AppleSilicon.dmg** |
-| Mac — Intel | **FundusViewer-mac-Intel.dmg** |
-
-Mac 종류는 화면 왼쪽 위 사과 메뉴 → **이 Mac에 관하여** 의 "칩"(Apple M…) 또는 "프로세서"(Intel …) 에서 확인합니다.
+아래 **Assets** 의 **FundusViewer-windows.zip** 을 눌러 내려받으세요 (Windows 10 / 11, 로그인 필요 없음).
 
 ### Windows 설치·실행
 1. 내려받은 zip 파일의 압축을 풉니다.
 2. `FundusViewer` 폴더 안의 **FundusViewer.exe** 를 실행합니다.
 3. "Windows의 PC 보호" 창이 뜨면 **추가 정보 → 실행** 을 누릅니다 (서명하지 않은 프로그램이라 나오는 경고입니다).
-
-### Mac 설치·실행 (macOS 11 Big Sur 이상)
-1. 내려받은 dmg 파일을 열고 **FundusViewer** 를 **Applications** 폴더로 끌어다 놓습니다.
-2. 응용 프로그램 폴더에서 FundusViewer 를 엽니다.
-3. 처음 열 때 "확인할 수 없는 개발자" 경고가 나오면 (애플 인증서로 서명하지 않은 프로그램이라 나오는 경고입니다):
-   - **macOS 15 Sequoia 이상:** 경고 창을 닫고 사과 메뉴 → **시스템 설정 → 개인정보 보호 및 보안** 맨 아래의 **그래도 열기** 를 누른 뒤 암호를 입력합니다.
-   - **macOS 14 이하:** FundusViewer 를 **Control + 클릭 (또는 오른쪽 클릭) → 열기** → **열기** 를 누릅니다.
-   - 한 번 열면 다음부터는 바로 열립니다.
-4. 문서 폴더·USB·네트워크 폴더 접근을 물으면 **허용** 을 누릅니다 (사진을 가져오는 데 필요합니다).
-
-Mac 에서는 Ctrl 대신 **⌘** 를 씁니다 (⌘+클릭 = 두 번째 사진 고르기). 트랙패드로 두 손가락 스크롤 또는 벌리기/오므리기로 확대·축소합니다.
 
 ### 모두 보기 (첫 화면)
 왼쪽에 큰 사진, 오른쪽에 다중(4장) · 확대(처음엔 시신경 유두 ×4, 큰 사진을 클릭한 곳) · 3D 안구가 함께 나옵니다.
@@ -34,6 +15,13 @@ Mac 에서는 Ctrl 대신 **⌘** 를 씁니다 (⌘+클릭 = 두 번째 사진 
 사진 목록은 최신 사진부터 나오고, 사진마다 왼쪽 위에 **OD(파랑) · OS(주황)** 가 붙습니다. 사진 목록은 화면 아래쪽에 있고, 왼쪽의 **▤** 버튼으로 1·2·3줄.
 사진을 **클릭**하면 멀티로 골라지고(노란 번호), **더블클릭**하면 2D로 크게 열립니다. **[멀티]** 를 누르면 고른 사진이
 다중 보기에 모이고, 칸을 누르면 **그 사진만** 아래 툴바로 보정됩니다(Red-free · 대비 · 선명하게 …).
+
+### 몽타주 — 여러 장을 한 장으로, 3D 안구에서 보기
+같은 눈의 사진을 2장 이상 클릭해 고르고 사진 목록 왼쪽의 **[몽타주]** 를 누르면 겹치는 혈관을 찾아 **자동으로 합칩니다**.
+맞추기 화면에서는 고른 사진이 **반투명**하게 겹쳐 보여 드래그로 옮기고(Ctrl+드래그 = 돌리기) 맞출 수 있고, **기준점으로
+맞추기**에서 두 사진의 같은 혈관 갈림길을 찍어 맞출 수도 있습니다. 밝기를 맞추고 경계 없이 섞은 결과를 **3D 안구**에
+입혀 보며, 몽타주의 각도(안구 중심각)는 자동으로 계산되고 직접 정할 수도 있습니다. **환자 기록에 저장**하면 사진 목록에
+`몽타주`로 추가됩니다(오른쪽 클릭 → 몽타주 다시 편집).
 
 ### 사진 확대·축소
 도구를 고를 필요 없이 사진 위에서 **위로 드래그하면 확대, 아래로 드래그하면 축소**됩니다 (누른 곳 중심).
@@ -46,11 +34,9 @@ Mac 에서는 Ctrl 대신 **⌘** 를 씁니다 (⌘+클릭 = 두 번째 사진 
 **크게 보기**로 화면 전체에 띄울 수 있습니다(Space = 다시 재생, Esc = 돌아가기).
 
 ### 사진 가져오기
-설정할 것이 없습니다. 실행하면 레티캠(`reticam`·`레티캠`) 등 장비 폴더와 `문서\안저사진 가져오기` 폴더(Mac: `문서/안저사진 가져오기`)를 찾아 자동으로 감시하고, 새 사진의 환자 ID·이름을 읽어 환자별로 정리합니다. Mac 에서는 연결된 USB 디스크와 NAS(공유 폴더)에서도 장비 폴더를 찾습니다.
+설정할 것이 없습니다. 실행하면 레티캠(`reticam`·`레티캠`) 등 장비 폴더와 `문서\안저사진 가져오기` 폴더를 찾아 자동으로 감시하고, 새 사진의 환자 ID·이름을 읽어 환자별로 정리합니다.
 
-가상 데모 사진으로 먼저 써 보려면 Windows 명령 프롬프트에서 `FundusViewer.exe --demo`, Mac 터미널에서 `/Applications/FundusViewer.app/Contents/MacOS/FundusViewer --demo` 로 실행합니다.
+가상 데모 사진으로 먼저 써 보려면 명령 프롬프트에서 `FundusViewer.exe --demo` 로 실행합니다 (몽타주는 데모 환자 `D0001240`).
 
 ### 항상 최신 버전 주소
-- Windows: https://github.com/kukje1980/Image-capture/releases/download/fundus-viewer-latest/FundusViewer-windows.zip
-- Mac (Apple Silicon): https://github.com/kukje1980/Image-capture/releases/download/fundus-viewer-latest/FundusViewer-mac-AppleSilicon.dmg
-- Mac (Intel): https://github.com/kukje1980/Image-capture/releases/download/fundus-viewer-latest/FundusViewer-mac-Intel.dmg
+https://github.com/kukje1980/Image-capture/releases/download/fundus-viewer-latest/FundusViewer-windows.zip
