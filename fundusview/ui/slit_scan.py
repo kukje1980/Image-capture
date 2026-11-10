@@ -28,10 +28,11 @@ import time
 from dataclasses import dataclass
 
 import numpy as np
-from PIL import Image
 from PySide6.QtCore import QObject, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QImage, QLinearGradient, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QWidget
+
+from .. import imaging
 
 
 def ease(x: float) -> float:
@@ -93,15 +94,16 @@ class ScanPhotoView(QWidget):
         y0, y1 = max(0, int(math.floor(cy - r))), min(h, int(math.ceil(cy + r)))
         if x1 - x0 < 2 or y1 - y0 < 2:
             x0, x1, y0, y1 = 0, w, 0, h
-        crop = rgb[y0:y1, x0:x1, :3].astype(np.float32)
-        if alpha is not None:             # black outside the field (hides text burned into the corners)
-            crop *= alpha[y0:y1, x0:x1, None].astype(np.float32) / 255.0
-        img = Image.fromarray(crop.clip(0, 255).astype(np.uint8))
-        s = min(1.0, self.MAX_SIDE / max(img.size))
+        # shrink first, then mask: a 24-megapixel photo is ready in a few ms instead of half a second
+        crop = np.ascontiguousarray(rgb[y0:y1, x0:x1, :3])
+        mask = np.ascontiguousarray(alpha[y0:y1, x0:x1]) if alpha is not None else None
+        s = min(1.0, self.MAX_SIDE / max(crop.shape[:2]))
         if s < 1.0:
-            img = img.resize((max(1, round(img.width * s)), max(1, round(img.height * s))),
-                             Image.Resampling.LANCZOS)
-        data = np.ascontiguousarray(np.asarray(img))
+            crop = imaging.shrink(crop, s)
+            mask = imaging.shrink(mask, s, like=crop) if mask is not None else None
+        if mask is not None:              # black outside the field (hides text burned into the corners)
+            crop = (crop.astype(np.uint16) * mask.astype(np.uint16)[..., None] // 255).astype(np.uint8)
+        data = np.ascontiguousarray(crop)
         qimg = QImage(data.data, data.shape[1], data.shape[0], 3 * data.shape[1],
                       QImage.Format.Format_RGB888).copy()
         self._pix = QPixmap.fromImage(qimg)
@@ -217,7 +219,8 @@ class SlitScanShow(QObject):
 
     def start(self) -> None:
         eye = self.eye
-        eye.mode = "outside"
+        eye.stop_motion()                     # a flick, a glide or 들어가기 in progress ends here
+        eye.mode, eye.unwrap, eye.dark = "outside", 0.0, 0.0
         self._start_pose = eye.pose()
         self._start_half, self._start_xray = eye.half, eye.xray
         self._side, self._end = eye.section_pose(), eye.showcase_pose()
@@ -320,6 +323,7 @@ class ViewTween(QObject):
     def go(self, pose: dict | None, half: float, xray: float, duration: float = 0.8, done=None) -> None:
         self._finish()
         eye = self.eye
+        eye.stop_motion()
         self._from = (eye.pose(), eye.half, eye.xray)
         self._to = (pose, half, xray)
         self._t0, self._dur, self._done = time.monotonic(), max(duration, 1e-3), done

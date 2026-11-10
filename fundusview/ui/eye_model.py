@@ -219,15 +219,24 @@ def wall_radius(z, phi):
     return wall_base_radius(z) - ciliary_relief(z, phi)
 
 
-def inner_wall_mesh(n_post: int = 140, n_ant: int = 72, n_seg: int = 432) -> MeshData:
-    """Retina … ciliary body up to the iris root; normals face the inside of the eye."""
+def inner_wall_mesh(n_post: int = 64, n_ant: int = 56, n_seg: int = 432, n_seg_post: int | None = None) -> MeshData:
+    """Retina … ciliary body up to the iris root; normals face the inside of the eye.
+
+    Two bands that meet at the ora serrata: the retina is a smooth sphere, shaded per pixel from
+    its direction, so it needs few triangles (``n_post`` rings × ``n_seg_post`` segments); the
+    ciliary body carries the 72 processes and keeps ``n_seg`` segments. (Triangles are what a
+    computer without a graphics card spends its time on.)"""
+    n_seg_post = min(n_seg, 180) if n_seg_post is None else n_seg_post
     th = np.linspace(0.0, ORA_THETA, n_post + 1)
     za = np.linspace(Z_ORA, IRIS_BACK_Z, n_ant + 1)[1:]
     z = np.concatenate([-R_RET * np.cos(th), za])
     r = np.concatenate([R_RET * np.sin(th), wall_base_radius(za)])
     nr, nz = _profile_normals(r, z)
     nr[: n_post + 1], nz[: n_post + 1] = -np.sin(th), np.cos(th)      # exact on the sphere
-    return revolve(r, z, n_seg, (nr, nz), relief=ciliary_relief)
+    k = n_post + 1
+    post = revolve(r[:k], z[:k], n_seg_post, (nr[:k], nz[:k]))
+    ant = revolve(r[k - 1:], z[k - 1:], n_seg, (nr[k - 1:], nz[k - 1:]), relief=ciliary_relief)
+    return merge(post, ant)
 
 
 def iris_mesh(n_seg: int = 192) -> MeshData:

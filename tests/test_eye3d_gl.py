@@ -51,7 +51,7 @@ def eye():
 
 
 PLAIN = dict(half=0.0, xray=0.0, scan=None, scan_dim=1.0, scan_beam=1.0, fov_sweep=0.0, fov_alpha=0.0,
-             fov_ring=0.0, black=False, show_nerve=True)
+             fov_ring=0.0, black=False, show_nerve=True, relief=0.0, unwrap=0.0, dark=0.0)
 
 
 def _render(eye, detail="detailed", **state):
@@ -206,6 +206,104 @@ def test_section_and_xray_together(eye):
     for detail in ("simple", "detailed"):
         px = _render(eye, detail, half=0.62, xray=1.0, black=True, pose=v.showcase_pose())
         assert len({px(x / 10, y / 10) for x in range(2, 9) for y in range(2, 9)}) > 20
+
+
+def _frame(eye):
+    """The last rendered frame as an integer RGB array."""
+    from fundusview.ui.image_view import from_qimage
+
+    return from_qimage(eye[0]._last_img).astype(int)
+
+
+@pytest.mark.parametrize("detail", ["simple", "detailed"])
+def test_relief_lighting_brings_out_the_vessels(eye, detail):
+    """입체 조명: vessel edges get a lit and a shaded side; the retina between them stays as it was."""
+    import numpy as np
+
+    look = dict(mode="inside", in_yaw=0.0, in_pitch=0.0, in_fov=60.0)
+    _render(eye, detail, **look)
+    plain = _frame(eye)
+    _render(eye, detail, relief=0.8, **look)
+    lit = _frame(eye)
+    changed = np.abs(lit - plain).max(axis=2) > 12
+    assert 0.004 < changed.mean() < 0.5
+    assert (lit - plain)[changed].max() > 12 and (lit - plain)[changed].min() < -12   # highlights and shadows
+    assert abs(lit.mean() - plain.mean()) < 4                                         # not brighter overall
+
+
+@pytest.mark.parametrize("detail", ["simple", "detailed"])
+def test_unwrap_lays_the_photo_flat_at_the_opening(eye, detail):
+    """사진 펼치기: at 1 the photo is a flat sheet at the eye's opening, pixel for pixel the photo."""
+    import numpy as np
+
+    from fundusview.ui import eye_model as em
+    from fundusview.ui.eye3d import SHEET_R
+
+    v = eye[0]
+    front = dict(cut=0.25, yaw=0.0, pitch=0.0, dist=3.0)
+    _render(eye, detail, **front)
+    on_retina = _frame(eye)
+    _render(eye, detail, unwrap=0.5, **front)
+    half_way = _frame(eye)
+    _render(eye, detail, unwrap=1.0, **front)
+    flat = _frame(eye)
+    assert np.abs(flat - on_retina).mean() > 2 and np.abs(half_way - flat).mean() > 0.5
+    assert np.abs(half_way - on_retina).mean() > 0.5
+    # where the photo's points must be: on the disc of radius r_flat just above the cut plane
+    r_in = (1.0 if detail == "simple" else em.R_RET) - 0.004
+    r_flat = min(SHEET_R, 0.97 * math.sqrt(r_in * r_in - 0.25 * 0.25))
+    h, w = v._rgba.shape[:2]
+    for rho, deg in ((0.2, 100.0), (0.5, 45.0), (0.7, 160.0), (0.6, 270.0), (0.85, 20.0)):
+        a = math.radians(deg)
+        seen = _at(v, (rho * r_flat * math.cos(a), rho * r_flat * math.sin(a), 0.25 + 0.012), r=1)
+        x = int((v._center[0] + math.cos(a) * v._radius[0] * rho) * w)
+        y = int((v._center[1] - math.sin(a) * v._radius[1] * rho) * h)
+        want = v._rgba[y - 3:y + 4, x - 3:x + 4, :3].reshape(-1, 3).mean(axis=0)   # a screen pixel ≈ 2 photo pixels
+        assert np.abs(np.array(seen) - want).max() < 25, (rho, deg, seen, want)
+    assert v._unwrap_on()
+    v.mode = "inside"                           # 내부 · 세로 단면 · 닫힌 안구: the photo is on the retina
+    assert not v._unwrap_on()
+    v.mode, v.cut = "outside", 1.0
+    assert not v._unwrap_on()
+
+
+def test_dark_fades_the_picture_to_black(eye):
+    """들어가기: the dive through the pupil goes through black."""
+    px = _render(eye, "detailed", cut=0.25, yaw=38.0, pitch=18.0, dist=3.3)
+    bright = px(0.5, 0.5)
+    px = _render(eye, "detailed", cut=0.25, yaw=38.0, pitch=18.0, dist=3.3, dark=0.5)
+    dim = px(0.5, 0.5)
+    assert all(abs(d - b / 2) < 12 for d, b in zip(dim, bright))
+    px = _render(eye, "detailed", cut=0.25, dark=1.0)
+    assert all(sum(px(x / 4, y / 4)) == 0 for x in range(5) for y in range(5))
+
+
+def test_moving_on_a_slow_computer_draws_small_then_sharp(eye):
+    """A frame that takes too long is drawn at half size while the eye moves — and sharp again
+    as soon as it rests (a saved picture is always sharp)."""
+    import numpy as np
+    from PySide6.QtCore import QPointF
+
+    v, app, errors = eye
+    _render(eye, "detailed", cut=0.25, yaw=38.0, pitch=18.0, dist=3.3)
+    sharp = _frame(eye)
+    try:
+        v._render_ms = 90.0                     # as on a PC without a graphics card …
+        v._drag = QPointF(1.0, 1.0)             # … while the eye is dragged
+        v.update()
+        _settle(app, 0.1)
+        assert not errors and v._scale == 0.5 and v._fbo is not None
+        assert (v._fbo.width(), v._fbo.height()) == (max(16, int(v.width() * v.devicePixelRatioF() * 0.5)),
+                                                     max(16, int(v.height() * v.devicePixelRatioF() * 0.5)))
+        v._drag = None
+        _settle(app, 0.5)                       # let go: one more frame at full size
+        assert v._scale == 1.0
+        v._drag = QPointF(1.0, 1.0)
+        v._last_img = v.grabFramebuffer()       # 화면 저장 while moving: sharp
+        assert v._scale == 1.0
+        assert np.abs(_frame(eye) - sharp).mean() < 1.0
+    finally:
+        v._drag, v._render_ms = None, 0.0
 
 
 def test_overview_shows_the_eye_in_its_pane(tmp_path, demo_dir, import_and_wait):

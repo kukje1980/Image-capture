@@ -55,15 +55,17 @@ from __future__ import annotations
 import ctypes
 import math
 import threading
+import time
 
 import numpy as np
-from PySide6.QtCore import QEvent, QPointF, Qt, Signal
+from PySide6.QtCore import QEvent, QPointF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QSurfaceFormat
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
 from .. import projection as proj
 from ..config import config_dir
 from . import eye_model as em
+from . import motion
 
 # kept for callers of the former module-level names
 LIMBUS_Z, IRIS_Z = em.LIMBUS_Z, em.IRIS_Z
@@ -228,6 +230,12 @@ uniform float u_roll;
 uniform float u_grid;     // > 0: draw 10°/30° retinal angle rings
 uniform vec2  u_scan;     // slit scan: (slit row in texture v, darkness of the unscanned part); y = 0: off
 uniform float u_fovring;  // > 0: mark the edge of the photographed field
+uniform float u_relief;   // 입체 조명: vessels and the disc catch a raking light (0 = off)
+uniform vec2  u_texel;    // one texel of the photo (texture coordinates)
+uniform vec3  u_rlight;   // direction to that light (object space)
+
+// brightness from a coarser level of the photo: the relief follows vessels, not the grain
+float lum_(vec2 uv) { return dot(texture2D(u_tex, uv, 1.0).rgb, vec3(0.299, 0.587, 0.114)); }
 
 float cbrt_(float x) { return sign(x) * pow(abs(x), 1.0 / 3.0); }
 
@@ -253,6 +261,18 @@ vec4 photo(vec3 d) {
     float ph = atan(d.y, d.x) + u_roll;
     vec2 uv = u_center + vec2(cos(ph) * u_radius.x, -sin(ph) * u_radius.y) * r;
     vec4 t = texture2D(u_tex, uv);
+    if (u_relief > 0.0 && t.a > 0.0) {
+        // The photo's brightness read as height (dark vessels stand up, the pale cup sinks): its
+        // slope along the retina, lit from u_rlight — the highlights move as the eye is turned.
+        vec2 e = u_texel * 2.2;
+        float gx = lum_(uv + vec2(e.x, 0.0)) - lum_(uv - vec2(e.x, 0.0));   // toward the photo's right
+        float gy = lum_(uv - vec2(0.0, e.y)) - lum_(uv + vec2(0.0, e.y));   // toward its top
+        float gr = gx * cos(ph) + gy * sin(ph);                               // along theta, along phi
+        float gt = -gx * sin(ph) + gy * cos(ph);
+        float phi = ph - u_roll, ct = cos(theta), st = sin(theta);
+        vec3 slope = gr * vec3(ct * cos(phi), ct * sin(phi), st) + gt * vec3(-sin(phi), cos(phi), 0.0);
+        t.rgb *= clamp(1.0 + 5.5 * u_relief * dot(slope, u_rlight), 0.45, 1.7);
+    }
     if (u_scan.y > 0.0) {                    // below the slit: not scanned yet; the slit glows
         float dv = (uv.y - u_scan.x) / max(u_radius.y, 1e-4);
         t.rgb *= 1.0 - 0.76 * u_scan.y * smoothstep(-0.004, 0.004, dv);
@@ -783,6 +803,98 @@ void main() {
 }
 """
 
+# 사진 펼치기: the photographed part of the retina as a sheet of its own. Each vertex knows where it
+# lies on the retina (a_pos) and on the flat photo held at the eye's opening (a_nrm); u_flat moves
+# it between the two, the middle of the photo first.
+SHEET_VERT = """
+attribute vec3 a_pos;
+attribute vec3 a_nrm;
+attribute vec2 a_uv;
+uniform mat4 u_mvp;
+uniform float u_flat;
+uniform float u_sheet_r;  // radius of the flat photo
+varying vec3 v_obj;
+varying vec3 v_n;
+varying vec2 v_uv;
+varying float v_front;
+void main() {
+    float rho = length(a_nrm.xy) / u_sheet_r;
+    float k = clamp(u_flat * 1.35 - 0.35 * rho, 0.0, 1.0);
+    k = k * k * (3.0 - 2.0 * k);
+    vec3 p = mix(a_pos, a_nrm, k);
+    v_obj = p;
+    v_n = normalize(mix(-normalize(a_pos), vec3(0.0, 0.0, 1.0), k));
+    v_uv = a_uv;
+    v_front = a_pos.z;
+    gl_ClipVertex = vec4(p, 1.0);
+    gl_Position = u_mvp * vec4(p, 1.0);
+}
+"""
+
+SHEET_FRAG = """
+uniform sampler2D u_tex;
+uniform vec3  u_light;
+uniform float u_flat;
+uniform float u_cutz;     // the eye's opening: a wide photo reaches in front of it
+uniform float u_relief;
+uniform vec2  u_texel;
+varying vec3 v_obj;
+varying vec3 v_n;
+varying vec2 v_uv;
+varying float v_front;
+float lum_(vec2 uv) { return dot(texture2D(u_tex, uv, 1.0).rgb, vec3(0.299, 0.587, 0.114)); }
+void main() {
+    vec4 t = texture2D(u_tex, v_uv);
+    // on the retina only what the opened eye shows; lifting off, the whole photo appears
+    float a = t.a * mix(1.0 - smoothstep(u_cutz - 0.01, u_cutz + 0.01, v_front), 1.0, smoothstep(0.0, 0.25, u_flat));
+    if (a < 0.03) discard;
+    vec3 n = normalize(v_n);
+    if (u_relief > 0.0) {                    // as on the retina, with the sheet's own directions
+        vec3 dp1 = dFdx(v_obj), dp2 = dFdy(v_obj);
+        vec2 d1 = dFdx(v_uv), d2 = dFdy(v_uv);
+        float det = d1.x * d2.y - d1.y * d2.x;
+        if (abs(det) > 1e-12) {
+            vec3 right = normalize((dp1 * d2.y - dp2 * d1.y) / det);
+            vec3 down = normalize((dp2 * d1.x - dp1 * d2.x) / det);
+            vec2 e = u_texel * 2.2;
+            float gx = lum_(v_uv + vec2(e.x, 0.0)) - lum_(v_uv - vec2(e.x, 0.0));
+            float gy = lum_(v_uv - vec2(0.0, e.y)) - lum_(v_uv + vec2(0.0, e.y));
+            t.rgb *= clamp(1.0 + 5.5 * u_relief * (1.0 - u_flat) * dot(gx * right - gy * down, u_light), 0.45, 1.7);
+        }
+    }
+    float diff = 0.62 + 0.38 * max(dot(n, u_light), 0.0);
+    gl_FragColor = vec4(t.rgb * mix(diff, 1.0, u_flat), a);
+}
+"""
+
+# A frame drawn small (while the eye moves on a slow computer), stretched over the widget.
+BLIT_VERT = """
+attribute vec3 a_pos;
+varying vec2 v_uv;
+void main() {
+    v_uv = a_pos.xy * 0.5 + 0.5;
+    gl_Position = vec4(a_pos.xy, 0.0, 1.0);
+}
+"""
+
+BLIT_FRAG = """
+uniform sampler2D u_src;
+uniform float u_dark;     // 0 … 1: fade to black (going in through the pupil)
+varying vec2 v_uv;
+void main() {
+    gl_FragColor = vec4(texture2D(u_src, v_uv).rgb * (1.0 - u_dark), 1.0);
+}
+"""
+
+FADE_FRAG = """
+uniform float u_dark;
+void main() {
+    gl_FragColor = vec4(0.0, 0.0, 0.0, u_dark);
+}
+"""
+
+SHEET_R = 0.86            # largest radius of the flat photo at the eye's opening (eye radii)
+
 # texture units
 _UNITS = {"tex": 0, "iris": 1, "scl_a": 2, "scl_p": 3, "peri": 4}
 
@@ -887,6 +999,30 @@ def _smooth(e0: float, e1: float, x: float) -> float:
     return t * t * (3.0 - 2.0 * t)
 
 
+class _Spin(motion._Anim):
+    """자동 회전: the eye turns slowly while nobody touches it (and nothing else moves it)."""
+
+    def __init__(self, eye: "EyeView"):
+        self.eye = eye
+        self._yaw = None
+
+    def step(self, dt: float) -> bool:
+        e = self.eye
+        now = time.perf_counter()
+        busy = (e._drag is not None or e._fling.running() or e._zoom_glide.running() or e._view_glide.running()
+                or e._entering or e.mode != "outside" or e.scan is not None)
+        if busy or self._yaw is None or abs(e.yaw - self._yaw) > 1e-9:
+            e._touched = now                   # someone else turned it: wait again
+            self._yaw = e.yaw
+            return e.auto_rotate != 0.0
+        k = min(1.0, max(0.0, (now - e._touched - 0.9) / 1.2))      # eases in after a pause
+        if k > 0.0:
+            e.yaw = (e.yaw + e.auto_rotate * k * k * (3.0 - 2.0 * k) * dt) % 360.0
+            self._yaw = e.yaw
+            e.update()
+        return e.auto_rotate != 0.0
+
+
 class EyeView(QOpenGLWidget):
     """Interactive 3D eyeball with the fundus photo on its retina."""
 
@@ -939,11 +1075,40 @@ class EyeView(QOpenGLWidget):
         self.fov_alpha = 0.0           # opacity of the rays and the angle label (section view)
         self.fov_ring = 0.0            # the edge of the photographed field marked on the retina
         self.black = False             # plain black background (presentation)
+        # 효과
+        self.relief = 0.0              # 입체 조명 0 … 1: vessels and the disc in relief under the light
+        self.unwrap = 0.0              # 사진 펼치기 0 … 1: the photo lifts off the retina and lies flat
+        self.dark = 0.0                # 0 … 1: the picture fades to black (through the pupil)
+        self.auto_rotate = 0.0         # 자동 회전, degrees / s (0 = off)
         self.yaw, self.pitch, self.dist = 38.0, 18.0, self.DIST0
         self.target = np.zeros(3)      # orbit pivot (outside): moves toward what is zoomed into
         self.in_yaw, self.in_pitch, self.in_fov, self.in_z = 0.0, 0.0, self.FOV0, 0.35
         self._drag: QPointF | None = None
         self._drag_kind = ""
+        # motion: a flick keeps turning, the wheel's zoom glides, view changes ease (motion.py)
+        self._touched = 0.0
+        self._vel = motion.Velocity()
+        self._fling = motion.Decay(self._fling_move, tau=0.32, stop_speed=5.0)
+        self._zoom_pos: QPointF | None = None
+        self._zoom_glide = motion.Chase(self._zoom_part, half_life=0.05)
+        self._turn_x = motion.Chase(lambda d: self._key_turn(d, 0.0), half_life=0.045)
+        self._turn_y = motion.Chase(lambda d: self._key_turn(0.0, d), half_life=0.045)
+        self._view_ends: tuple | None = None
+        self._view_glide = motion.Tween(self._view_glide_to, 0.45)
+        self._enter_plan: list = []
+        self._enter_end: dict = {}
+        self._entering = False
+        self._spin = _Spin(self)
+        # drawn smaller while moving when a frame takes too long (a PC without a graphics card)
+        self.adaptive = True
+        self._scale = 1.0
+        self._fbo = None
+        self._paint_end = 0.0
+        self._render_ms = 0.0
+        self._force_full = False
+        self._sharp = QTimer(self)
+        self._sharp.setSingleShot(True)
+        self._sharp.timeout.connect(self._sharpen)
         self._ok = False
         self._meshes: dict = {}
         self._keys: dict = {}          # what the dynamic meshes were built for
@@ -952,6 +1117,7 @@ class EyeView(QOpenGLWidget):
         self._model_tex: dict = {}
         self._rim_cache: tuple = (None, {})
         self._clip_ok = False
+        self._rlight = np.array([0.0, 0.6, 0.8])
         warm_up_textures()
 
     # -- public API ----------------------------------------------------------
@@ -961,10 +1127,12 @@ class EyeView(QOpenGLWidget):
             self._rgba = None
         else:
             h, w = rgb.shape[:2]
-            a = alpha if alpha is not None else np.full((h, w), 255, np.uint8)
-            rgba = np.dstack([rgb, a]).astype(np.uint8)
-            step = max(1, int(math.ceil(max(h, w) / 4096)))
-            rgba = np.ascontiguousarray(rgba[::step, ::step])
+            step = max(1, int(math.ceil(max(h, w) / 4096)))      # decimate first: 4× less to copy
+            small = rgb[::step, ::step, :3]
+            a = alpha[::step, ::step] if alpha is not None else np.full(small.shape[:2], 255, np.uint8)
+            rgba = np.empty(small.shape[:2] + (4,), np.uint8)
+            rgba[..., :3] = small
+            rgba[..., 3] = a
             self._rgba = rgba
             cx, cy, r = circle or (w / 2, h / 2, min(w, h) / 2)
             self._center = (cx / w, cy / h)
@@ -1012,19 +1180,191 @@ class EyeView(QOpenGLWidget):
             self.update()
 
     def set_mode(self, mode: str) -> None:
-        """외부 ("outside") or 내부 ("inside")."""
-        self.mode = mode
+        """외부 ("outside") or 내부 ("inside"), at once (``enter`` glides there)."""
+        self.stop_motion()
+        self.mode, self.dark = mode, 0.0
         self._view_changed()
 
-    def reset_view(self) -> None:
+    HOME = {"yaw": 38.0, "pitch": 18.0, "dist": DIST0, "target": (0.0, 0.0, 0.0)}
+
+    def reset_view(self, animate: bool = False) -> None:
+        if animate and motion.enabled() and self.isVisible():
+            self._finish_enter()
+            self.glide_to(dict(self.HOME), inside=(0.0, 0.0, self.FOV0))
+            return
+        self.stop_motion()
         self.yaw, self.pitch, self.dist = 38.0, 18.0, self.DIST0
         self.target = np.zeros(3)
         self.in_yaw, self.in_pitch, self.in_fov = 0.0, 0.0, self.FOV0
         self._view_changed()
 
-    def front_view(self) -> None:
+    def front_view(self, animate: bool = False) -> None:
+        if animate and motion.enabled() and self.isVisible() and self.mode == "outside":
+            self._finish_enter()
+            self.glide_to({"yaw": 0.0, "pitch": 0.0, "dist": self.DIST0, "target": (0.0, 0.0, 0.0)})
+            return
+        self.stop_motion()
         self.yaw, self.pitch, self.dist = 0.0, 0.0, self.DIST0
         self.target = np.zeros(3)
+        self._view_changed()
+
+    # -- motion ------------------------------------------------------------------
+    def stop_motion(self) -> None:
+        """End every glide where it is (a touch, a new view); a running 들어가기 jumps to its end."""
+        self._fling.stop()
+        self._zoom_glide.stop()
+        self._turn_x.stop()
+        self._turn_y.stop()
+        self._view_glide.stop()
+        self._finish_enter()
+
+    def moving(self) -> bool:
+        return (self._drag is not None or self._fling.running() or self._zoom_glide.running()
+                or self._turn_x.running() or self._turn_y.running() or self._view_glide.running()
+                or self._entering)
+
+    def glide_to(self, pose: dict | None = None, inside: tuple | None = None, duration: float = 0.45,
+                 extra: dict | None = None, done=None, easing=motion.ease_in_out) -> None:
+        """Ease the camera to ``pose`` (outside: yaw / pitch / dist / target) and ``inside`` =
+        (yaw, pitch, field of view); ``extra`` = other attributes to ease along (cut, unwrap …)."""
+        self._fling.stop()
+        self._zoom_glide.stop()
+        self._view_glide.stop()
+        start = (self.pose(), (self.in_yaw, self.in_pitch, self.in_fov),
+                 {k: float(getattr(self, k)) for k in (extra or {})})
+        self._view_ends = (start, pose, inside, dict(extra or {}))
+        self._view_glide = motion.Tween(self._view_glide_to, duration, easing, done)
+        self._view_glide.start()
+
+    def _view_glide_to(self, k: float) -> None:
+        if self._view_ends is None:
+            return
+        (p0, i0, x0), p1, i1, x1 = self._view_ends
+        if p1 is not None:
+            dy = (p1["yaw"] - p0["yaw"] + 180.0) % 360.0 - 180.0          # the short way round
+            self.yaw = (p0["yaw"] + dy * k) % 360.0
+            self.pitch = p0["pitch"] + (p1["pitch"] - p0["pitch"]) * k
+            self.dist = p0["dist"] * (p1["dist"] / p0["dist"]) ** k        # even on the scale the eye sees
+            t0, t1 = np.asarray(p0["target"], np.float64), np.asarray(p1["target"], np.float64)
+            self.target = t0 + (t1 - t0) * k
+        if i1 is not None:
+            self.in_yaw = i0[0] + (i1[0] - i0[0]) * k
+            self.in_pitch = i0[1] + (i1[1] - i0[1]) * k
+            self.in_fov = i0[2] * (i1[2] / i0[2]) ** k
+        for name, goal in x1.items():
+            setattr(self, name, x0[name] + (goal - x0[name]) * k)
+        self._view_changed()
+
+    def _fling_move(self, dx: float, dy: float) -> None:
+        if self._drag_kind == "pan":
+            self.pan(dx, dy)
+        else:
+            self._look(dx, dy)
+
+    def _zoom_part(self, steps: float) -> None:
+        self.zoom_at(steps, self._zoom_pos)
+
+    def _key_turn(self, dx: float, dy: float) -> None:
+        if self.mode == "inside":
+            self.in_yaw = max(-150.0, min(150.0, self.in_yaw - dx * 0.5))
+            self.in_pitch = max(-85.0, min(85.0, self.in_pitch + dy * 0.5))
+        else:
+            self.yaw = (self.yaw - dx) % 360
+            self.pitch = max(-89.0, min(89.0, self.pitch + dy))
+        self.update()
+
+    def set_auto_rotate(self, deg_per_s: float) -> None:
+        """자동 회전: turn slowly while the eye is left alone (0 = off)."""
+        self.auto_rotate = float(deg_per_s)
+        self._touched = time.perf_counter()
+        if self.auto_rotate and motion.enabled() and self.isVisible():
+            motion.ticker().add(self._spin)
+        else:
+            self._spin.stop()
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        if self.auto_rotate and motion.enabled():
+            self._touched = time.perf_counter()
+            motion.ticker().add(self._spin)
+
+    def hideEvent(self, e):
+        self._spin.stop()
+        super().hideEvent(e)
+
+    # -- 들어가기: through the pupil to the retina and back ---------------------------
+    def enter(self, mode: str, animate: bool = True) -> None:
+        """Go to 내부 ("inside") or 외부 ("outside"). Animated, the camera comes to the front of the
+        closed eye, dives through the pupil into the dark and comes out looking at the retina
+        (and the same way back out). The simple model and 세로 단면 just fade through black."""
+        if mode == self.mode and not self._entering:
+            return
+        self.stop_motion()
+        if not (animate and motion.enabled() and self.isVisible()):
+            self.set_mode(mode)
+            return
+        sq = lambda t: t * t                                 # noqa: E731 - speeding up into the dark
+        front = {"yaw": 0.0, "pitch": 0.0, "dist": self.DIST0 * 0.85, "target": (0.0, 0.0, 0.0)}
+        close = dict(front, dist=1.16)                       # at the cornea: the pupil fills the view
+        dive = self.detail == "detailed" and self.half <= 0.0
+
+        def switch_to(m, **state):
+            def go():
+                self.mode = m
+                for name, value in state.items():
+                    setattr(self, name, value)
+            return go
+
+        if not dive:
+            self._enter_plan = [(dict(extra={"dark": 1.0}), 0.22, sq, switch_to(mode)),
+                                (dict(extra={"dark": 0.0}), 0.30, motion.ease_out, None)]
+            self._enter_end = dict(mode=mode, dark=0.0)
+        elif mode == "inside":
+            cut = self.cut
+            into = switch_to("inside", cut=cut, in_yaw=0.0, in_pitch=0.0, in_fov=26.0)
+            self._enter_plan = [
+                (dict(pose=front, extra={"cut": 1.0, "unwrap": 0.0, "xray": 0.0}), 0.55, motion.ease_in_out, None),
+                (dict(pose=close, extra={"dark": 1.0}), 0.60, sq, into),
+                (dict(inside=(0.0, 0.0, self.FOV0), extra={"dark": 0.0}), 0.75, motion.ease_out, None),
+            ]
+            self._enter_end = dict(mode="inside", cut=cut, dark=0.0, unwrap=0.0, xray=0.0,
+                                   in_yaw=0.0, in_pitch=0.0, in_fov=self.FOV0)
+        else:
+            cut = self.cut if self.cut < 0.999 else 0.25
+            out = switch_to("outside", cut=1.0, yaw=0.0, pitch=0.0, dist=close["dist"], target=np.zeros(3))
+            self._enter_plan = [
+                (dict(inside=(0.0, 0.0, 26.0), extra={"dark": 1.0}), 0.55, sq, out),
+                (dict(pose=front, extra={"dark": 0.0}), 0.60, motion.ease_out, None),
+                (dict(pose=dict(self.HOME), extra={"cut": cut}), 0.60, motion.ease_in_out, None),
+            ]
+            self._enter_end = dict(mode="outside", cut=cut, dark=0.0, yaw=self.HOME["yaw"],
+                                   pitch=self.HOME["pitch"], dist=self.DIST0, target=np.zeros(3))
+        self._entering = True
+        self._enter_next()
+
+    def _enter_next(self) -> None:
+        if not self._enter_plan:
+            self._finish_enter()
+            return
+        goal, dur, easing, after = self._enter_plan.pop(0)
+
+        def done():
+            if after:
+                after()
+            if self._entering:
+                self._enter_next()
+
+        self.glide_to(goal.get("pose"), goal.get("inside"), dur, goal.get("extra"), done, easing)
+
+    def _finish_enter(self) -> None:
+        """The end of 들어가기 — reached, or a touch on the way: be there at once."""
+        if not self._entering:
+            return
+        self._entering = False
+        self._enter_plan = []
+        self._view_glide.stop()
+        for name, value in self._enter_end.items():
+            setattr(self, name, value)
         self._view_changed()
 
     # -- 세로 단면 · 망막 투시 · 슬릿 스캔 ------------------------------------------
@@ -1052,6 +1392,7 @@ class EyeView(QOpenGLWidget):
         return {"yaw": self.yaw, "pitch": self.pitch, "dist": self.dist, "target": tuple(self.target)}
 
     def set_pose(self, yaw: float, pitch: float, dist: float, target=(0.0, 0.0, 0.0)) -> None:
+        self.stop_motion()
         self.yaw, self.pitch, self.dist = yaw % 360.0, max(-89.0, min(89.0, pitch)), dist
         self.target = np.asarray(target, np.float64)
         self._view_changed()
@@ -1123,7 +1464,11 @@ class EyeView(QOpenGLWidget):
                 "section": self._program(_glsl(VERT), _glsl(COMMON, WALL_LAYERS_LIB, SECTION_FRAG)),
                 "simple_eye": self._program(_glsl(VERT), _glsl(MAPPING_LIB, SIMPLE_EYE_FRAG)),
                 "simple_solid": self._program(_glsl(VERT), _glsl(SIMPLE_SOLID_FRAG)),
+                "sheet": self._program(_glsl(SHEET_VERT), _glsl(SHEET_FRAG)),
+                "blit": self._program(_glsl(BLIT_VERT), _glsl(BLIT_FRAG)),
+                "fade": self._program(_glsl(BG_VERT), _glsl(FADE_FRAG)),
             }
+            self._fbo = None
             for p in self._prog.values():
                 gl.glUseProgram(p)
                 for name, unit in _UNITS.items():
@@ -1134,8 +1479,11 @@ class EyeView(QOpenGLWidget):
             self._model_tex = {}          # made on the first detailed frame
             quad = em.MeshData(np.array([[-1, -1, 0], [1, -1, 0], [1, 1, 0], [-1, 1, 0]], np.float32),
                                np.zeros((4, 3), np.float32), np.array([0, 1, 2, 0, 2, 3], np.uint32))
-            for name, mesh in (("bg", quad), ("sclera", em.sphere_mesh()), ("cornea", em.cornea_mesh()),
+            for name, mesh in (("bg", quad), ("sclera", em.sphere_mesh(80, 160)), ("cornea", em.cornea_mesh()),
                                ("wall", em.inner_wall_mesh()), ("iris", em.iris_mesh()),
+                               # coarser stand-ins while the eye moves on a slow computer
+                               ("sclera_lo", em.sphere_mesh(44, 88)),
+                               ("wall_lo", em.inner_wall_mesh(28, 30, 216, 96)),
                                ("angle", em.angle_mesh()), ("lens", em.lens_mesh()),
                                ("zonules", em.zonule_lines()),
                                # out to the iris root: in the closed eye the limbus hides the edge,
@@ -1468,11 +1816,130 @@ class EyeView(QOpenGLWidget):
         if self.scan is not None and self.scan_dim > 0.0:
             scan = (self._center[1] + (2.0 * min(1.0, max(0.0, self.scan)) - 1.0) * self._radius[1],
                     float(min(1.0, self.scan_dim)))
+        tex = self._tex is not None
         return dict(tmax=tmax, gmax=proj.g(tmax, self.projection, self.viewpoint, tmax=tmax, c=self.radial_c),
                     proj=proj.PROJECTION_INDEX.get(self.projection, 0), d=self.viewpoint, c=self.radial_c,
                     center=self._center, radius=self._radius, roll=math.radians(self.roll_deg),
-                    grid=1.0 if self.show_grid else 0.0, has_tex=int(self._tex is not None),
-                    scan=scan, fovring=float(self.fov_ring))
+                    grid=1.0 if self.show_grid else 0.0,
+                    has_tex=int(tex and not self._unwrap_on()),      # 펼치기: the photo is on its sheet
+                    scan=scan, fovring=float(self.fov_ring),
+                    relief=float(self.relief) if tex else 0.0, texel=self._texel(), rlight=self._rlight)
+
+    def _texel(self) -> tuple[float, float]:
+        if self._rgba is None:
+            return (0.001, 0.001)
+        h, w = self._rgba.shape[:2]
+        return (1.0 / w, 1.0 / h)
+
+    def _unwrap_on(self) -> bool:
+        """사진 펼치기 is drawn: the open eye seen from outside, with a photo."""
+        return (self.unwrap > 0.0 and self._tex is not None and self.mode == "outside"
+                and not self._half_on() and self.cut < 0.999)
+
+    def _sheet_mesh(self, r_in: float, z_flat: float, r_flat: float) -> em.MeshData:
+        """The photographed field as a polar grid: on the retina (``pos``), flat at the eye's opening
+        (``nrm`` — the sheet's shader moves each vertex between the two), photo coordinates (``uv``)."""
+        n_r, n_a = 56, 128
+        tmax = self.theta_max
+        rho = np.linspace(0.0, 1.0, n_r + 1)
+        theta = np.array([proj.theta_of_rho(float(x), tmax, self.projection, self.viewpoint, c=self.radial_c)
+                          for x in rho])
+        phi = np.linspace(0.0, 2.0 * math.pi, n_a + 1)
+        tt, pp = np.meshgrid(theta, phi, indexing="ij")
+        rr = np.meshgrid(rho, phi, indexing="ij")[0]
+        st = np.sin(tt)
+        pos = np.stack([st * np.cos(pp), st * np.sin(pp), -np.cos(tt)], axis=-1) * r_in
+        flat = np.stack([rr * np.cos(pp) * r_flat, rr * np.sin(pp) * r_flat, np.full_like(rr, z_flat)], axis=-1)
+        ph = pp + math.radians(self.roll_deg)
+        uv = np.stack([self._center[0] + np.cos(ph) * self._radius[0] * rr,
+                       self._center[1] - np.sin(ph) * self._radius[1] * rr], axis=-1)
+        i, j = np.meshgrid(np.arange(n_r), np.arange(n_a), indexing="ij")
+        a = (i * (n_a + 1) + j).ravel()
+        b, c, d = a + 1, a + n_a + 1, a + n_a + 2
+        idx = np.stack([a, c, b, b, c, d], axis=1).astype(np.uint32).ravel()
+        return em.MeshData(pos.reshape(-1, 3).astype(np.float32), flat.reshape(-1, 3).astype(np.float32),
+                           idx, uv.reshape(-1, 2).astype(np.float32))
+
+    def _draw_sheet(self, gl, mvp, light) -> None:
+        """사진 펼치기: the photo between the retina and a flat sheet at the eye's opening."""
+        r_in = (1.0 if self.detail == "simple" else em.R_RET) - 0.004
+        zc = float(em.cut_plane_z(self.cut))
+        r_flat = min(SHEET_R, 0.97 * math.sqrt(max(r_in * r_in - zc * zc, 0.04)))
+        key = (round(r_in, 4), round(zc, 4), round(r_flat, 4), round(self.theta_max, 6), self.projection,
+               self.viewpoint, self.radial_c, self.roll_deg, self._center, self._radius)
+        mesh = self._dynamic("sheet", key, lambda: self._sheet_mesh(r_in, zc + 0.012, r_flat))
+        p = self._prog["sheet"]
+        gl.glUseProgram(p)
+        self._set(p, mvp=mvp, flat=float(min(1.0, self.unwrap)), light=light, cutz=zc, sheet_r=float(r_flat),
+                  relief=float(self.relief), texel=self._texel())
+        gl.glActiveTexture(gl.GL_TEXTURE0)
+        gl.glBindTexture(gl.GL_TEXTURE_2D, self._tex or 0)
+        gl.glEnable(gl.GL_BLEND)
+        gl.glBlendFuncSeparate(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA, gl.GL_ZERO, gl.GL_ONE)
+        mesh.draw(gl)
+        gl.glDisable(gl.GL_BLEND)
+
+    def _draw_dark(self, gl) -> None:
+        """The fade to black of 들어가기."""
+        if self.dark <= 0.002:
+            return
+        p = self._prog["fade"]
+        gl.glUseProgram(p)
+        self._set(p, dark=float(min(1.0, self.dark)))
+        gl.glDisable(gl.GL_DEPTH_TEST)
+        gl.glEnable(gl.GL_BLEND)
+        gl.glBlendFuncSeparate(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA, gl.GL_ZERO, gl.GL_ONE)
+        self._meshes["bg"].draw(gl)
+        gl.glDisable(gl.GL_BLEND)
+
+    # -- drawn smaller while moving (slow computers) ------------------------------------
+    def grabFramebuffer(self):
+        self._force_full = True                     # a saved picture is always sharp
+        return super().grabFramebuffer()
+
+    def _sharpen(self) -> None:
+        """The motion is over: draw once more at full size."""
+        if self.moving() or (self.auto_rotate and self._spin.running()):
+            self._sharp.start(160)
+            return
+        if self._scale < 0.999:
+            self._force_full = True
+            self.update()
+
+    def _pick_scale(self) -> float:
+        """1, or less while the eye moves and a full frame takes too long."""
+        full, self._force_full = self._force_full, False
+        if full or not self.adaptive or self._render_ms <= 22.0:
+            return 1.0
+        if not (self.moving() or time.perf_counter() - self._paint_end < 0.06):
+            return 1.0
+        want = math.sqrt(15.0 / self._render_ms)
+        return next((s for s in (0.8, 0.65, 0.5) if s <= want), 0.5)
+
+    def _note_render(self, ms: float, scale: float) -> None:
+        est = ms / (scale * scale)                  # what the frame would cost at full size
+        self._render_ms = est if self._render_ms <= 0.0 else 0.6 * self._render_ms + 0.4 * est
+
+    def _small_target(self, w: int, h: int, scale: float) -> bool:
+        from PySide6.QtOpenGL import QOpenGLFramebufferObject, QOpenGLFramebufferObjectFormat
+
+        gl = self.gl
+        sw, sh = max(16, int(w * scale)), max(16, int(h * scale))
+        try:
+            if self._fbo is None or self._fbo.width() != sw or self._fbo.height() != sh:
+                fmt = QOpenGLFramebufferObjectFormat()
+                fmt.setAttachment(QOpenGLFramebufferObject.Attachment.CombinedDepthStencil)
+                self._fbo = QOpenGLFramebufferObject(sw, sh, fmt)
+                gl.glBindTexture(gl.GL_TEXTURE_2D, self._fbo.texture())
+                gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR)
+                gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)
+                gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
+            if not self._fbo.isValid() or not self._fbo.bind():
+                raise RuntimeError("framebuffer")
+        except Exception:                           # no framebuffer objects: always full size
+            self.adaptive, self._fbo = False, None
+            return False
+        return True
 
     @staticmethod
     def _section_quad(k: np.ndarray, off: float, size: float = 1.16) -> em.MeshData:
@@ -1491,6 +1958,50 @@ class EyeView(QOpenGLWidget):
         gl.glClipPlane(gl.GL_CLIP_PLANE1, (float(k[0]), float(k[1]), float(k[2]), float(off) + 2e-4))
 
     def _paint_gl(self) -> np.ndarray:
+        """The frame — at full size, or smaller and stretched while the eye moves on a slow computer."""
+        gl = self.gl
+        dpr = self.devicePixelRatioF()
+        w, h = max(1, int(self.width() * dpr)), max(1, int(self.height() * dpr))
+        scale = self._pick_scale()
+        timed = scale < 0.999 or (self.adaptive and (self.moving() or self._render_ms <= 0.0))
+        small = scale < 0.999 and self._small_target(w, h, scale)
+        if timed:
+            gl.glFinish()
+        t0 = time.perf_counter()
+        if small:
+            full = {name: self._meshes[name] for name in ("sclera", "wall")}
+            for name in full:                    # fewer triangles too, until it is drawn sharp again
+                self._meshes[name] = self._meshes[name + "_lo"]
+            try:
+                mvp = self._paint_scene(self._fbo.width(), self._fbo.height())
+            finally:
+                self._meshes.update(full)
+            self._draw_dark(gl)
+            gl.glFinish()
+            self._note_render((time.perf_counter() - t0) * 1000.0, scale)
+            gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.defaultFramebufferObject())
+            gl.glViewport(0, 0, w, h)
+            gl.glDisable(gl.GL_DEPTH_TEST)
+            gl.glDisable(gl.GL_BLEND)
+            p = self._prog["blit"]
+            gl.glUseProgram(p)
+            self._set(p, dark=0.0)
+            gl.glActiveTexture(gl.GL_TEXTURE0)
+            gl.glBindTexture(gl.GL_TEXTURE_2D, self._fbo.texture())
+            self._meshes["bg"].draw(gl)
+            gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
+            self._sharp.start(160)
+        else:
+            mvp = self._paint_scene(w, h)
+            self._draw_dark(gl)
+            if timed:
+                gl.glFinish()
+                self._note_render((time.perf_counter() - t0) * 1000.0, 1.0)
+        self._scale = scale if small else 1.0
+        self._paint_end = time.perf_counter()
+        return mvp
+
+    def _paint_scene(self, w: int, h: int) -> np.ndarray:
         gl = self.gl
         for loc in range(3, 8):          # a QPainter may leave other attribute arrays enabled
             gl.glDisableVertexAttribArray(loc)
@@ -1498,9 +2009,9 @@ class EyeView(QOpenGLWidget):
             self._stale.pop().delete(gl)
         if self._tex_dirty:
             self._upload_texture()
-        dpr = self.devicePixelRatioF()
-        w, h = max(1, int(self.width() * dpr)), max(1, int(self.height() * dpr))
         gl.glViewport(0, 0, w, h)
+        _, vf, vr, vu, _ = self._view_basis()
+        self._rlight = _unit(-0.55 * vr + 0.75 * vu - 0.35 * vf)   # 입체 조명: from the upper left of the view
         if self.black:
             gl.glClearColor(0.0, 0.0, 0.0, 1.0)
         else:
@@ -1618,6 +2129,8 @@ class EyeView(QOpenGLWidget):
             gl.glDisable(gl.GL_CLIP_PLANE0)
         if half_clip:
             gl.glDisable(gl.GL_CLIP_PLANE1)
+        if self._unwrap_on():
+            self._draw_sheet(gl, mvp, lights["key"])
         gl.glDepthMask(gl.GL_FALSE)
         gl.glUseProgram(self._prog["bg"])
         self._set(self._prog["bg"], aspect=float(w / h), black=int(self.black))
@@ -1712,6 +2225,9 @@ class EyeView(QOpenGLWidget):
                           lambda: self._section_quad(k, off)).draw(gl)
             if half_clip:
                 gl.glEnable(gl.GL_CLIP_PLANE1)
+            gl.glUseProgram(s)
+        if self._unwrap_on():
+            self._draw_sheet(gl, mvp, light)
             gl.glUseProgram(s)
         if closed or half:
             gl.glEnable(gl.GL_BLEND)
@@ -1839,8 +2355,12 @@ class EyeView(QOpenGLWidget):
     # drag started · middle drag or Shift+left drag: move · wheel: zoom at the
     # cursor · double click / 0: start view · + / -: zoom at the centre
     def mousePressEvent(self, e):
+        self.stop_motion()                    # a touch stops whatever was gliding
+        self._touched = time.perf_counter()
         self.interacted.emit()
         self._drag = self._press = e.position()
+        self._vel.reset()
+        self._vel.add(self._drag.x(), self._drag.y())
         if e.button() == Qt.MouseButton.RightButton:
             self._drag_kind = "zoom"
         elif e.button() == Qt.MouseButton.MiddleButton or e.modifiers() & Qt.KeyboardModifier.ShiftModifier:
@@ -1849,13 +2369,19 @@ class EyeView(QOpenGLWidget):
             self._drag_kind = "rotate"
 
     def mouseReleaseEvent(self, e):
-        self._drag = None
+        was, self._drag = self._drag, None
+        self._touched = time.perf_counter()
+        if was is not None and self._drag_kind in ("rotate", "pan"):
+            self._fling.start(*self._vel.get())           # let go while moving: it turns on and settles
+        if not self.moving():
+            self._sharp.start(0)
 
     def mouseMoveEvent(self, e):
         if self._drag is None:
             return
         d = e.position() - self._drag
         self._drag = e.position()
+        self._vel.add(self._drag.x(), self._drag.y())
         if self._drag_kind == "zoom":
             self.zoom_at(-d.y() / 40.0, self._press)
         elif self._drag_kind == "pan":
@@ -1864,8 +2390,13 @@ class EyeView(QOpenGLWidget):
             self._look(d.x(), d.y())
 
     def wheelEvent(self, e):
+        self._fling.stop()
+        self._view_glide.stop()
+        self._finish_enter()
+        self._touched = time.perf_counter()
         self.interacted.emit()
-        self.zoom_at(e.angleDelta().y() / 120.0, e.position())
+        self._zoom_pos = e.position()
+        self._zoom_glide.add(e.angleDelta().y() / 120.0)   # the view glides after the notches
 
     def pinch(self, value: float, pos: QPointF) -> None:
         """Trackpad pinch (macOS): magnify by ``1 + value`` toward ``pos``
@@ -1883,28 +2414,32 @@ class EyeView(QOpenGLWidget):
 
     def mouseDoubleClickEvent(self, e):
         self.interacted.emit()
-        self.reset_view()
+        self._drag = None
+        self.reset_view(animate=True)
 
     def keyPressEvent(self, e):
         k = e.key()
         if k in (Qt.Key.Key_Left, Qt.Key.Key_Right, Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Plus,
                  Qt.Key.Key_Equal, Qt.Key.Key_Minus, Qt.Key.Key_Underscore, Qt.Key.Key_0, Qt.Key.Key_Home):
             self.interacted.emit()
+            self._touched = time.perf_counter()
+            self._fling.stop()
+            self._view_glide.stop()
+            self._finish_enter()
         if k in (Qt.Key.Key_Left, Qt.Key.Key_Right, Qt.Key.Key_Up, Qt.Key.Key_Down):
             dx = {Qt.Key.Key_Left: -10, Qt.Key.Key_Right: 10}.get(k, 0)
             dy = {Qt.Key.Key_Up: -10, Qt.Key.Key_Down: 10}.get(k, 0)
-            if self.mode == "inside":
-                self.in_yaw = max(-150.0, min(150.0, self.in_yaw - dx * 0.5))
-                self.in_pitch = max(-85.0, min(85.0, self.in_pitch + dy * 0.5))
-            else:
-                self.yaw = (self.yaw - dx) % 360
-                self.pitch = max(-89.0, min(89.0, self.pitch + dy))
-            self.update()
+            if dx:
+                self._turn_x.add(dx)
+            if dy:
+                self._turn_y.add(dy)
         elif k in (Qt.Key.Key_Plus, Qt.Key.Key_Equal):
-            self.zoom_at(2.0)
+            self._zoom_pos = None
+            self._zoom_glide.add(2.0)
         elif k in (Qt.Key.Key_Minus, Qt.Key.Key_Underscore):
-            self.zoom_at(-2.0)
+            self._zoom_pos = None
+            self._zoom_glide.add(-2.0)
         elif k in (Qt.Key.Key_0, Qt.Key.Key_Home):
-            self.reset_view()
+            self.reset_view(animate=True)
         else:
             super().keyPressEvent(e)

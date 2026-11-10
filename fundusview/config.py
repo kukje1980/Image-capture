@@ -74,6 +74,10 @@ class Settings:
     opengl: str = "auto"
     # 3D eye: "simple" (간단히, light-weight) or "detailed" (자세히, anatomical)
     view3d_detail: str = "simple"
+    # Motion and 3D effects (보기 → 부드러운 움직임; 3D 안구: 입체 조명, 자동 회전)
+    smooth_motion: bool = True
+    relief3d: bool = True
+    auto_rotate3d: bool = False
     # Extra user-defined filename regexes tried before the profile patterns.
     custom_filename_patterns: list[str] = field(default_factory=list)
     last_patient: str = ""
