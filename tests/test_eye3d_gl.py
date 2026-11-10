@@ -206,3 +206,52 @@ def test_section_and_xray_together(eye):
     for detail in ("simple", "detailed"):
         px = _render(eye, detail, half=0.62, xray=1.0, black=True, pose=v.showcase_pose())
         assert len({px(x / 10, y / 10) for x in range(2, 9) for y in range(2, 9)}) > 20
+
+
+def test_overview_shows_the_eye_in_its_pane(tmp_path, demo_dir, import_and_wait):
+    """모두 보기 with OpenGL: the 3D eye sits in its small pane and moves to the 3D tab,
+    to 크게 보기 and back without losing its place."""
+    from PySide6.QtWidgets import QApplication
+
+    from fundusview.config import Settings, WatchFolder
+    from fundusview.db import Database
+    from fundusview.ui.main_window import MainWindow, gl_available
+
+    app = QApplication.instance() or QApplication([])
+    if not gl_available():
+        if os.getenv("FUNDUSVIEW_REQUIRE_GL") == "1":
+            pytest.fail("no OpenGL context")
+        pytest.skip("no OpenGL context on this platform")
+    s = Settings(library_dir=str(tmp_path / "lib"), stable_seconds=0.05, rescan_seconds=0,
+                 watch_folders=[WatchFolder(path=str(demo_dir))], watch_on_startup=False)
+    db = Database(tmp_path / "lib" / "fundus.db")
+    w = MainWindow(s, db)
+
+    def inside(widget, ancestor):
+        while widget is not None and widget is not ancestor:
+            widget = widget.parentWidget()
+        return widget is ancestor
+
+    try:
+        w.resize(1400, 900)
+        w.show()
+        import_and_wait(app, w, [demo_dir])
+        w._select_patient_ref(db.find_patient("20260115001")["id"])
+        _settle(app, 0.5)
+        assert w._tab() == "all" and w._ov_gl and inside(w.eye3d, w.ov_3d)
+        assert w.eye3d._ok and not w._3d_dirty               # the photo is on the eye
+        w._go("3d")
+        _settle(app)
+        assert inside(w.eye3d, w.page3d)
+        w._go("all")
+        _settle(app)
+        assert inside(w.eye3d, w.ov_3d)
+        w._toggle_full_3d()                                   # 크게 보기 from 모두 보기 ...
+        _settle(app)
+        assert inside(w.eye3d, w._full3d)
+        w._exit_full_3d()                                     # ... comes back to the small pane
+        _settle(app)
+        assert inside(w.eye3d, w.ov_3d) and w.eye3d._ok
+    finally:
+        w.close()
+        db.close()
