@@ -41,6 +41,7 @@ from .disc_pair import DiscPairDialog
 from .eye3d import EyeView
 from .histogram import HistogramDialog
 from .image_view import TOOL_HINTS, TOOLS, ImageView, from_qimage
+from .montage_dialog import MontageDialog, MontageSource, confirm_sources
 from .keys import IS_MAC, keys
 from .multi_view import MultiView
 from .slit_scan import ScanPhotoView, SlitScanShow, ViewTween
@@ -131,6 +132,7 @@ class MainWindow(QMainWindow):
         self._history: list[dict] = []       # undo snapshots
         self._multi_lock = False
         self._picks: list[int] = []          # photos picked for the multi view (plain click), in order
+        self._montage_dlg = None             # the open 몽타주 editor (tests reach it here)
         self._pick_pre: tuple | None = None  # (image id, picks before the click) — a double click undoes it
         self._per_photo: dict[int, dict] = {}  # processing of each picked photo {"state", "history"}
         self._3d_dirty = True
@@ -231,6 +233,7 @@ class MainWindow(QMainWindow):
         for a in self.menus["save"].actions():
             m.addAction(a)
         m.addAction(A["discpair"])
+        m.addAction("몽타주 만들기 (고른 사진)…", lambda: self.open_montage())
         m.addAction(A["print"])
         m.addSeparator()
         m.addAction("원본 폴더 열기", self._open_folder)
@@ -365,6 +368,10 @@ class MainWindow(QMainWindow):
         self.btn_multi.setToolTip("고른 사진을 다중 보기에 모아 보고, 칸을 눌러 그 사진만 보정합니다\n"
                                   "(사진 클릭 = 고르기 · 다시 클릭 = 빼기 · 더블클릭 = 2D로 크게)")
         self.btn_multi.clicked.connect(self.open_picks)
+        self.btn_montage = QPushButton("몽타주")
+        self.btn_montage.setToolTip("고른 사진(2장 이상, 같은 눈)을 자동·수동으로 맞춰 한 장으로 합칩니다 —\n"
+                                    "반투명 겹치기 · 기준점 맞추기 · 3D 안구에서 보기")
+        self.btn_montage.clicked.connect(lambda: self.open_montage())
         cl.addLayout(top)
         self.thumbs = QListWidget()
         self.thumbs.setViewMode(QListWidget.ViewMode.IconMode)
@@ -455,7 +462,7 @@ class MainWindow(QMainWindow):
         strip.setSpacing(4)
         side = QVBoxLayout()
         side.setSpacing(2)
-        for w in (self.btn_multi, self.lbl_picks, self.btn_clear_picks):
+        for w in (self.btn_multi, self.btn_montage, self.lbl_picks, self.btn_clear_picks):
             side.addWidget(w)
         side.addStretch(1)
         side.addWidget(self.btn_rows)
@@ -1113,6 +1120,7 @@ class MainWindow(QMainWindow):
         self.btn_multi.setText(f"멀티 {n}" if n else "멀티")
         self.lbl_picks.setText(f"{n}장 선택" if n else "")
         self.btn_clear_picks.setVisible(n > 0)
+        self.btn_montage.setEnabled(n >= 2)
 
     @staticmethod
     def _adjusted_with(rgb: np.ndarray, st: dict) -> np.ndarray:
@@ -1243,6 +1251,11 @@ class MainWindow(QMainWindow):
         menu.addAction("멀티에서 빼기" if iid in self._picks else "멀티로 고르기", lambda: self._toggle_pick(iid))
         if self._picks:
             menu.addAction(f"멀티로 보기 ({len(self._picks)}장)", self.open_picks)
+        if len(self._picks) >= 2:
+            menu.addAction(f"몽타주 만들기 ({len(self._picks)}장)…", lambda: self.open_montage())
+        row = self.db.get_image(iid)
+        if row is not None and self._montage_definition(row):
+            menu.addAction("몽타주 다시 편집…", lambda: self.edit_montage(iid))
         menu.addSeparator()
         menu.addAction("환자 지정/정보 수정…", lambda: (self._show_image(iid), self._edit_image()))
         cur = self.current["id"] if self.current else None
@@ -1819,7 +1832,8 @@ class MainWindow(QMainWindow):
             self.view2d.geometry = measure.Geometry(
                 *circle, fov_deg=self.sp_fov.value(), fov_type=self.c_fovtype.currentData(),
                 projection=self.c_proj.currentData(), viewpoint=prof.viewpoint,
-                radial_c=prof.radial_c) if circle and row["modality"] not in ("montage", "disc") else None
+                radial_c=prof.radial_c) if circle and (row["modality"] not in ("montage", "disc")
+                                                      or self._montage_definition(row)) else None
         tmax = math.degrees(self.eye3d.theta_max)
         self.lbl_3d.setText(f"망막 범위: 후극에서 {tmax:.0f}° (안구 중심각 {2 * tmax:.0f}°)")
 
@@ -2403,6 +2417,112 @@ class MainWindow(QMainWindow):
         self._fill_dates()
         self._fill_thumbs(select_id=self.current["id"] if self.current else None)
         self.lbl_status.setText("디스크 2장을 이 환자 기록에 저장했습니다")
+        return new_id
+
+    # -- montage (몽타주 — montage.py, montage_dialog.py) ----------------------------------------
+    @staticmethod
+    def _montage_definition(row) -> dict | None:
+        """The arrangement of a montage made here (None for photos and for a device's montage)."""
+        if row["modality"] != "montage":
+            return None
+        try:
+            d = json.loads(row["meta_json"] or "{}").get("montage")
+        except (ValueError, AttributeError):
+            return None
+        return d if isinstance(d, dict) and d.get("shots") else None
+
+    def _montage_source(self, row, rgb: np.ndarray) -> MontageSource:
+        prof = get_profile(row["profile"])
+        circle = ((row["circle_cx"], row["circle_cy"], row["circle_r"]) if row["circle_r"]
+                  else imaging.detect_circle(rgb))
+        label = row["exam_time"] or row["exam_date"] or Path(row["original_path"] or row["file_path"]).stem
+        if row["exam_date"] and row["exam_time"]:
+            label = f"{row['exam_date'][5:]} {row['exam_time'][:8]}"
+        return MontageSource(
+            row["id"], rgb, imaging.fundus_alpha(rgb, circle), circle,
+            fov_deg=row["fov_deg"] or prof.fov_deg, fov_type=row["fov_type"] or prof.fov_type,
+            projection=row["projection"] or prof.projection, viewpoint=prof.viewpoint, radial_c=prof.radial_c,
+            label=label, disc=(row["disc_x"], row["disc_y"]) if row["disc_x"] is not None else None,
+            laterality=row["laterality"] if row["laterality"] in ("OD", "OS") else None)
+
+    def _montage_sources(self, ids: list[int]):
+        """``(sources, "")`` for the photos ``ids``, or ``(None, why not)``."""
+        if len(ids) < 2:
+            return None, ("사진을 두 장 이상 고르세요.\n\n아래 사진 목록에서 같은 눈의 사진을 차례로 클릭해 번호를 "
+                          "붙인 뒤 [몽타주]를 누르세요.")
+        rows = [self.db.get_image(i) for i in ids]
+        if any(r is None for r in rows):
+            return None, "몽타주에 쓰인 사진 가운데 목록에서 지워진 것이 있습니다."
+        if len({r["patient_ref"] for r in rows}) > 1:
+            return None, "서로 다른 환자의 사진입니다."
+        for r in rows:
+            if r["modality"] in ("anterior", "disc"):
+                return None, f"{MODALITY_LABELS[r['modality']]} 사진은 몽타주에 쓸 수 없습니다."
+        sources = []
+        for r in rows:
+            rgb = self._load(r)
+            if rgb is None:
+                return None, f"영상을 열 수 없습니다: {Path(r['original_path'] or r['file_path']).name}"
+            sources.append(self._montage_source(r, rgb))
+        return sources, ""
+
+    def _montage_stem(self, row) -> str:
+        p = self.db.get_patient(row["patient_ref"]) if row["patient_ref"] is not None else None
+        bits = [p["patient_id"], p["name"] or ""] if p is not None else []
+        bits += ["몽타주", row["laterality"] or "", row["exam_date"] or ""]
+        return safe_component("_".join(x for x in bits if x), "몽타주")
+
+    def open_montage(self, ids: list[int] | None = None, definition: dict | None = None) -> None:
+        """몽타주 편집기 for the picked photos (or ``ids``; ``definition`` = a saved arrangement)."""
+        if ids is None:
+            ids = list(self._picks)
+        sources, why = self._montage_sources(ids)
+        if sources is None:
+            QMessageBox.information(self, "몽타주", why)
+            return
+        if not confirm_sources(self, sources):
+            return
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            dlg = MontageDialog(sources, file_stem=self._montage_stem(self.db.get_image(ids[0])),
+                                save_record=self._save_montage, definition=definition, parent=self)
+        finally:
+            QApplication.restoreOverrideCursor()
+        self._montage_dlg = dlg
+        try:
+            dlg.exec()
+        finally:
+            self._montage_dlg = None
+            dlg.deleteLater()
+
+    def edit_montage(self, image_id: int) -> None:
+        row = self.db.get_image(image_id)
+        d = self._montage_definition(row) if row is not None else None
+        if d is None:
+            return
+        self.open_montage([s.get("image_id") for s in d["shots"]], definition=d)
+
+    def _save_montage(self, res) -> int:
+        """Store a montage (``montage_dialog.MontageResult``) as a new photo of the patient: modality
+        몽타주, its eye geometry (equidistant, internal field of view) for the 3D view and measurements,
+        and the arrangement for 다시 편집."""
+        ids = [i for i in res.image_ids if i is not None]
+        rows = [self.db.get_image(i) for i in ids]
+        ref_id = res.definition["shots"][res.definition.get("ref", 0)].get("image_id")
+        base = next((r for r in rows if r["id"] == ref_id), rows[0])
+        meta = json.loads(base["meta_json"] or "{}")
+        meta.update(derived_from=ids, montage=res.definition)
+        cx, cy, r = res.geom.circle()
+        new_id = self.service.importer.add_derived(
+            base, res.rgb, f"몽타주 {len(ids)}장 (안구 중심각 {res.fov_deg:g}°)", suffix="몽타주", derived_from=ids,
+            laterality=res.laterality or base["laterality"], modality="montage", fov_deg=res.fov_deg,
+            fov_type="internal", projection="equidistant", circle_cx=cx, circle_cy=cy, circle_r=r,
+            disc_x=res.disc[0] if res.disc else None, disc_y=res.disc[1] if res.disc else None, meta_json=meta)
+        self.refresh_patients(keep=True)
+        self._fill_dates()
+        self._fill_thumbs(select_id=self.current["id"] if self.current else None)
+        self.lbl_status.setText(f"몽타주({len(ids)}장)를 이 환자 기록에 저장했습니다 — 썸네일을 더블클릭하면 2D, "
+                                "3D 안구 탭에서 안구 위에 볼 수 있습니다")
         return new_id
 
     # -- edit / misc -------------------------------------------------------------------
