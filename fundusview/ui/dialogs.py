@@ -366,6 +366,15 @@ class SettingsDialog(QDialog):
         self.redetect = True
         QMessageBox.information(self, "장비 폴더", "확인을 누르면 장비 폴더를 다시 찾아 감시 목록에 추가합니다.")
 
+    def accept(self) -> None:
+        from .. import autosetup
+        msg = autosetup.inbox_problem(self.inbox.text(), self.library.text() or str(self.settings.library))
+        if msg:
+            QMessageBox.warning(self, "가져오기 폴더", msg)
+            self.inbox.setFocus()
+            return
+        super().accept()
+
     def _pick_library(self) -> None:
         d = QFileDialog.getExistingDirectory(self, "라이브러리 폴더 선택", self.library.text())
         if d:

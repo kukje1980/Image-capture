@@ -133,6 +133,63 @@ def apply(settings: Settings, detected: list[tuple[str, str]]) -> list[WatchFold
     return added
 
 
+def inbox_problem(inbox: str, library: str) -> str | None:
+    """Why ``inbox`` cannot be the import folder (Korean message), or ``None``.
+
+    An inbox inside the library would import the library's own copies again,
+    and :func:`apply` / :func:`change_inbox` silently skip such a folder, so the
+    settings dialog refuses it up front instead.
+    """
+    if not inbox.strip():
+        return None
+    k, lib = _key(inbox.strip()), _key(library.strip()) if library.strip() else ""
+    if lib and (k == lib or k.startswith(lib + os.sep)):
+        return ("가져오기 폴더는 라이브러리 폴더와 같거나 그 안에 둘 수 없습니다.\n"
+                "(가져온 사진을 다시 가져오게 됩니다) 다른 폴더를 고르세요.")
+    try:
+        Path(inbox.strip()).mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        return f"가져오기 폴더를 만들 수 없습니다:\n{inbox.strip()}\n({e.strerror or e})"
+    return None
+
+
+def change_inbox(settings: Settings, old: str) -> WatchFolder | None:
+    """The inbox was changed in the settings: watch the new folder right away.
+
+    The old inbox's watch entry is moved to the new path (its options kept)
+    instead of being left behind — otherwise the old folder kept emptying
+    itself into the library while photos dropped into the new one waited for
+    a restart. The old folder is not remembered as removed, so choosing it
+    again later works. Returns the new inbox entry, or ``None`` when nothing
+    changed or the folder cannot be watched (inside the library).
+    """
+    new = str(settings.inbox)
+    nk, ok = _key(new), _key(old)
+    if nk == ok:
+        return None
+    lib = _key(str(settings.library))
+    if nk == lib or nk.startswith(lib + os.sep):
+        return None
+    Path(new).mkdir(parents=True, exist_ok=True)
+    # chosen by the user: never treat it as a removed auto folder
+    settings.ignored_auto_folders = [p for p in settings.ignored_auto_folders if _key(p) != nk]
+    folders: list[WatchFolder] = []
+    entry = next((f for f in settings.watch_folders if _key(f.path) == nk), None)
+    for f in settings.watch_folders:
+        if _key(f.path) == ok:              # the old inbox -> the new one, same options
+            if entry is None:
+                f.path = new
+                entry = f
+                folders.append(f)
+        else:
+            folders.append(f)
+    if entry is None:                       # the old inbox had been removed from the list
+        entry = WatchFolder(path=new, profile="auto", recursive=True, action=ACTION_MOVE)
+        folders.insert(0, entry)
+    settings.watch_folders = folders
+    return entry
+
+
 def remember_removed(settings: Settings, before: list[WatchFolder]) -> None:
     """Folders the user deleted in the settings are not auto-added again."""
     now = {_key(f.path) for f in settings.watch_folders}
