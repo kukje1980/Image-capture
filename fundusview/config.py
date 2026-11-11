@@ -79,6 +79,7 @@ class Settings:
     relief3d: bool = True
     auto_rotate3d: bool = True
     glass3d: int = 80               # 공막 투명도 0 … 100 (0 = the opaque white sclera)
+    align3d: bool = True            # 3D: the photo's fovea / disc at their place on the eye (placement.py)
     # the look this settings file was last used with: a newer one may adopt new defaults once
     ui_version: int = 0
     # Extra user-defined filename regexes tried before the profile patterns.

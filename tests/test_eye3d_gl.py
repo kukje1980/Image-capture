@@ -224,6 +224,63 @@ def test_glass_sclera_keeps_the_photographed_retina_solid(eye, detail):
     assert np.abs(_frame(eye) - plain).max() <= 2
 
 
+def test_a_turned_photo_is_drawn_where_it_was_taken(eye):
+    """실제 위치에 맞춤: the same retina photographed straight and with the camera turned — with the
+    turned photo's fovea and disc marked, the eye looks the same from inside; without, it does not."""
+    import numpy as np
+
+    from fundusview import demo, imaging, placement
+    from fundusview import projection as proj
+
+    v = eye[0]
+    look = dict(mode="inside", in_yaw=0.0, in_pitch=0.0, in_fov=70.0)
+    disc_eye = np.array(proj.sphere_point(math.radians(math.hypot(21.0, 1.5)), math.atan2(1.5, 21.0)))
+
+    def show(gaze, align, **state):
+        rgb = demo.synth_fundus(eye="OD", size=(512, 540), gaze=gaze)
+        circle = imaging.detect_circle(rgb)
+        v.set_image(rgb, imaging.fundus_alpha(rgb, circle), circle)
+        r = demo.gaze_rotation(*gaze) if gaze else np.eye(3)
+        cam = v.photo_camera(circle)
+        v.set_landmarks("OD", cam.pixel(r.T @ disc_eye), cam.pixel(r.T @ placement.POLE), circle, align=align)
+        _render(eye, **state)
+        return _frame(eye)
+
+    try:
+        straight = show(None, True, **look)
+        assert v.placement.offset_deg < 0.5
+        placed = show((14.0, 6.0), True, **look)
+        assert v.placement.by == "fovea" and v.placement.offset_deg == pytest.approx(15.2, abs=0.6)
+        assert placement.angle_between(v.disc_dir, disc_eye) < 1.0            # the nerve: behind the photo's disc
+        unplaced = show((14.0, 6.0), False, **look)
+        assert v.placement.by == "off"
+        # around the fovea and the disc (the middle of the view) the eye looks as with the straight photo
+        h, w = placed.shape[:2]
+        mid = (slice(h // 4, 3 * h // 4), slice(w // 3, 5 * w // 6))
+        same, moved = np.abs(placed[mid] - straight[mid]).mean(), np.abs(unplaced[mid] - straight[mid]).mean()
+        assert same < 4.0 and moved > 2.0 * same
+        # from behind, through the glass sclera: the retina and the nerve where they were
+        back = dict(pose=dict(yaw=180.0, pitch=0.0, dist=3.3), glass=0.8)
+        a, b, c = show(None, True, **back), show((14.0, 6.0), True, **back), show((14.0, 6.0), False, **back)
+        assert np.abs(b - a).mean() < 6.0 and np.abs(c - a).mean() > 2.5 * np.abs(b - a).mean()
+        # from outside, through the glass sclera, the unwrap sheet and the field edge: all of them draw
+        for state in (dict(pose=dict(yaw=180.0, pitch=0.0, dist=3.3), glass=0.8), dict(cut=0.25, unwrap=0.6),
+                      dict(cut=0.25, fov_ring=1.0, yaw=38.0, pitch=18.0), dict(half=1.0, fov_alpha=1.0, fov_sweep=1.0)):
+            for detail in ("simple", "detailed"):
+                show((14.0, 6.0), True)
+                px = _render(eye, detail, **state)
+                assert len({px(x / 10, y / 10) for x in range(2, 9) for y in range(2, 9)}) > 8
+        t0, t1 = v.field_on_meridian()                                        # the field, shifted with the photo
+        assert t1 - t0 == pytest.approx(2 * v.theta_max, rel=0.08) and abs(0.5 * (t0 + t1)) > math.radians(3.0)
+        th, side = v.scan_theta(0.5)                                          # the middle row: off the pole now
+        assert th > math.radians(3.0)
+    finally:                                                                   # the module's photo back
+        rgb = demo.synth_fundus(eye="OD", size=(512, 540))
+        circle = imaging.detect_circle(rgb)
+        v.set_image(rgb, imaging.fundus_alpha(rgb, circle), circle)
+        v.set_landmarks("OD", None, None, circle, align=True)
+
+
 def test_section_and_xray_together(eye):
     """The end of the 슬릿 스캔 presentation: opened off the axis, coats see-through."""
     v = eye[0]

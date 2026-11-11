@@ -59,7 +59,7 @@ TOOL_HINTS = {
     "profile": "누르고 있는 동안 그 가로줄의 밝기 그래프",
 }
 YELLOW, CYAN = QColor(255, 214, 64), QColor(110, 215, 255)
-CAPTION = QColor(0, 255, 0)   # VK-2 text colour
+CAPTION = QColor(242, 242, 247, 225)   # the labels on the photo (photo number, eye): quiet, not the VK-2 green
 
 
 def to_qimage(rgb: np.ndarray) -> QImage:
@@ -156,6 +156,7 @@ class _Navigator(QWidget):
 
 class ImageView(QGraphicsView):
     discPicked = Signal(float, float)
+    foveaPicked = Signal(float, float)
     zoomChanged = Signal(float)
     measured = Signal(str)       # result of a measurement
     hovered = Signal(str)        # pixel / retinal position under the cursor
@@ -186,11 +187,17 @@ class ImageView(QGraphicsView):
         self._disc.setVisible(False)
         self._disc.setZValue(5)
         self.scene().addItem(self._disc)
+        self._fovea = QGraphicsEllipseItem()
+        self._fovea.setPen(QPen(QColor(100, 210, 255, 230), 0))
+        self._fovea.setVisible(False)
+        self._fovea.setZValue(5)
+        self.scene().addItem(self._fovea)
         self.show_overlays = False
         self.show_captions = False
         self._captions = ("", "", "", "")
         self._circle_px = None
         self._disc_px = None
+        self._fovea_px = None
         self._rgb: np.ndarray | None = None
         self.geometry: measure.Geometry | None = None
         # view state
@@ -279,6 +286,7 @@ class ImageView(QGraphicsView):
             self._pix.setPixmap(QPixmap())
             self._circle.setVisible(False)
             self._disc.setVisible(False)
+            self._fovea.setVisible(False)
             self._update_navigator()
             return
         self._pix.setPixmap(to_pixmap(rgb))
@@ -287,8 +295,8 @@ class ImageView(QGraphicsView):
             self.fit()
         self._update_navigator()
 
-    def set_overlays(self, circle, disc) -> None:
-        self._circle_px, self._disc_px = circle, disc
+    def set_overlays(self, circle, disc, fovea=None) -> None:
+        self._circle_px, self._disc_px, self._fovea_px = circle, disc, fovea
         self._update_overlays()
 
     def _update_overlays(self) -> None:
@@ -299,14 +307,19 @@ class ImageView(QGraphicsView):
             x, y = self._disc_px[:2]
             r = (self._circle_px[2] if self._circle_px else 500) * 0.06
             self._disc.setRect(x - r, y - r, 2 * r, 2 * r)
+        if self._fovea_px:
+            x, y = self._fovea_px[:2]
+            r = (self._circle_px[2] if self._circle_px else 500) * 0.025
+            self._fovea.setRect(x - r, y - r, 2 * r, 2 * r)
         self._circle.setVisible(self.show_overlays and bool(self._circle_px))
         self._disc.setVisible(self.show_overlays and bool(self._disc_px))
+        self._fovea.setVisible(self.show_overlays and bool(self._fovea_px))
 
     def toggle_overlays(self, on: bool) -> None:
         self.show_overlays = on
         self._update_overlays()
 
-    # -- VK-2 style on-screen captions (green text in the corners) ------------
+    # -- small labels in the corners of the photo (photo number, eye) ----------
     def set_captions(self, top_left: str = "", top_right: str = "", bottom_left: str = "",
                      bottom_right: str = "") -> None:
         self._captions = (top_left, top_right, bottom_left, bottom_right)
@@ -323,8 +336,8 @@ class ImageView(QGraphicsView):
             return
         p = QPainter(self.viewport())
         f = QFont(self.font())
-        f.setPixelSize(max(13, min(22, self.viewport().height() // 32)))
-        f.setBold(True)
+        f.setPixelSize(max(12, min(18, self.viewport().height() // 40)))
+        f.setWeight(QFont.Weight.DemiBold)
         p.setFont(f)
         r = self.viewport().rect().adjusted(10, 6, -10, -6)
         flags = (Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
@@ -334,7 +347,7 @@ class ImageView(QGraphicsView):
         for text, flag in zip(self._captions, flags):
             if not text:
                 continue
-            p.setPen(QColor(0, 0, 0, 200))       # shadow keeps it legible on bright retina
+            p.setPen(QColor(0, 0, 0, 170))       # shadow keeps it legible on bright retina
             p.drawText(r.translated(1, 1), int(flag), text)
             p.setPen(CAPTION)
             p.drawText(r, int(flag), text)
@@ -974,6 +987,9 @@ class ImageView(QGraphicsView):
         menu = QMenu(self)
         act = QAction("여기를 시신경 유두로 지정 (3D 시신경 위치)", menu)
         act.triggered.connect(lambda: self.discPicked.emit(sp.x(), sp.y()))
+        menu.addAction(act)
+        act = QAction("여기를 황반(중심와)으로 지정 (3D에서 안구 뒤쪽 한가운데)", menu)
+        act.triggered.connect(lambda: self.foveaPicked.emit(sp.x(), sp.y()))
         menu.addAction(act)
         menu.addSeparator()
         for label, fn in (("화면에 맞춤", self.fit), ("100% 크기", lambda: self.zoom_to(1.0)),
