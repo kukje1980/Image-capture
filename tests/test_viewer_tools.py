@@ -203,7 +203,9 @@ def test_main_window_tools(app, tmp_path, demo_dir, import_and_wait):
         w.pop_gamma.hide()
         w._on_action("adj_reset")
         assert w.s_gamma.value() == 100 and not w.acts["adj:gamma"].isChecked()
-        assert w.view2d._captions[0] == "1/2" and w.view2d._captions[2].endswith("PID20260310-0A1B2C3D")
+        # on the photo: its number and the eye — no patient name, ID or date
+        assert w.view2d._captions[0] == "1/2" and w.view2d._captions[1] in ("OD (R)", "OS (L)")
+        assert w.view2d._captions[2:] == ("", "")
         w._on_action("tools")                    # TOOLS hides / shows the processing toolbar
         assert w.tb_proc.isHidden() and not w.acts["tools"].isChecked()
         w._on_action("tools")

@@ -62,6 +62,7 @@ from PySide6.QtCore import QEvent, QPointF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QSurfaceFormat
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
+from .. import placement
 from .. import projection as proj
 from ..config import config_dir
 from . import eye_model as em
@@ -227,12 +228,13 @@ uniform float u_c;        // cubic share for radial
 uniform vec2  u_center;   // image centre (texture coords)
 uniform vec2  u_radius;   // image-circle radius (texture coords, x and y)
 uniform float u_roll;
+uniform mat3  u_place;    // eye → the photo's own frame: where the photo lies on the retina (placement.py)
 uniform float u_grid;     // > 0: draw 10°/30° retinal angle rings
 uniform vec2  u_scan;     // slit scan: (slit row in texture v, darkness of the unscanned part); y = 0: off
 uniform float u_fovring;  // > 0: mark the edge of the photographed field
 uniform float u_relief;   // 입체 조명: vessels and the disc catch a raking light (0 = off)
 uniform vec2  u_texel;    // one texel of the photo (texture coordinates)
-uniform vec3  u_rlight;   // direction to that light (object space)
+uniform vec3  u_rlight;   // direction to that light (the photo's frame)
 
 // brightness from a coarser level of the photo: the relief follows vessels, not the grain
 float lum_(vec2 uv) { return dot(texture2D(u_tex, uv, 1.0).rgb, vec3(0.299, 0.587, 0.114)); }
@@ -255,10 +257,11 @@ float gfun(float t) {
 }
 
 vec4 photo(vec3 d) {
-    float theta = acos(clamp(-d.z, -1.0, 1.0));
+    vec3 q = u_place * d;                    // the same point as the photo's camera saw it
+    float theta = acos(clamp(-q.z, -1.0, 1.0));
     if (u_has_tex == 0 || theta > u_tmax) return vec4(0.0);
     float r = gfun(theta) / u_gmax;
-    float ph = atan(d.y, d.x) + u_roll;
+    float ph = atan(q.y, q.x) + u_roll;
     vec2 uv = u_center + vec2(cos(ph) * u_radius.x, -sin(ph) * u_radius.y) * r;
     vec4 t = texture2D(u_tex, uv);
     if (u_relief > 0.0 && t.a > 0.0) {
@@ -281,15 +284,15 @@ vec4 photo(vec3 d) {
     return t;
 }
 
-vec3 retina_marks(vec3 c, float theta) {
-    if (u_grid > 0.0) {
-        float deg = degrees(theta);
+vec3 retina_marks(vec3 c, vec3 d) {
+    if (u_grid > 0.0) {                      // rings around the fovea (the posterior pole)
+        float deg = degrees(acos(clamp(-d.z, -1.0, 1.0)));
         float ring10 = 1.0 - smoothstep(0.0, 0.35, abs(mod(deg + 5.0, 10.0) - 5.0));
         float ring30 = 1.0 - smoothstep(0.0, 0.5, abs(mod(deg + 15.0, 30.0) - 15.0));
         c = mix(c, vec3(0.3, 0.9, 1.0), max(ring10 * 0.35, ring30 * 0.8) * u_grid);
     }
-    if (u_fovring > 0.0 && u_has_tex == 1) {
-        float e = degrees(abs(theta - u_tmax));
+    if (u_fovring > 0.0 && u_has_tex == 1) {  // the edge of the photo's own field
+        float e = degrees(abs(acos(clamp(-(u_place * d).z, -1.0, 1.0)) - u_tmax));
         c = mix(c, vec3(0.16, 0.80, 1.0), (1.0 - smoothstep(0.35, 0.9, e)) * u_fovring);
     }
     return c;
@@ -307,7 +310,7 @@ vec3 fundus(vec3 d, float z, out float w) {
     float phim = u_mirror == 1 ? (phi > 0.0 ? @PI@ - phi : -@PI@ - phi) : phi;   // anatomical azimuth
     vec3 ret = texture2D(u_peri, vec2(dx, d.y) / max(1.0 - d.z, 0.05) * @PERI_K@ + 0.5).rgb;
     vec4 t = photo(d);
-    ret = retina_marks(mix(ret, t.rgb, t.a), theta);
+    ret = retina_marks(mix(ret, t.rgb, t.a), d);
     w = 1.0;
     if (theta <= @ORA@ - 0.04) return ret;
     // ora serrata: dentate processes reaching forward between the bays
@@ -776,7 +779,7 @@ vec3 fundus_s(vec3 d, out float theta) {
     // the darker ora serrata
     vec3 base = mix(vec3(0.70, 0.33, 0.20), vec3(0.36, 0.16, 0.10), smoothstep(1.6, 2.6, theta));
     vec4 t = photo(d);
-    return retina_marks(mix(base, t.rgb, t.a), theta);
+    return retina_marks(mix(base, t.rgb, t.a), d);
 }
 
 void main() {
@@ -1114,6 +1117,10 @@ class EyeView(QOpenGLWidget):
         self.roll_deg = 0.0
         self.disc_dir: np.ndarray | None = None
         self.laterality: str | None = None
+        # where the photo lies on the eye: by its fovea / disc (placement.py), else centred on the pole
+        self.align = True
+        self.placement = placement.Placement()
+        self._marks: tuple = (None, None, None)        # disc, fovea (pixels), image circle
         # view
         self.detail = "simple"
         self.mode = "outside"
@@ -1211,24 +1218,39 @@ class EyeView(QOpenGLWidget):
             self.viewpoint = float(viewpoint)
         if roll_deg is not None:
             self.roll_deg = float(roll_deg)
+        self._replace()
+        self.update()
+
+    def set_landmarks(self, laterality: str | None, disc_px: tuple[float, float] | None,
+                      fovea_px: tuple[float, float] | None, circle: tuple[float, float, float] | None,
+                      align: bool | None = None) -> None:
+        """Put the photo where its fovea and disc belong on the eye (``placement.py``): the fovea at
+        the posterior pole, or — without a fovea — the disc at its anatomical place. The optic nerve
+        leaves behind the photo's disc (without one: behind the anatomical disc)."""
+        self.laterality = laterality
+        self._marks = (disc_px, fovea_px, circle)
+        if align is not None:
+            self.align = bool(align)
+        self._replace()
         self.update()
 
     def set_disc(self, laterality: str | None, disc_px: tuple[float, float] | None,
                  circle: tuple[float, float, float] | None) -> None:
-        """Place the optic nerve behind the disc (detected, or anatomical default)."""
-        self.laterality = laterality
-        tmax = self.theta_max
-        p = None
-        if disc_px is not None and circle is not None:
-            p = proj.image_to_sphere(disc_px[0], disc_px[1], circle[0], circle[1], circle[2], tmax,
-                                     self.projection, self.viewpoint, math.radians(self.roll_deg),
-                                     c=self.radial_c)
-        if p is None:
-            # disc ≈ 4.5 mm nasal of the fovea ≈ 21.5° at the eye centre, slightly superior
-            phi = 0.0 if laterality != "OS" else math.pi
-            p = proj.sphere_point(math.radians(21.5), phi + (0.06 if laterality != "OS" else -0.06))
-        self.disc_dir = np.asarray(p, np.float64)
-        self.update()
+        """:meth:`set_landmarks` with the disc alone."""
+        self.set_landmarks(laterality, disc_px, None, circle)
+
+    def photo_camera(self, circle) -> placement.Camera:
+        return placement.Camera(circle[0], circle[1], circle[2], self.fov_deg, self.fov_type, self.projection,
+                                self.viewpoint, self.radial_c, self.roll_deg)
+
+    def _replace(self) -> None:
+        disc_px, fovea_px, circle = self._marks
+        pl = placement.Placement(by="centre" if self.align else "off")
+        if circle is not None and circle[2]:
+            pl = placement.place(self.photo_camera(circle), fovea=fovea_px, disc=disc_px,
+                                 laterality=self.laterality, align=self.align)
+        self.placement = pl
+        self.disc_dir = pl.disc if pl.disc is not None else placement.anatomical_disc(self.laterality)
 
     def set_detail(self, detail: str) -> None:
         """간단히 ("simple") or 자세히 ("detailed")."""
@@ -1480,11 +1502,44 @@ class EyeView(QOpenGLWidget):
         k, _ = self.half_plane()
         return self._pose_from(-0.70 * k + np.array([0.0, -0.25, 0.65]), self._fit(3.8, 1.2))
 
+    def _meridian_rows(self, n: int = 721) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """The section's meridian through the photo: angles ``t`` from the posterior pole (+: up),
+        the photo row there (+1 top … −1 bottom of the image circle) and whether the photo covers it."""
+        t = np.linspace(-0.97 * math.pi, 0.97 * math.pi, n)
+        m = self.meridian()
+        d = np.sin(t)[:, None] * m[None, :] - np.cos(t)[:, None] * np.array([0.0, 0.0, 1.0])[None, :]
+        q = d @ self.placement.matrix                      # eye → the photo's frame (matrix is orthonormal)
+        theta = np.arccos(np.clip(-q[:, 2], -1.0, 1.0))
+        tmax = self.theta_max
+        lut = np.array([proj.rho(k / 256.0 * tmax, tmax, self.projection, self.viewpoint, c=self.radial_c)
+                        for k in range(257)])
+        rho = np.interp(np.minimum(theta, tmax), np.linspace(0.0, tmax, 257), lut)
+        row = rho * np.sin(np.arctan2(q[:, 1], q[:, 0]) + math.radians(self.roll_deg))
+        return t, row, theta <= tmax
+
+    def _tilted(self) -> bool:
+        return self.placement.offset_deg > 1e-6
+
+    def field_on_meridian(self) -> tuple[float, float]:
+        """Where the photo's field begins and ends on the section's meridian (angles from the pole)."""
+        if not self._tilted():
+            return -self.theta_max, self.theta_max
+        t, _, inside = self._meridian_rows()
+        if not inside.any():
+            return -self.theta_max, self.theta_max
+        return float(t[inside][0]), float(t[inside][-1])
+
     def scan_theta(self, s: float) -> tuple[float, float]:
         """Retinal angle (from the posterior pole) and side (+1 superior, -1 inferior) that the
-        slit at ``s`` (0 top … 1 bottom of the photo) reaches on the vertical meridian."""
+        slit at ``s`` (0 top … 1 bottom of the photo) reaches on the section's meridian."""
         dy = 1.0 - 2.0 * min(1.0, max(0.0, s))
         tmax = self.theta_max
+        if self._tilted():                    # a photo not centred on the pole: where its row crosses the section
+            t, row, inside = self._meridian_rows()
+            k = np.flatnonzero(inside)
+            if len(k) > 1 and row[k][-1] > row[k][0]:
+                tt = float(np.interp(dy, row[k], t[k]))
+                return abs(tt), (1.0 if tt >= 0 else -1.0)
         th = proj.theta_of_rho(min(1.0, abs(dy)), tmax, self.projection, self.viewpoint, c=self.radial_c)
         return th, (1.0 if dy >= 0 else -1.0)
 
@@ -1628,7 +1683,7 @@ class EyeView(QOpenGLWidget):
             self._tex = self._make_texture(self._rgba)
 
     def _set(self, prog, **values) -> None:
-        """Set uniforms ``u_<name>``: int → 1i, float → 1f, 2/3-vectors, 4×4 matrices."""
+        """Set uniforms ``u_<name>``: int → 1i, float → 1f, 2/3-vectors, 3×3 and 4×4 matrices."""
         gl = self.gl
         for name, v in values.items():
             loc = self._loc.get((prog, name))
@@ -1644,6 +1699,8 @@ class EyeView(QOpenGLWidget):
                 a = np.asarray(v, np.float32)
                 if a.shape == (4, 4):
                     gl.glUniformMatrix4fv(loc, 1, gl.GL_TRUE, a)
+                elif a.shape == (3, 3):
+                    gl.glUniformMatrix3fv(loc, 1, gl.GL_TRUE, a)
                 elif a.size == 4:
                     gl.glUniform4f(loc, *(float(x) for x in a))
                 elif a.size == 2:
@@ -1879,10 +1936,11 @@ class EyeView(QOpenGLWidget):
         return dict(tmax=tmax, gmax=proj.g(tmax, self.projection, self.viewpoint, tmax=tmax, c=self.radial_c),
                     proj=proj.PROJECTION_INDEX.get(self.projection, 0), d=self.viewpoint, c=self.radial_c,
                     center=self._center, radius=self._radius, roll=math.radians(self.roll_deg),
-                    grid=1.0 if self.show_grid else 0.0,
+                    place=self.placement.matrix.T, grid=1.0 if self.show_grid else 0.0,
                     has_tex=int(tex and not self._unwrap_on()),      # 펼치기: the photo is on its sheet
                     scan=scan, fovring=float(self.fov_ring),
-                    relief=float(self.relief) if tex else 0.0, texel=self._texel(), rlight=self._rlight)
+                    relief=float(self.relief) if tex else 0.0, texel=self._texel(),
+                    rlight=self.placement.matrix.T @ self._rlight)
 
     def _texel(self) -> tuple[float, float]:
         if self._rgba is None:
@@ -1907,7 +1965,7 @@ class EyeView(QOpenGLWidget):
         tt, pp = np.meshgrid(theta, phi, indexing="ij")
         rr = np.meshgrid(rho, phi, indexing="ij")[0]
         st = np.sin(tt)
-        pos = np.stack([st * np.cos(pp), st * np.sin(pp), -np.cos(tt)], axis=-1) * r_in
+        pos = np.stack([st * np.cos(pp), st * np.sin(pp), -np.cos(tt)], axis=-1) @ self.placement.matrix.T * r_in
         flat = np.stack([rr * np.cos(pp) * r_flat, rr * np.sin(pp) * r_flat, np.full_like(rr, z_flat)], axis=-1)
         ph = pp + math.radians(self.roll_deg)
         uv = np.stack([self._center[0] + np.cos(ph) * self._radius[0] * rr,
@@ -1925,7 +1983,8 @@ class EyeView(QOpenGLWidget):
         zc = float(em.cut_plane_z(self.cut))
         r_flat = min(SHEET_R, 0.97 * math.sqrt(max(r_in * r_in - zc * zc, 0.04)))
         key = (round(r_in, 4), round(zc, 4), round(r_flat, 4), round(self.theta_max, 6), self.projection,
-               self.viewpoint, self.radial_c, self.roll_deg, self._center, self._radius)
+               self.viewpoint, self.radial_c, self.roll_deg, self._center, self._radius,
+               self.placement.matrix.round(6).tobytes())
         mesh = self._dynamic("sheet", key, lambda: self._sheet_mesh(r_in, zc + 0.012, r_flat))
         p = self._prog["sheet"]
         gl.glUseProgram(p)
@@ -2425,10 +2484,12 @@ class EyeView(QOpenGLWidget):
 
         if self.fov_alpha > 0.005 and self.fov_sweep > 0.0:      # field of view at the eye centre
             a = self.fov_alpha * vis
-            th = self.theta_max * min(1.0, self.fov_sweep)
-            for side in (1.0, -1.0):
-                glow([centre, to_screen(on_plane(side * th, em.R_RET))], self.FOV_COLOR, a, lw)
-            glow([to_screen(on_plane(t, 0.2)) for t in np.linspace(-th, th, 72)], self.FOV_COLOR, a * 0.9, lw * 0.8)
+            t0, t1 = self.field_on_meridian()             # the photo's field where the section cuts it
+            mid, half = 0.5 * (t0 + t1), 0.5 * (t1 - t0) * min(1.0, self.fov_sweep)
+            for edge_t in (mid + half, mid - half):
+                glow([centre, to_screen(on_plane(edge_t, em.R_RET))], self.FOV_COLOR, a, lw)
+            glow([to_screen(on_plane(t, 0.2)) for t in np.linspace(mid - half, mid + half, 72)],
+                 self.FOV_COLOR, a * 0.9, lw * 0.8)
             spot(centre, self.FOV_COLOR, a, lw * 1.2)
             la = a * _smooth(0.55, 1.0, self.fov_sweep)
             anchor = to_screen(base + zax * 0.33)

@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem, QTabWidget, QToolBar, QToolButton, QVBoxLayout, QWidget,
 )
 
-from .. import APP_TITLE, __version__, autosetup, discpair, imaging, measure
+from .. import APP_TITLE, __version__, autosetup, discpair, imaging, measure, placement
 from .. import projection as proj
 from ..config import Settings
 from ..db import Database
@@ -165,6 +165,7 @@ class MainWindow(QMainWindow):
         self.compare = None
         self._patient_ref: int | None = None  # UNASSIGNED / patient id / None
         self._cache: OrderedDict[int, np.ndarray] = OrderedDict()
+        self._fovea_tried: set[int] = set()     # photos whose fovea was looked for in this session
         self._preloader = Preloader(self)
         self._preloader.loaded.connect(self._on_preloaded)
         self._preload_timer = QTimer(self, singleShot=True, timeout=self._preload_neighbours)
@@ -234,7 +235,7 @@ class MainWindow(QMainWindow):
                 else:
                     m.addAction(self._act(*item))
             self.menus[key] = m
-        self.acts["captions"] = self._act("captions", "화면 글자 표시", "사진 위에 환자·날짜를 녹색 글자로 (VK-2 방식)",
+        self.acts["captions"] = self._act("captions", "화면 글자 표시", "사진 위 구석에 사진 번호와 눈(OD/OS)을 작게 표시",
                                           checkable=True)
         self.acts["captions"].setChecked(True)
         self.acts["overlay"] = self._act("overlay", "원·시신경 표시", "검출한 영상 원과 시신경 유두 위치 표시",
@@ -457,6 +458,7 @@ class MainWindow(QMainWindow):
         self.view2d.crossfade = True            # the next photo fades in over the last
         self.view2d.toggle_captions(True)
         self.view2d.discPicked.connect(self._on_disc_picked)
+        self.view2d.foveaPicked.connect(self._on_fovea_picked)
         self.view2d.measured.connect(self._on_measured)
         self.view2d.hovered.connect(lambda t: self.lbl_hover.setText(t))
         self.view2d.clicked.connect(self._stop_slideshow)
@@ -743,6 +745,17 @@ class MainWindow(QMainWindow):
         b_save_map.setObjectName("plain")
         b_save_map.setToolTip("이 사진의 화각·투영을 저장해 다음에도 이대로 엽니다")
         b_save_map.clicked.connect(self._save_mapping)
+        self.c_align3d = Switch("실제 위치에 맞춤")
+        self.c_align3d.setToolTip("사진의 황반을 안구 뒤쪽 한가운데(후극)에, 시신경 유두를 코쪽 제자리에 오도록 사진을 얹습니다 —\n"
+                                  "사진 중심이 황반이 아니어도(유두 중심 · 주변부 촬영) 망막의 실제 위치에 놓입니다.\n"
+                                  "황반·유두를 잘못 찾았으면 2D 사진에서 오른쪽 클릭으로 직접 지정하세요. 끄면 사진 중심을 후극에 둡니다.")
+        self.c_align3d.setChecked(self.settings.align3d)
+        self.c_align3d.toggled.connect(self._on_align)
+        self.b_fit_fov = QPushButton("황반–유두 거리로 크기 맞춤")
+        self.b_fit_fov.setObjectName("plain")
+        self.b_fit_fov.setToolTip("화각을 모르는 사진: 황반과 시신경 유두 사이가 보통 거리(약 4.5 mm)가 되도록 화각을 정합니다\n"
+                                  "(이 거리는 사람마다 조금 다르므로 대략 맞춰집니다 — 장비의 화각을 알면 그 값을 쓰세요)")
+        self.b_fit_fov.clicked.connect(self._fit_fov)
         self.lbl_3d = QLabel("")
         self.lbl_3d.setObjectName("caption")
         self.lbl_3d.setWordWrap(True)
@@ -809,8 +822,9 @@ class MainWindow(QMainWindow):
                           self.c_xray3d))
         bl.addWidget(card("효과", self.c_relief3d, self.c_spin3d, self.c_fov3d, self.c_side3d))
         bl.addWidget(card("표시", self.c_nerve, self.c_muscle, self.c_grid, self.c_adj3d))
-        bl.addWidget(card("사진 맞춤", setting_row("화각", self.sp_fov), setting_row("화각 기준", self.c_fovtype),
-                          setting_row("투영", self.c_proj), setting_row("회전", self.sp_roll), b_save_map))
+        bl.addWidget(card("사진 맞춤", self.c_align3d, setting_row("화각", self.sp_fov),
+                          setting_row("화각 기준", self.c_fovtype), setting_row("투영", self.c_proj),
+                          setting_row("회전", self.sp_roll), self.b_fit_fov, b_save_map))
         bl.addWidget(self.lbl_3d)
         bl.addStretch(1)
         self.inspector = QScrollArea()
@@ -869,13 +883,15 @@ class MainWindow(QMainWindow):
             "확대하면 오른쪽 위 미니맵에 전체 사진과 보이는 곳이 나옵니다 — 눌러서 이동<br>"
             "화면 맞춤 ▾ 또는 아래쪽 [배율]: 400·800%, 후극부·위/아래/코/귀쪽 주변부로 바로 확대<br>"
             "가운데 버튼 드래그(이동 도구는 왼쪽 드래그): 이동 · 더블클릭: 화면 맞춤<br>"
-            "오른쪽 클릭: 메뉴 (시신경 위치 지정, 돋보기 배율, 미니맵)<br><br>"
+            "오른쪽 클릭: 메뉴 (시신경 유두 · 황반 위치 지정, 돋보기 배율, 미니맵)<br><br>"
             "<b>3D 안구</b><br>"
             "위 막대: 간단히 / 자세히 (가벼운 기본 모형 / 실제 해부 구조) · 외부 / 내부 · ▶ 슬릿 스캔 · "
             "사진 펼치기 · 크게 보기 · 설정 (오른쪽 패널 열고 닫기)<br>"
             "설정 패널 — <b>시점</b>: 정면 · 처음 시점 · 화면 저장 / <b>안구 열기</b>: 앞쪽 절개 · 세로 단면, 깊이, "
             "공막 투명도, 망막 투시 / <b>효과</b>: 입체 조명 · 자동 회전 · 화각 표시 · 사진 나란히 / "
-            "<b>표시</b>: 시신경 · 외안근 · 각도 격자 / <b>사진 맞춤</b>: 화각 · 투영 · 회전<br>"
+            "<b>표시</b>: 시신경 · 외안근 · 각도 격자 / <b>사진 맞춤</b>: 실제 위치에 맞춤 · 화각 · 투영 · 회전<br>"
+            "사진 맞춤 → 실제 위치에 맞춤: 사진의 황반을 안구 뒤쪽 한가운데(후극)에, 시신경 유두를 코쪽 제자리에 "
+            "오도록 얹습니다 — 잘못 찾았으면 2D 사진에서 오른쪽 클릭으로 황반·유두를 직접 지정<br>"
             "공막 투명도: 공막이 유리처럼 비쳐 보이고, 사진이 있는 망막은 진하게 그대로 남습니다 "
             "(0 = 흰 공막) — 안구를 돌리면 망막이 안구 속 어디에 있는지 보입니다<br>"
             "▶ 슬릿 스캔: 단면에 화각 → 슬릿이 사진을 위에서 아래로 → 사진을 입힌 3D 안구 (누르면 멈춤) · "
@@ -1511,9 +1527,8 @@ class MainWindow(QMainWindow):
             self._load_state(saved.get("state", {}), saved.get("history"))
         self.view2d.set_rgb(self._display_rgb(row))
         self._sync_palette()
-        circle = (row["circle_cx"], row["circle_cy"], row["circle_r"]) if row["circle_r"] else None
-        disc = (row["disc_x"], row["disc_y"]) if row["disc_x"] is not None else None
-        self.view2d.set_overlays(circle, disc)
+        row = self.current = self._ensure_fovea(row)
+        self.view2d.set_overlays(*self._marks_of(row))
         self._fill_info(row)
         self._load_mapping(row)
         self._mark_3d_dirty()
@@ -1522,6 +1537,46 @@ class MainWindow(QMainWindow):
         if self._tab() == "all":
             self._fill_overview(multi=not self._multi_lock)
         self._preload_timer.start(180)        # once the browsing pauses: read the neighbours ahead
+
+    @staticmethod
+    def _marks_of(row) -> tuple:
+        """Image circle, optic disc and fovea of a photo (pixels; None where not known)."""
+        circle = (row["circle_cx"], row["circle_cy"], row["circle_r"]) if row["circle_r"] else None
+        disc = (row["disc_x"], row["disc_y"]) if row["disc_x"] is not None else None
+        fovea = (row["fovea_x"], row["fovea_y"]) if row["fovea_x"] is not None else None
+        return circle, disc, fovea
+
+    def _photo_camera(self, row, *, stored: bool = False) -> placement.Camera | None:
+        """How the photo maps to directions: as set in 사진 맞춤 for the photo on screen, else as stored."""
+        if not row["circle_r"]:
+            return None
+        prof = get_profile(row["profile"])
+        if stored or self.current is None or row["id"] != self.current["id"]:
+            fov, ftype, projection = (row["fov_deg"] or prof.fov_deg, row["fov_type"] or prof.fov_type,
+                                      row["projection"] or prof.projection)
+        else:
+            fov, ftype, projection = self.sp_fov.value(), self.c_fovtype.currentData(), self.c_proj.currentData()
+        return placement.Camera(row["circle_cx"], row["circle_cy"], row["circle_r"], fov, ftype, projection,
+                                prof.viewpoint, prof.radial_c)
+
+    def _find_fovea(self, row, rgb) -> tuple[float, float] | None:
+        cam = self._photo_camera(row, stored=True)
+        if cam is None or row["disc_x"] is None or row["modality"] in ("anterior", "disc"):
+            return None
+        found = imaging.detect_fovea(rgb, cam, (row["disc_x"], row["disc_y"]), row["laterality"])
+        return None if found is None else (found[0], found[1])
+
+    def _ensure_fovea(self, row):
+        """A photo imported before the fovea was looked for: find it once, when the photo is first shown."""
+        if row["fovea_x"] is not None or row["disc_x"] is None or row["id"] in self._fovea_tried:
+            return row
+        self._fovea_tried.add(row["id"])
+        rgb = self._load(row)
+        fovea = self._find_fovea(row, rgb) if rgb is not None else None
+        if fovea is None:
+            return row
+        self.db.update_image(row["id"], fovea_x=fovea[0], fovea_y=fovea[1])
+        return self.db.get_image(row["id"])
 
     def _fill_info(self, row) -> None:
         meta = json.loads(row["meta_json"] or "{}")
@@ -1543,13 +1598,12 @@ class MainWindow(QMainWindow):
         ftype = "안구 중심각" if row["fov_type"] == "internal" else "외부각"
         fov = f"{row['fov_deg']:g}°" if row["fov_deg"] else ""
         name = Path(row["original_path"] or row["file_path"]).name
-        # VK-2: green text on the photo — counter, eye, name / ID, date / time
+        # on the photo: only its number and the eye (the patient and the date are in the line above
+        # the tabs and in the photo list — no patient data on the picture)
         n, i = self.thumbs.count(), self.thumbs.currentRow()
         self.view2d.set_captions(
             f"{i + 1}/{n}" if n and i >= 0 else "",
-            {"OD": "OD (R)", "OS": "OS (L)", "OU": "OU"}.get(row["laterality"] or "", ""),
-            f"{p['name'] or ''}\n{p['patient_id']}" if p else "미분류",
-            f"{row['exam_date'] or ''}\n{row['exam_time'] or ''}".strip())
+            {"OD": "OD (R)", "OS": "OS (L)", "OU": "OU"}.get(row["laterality"] or "", ""))
         # status bar "Image Info"; the tooltip says where every value came from
         self.lbl_info.setText("  ·  ".join(x for x in (eye or "눈 미상", mod, device, fov,
                                                         f"{row['width']}×{row['height']}") if x))
@@ -2017,20 +2071,56 @@ class MainWindow(QMainWindow):
                                projection=self.c_proj.currentData(), viewpoint=prof.viewpoint,
                                roll_deg=self.sp_roll.value(), radial_c=prof.radial_c)
         if row is not None:
-            circle = (row["circle_cx"], row["circle_cy"], row["circle_r"]) if row["circle_r"] else None
-            disc = (row["disc_x"], row["disc_y"]) if row["disc_x"] is not None else None
-            self.eye3d.set_disc(row["laterality"], disc, circle)
+            circle, disc, fovea = self._marks_of(row)
+            self.eye3d.set_landmarks(row["laterality"], disc, fovea, circle, align=self.c_align3d.isChecked())
             # the 2D measurements use the same eye geometry as the 3D view
             self.view2d.geometry = measure.Geometry(
                 *circle, fov_deg=self.sp_fov.value(), fov_type=self.c_fovtype.currentData(),
                 projection=self.c_proj.currentData(), viewpoint=prof.viewpoint,
                 radial_c=prof.radial_c) if circle and (row["modality"] not in ("montage", "disc")
                                                       or self._montage_definition(row)) else None
+        self.lbl_3d.setText(self._placement_text())
+        both = row is not None and row["disc_x"] is not None and row["fovea_x"] is not None
+        self.b_fit_fov.setEnabled(bool(both))
+
+    def _placement_text(self) -> str:
+        """What the 3D view did with the photo: how much retina it covers and where it was put."""
         tmax = math.degrees(self.eye3d.theta_max)
-        self.lbl_3d.setText(f"망막 범위: 후극에서 {tmax:.0f}° (안구 중심각 {2 * tmax:.0f}°)")
+        pl = self.eye3d.placement
+        lines = [f"망막 범위: 사진 중심에서 {tmax:.0f}° (안구 중심각 {2 * tmax:.0f}°)"]
+        where = {"fovea": "황반을 안구 뒤쪽 한가운데(후극)에 맞춤",
+                 "disc": "황반이 사진에 없어 시신경 유두를 코쪽 제자리에 맞춤",
+                 "centre": "황반·시신경 유두를 찾지 못해 사진 중심을 후극에 둠",
+                 "off": "사진 중심을 후극에 둠 (실제 위치에 맞춤 꺼짐)"}[pl.by]
+        if pl.by in ("fovea", "disc") and pl.offset_deg >= 0.5:
+            where += f" — 사진 중심은 후극에서 {pl.offset_deg:.0f}°"
+        lines.append(where)
+        if pl.distance_deg is not None:
+            off = abs(pl.distance_deg / placement.DISC_FOVEA_DEG - 1.0)
+            lines.append(f"황반–유두 {pl.distance_deg:.1f}° · {pl.distance_mm:.1f} mm (보통 약 4.5 mm)"
+                         + (" — 화각이 실제와 다를 수 있습니다" if off > 0.2 else ""))
+        return "\n".join(lines)
 
     def _on_mapping(self, *_):
         self._push_mapping()
+
+    def _on_align(self, on: bool) -> None:
+        self.settings.align3d = bool(on)
+        self.settings.save()
+        self._push_mapping()
+
+    def _fit_fov(self) -> None:
+        """황반–유두 거리로 크기 맞춤: the field of view that puts the two 4.5 mm apart."""
+        row = self.current
+        cam = self._photo_camera(row) if row is not None else None
+        if cam is None or row["disc_x"] is None or row["fovea_x"] is None:
+            return
+        fov = placement.fit_fov(cam, (row["fovea_x"], row["fovea_y"]), (row["disc_x"], row["disc_y"]))
+        if fov is None:
+            self.lbl_status.setText("황반–유두 거리로 화각을 정할 수 없습니다")
+            return
+        self.sp_fov.setValue(round(fov, 1))        # → _on_mapping
+        self.lbl_status.setText(f"화각을 {fov:.1f}°로 맞췄습니다 (황반–유두 4.5 mm 기준) — [화각·투영 저장]으로 저장")
 
     def _save_mapping(self) -> None:
         if self.current is None:
@@ -2369,11 +2459,33 @@ class MainWindow(QMainWindow):
     def _set_disc(self, image_id: int, x: float, y: float) -> None:
         """Store a photo's optic disc position (2D right-click menu, disc pair clicks)."""
         self.db.update_image(image_id, disc_x=x, disc_y=y)
+        row = self.db.get_image(image_id)
+        cam = self._photo_camera(row, stored=True)
+        if cam is not None and row["fovea_x"] is not None:
+            # a fovea that was looked for beside the old disc: keep it only if it still fits the new one
+            a, b = cam.direction(row["fovea_x"], row["fovea_y"]), cam.direction(x, y)
+            if a is None or b is None or not (12.0 <= placement.angle_between(a, b) <= 32.0):
+                self.db.update_image(image_id, fovea_x=None, fovea_y=None)
+                row = self.db.get_image(image_id)
+        if row["fovea_x"] is None:
+            rgb = self._load(row)
+            fovea = self._find_fovea(row, rgb) if rgb is not None else None
+            if fovea is not None:
+                self.db.update_image(image_id, fovea_x=fovea[0], fovea_y=fovea[1])
+                row = self.db.get_image(image_id)
         if self.current is not None and self.current["id"] == image_id:
-            self.current = self.db.get_image(image_id)
-            self.view2d.set_overlays((self.current["circle_cx"], self.current["circle_cy"],
-                                      self.current["circle_r"]), (x, y))
+            self.current = row
+            self.view2d.set_overlays(*self._marks_of(row))
             self._push_mapping()
+
+    def _on_fovea_picked(self, x: float, y: float) -> None:
+        if self.current is None:
+            return
+        self.db.update_image(self.current["id"], fovea_x=x, fovea_y=y)
+        self.current = self.db.get_image(self.current["id"])
+        self.view2d.set_overlays(*self._marks_of(self.current))
+        self._push_mapping()
+        self.lbl_status.setText("황반 위치를 저장했습니다 (3D에서 안구 뒤쪽 한가운데에 맞춤)")
 
     # -- tabs by name -----------------------------------------------------------------
     def _tab(self) -> str:
@@ -2823,7 +2935,9 @@ class MainWindow(QMainWindow):
                                            prof.viewpoint))
         disc = imaging.detect_disc(rgb, circle, disc_frac=min(0.25, 3.8 / max(tmax, 5)), search=prof.disc_search)
         self.db.update_image(image_id, circle_cx=circle[0], circle_cy=circle[1], circle_r=circle[2],
-                             disc_x=disc[0] if disc else None, disc_y=disc[1] if disc else None)
+                             disc_x=disc[0] if disc else None, disc_y=disc[1] if disc else None,
+                             fovea_x=None, fovea_y=None)
+        self._fovea_tried.discard(image_id)     # looked for again when shown
         self._show_image(image_id)
 
     def _remove_image(self, image_id: int) -> None:

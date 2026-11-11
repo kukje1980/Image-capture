@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
+from .. import imaging
 from .. import montage as mt
 from .. import projection as proj
 from . import theme
@@ -1143,7 +1144,10 @@ class MontageDialog(QDialog):
         circle = geom.circle()
         self.eye.set_mapping(fov_deg=self.montage_fov(), fov_type="internal", projection="equidistant", roll_deg=0.0)
         self.eye.set_image(rgb, alpha, circle)
-        self.eye.set_disc(self.laterality(), self._disc_on(geom), circle)
+        # on the eye as in the main window: the montage's fovea at the posterior pole, its disc nasal
+        lat, disc = self.laterality(), self._disc_on(geom)
+        fovea = imaging.detect_fovea(rgb, self.eye.photo_camera(circle), disc, lat) if disc is not None else None
+        self.eye.set_landmarks(lat, disc, fovea[:2] if fovea else None, circle)
 
     # -- output ----------------------------------------------------------------------------
     def _final_job(self):
