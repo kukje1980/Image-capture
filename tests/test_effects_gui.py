@@ -114,6 +114,7 @@ def test_browsing_reads_ahead_and_effects_follow_their_controls(app, tmp_path, d
         assert eye.mode == "outside" and eye.dark == 0.0
         w.b_unwrap.click()
         w.c_view3d.setCurrentIndex(w.c_view3d.findData("section"))
+        w._tween._finish()                                    # (the glide to the section: its end, not its first step)
         assert eye.unwrap == 0.0 and eye.half > 0.0
         w.b_unwrap.click()                                    # from 세로 단면: back to the opened eye first
         assert eye.unwrap == 1.0 and eye.half == 0.0 and w.c_view3d.currentData() == "front"
