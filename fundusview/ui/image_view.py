@@ -218,7 +218,7 @@ class ImageView(QGraphicsView):
         self._wheel_scene = QPointF()
         self._wheel = motion.Chase(self._wheel_part, half_life=0.05)
         self._vel = motion.Velocity()
-        self._fling = motion.Decay(self._fling_move, tau=0.28)
+        self._fling = motion.Decay(self._fling_move, tau=0.33)
         self._fling_rest = [0.0, 0.0]
         self._glide = motion.Tween(self._glide_to, 0.28)
         self._glide_ends: tuple | None = None

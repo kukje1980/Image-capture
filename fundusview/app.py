@@ -38,19 +38,15 @@ def main(argv: list[str] | None = None) -> int:
     settings = Settings.load()
     _apply_opengl_mode(settings.opengl)
 
-    from PySide6.QtGui import QFont
     from PySide6.QtWidgets import QApplication
 
     app = QApplication(sys.argv[:1])
     app.setApplicationName(APP_NAME)
     app.setOrganizationName(APP_NAME)
+    from .ui import theme
     from .ui.icon import qicon
     app.setWindowIcon(qicon())
-    if sys.platform == "win32":
-        app.setFont(QFont("Malgun Gothic", 9))
-    style = Path(__file__).with_name("ui") / "style.qss"
-    if style.exists():
-        app.setStyleSheet(style.read_text(encoding="utf-8"))
+    theme.apply(app)                  # the dark look: style, palette, fonts, stylesheet, window frames
 
     from .db import Database
     from .ui.main_window import MainWindow

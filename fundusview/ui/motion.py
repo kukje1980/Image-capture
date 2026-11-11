@@ -311,3 +311,44 @@ class SmoothWheel(QObject):
             if self._bar.value() == before:          # the end of the list
                 self._chase.stop()
                 self._rest = 0.0
+
+
+class Crossfade:
+    """What a widget showed fades away over what it shows now (a change of tab): ``snap()`` before
+    the change, ``play()`` after it."""
+
+    def __init__(self, widget, duration: float = 0.20):
+        self.widget = widget
+        self._pix = None
+        self._label = None
+        self._tween = Tween(self._fade, duration, ease_out, self._done)
+
+    def snap(self) -> None:
+        self._pix = self.widget.grab() if enabled() and self.widget.isVisible() else None
+
+    def play(self) -> None:
+        pix, self._pix = self._pix, None
+        if pix is None or not enabled():
+            return
+        from PySide6.QtWidgets import QGraphicsOpacityEffect, QLabel
+
+        if self._label is None:
+            self._label = QLabel(self.widget)
+            self._label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            self._label.setGraphicsEffect(QGraphicsOpacityEffect(self._label))
+        self._tween.stop()
+        self._label.setPixmap(pix)
+        self._label.setGeometry(self.widget.rect())
+        self._label.graphicsEffect().setOpacity(1.0)
+        self._label.show()
+        self._label.raise_()
+        self._tween.start()
+
+    def _fade(self, k: float) -> None:
+        if self._label is not None:
+            self._label.graphicsEffect().setOpacity(max(0.0, 1.0 - k))
+
+    def _done(self) -> None:
+        if self._label is not None:
+            self._label.hide()
+            self._label.clear()

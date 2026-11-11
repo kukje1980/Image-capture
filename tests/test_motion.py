@@ -251,11 +251,11 @@ def test_3d_enters_through_the_pupil_and_back(app, live, monkeypatch):
     e.cut = 0.25
     e.enter("inside")
     assert e.mode == "outside" and e.moving()
-    live(0.5)
+    live(0.4)
     assert e.mode == "outside" and e.cut > 0.9 and e.dark == 0.0        # the eye closes, seen from the front
-    live(0.55)
+    live(0.45)
     assert e.mode == "outside" and e.dark > 0.5 and e.dist < 1.6        # diving at the pupil, into the dark
-    live(0.3)
+    live(0.25)
     assert e.mode == "inside" and e.in_fov < e.FOV0 and e.dark < 1.0    # inside, opening up
     live(1.0)
     assert not e.moving()

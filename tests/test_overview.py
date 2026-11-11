@@ -92,7 +92,8 @@ def test_overview_panes_follow_the_photo(tmp_path, demo_dir, import_and_wait):
         app.processEvents()
         row = w.current
         assert w._ov_roi.rect().contains(QPointF(row["disc_x"], row["disc_y"]))
-        assert any(c.image_id == row["id"] and "#2f9be0" in c.styleSheet() for c in w.ov_multi.cells)
+        from fundusview.ui.theme import ACCENT                     # the selected cell's frame
+        assert any(c.image_id == row["id"] and ACCENT in c.styleSheet() for c in w.ov_multi.cells)
         # clicking a 다중 cell selects that photo
         other = next(c for c in w.ov_multi.cells if c.image_id not in (None, row["id"]))
         other.view.clicked.emit()

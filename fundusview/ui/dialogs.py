@@ -17,6 +17,7 @@ from ..extract.filename_meta import filename_meta
 from ..extract.normalize import norm_date, norm_time
 from ..models import FIELD_LABELS, META_FIELDS, MODALITY_LABELS
 from ..profiles import AUTO, PROFILES, get_profile
+from . import theme
 
 SOURCE_LABELS = {
     "dicom": "DICOM", "reticam": "RetiCam 데이터", "apollo": "APOLLO 데이터", "apollo-json": "APOLLO 환자 파일", "folder": "폴더 이름",
@@ -98,15 +99,18 @@ class ImageDialog(QDialog):
         lay = QVBoxLayout(self)
         hint = QLabel("파일에서 추출한 값입니다. 환자 ID를 비우면 '미분류'로 남습니다.\n"
                       "기존 환자 ID를 고르면 그 환자의 기록으로 들어갑니다.")
-        hint.setStyleSheet("color:#667")
+        hint.setStyleSheet(f"color:{theme.TEXT3}")
         lay.addWidget(hint)
         lay.addLayout(form)
         orig = QLabel(f"원본: {image['original_path'] or ''}")
         orig.setWordWrap(True)
         orig.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        orig.setStyleSheet("color:#889; font-size:11px")
+        orig.setStyleSheet(f"color:{theme.TEXT3}; font-size:11px")
         lay.addWidget(orig)
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        bb.button(QDialogButtonBox.StandardButton.Ok).setObjectName("primary")     # the blue button
+        bb.button(QDialogButtonBox.StandardButton.Ok).setText("확인")
+        bb.button(QDialogButtonBox.StandardButton.Cancel).setText("취소")
         bb.accepted.connect(self._accept)
         bb.rejected.connect(self.reject)
         lay.addWidget(bb)
@@ -174,6 +178,9 @@ class PatientDialog(QDialog):
         lay = QVBoxLayout(self)
         lay.addLayout(form)
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        bb.button(QDialogButtonBox.StandardButton.Ok).setObjectName("primary")     # the blue button
+        bb.button(QDialogButtonBox.StandardButton.Ok).setText("확인")
+        bb.button(QDialogButtonBox.StandardButton.Cancel).setText("취소")
         bb.accepted.connect(self._accept)
         bb.rejected.connect(self.reject)
         lay.addWidget(bb)
@@ -322,6 +329,9 @@ class SettingsDialog(QDialog):
         lay = QVBoxLayout(self)
         lay.addWidget(tabs)
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        bb.button(QDialogButtonBox.StandardButton.Ok).setObjectName("primary")     # the blue button
+        bb.button(QDialogButtonBox.StandardButton.Ok).setText("확인")
+        bb.button(QDialogButtonBox.StandardButton.Cancel).setText("취소")
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
         lay.addWidget(bb)
@@ -381,7 +391,7 @@ class SettingsDialog(QDialog):
         meta = filename_meta(Path(name if "." in name else name + ".jpg"),
                              pats + list(prof.filename_patterns), id_only=prof.id_only_filenames)
         parts = [f"{FIELD_LABELS[k]}: <b>{getattr(meta, k)}</b>" for k in META_FIELDS if getattr(meta, k)]
-        self.test_out.setText(" · ".join(parts) if parts else "<span style='color:#b44'>인식된 정보 없음</span>")
+        self.test_out.setText(" · ".join(parts) if parts else "<span style='color:#ff6961'>인식된 정보 없음</span>")
 
     def apply(self) -> None:
         s = self.settings
