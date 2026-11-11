@@ -13,6 +13,7 @@ concurrency:
 jobs:
   test-linux:
     runs-on: ubuntu-latest
+    timeout-minutes: 45          # not the default six hours when the runner's network hangs
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -20,6 +21,7 @@ jobs:
           python-version: "3.12"
       # the runner's package mirror sometimes cannot be reached for a while: retry before giving up
       - name: Qt and OpenGL libraries
+        timeout-minutes: 20
         run: |
           PKGS="libegl1 libgl1 libxkbcommon-x11-0 xvfb libgl1-mesa-dri libxcb-cursor0 libxcb-icccm4
                 libxcb-keysyms1 libxcb-shape0 libxcb-xinerama0 libxcb-randr0 libxcb-render-util0 libxcb-image0"
@@ -120,11 +122,15 @@ jobs:
   # Only main publishes: pushes to other branches (and pull requests) still build and test,
   # but must not replace the public download with unmerged work. A manual run on main
   # (workflow_dispatch) republishes.
+  # The download waits for the builds, which run every test themselves (Windows: the whole
+  # suite; Mac: the whole suite, the bundled app started, the 3D eye on OpenGL). test-linux
+  # stays a check of its own, so a Linux runner that cannot reach its package mirror does
+  # not hold the Windows and Mac downloads back.
   publish:
     if: >-
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
       && github.ref == 'refs/heads/main'
-    needs: [test-linux, build-windows, build-mac]
+    needs: [build-windows, build-mac]
     runs-on: ubuntu-latest
     permissions:
       contents: write   # publish the builds as a release (download without logging in)
