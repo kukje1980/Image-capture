@@ -383,6 +383,7 @@ float spca(vec3 p, float d) {
     return step(0.3, hash1(sec * 1.91 + 3.0)) * exp(-(da * da) / 0.00006 - (dd * dd) / 0.0003);
 }
 uniform float u_xray;     // 망막 투시: 0 sclera … 1 the retina seen through see-through coats
+uniform float u_glass;    // 유리 공막: 0 the opaque white coat … 1 clear as glass (drawn blended, last)
 void main() {
     if (!gl_FrontFacing || v_obj.z > u_clip || cut_away(v_obj)) discard;
     vec3 p = normalize(v_obj);
@@ -398,7 +399,27 @@ void main() {
         float theta = acos(clamp(-p.z, -1.0, 1.0));
         c = mix(c, wet(f, n, v, 0.35, 0.35) * 1.15, u_xray * (1.0 - smoothstep(@ORA@ - 0.12, @ORA@ + 0.01, theta)));
     }
-    gl_FragColor = vec4(tonemap(c), 1.0);
+    float a = 1.0;
+    if (u_glass > 0.0) {
+        // A shell of glass: clear where it faces the eye of the viewer, denser toward its edge
+        // (the longer path through it), with its vessels and the lights' reflections on it.
+        float nv = max(dot(n, v), 0.0);
+        float edge = pow(1.0 - nv, 2.2);
+        float vessel = clamp((alb.r - max(alb.g, alb.b)) * 3.5, 0.0, 1.0);
+        vec3 h = normalize(u_key + v);
+        float glint = pow(max(dot(n, h), 0.0), 120.0) + 0.32 * softbox(reflect(-v, n), u_key, u_kx, u_ky,
+                                                                     vec2(0.24, 0.17), 0.05, 0.03);
+        float body = clamp(0.07 + 0.70 * edge + 0.50 * vessel + glint, 0.0, 1.0);
+        a = mix(1.0, body, u_glass);
+        // over the photographed retina the glass is clear whatever the setting: the photo shows strong
+        float cover = photo(p).a * smoothstep(0.0, 0.25, u_glass);
+        a = mix(a, min(a, clamp(0.03 + 0.55 * edge + 0.25 * vessel + glint, 0.0, 1.0)), cover);
+        if (u_xray > 0.0) {
+            float theta = acos(clamp(-p.z, -1.0, 1.0));
+            a = mix(a, 1.0, u_xray * (1.0 - smoothstep(@ORA@ - 0.12, @ORA@ + 0.01, theta)));
+        }
+    }
+    gl_FragColor = vec4(tonemap(c), a);
 }
 """
 
@@ -449,6 +470,9 @@ uniform int   u_inside;
 uniform vec3  u_light;
 uniform vec3  u_open_n;   // the opening (outside mode): points q with dot(q, u_open_n) > u_open
 uniform float u_open;     // are open, so the rim of the cut shadows the wall
+uniform int   u_side;     // 유리 공막: 0 the whole wall (as ever), 1 only its inside (the far wall),
+                          // 2 only the outside of the near wall — solid where the photo lies, else clear
+uniform float u_glass;
 
 void main() {
     if (v_obj.z > u_cut + 1e-4 || cut_away(v_obj)) discard;   // section faces lie exactly at the cut
@@ -456,6 +480,20 @@ void main() {
     vec3 n = normalize(v_n);
     float on_ret;
     vec3 col = fundus(d, v_obj.z, on_ret);
+    float facing = dot(n, normalize(u_campos - v_obj));       // > 0: the inner surface faces the viewer
+    if (u_side == 1 && facing < 0.0) discard;
+    if (u_side == 2) {
+        if (facing >= 0.0) discard;
+        // the retina seen from behind, through the glass sclera: the photographed part stays solid
+        // and strong, the rest of the coat is a faint veil the far wall shows through
+        float cover = photo(d).a * on_ret;
+        float lit = max(dot(-n, u_light), 0.0);
+        float edge = pow(1.0 - abs(facing), 3.0);
+        vec3 c = col * (0.78 + 0.40 * lit);
+        float veil = mix(1.0, 0.14 + 0.34 * edge, u_glass);
+        gl_FragColor = vec4(c, mix(veil, 1.0, cover));
+        return;
+    }
 
     float diff = max(dot(n, u_light), 0.0);
     float lit = 1.0;
@@ -724,6 +762,9 @@ uniform vec3  u_light;
 uniform int   u_side;     // 0 both faces (outer: sclera), 1 the outer surface only, 2 the retina only
                           // (wall mesh, normals toward the centre)
 uniform float u_xray;     // 망막 투시: the outer surface shows the retina instead of the sclera
+uniform float u_glass;    // 유리 공막 (see SCLERA_FRAG)
+uniform int   u_pass;     // 0 both surfaces, 1 the inner surface only, 2 the outer one only (see-through)
+uniform vec3  u_campos;
 uniform vec3  u_hk;       // 세로 단면 (see COMMON)
 uniform float u_hoff;
 varying vec3 v_obj;
@@ -746,6 +787,7 @@ void main() {
     float theta;
     bool outer = u_side != 2 && gl_FrontFacing && u_inside == 0;
     if (u_side == 1 && !outer) discard;
+    if ((u_pass == 1 && outer) || (u_pass == 2 && !outer)) discard;
     if (outer) {                                     // outer sclera
         float diff = max(dot(n, u_light), 0.0);
         vec3 sclera = vec3(0.93, 0.91, 0.87);
@@ -757,7 +799,20 @@ void main() {
             vec3 f = fundus_s(d, theta);
             sclera = mix(sclera, f * (0.45 + 0.65 * diff), u_xray * (1.0 - smoothstep(@ORA@ - 0.12, @ORA@ + 0.01, theta)));
         }
-        gl_FragColor = vec4(sclera, 1.0);
+        float a = 1.0;
+        if (u_pass == 2) {       // glass: the photographed retina behind it stays solid, the rest is clear
+            vec3 f = fundus_s(d, theta);
+            float cover = photo(d).a;
+            vec3 v = normalize(u_campos - v_obj);
+            float edge = pow(1.0 - max(dot(n, v), 0.0), 2.2);
+            vec3 h = normalize(u_light + v);
+            float glint = pow(max(dot(n, h), 0.0), 90.0);
+            a = mix(1.0, clamp(0.08 + 0.70 * edge + glint, 0.0, 1.0), u_glass);
+            if (u_xray > 0.0) a = mix(a, 1.0, u_xray * (1.0 - smoothstep(@ORA@ - 0.12, @ORA@ + 0.01, theta)));
+            sclera = mix(sclera, f * (0.62 + 0.50 * diff), cover);
+            a = mix(a, 1.0, cover);
+        }
+        gl_FragColor = vec4(sclera, a);
         return;
     }
     vec3 col = fundus_s(d, theta);
@@ -1015,7 +1070,7 @@ class _Spin(motion._Anim):
             e._touched = now                   # someone else turned it: wait again
             self._yaw = e.yaw
             return e.auto_rotate != 0.0
-        k = min(1.0, max(0.0, (now - e._touched - 0.9) / 1.2))      # eases in after a pause
+        k = min(1.0, max(0.0, (now - e._touched - e.SPIN_WAIT) / 1.5))   # eases in after a pause
         if k > 0.0:
             e.yaw = (e.yaw + e.auto_rotate * k * k * (3.0 - 2.0 * k) * dt) % 360.0
             self._yaw = e.yaw
@@ -1031,6 +1086,7 @@ class EyeView(QOpenGLWidget):
     interacted = Signal()              # the user dragged, zoomed or pressed a view key
 
     DETAILS = ("simple", "detailed")
+    SPIN_WAIT = 3.0                    # seconds left alone before 자동 회전 starts turning again
     DIST0, FOV0 = 3.3, 85.0            # start distance (outside) / field of view (inside)
     FOV_COLOR = QColor(56, 200, 255)   # field-of-view rays and label (세로 단면)
     BEAM_COLOR = QColor(255, 128, 64)  # slit light
@@ -1077,6 +1133,7 @@ class EyeView(QOpenGLWidget):
         self.black = False             # plain black background (presentation)
         # 효과
         self.relief = 0.0              # 입체 조명 0 … 1: vessels and the disc in relief under the light
+        self.glass = 0.0               # 유리 공막 0 … 1: the sclera see-through, the photographed retina solid
         self.unwrap = 0.0              # 사진 펼치기 0 … 1: the photo lifts off the retina and lies flat
         self.dark = 0.0                # 0 … 1: the picture fades to black (through the pupil)
         self.auto_rotate = 0.0         # 자동 회전, degrees / s (0 = off)
@@ -1088,7 +1145,7 @@ class EyeView(QOpenGLWidget):
         # motion: a flick keeps turning, the wheel's zoom glides, view changes ease (motion.py)
         self._touched = 0.0
         self._vel = motion.Velocity()
-        self._fling = motion.Decay(self._fling_move, tau=0.32, stop_speed=5.0)
+        self._fling = motion.Decay(self._fling_move, tau=0.42, stop_speed=4.0)
         self._zoom_pos: QPointF | None = None
         self._zoom_glide = motion.Chase(self._zoom_part, half_life=0.05)
         self._turn_x = motion.Chase(lambda d: self._key_turn(d, 0.0), half_life=0.045)
@@ -1247,6 +1304,8 @@ class EyeView(QOpenGLWidget):
             self.dist = p0["dist"] * (p1["dist"] / p0["dist"]) ** k        # even on the scale the eye sees
             t0, t1 = np.asarray(p0["target"], np.float64), np.asarray(p1["target"], np.float64)
             self.target = t0 + (t1 - t0) * k
+            if k >= 1.0:                                                   # land exactly on the goal
+                self.yaw, self.pitch, self.dist = p1["yaw"] % 360.0, p1["pitch"], p1["dist"]
         if i1 is not None:
             self.in_yaw = i0[0] + (i1[0] - i0[0]) * k
             self.in_pitch = i0[1] + (i1[1] - i0[1]) * k
@@ -1323,9 +1382,9 @@ class EyeView(QOpenGLWidget):
             cut = self.cut
             into = switch_to("inside", cut=cut, in_yaw=0.0, in_pitch=0.0, in_fov=26.0)
             self._enter_plan = [
-                (dict(pose=front, extra={"cut": 1.0, "unwrap": 0.0, "xray": 0.0}), 0.55, motion.ease_in_out, None),
-                (dict(pose=close, extra={"dark": 1.0}), 0.60, sq, into),
-                (dict(inside=(0.0, 0.0, self.FOV0), extra={"dark": 0.0}), 0.75, motion.ease_out, None),
+                (dict(pose=front, extra={"cut": 1.0, "unwrap": 0.0, "xray": 0.0}), 0.45, motion.ease_in_out, None),
+                (dict(pose=close, extra={"dark": 1.0}), 0.45, sq, into),
+                (dict(inside=(0.0, 0.0, self.FOV0), extra={"dark": 0.0}), 0.60, motion.ease_out, None),
             ]
             self._enter_end = dict(mode="inside", cut=cut, dark=0.0, unwrap=0.0, xray=0.0,
                                    in_yaw=0.0, in_pitch=0.0, in_fov=self.FOV0)
@@ -1333,9 +1392,9 @@ class EyeView(QOpenGLWidget):
             cut = self.cut if self.cut < 0.999 else 0.25
             out = switch_to("outside", cut=1.0, yaw=0.0, pitch=0.0, dist=close["dist"], target=np.zeros(3))
             self._enter_plan = [
-                (dict(inside=(0.0, 0.0, 26.0), extra={"dark": 1.0}), 0.55, sq, out),
-                (dict(pose=front, extra={"dark": 0.0}), 0.60, motion.ease_out, None),
-                (dict(pose=dict(self.HOME), extra={"cut": cut}), 0.60, motion.ease_in_out, None),
+                (dict(inside=(0.0, 0.0, 26.0), extra={"dark": 1.0}), 0.40, sq, out),
+                (dict(pose=front, extra={"dark": 0.0}), 0.45, motion.ease_out, None),
+                (dict(pose=dict(self.HOME), extra={"cut": cut}), 0.50, motion.ease_in_out, None),
             ]
             self._enter_end = dict(mode="outside", cut=cut, dark=0.0, yaw=self.HOME["yaw"],
                                    pitch=self.HOME["pitch"], dist=self.DIST0, target=np.zeros(3))
@@ -1879,6 +1938,15 @@ class EyeView(QOpenGLWidget):
         mesh.draw(gl)
         gl.glDisable(gl.GL_BLEND)
 
+    def _draw_backdrop(self, gl) -> None:
+        """The studio background, only where nothing was drawn (before anything see-through)."""
+        vp = gl.glGetIntegerv(gl.GL_VIEWPORT)
+        gl.glDepthMask(gl.GL_FALSE)
+        gl.glUseProgram(self._prog["bg"])
+        self._set(self._prog["bg"], aspect=float(vp[2]) / max(1.0, float(vp[3])), black=int(self.black))
+        self._meshes["bg"].draw(gl)
+        gl.glDepthMask(gl.GL_TRUE)
+
     def _draw_dark(self, gl) -> None:
         """The fade to black of 들어가기."""
         if self.dark <= 0.002:
@@ -2070,14 +2138,27 @@ class EyeView(QOpenGLWidget):
             self._clip_half(gl, k, off)
             gl.glEnable(gl.GL_CLIP_PLANE1)
 
+        # 유리 공막: the outer coat see-through (drawn last, blended), the wall in two layers — its
+        # inside first (the far wall, solid), then the outside of the near wall (solid only where
+        # the photo lies). 세로 단면 and the inside view keep the solid coat.
+        glass = 0.0 if (inside or half) else float(min(1.0, max(0.0, self.glass)))
+        if half:
+            open_n, open_ = -k, float(off)
+        else:
+            open_n, open_ = (0.0, 0.0, 1.0), float(em.cut_plane_z(self.cut))
+
+        def draw_sclera():
+            use("sclera", clip=float(em.LIMBUS_Z if closed or half else min(self.cut, em.LIMBUS_Z)),
+                disc=self.disc_dir if self.disc_dir is not None else (0.37, 0.02, -0.93),
+                xray=float(self.xray), glass=glass, **mapping)
+            self._meshes["sclera"].draw(gl)
+
         # Opaque surfaces front to back: what hides the costly retina goes first,
         # so the depth test rejects the hidden part of the inner wall.
         if not inside:
             # -- outer coat (망막 투시: the retina seen through it) ------------------
-            use("sclera", clip=float(em.LIMBUS_Z if closed or half else min(self.cut, em.LIMBUS_Z)),
-                disc=self.disc_dir if self.disc_dir is not None else (0.37, 0.02, -0.93),
-                xray=float(self.xray), **mapping)
-            self._meshes["sclera"].draw(gl)
+            if glass <= 0.0:
+                draw_sclera()
             if clip_plane:
                 gl.glEnable(gl.GL_CLIP_PLANE0)
             # -- section faces of the cut -----------------------------------------
@@ -2110,18 +2191,14 @@ class EyeView(QOpenGLWidget):
                 self._meshes["cornea"].draw(gl)
 
         # -- iris, chamber angle, retina and inner wall ------------------------------
-        if not closed:
+        if not closed or glass > 0.0:             # (through glass the closed eye shows its inside too)
             if inside or half or self.cut > em.IRIS_BACK_Z:      # otherwise cut away entirely
                 use("tissue", kind=2)
                 self._meshes["iris"].draw(gl)
                 self._set(self._prog["tissue"], kind=3)
                 self._meshes["angle"].draw(gl)
-            if half:
-                open_n, open_ = -k, float(off)
-            else:
-                open_n, open_ = (0.0, 0.0, 1.0), float(em.cut_plane_z(self.cut))
             use("wall", inside=int(inside), light=lights["key"] if not inside else (0.0, 0.0, 1.0),
-                open_n=open_n, open=open_, **mapping)
+                open_n=open_n, open=open_, side=1 if glass > 0.0 else 0, glass=glass, **mapping)
             self._meshes["wall"].draw(gl)
 
         # -- background, only where nothing was drawn (before the transparent media) --
@@ -2131,14 +2208,10 @@ class EyeView(QOpenGLWidget):
             gl.glDisable(gl.GL_CLIP_PLANE1)
         if self._unwrap_on():
             self._draw_sheet(gl, mvp, lights["key"])
-        gl.glDepthMask(gl.GL_FALSE)
-        gl.glUseProgram(self._prog["bg"])
-        self._set(self._prog["bg"], aspect=float(w / h), black=int(self.black))
-        self._meshes["bg"].draw(gl)
-        gl.glDepthMask(gl.GL_TRUE)
+        self._draw_backdrop(gl)
 
         # -- transparent media ----------------------------------------------------
-        if inside or half or (not closed and self.cut > em.LENS_BACK_Z):
+        if inside or half or ((not closed or glass > 0.0) and self.cut > em.LENS_BACK_Z):
             gl.glEnable(gl.GL_BLEND)
             # Keep destination alpha at 1: QOpenGLWidget composites its FBO as
             # premultiplied, so alpha < 1 here shows as colour artifacts.
@@ -2177,6 +2250,21 @@ class EyeView(QOpenGLWidget):
                 gl.glDisable(gl.GL_CLIP_PLANE0)
             if half_clip:
                 gl.glDisable(gl.GL_CLIP_PLANE1)
+
+        # -- 유리 공막: the near wall from outside, then the glass shell over everything ------
+        if glass > 0.0:
+            gl.glEnable(gl.GL_BLEND)
+            gl.glBlendFuncSeparate(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA, gl.GL_ZERO, gl.GL_ONE)
+            gl.glDepthMask(gl.GL_FALSE)
+            if clip_plane:
+                gl.glEnable(gl.GL_CLIP_PLANE0)
+            use("wall", inside=0, light=lights["key"], open_n=open_n, open=open_, side=2, glass=glass, **mapping)
+            self._meshes["wall"].draw(gl)
+            if clip_plane:
+                gl.glDisable(gl.GL_CLIP_PLANE0)
+            draw_sclera()
+            gl.glDepthMask(gl.GL_TRUE)
+            gl.glDisable(gl.GL_BLEND)
         return mvp
 
     def _paint_simple(self, gl, mvp, campos, inside: bool, closed: bool, half: bool = False) -> None:
@@ -2189,13 +2277,14 @@ class EyeView(QOpenGLWidget):
         light = _unit((0.0, 0.0, 1.0) if inside else light)
         k, off = self.half_plane() if half else (np.zeros(3), 1.0)
         half_clip = self._clip_ok and half
+        glass = 0.0 if (inside or half) else float(min(1.0, max(0.0, self.glass)))    # 유리 공막
         p = self._prog["simple_eye"]
         gl.glUseProgram(p)
         self._set(p, mvp=mvp, cut=2.0 if closed or half else float(self.cut),
                   limbus=em.LIMBUS_Z if closed or half else 2.0, inside=int(inside), light=light,
                   side=1 if half else 0, xray=0.0 if inside else float(self.xray), hk=k, hoff=float(off),
-                  **self._mapping_uniforms())
-        self._meshes["sclera"].draw(gl)
+                  glass=glass, campos=campos, **{"pass": 1 if glass > 0.0 else 0}, **self._mapping_uniforms())
+        self._meshes["sclera"].draw(gl)                    # glass: only the inner surface for now
         if inside:
             return
         if half_clip:
@@ -2228,6 +2317,23 @@ class EyeView(QOpenGLWidget):
             gl.glUseProgram(s)
         if self._unwrap_on():
             self._draw_sheet(gl, mvp, light)
+            gl.glUseProgram(s)
+        if not inside:
+            if half_clip:
+                gl.glDisable(gl.GL_CLIP_PLANE1)
+            self._draw_backdrop(gl)
+            if half_clip:
+                gl.glEnable(gl.GL_CLIP_PLANE1)
+            gl.glUseProgram(s)
+        if glass > 0.0:                                    # the outer surface as a glass shell, over it all
+            gl.glUseProgram(p)
+            self._set(p, **{"pass": 2})
+            gl.glEnable(gl.GL_BLEND)
+            gl.glBlendFuncSeparate(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA, gl.GL_ZERO, gl.GL_ONE)
+            gl.glDepthMask(gl.GL_FALSE)
+            self._meshes["sclera"].draw(gl)
+            gl.glDepthMask(gl.GL_TRUE)
+            gl.glDisable(gl.GL_BLEND)
             gl.glUseProgram(s)
         if closed or half:
             gl.glEnable(gl.GL_BLEND)

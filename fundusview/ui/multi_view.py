@@ -14,6 +14,7 @@ from __future__ import annotations
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
+from . import theme
 from .image_view import ImageView
 
 LAYOUTS = {1: (1, 1), 2: (1, 2), 4: (2, 2), 6: (2, 3), 9: (3, 3), 16: (4, 4)}
@@ -28,7 +29,7 @@ class _Cell(QFrame):
         lay.setContentsMargins(1, 1, 1, 1)
         lay.setSpacing(0)
         self.label = QLabel()
-        self.label.setStyleSheet("background:#20262c; color:#e6ebef; padding:2px 4px; font-size:11px")
+        self.label.setStyleSheet(f"background:{theme.CARD}; color:{theme.TEXT2}; padding:3px 6px; font-size:11px")
         self.view = ImageView()
         lay.addWidget(self.label)
         lay.addWidget(self.view, 1)
@@ -36,7 +37,7 @@ class _Cell(QFrame):
         self.select(False)
 
     def select(self, on: bool) -> None:
-        self.setStyleSheet("QFrame { border: 2px solid %s; }" % ("#2f9be0" if on else "#20262c"))
+        self.setStyleSheet("QFrame { border: 2px solid %s; }" % (theme.ACCENT if on else theme.CARD))
 
 
 class MultiView(QWidget):
@@ -57,10 +58,10 @@ class MultiView(QWidget):
         self.combo.currentIndexChanged.connect(lambda _: self.layoutChanged.emit(self.count))
         top.addWidget(self.combo)
         self.mode_label = QLabel("")
-        self.mode_label.setStyleSheet("color:#facc15; font-weight:600; padding-left:6px")
+        self.mode_label.setStyleSheet(f"color:{theme.YELLOW}; font-weight:600; padding-left:6px")
         top.addWidget(self.mode_label)
         hint = QLabel("위/아래 드래그: 확대·축소 · 클릭: 선택 · 더블클릭: 2D로 열기")
-        hint.setStyleSheet("color:#889")
+        hint.setStyleSheet(f"color:{theme.TEXT3}")
         top.addWidget(hint, 1)
         self.grid = QGridLayout()
         self.grid.setSpacing(3)

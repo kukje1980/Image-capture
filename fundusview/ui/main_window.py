@@ -21,10 +21,10 @@ from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, QSize, Qt, QT
 from PySide6.QtGui import QAction, QActionGroup, QBrush, QColor, QCursor, QDesktopServices, QFont, QIcon, QImage, \
     QKeySequence, QPainter, QPen, QPixmap, QShortcut
 from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox, QDockWidget, QDoubleSpinBox, QFileDialog,
-    QFrame, QGraphicsRectItem, QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget,
+    QAbstractItemView, QApplication, QCheckBox, QComboBox, QDockWidget, QDoubleSpinBox, QFileDialog,
+    QFrame, QGraphicsRectItem, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QMainWindow, QMenu,
-    QMessageBox, QPushButton, QRadioButton, QSizePolicy, QSlider, QSplitter, QStatusBar, QTableWidget,
+    QMessageBox, QPushButton, QScrollArea, QSizePolicy, QSlider, QSplitter, QStatusBar, QTableWidget,
     QTableWidgetItem, QTabWidget, QToolBar, QToolButton, QVBoxLayout, QWidget,
 )
 
@@ -40,7 +40,7 @@ from .dialogs import ImageDialog, PatientDialog, SettingsDialog, source_label
 from .disc_pair import DiscPairDialog
 from .eye3d import EyeView
 from .histogram import HistogramDialog
-from . import motion
+from . import motion, theme
 from .image_view import TOOL_HINTS, TOOLS, ImageView, from_qimage
 from .montage_dialog import MontageDialog, MontageSource, confirm_sources
 from .keys import IS_MAC, keys
@@ -48,6 +48,8 @@ from .multi_view import MultiView
 from .slit_scan import ScanPhotoView, SlitScanShow, ViewTween
 from .thumbs import EYE_ROLE, PICK_ROLE, ThumbDelegate, eye_badge_html
 from .toolbars import CHECKABLE, COMMANDS, MENUS, PROCESSING, SliderPopup, icon_for
+from .widgets import Segmented, Switch, card, segment
+from .widgets import row as setting_row
 
 UNASSIGNED = -1
 SEX_LABEL = {"M": "남", "F": "여", "O": "기타"}
@@ -150,6 +152,9 @@ class MainWindow(QMainWindow):
         self.db = db
         if not settings.smooth_motion:        # 보기 → 부드러운 움직임 (off: everything changes at once)
             motion.set_enabled(False)
+        if settings.ui_version < self.UI_VERSION:     # a new look: its 3D defaults, once
+            settings.ui_version = self.UI_VERSION
+            settings.view3d_detail, settings.auto_rotate3d, settings.glass3d = "detailed", True, 80
         self.bridge = Bridge()
         self.service = ImportService(db, settings, on_result=self.bridge.result.emit,
                                      on_status=self.bridge.status.emit)
@@ -192,7 +197,7 @@ class MainWindow(QMainWindow):
         if icon:
             a.setIcon(icon_for(icon))
             a.setIconVisibleInMenu(False)
-        vk_txt = f"<br><span style='color:#889'>VK-2: {vk}</span>" if vk and vk != "—" else ""
+        vk_txt = f"<br><span style='color:{theme.TEXT3}'>VK-2: {vk}</span>" if vk and vk != "—" else ""
         a.setToolTip(f"<b>{label}</b><br>{tip}{vk_txt}" if tip else label)
         a.setStatusTip(tip)
         a.setCheckable(checkable)
@@ -370,6 +375,10 @@ class MainWindow(QMainWindow):
         self.patients.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.patients.customContextMenuRequested.connect(self._patient_menu)
         self.patients.doubleClicked.connect(lambda _: self._edit_patient())
+        self.patients.setShowGrid(False)
+        self.patients.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.patients.verticalHeader().setDefaultSectionSize(32)
+        self._patients_wheel = motion.SmoothWheel(self.patients, step=64.0)
         ll.addWidget(self.patients)
 
         # -- centre: patient line + thumbnails + views ------------------------------
@@ -401,7 +410,7 @@ class MainWindow(QMainWindow):
         self.btn_rows.setAutoRaise(True)
         self.btn_rows.clicked.connect(lambda: self._set_thumb_rows(self._thumb_rows % 3 + 1, save=True))
         self.lbl_picks = QLabel("")
-        self.lbl_picks.setStyleSheet("color:#facc15; font-weight:600")
+        self.lbl_picks.setStyleSheet(f"color:{theme.YELLOW}; font-weight:600")
         self.btn_clear_picks = QToolButton()
         self.btn_clear_picks.setText("선택 해제")
         self.btn_clear_picks.setAutoRaise(True)
@@ -442,6 +451,7 @@ class MainWindow(QMainWindow):
         self._set_thumb_rows(getattr(self.settings, "thumb_rows", 2) or 2)
         self._sync_picks_ui()
         self.tabs = QTabWidget()
+        self.tabs.setObjectName("views")
         self.tabs.setDocumentMode(True)
         self.view2d = ImageView()
         self.view2d.crossfade = True            # the next photo fades in over the last
@@ -501,6 +511,11 @@ class MainWindow(QMainWindow):
         self._pages = {"all": self.page_all, "2d": self.page2d, "3d": self.page3d, "multi": self.multi,
                        "cmp": cmp_w}
         self._ov_on = False
+        from PySide6.QtWidgets import QStackedWidget
+
+        self._tab_fade = motion.Crossfade(self.tabs.findChild(QStackedWidget) or self.tabs)
+        self.tabs.tabBar().tabBarClicked.connect(
+            lambda i: i != self.tabs.currentIndex() and self._tab_fade.snap())
         self.tabs.currentChanged.connect(self._on_tab)
         cl.addWidget(self.tabs, 1)
         # 사진 목록은 화면 아래쪽, 멀티로 고르기 버튼은 그 왼쪽에 세로로
@@ -509,7 +524,9 @@ class MainWindow(QMainWindow):
         strip = QHBoxLayout()
         strip.setSpacing(4)
         side = QVBoxLayout()
-        side.setSpacing(2)
+        side.setContentsMargins(6, 6, 6, 6)
+        side.setSpacing(6)
+        self.btn_clear_picks.setStyleSheet("padding: 4px 2px;")      # "선택 해제" in full on the narrow column
         for w in (self.btn_multi, self.btn_montage, self.lbl_picks, self.btn_clear_picks):
             side.addWidget(w)
         side.addStretch(1)
@@ -517,7 +534,7 @@ class MainWindow(QMainWindow):
         side_w = QWidget()
         side_w.setObjectName("thumbSide")
         side_w.setLayout(side)
-        side_w.setFixedWidth(84)
+        side_w.setFixedWidth(92)
         strip.addWidget(side_w)
         strip.addWidget(self.thumbs, 1)
         cl.addLayout(strip)
@@ -575,7 +592,7 @@ class MainWindow(QMainWindow):
         self.lbl_measure.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.lbl_measure.hide()
         self.lbl_hover = QLabel("")
-        self.lbl_hover.setStyleSheet("color:#556")
+        self.lbl_hover.setStyleSheet(f"color:{theme.TEXT3}")
         sb.addWidget(self.lbl_watch)
         sb.addWidget(self.lbl_info)
         sb.addWidget(self.lbl_status, 1)
@@ -602,54 +619,107 @@ class MainWindow(QMainWindow):
         self._result_timer = QTimer(self, singleShot=True, timeout=self._flush_results)
 
     def _build_3d(self) -> QWidget:
-        """3D tab: a compact control bar over the eye model (formerly the right panel)."""
+        """3D tab: the eye, a slim bar with the main choices and actions above it, and the settings in
+        grouped cards beside it (each control under the heading it belongs to)."""
         w = QWidget()
-        lay = QVBoxLayout(w)
+        outer = QHBoxLayout(w)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        main = QWidget()
+        lay = QVBoxLayout(main)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
         bar = QWidget()
         bar.setObjectName("bar3d")
-        g = QGridLayout(bar)
-        g.setContentsMargins(8, 4, 8, 4)
-        g.setHorizontalSpacing(6)
-        g.setVerticalSpacing(2)
+        top = QHBoxLayout(bar)
+        top.setContentsMargins(10, 6, 10, 6)
+        top.setSpacing(8)
+
+        # -- the look and the viewpoint: two segmented controls -------------------------------
         # 간단히 (the light original) / 자세히 (anatomical model), remembered in the settings
-        self.b_simple = QPushButton("간단히")
-        self.b_detailed = QPushButton("자세히")
-        self.b_simple.setToolTip("가볍고 빠른 기본 안구 모형 — 사진을 보는 데 집중")
-        self.b_detailed.setToolTip("실제 해부 구조: 공막 혈관, 굴절하는 각막·홍채, 안구벽 단면, 섬모체·수정체, 외안근")
-        self._detail_group = QButtonGroup(self)
-        for b in (self.b_simple, self.b_detailed):
-            b.setCheckable(True)
-            b.setObjectName("detail3d")
-            self._detail_group.addButton(b)
+        self.b_simple = segment("간단히", "가볍고 빠른 기본 안구 모형 — 사진을 보는 데 집중")
+        self.b_detailed = segment("자세히", "실제 해부 구조: 공막 혈관, 굴절하는 각막·홍채, 안구벽 단면, "
+                                         "섬모체·수정체, 외안근")
+        self.seg_detail = Segmented([self.b_simple, self.b_detailed], on_card=False)
+        self._detail_group = self.seg_detail.group
         self.b_simple.clicked.connect(lambda: self._set_3d_detail("simple"))
         self.b_detailed.clicked.connect(lambda: self._set_3d_detail("detailed"))
-        self.r_out = QRadioButton("외부 (안구 모형)")
-        self.r_in = QRadioButton("내부 (망막 시점)")
+        self.r_out = segment("외부", "안구 모형을 바깥에서 봅니다")
+        self.r_in = segment("내부", "동공을 지나 안으로 들어가 망막을 바라봅니다 (망막 시점)")
+        self.seg_mode = Segmented([self.r_out, self.r_in], on_card=False)
         self.r_out.setChecked(True)
-        grp = QButtonGroup(self)
-        grp.addButton(self.r_out)
-        grp.addButton(self.r_in)
         self.r_out.toggled.connect(self._on_3d_mode)
-        # how the eye is opened (outside): the front cut, or cut along the photo's vertical meridian
-        # and seen from the side; the slider sets the depth of either (right end = closed eye)
-        self.c_view3d = QComboBox()
-        for label, key, tip in (("앞쪽 절개", "front", "앞부분을 잘라 안쪽 망막을 봅니다 (슬라이더: 자르는 깊이)"),
-                                ("세로 단면", "section", "사진의 세로 자오선을 따라 안구를 잘라 옆에서 봅니다 — "
-                                                     "공막·맥락막·망막 층, 홍채·수정체·각막 단면과 화각 "
-                                                     "(슬라이더 왼쪽 끝 = 정확히 반)")):
+
+        # -- how the eye is opened (outside): the front cut, or cut along the photo's vertical
+        # meridian and seen from the side; the slider sets the depth of either (right end = closed)
+        self.c_view3d = QComboBox(w)            # the choice itself (the two segments show and set it)
+        self.c_view3d.hide()
+        tips = {"front": "앞부분을 잘라 안쪽 망막을 봅니다 (깊이 슬라이더: 자르는 깊이)",
+                "section": "사진의 세로 자오선을 따라 안구를 잘라 옆에서 봅니다 — 공막·맥락막·망막 층, "
+                           "홍채·수정체·각막 단면과 화각 (깊이 슬라이더 왼쪽 끝 = 정확히 반)"}
+        self._view_buttons = {}
+        for label, key in (("앞쪽 절개", "front"), ("세로 단면", "section")):
             self.c_view3d.addItem(label, key)
-            self.c_view3d.setItemData(self.c_view3d.count() - 1, tip, Qt.ItemDataRole.ToolTipRole)
-        self.c_view3d.setToolTip("안구를 여는 방식")
-        self.c_view3d.currentIndexChanged.connect(lambda _: self._set_3d_view(self.c_view3d.currentData()))
+            self.c_view3d.setItemData(self.c_view3d.count() - 1, tips[key], Qt.ItemDataRole.ToolTipRole)
+            b = segment(label, tips[key])
+            b.clicked.connect(lambda _=False, k=key: self.c_view3d.setCurrentIndex(self.c_view3d.findData(k)))
+            self._view_buttons[key] = b
+        self.seg_view = Segmented(list(self._view_buttons.values()))
+        self._view_buttons["front"].setChecked(True)
+        self.c_view3d.currentIndexChanged.connect(lambda _: (self._sync_view_buttons(),
+                                                             self._set_3d_view(self.c_view3d.currentData())))
         self._cut_values = {"front": 25, "section": 0}
         self.s_cut = QSlider(Qt.Orientation.Horizontal)
         self.s_cut.setRange(-30, 100)
         self.s_cut.setValue(25)
-        self.s_cut.setFixedWidth(120)
+        self.s_cut.setMinimumWidth(120)
         self.s_cut.setToolTip("자르는 깊이 (오른쪽 끝 = 닫힌 안구)")
         self.s_cut.valueChanged.connect(self._on_cut)
+        self.s_glass = QSlider(Qt.Orientation.Horizontal)
+        self.s_glass.setRange(0, 100)
+        self.s_glass.setValue(int(self.settings.glass3d))
+        self.s_glass.setMinimumWidth(120)
+        self.s_glass.setToolTip("공막을 유리처럼 비쳐 보이게 합니다 — 사진이 있는 망막은 진하게 남아, 안구를 돌리면 "
+                                "안쪽 망막이 입체로 보입니다 (왼쪽 끝 = 불투명한 흰 공막)")
+        self.s_glass.valueChanged.connect(self._on_glass)
+        self.c_xray3d = Switch("망막 투시")
+        self.c_xray3d.setToolTip("공막·맥락막 바깥 면에 망막의 사진을 그대로 비춰 봅니다 "
+                                 "(바깥에서 보므로 좌우가 뒤집혀 보입니다)")
+        self.c_xray3d.toggled.connect(self._on_xray)
+
+        # -- effects ---------------------------------------------------------------------------
+        self.c_relief3d = Switch("입체 조명")
+        self.c_relief3d.setToolTip("사진의 밝기를 높낮이로 읽어 혈관과 시신경 유두가 도드라져 보이게 비춥니다 "
+                                   "(안구를 돌리면 빛이 따라 움직입니다)")
+        self.c_relief3d.setChecked(bool(self.settings.relief3d))
+        self.c_relief3d.toggled.connect(self._on_relief)
+        self.c_spin3d = Switch("자동 회전")
+        self.c_spin3d.setToolTip("손을 떼고 있으면 안구가 천천히 돕니다 (만지면 멈췄다가 다시 돕니다)")
+        self.c_spin3d.setChecked(bool(self.settings.auto_rotate3d))
+        self.c_spin3d.toggled.connect(self._on_spin)
+        self.c_fov3d = Switch("화각 표시")
+        self.c_fov3d.setToolTip("세로 단면에는 안구 중심에서 잰 화각(선·각도), 다른 보기에는 망막 위 촬영 범위의 경계")
+        self.c_fov3d.toggled.connect(self._on_fov_marks)
+        self.c_side3d = Switch("사진 나란히")
+        self.c_side3d.setToolTip("3D 안구 오른쪽에 사진을 평면으로 함께 보여 줍니다 (검은 바탕)")
+        self.c_side3d.toggled.connect(self._on_side_photo)
+
+        # -- what is shown -----------------------------------------------------------------------
+        self.c_nerve = Switch("시신경")
+        self.c_nerve.setChecked(True)
+        self.c_nerve.toggled.connect(lambda on: (setattr(self.eye3d, "show_nerve", on), self.eye3d.update()))
+        self.c_muscle = Switch("외안근")
+        self.c_muscle.setToolTip("네 곧은근과 두 빗근의 부착부(절단면)를 함께 표시")
+        self.c_muscle.toggled.connect(lambda on: (setattr(self.eye3d, "show_muscles", on), self.eye3d.update()))
+        self.c_grid = Switch("각도 격자")
+        self.c_grid.setToolTip("후극에서 10°마다 링 (30°마다 진하게)")
+        self.c_grid.toggled.connect(lambda on: (setattr(self.eye3d, "show_grid", on), self.eye3d.update()))
+        self.c_adj3d = Switch("영상 처리 적용")
+        self.c_adj3d.setToolTip("2D에서 조정한 밝기·대비·필터를 3D의 사진에도 적용")
+        self.c_adj3d.setChecked(True)
+        self.c_adj3d.toggled.connect(lambda _: self._mark_3d_dirty())
+
+        # -- how the photo lies on the retina ------------------------------------------------------
         self.sp_fov = QDoubleSpinBox()
         self.sp_fov.setRange(10, 240)
         self.sp_fov.setDecimals(1)
@@ -667,23 +737,17 @@ class MainWindow(QMainWindow):
         self.sp_roll.setRange(-180, 180)
         self.sp_roll.setSuffix("°")
         self.sp_roll.valueChanged.connect(self._on_mapping)
-        row1 = QHBoxLayout()
-        for item in (self.b_simple, self.b_detailed, QLabel("  "), self.r_out, self.r_in, QLabel("  화각"), self.sp_fov,
-                     self.c_fovtype, QLabel("  투영"), self.c_proj, QLabel("  회전"), self.sp_roll):
-            row1.addWidget(item)
-        row1.addStretch()
-        self.c_nerve = QCheckBox("시신경")
-        self.c_nerve.setChecked(True)
-        self.c_nerve.toggled.connect(lambda on: (setattr(self.eye3d, "show_nerve", on), self.eye3d.update()))
-        self.c_muscle = QCheckBox("외안근")
-        self.c_muscle.setToolTip("네 곧은근과 두 빗근의 부착부(절단면)를 함께 표시")
-        self.c_muscle.toggled.connect(lambda on: (setattr(self.eye3d, "show_muscles", on), self.eye3d.update()))
-        self.c_grid = QCheckBox("각도 격자")
-        self.c_grid.setToolTip("후극에서 10°마다 링 (30°마다 진하게)")
-        self.c_grid.toggled.connect(lambda on: (setattr(self.eye3d, "show_grid", on), self.eye3d.update()))
-        self.c_adj3d = QCheckBox("영상 처리 적용")
-        self.c_adj3d.setChecked(True)
-        self.c_adj3d.toggled.connect(lambda _: self._mark_3d_dirty())
+        for wdg in (self.sp_fov, self.c_fovtype, self.c_proj, self.sp_roll):
+            wdg.setFixedWidth(148)
+        b_save_map = QPushButton("화각·투영 저장")
+        b_save_map.setObjectName("plain")
+        b_save_map.setToolTip("이 사진의 화각·투영을 저장해 다음에도 이대로 엽니다")
+        b_save_map.clicked.connect(self._save_mapping)
+        self.lbl_3d = QLabel("")
+        self.lbl_3d.setObjectName("caption")
+        self.lbl_3d.setWordWrap(True)
+
+        # -- the bar: the main choices on the left, the actions on the right --------------------------
         # 슬릿 스캔: the photo flat next to the eye and the scan presentation
         self.b_scan = QPushButton("▶ 슬릿 스캔")
         self.b_scan.setObjectName("scan3d")
@@ -691,41 +755,13 @@ class MainWindow(QMainWindow):
                                "빛이 동공을 지나 같은 망막 위치에 닿는 모습을 보여 준 뒤, 사진을 입힌 3D 안구로 "
                                "돌려 보여 줍니다 (사진 나란히). 안구를 누르거나 돌리면 멈춥니다.")
         self.b_scan.clicked.connect(self._toggle_scan)
-        self.c_side3d = QCheckBox("사진 나란히")
-        self.c_side3d.setToolTip("3D 안구 오른쪽에 사진을 평면으로 함께 보여 줍니다 (검은 바탕)")
-        self.c_side3d.toggled.connect(self._on_side_photo)
-        self.c_fov3d = QCheckBox("화각 표시")
-        self.c_fov3d.setToolTip("세로 단면에는 안구 중심에서 잰 화각(선·각도), 다른 보기에는 망막 위 촬영 범위의 경계")
-        self.c_fov3d.toggled.connect(self._on_fov_marks)
-        self.c_xray3d = QCheckBox("망막 투시")
-        self.c_xray3d.setToolTip("공막·맥락막을 투명하게 해 사진을 입힌 망막을 안구 바깥에서도 봅니다 "
-                                 "(바깥에서 보므로 좌우가 뒤집혀 보입니다)")
-        self.c_xray3d.toggled.connect(self._on_xray)
-        self.b_full3d = QPushButton("크게 보기")
-        self.b_full3d.setToolTip("3D 안구와 사진을 화면 전체로 (Esc: 돌아가기 · Space: 슬릿 스캔)")
-        self.b_full3d.clicked.connect(self._toggle_full_3d)
-        # 효과: the photo lifting off the retina, relief lighting, a slow turntable
         self.b_unwrap = QPushButton("사진 펼치기")
         self.b_unwrap.setToolTip("망막에 입힌 사진이 떠올라 평면 사진으로 펴지고, 다시 누르면 망막에 감깁니다 — "
                                  "평면 사진과 안구 속 위치가 어떻게 이어지는지 보여 줍니다")
         self.b_unwrap.clicked.connect(self._toggle_unwrap)
-        self.c_relief3d = QCheckBox("입체 조명")
-        self.c_relief3d.setToolTip("사진의 밝기를 높낮이로 읽어 혈관과 시신경 유두가 도드라져 보이게 비춥니다 "
-                                   "(안구를 돌리면 빛이 따라 움직입니다)")
-        self.c_relief3d.setChecked(bool(self.settings.relief3d))
-        self.c_relief3d.toggled.connect(self._on_relief)
-        self.c_spin3d = QCheckBox("자동 회전")
-        self.c_spin3d.setToolTip("손을 떼고 있으면 안구가 천천히 돕니다 (만지면 멈췄다가 다시 돕니다)")
-        self.c_spin3d.setChecked(bool(self.settings.auto_rotate3d))
-        self.c_spin3d.toggled.connect(self._on_spin)
-        row3 = QHBoxLayout()
-        for c in (self.b_scan, self.c_side3d, self.c_fov3d, self.c_xray3d, self.b_full3d, QLabel("  "),
-                  self.b_unwrap, self.c_relief3d, self.c_spin3d):
-            row3.addWidget(c)
-        row3.addStretch()
-        row2 = QHBoxLayout()
-        for c in (self.c_view3d, self.s_cut, QLabel(" "), self.c_nerve, self.c_muscle, self.c_grid, self.c_adj3d):
-            row2.addWidget(c)
+        self.b_full3d = QPushButton("크게 보기")
+        self.b_full3d.setToolTip("3D 안구와 사진을 화면 전체로 (Esc: 돌아가기 · Space: 슬릿 스캔)")
+        self.b_full3d.clicked.connect(self._toggle_full_3d)
         self.eye3d = EyeView()
         self.eye3d.setToolTip("드래그: 회전 · 휠: 커서 쪽으로 확대 · 오른쪽 드래그: 확대 · "
                               "가운데/Shift+드래그: 이동 · +/−: 확대·축소 · 더블클릭·0: 처음 보기")
@@ -734,20 +770,59 @@ class MainWindow(QMainWindow):
         self.lbl_zoom3d.setToolTip("처음 보기 대비 확대 배율 · 더블클릭 또는 0: 처음 보기")
         self.eye3d.zoomChanged.connect(lambda m: self.lbl_zoom3d.setText(f"배율 ×{m:.1f}"))
         self.eye3d.glError.connect(self._on_gl_error)
-        for label, fn in (("정면 보기", lambda: self.eye3d.front_view(animate=True)),
-                          ("시점 초기화", lambda: self.eye3d.reset_view(animate=True)),
-                          ("화각·투영 저장", self._save_mapping), ("화면 저장…", self._save_3d)):
+        self.b_inspector = QPushButton("설정")
+        self.b_inspector.setObjectName("toggle")
+        self.b_inspector.setCheckable(True)
+        self.b_inspector.setChecked(True)
+        self.b_inspector.setToolTip("오른쪽 설정 패널 보이기 / 숨기기")
+        top.addWidget(self.seg_detail)
+        top.addWidget(self.seg_mode)
+        top.addWidget(self.lbl_zoom3d)
+        top.addStretch(1)
+        top.addWidget(self.b_scan)
+        top.addWidget(self.b_unwrap)
+        top.addWidget(self.b_full3d)
+        top.addWidget(self.b_inspector)
+        view_row = QWidget()
+        vr = QHBoxLayout(view_row)
+        vr.setContentsMargins(0, 0, 0, 0)
+        vr.setSpacing(6)
+        for label, tip, fn in (("정면", "정면에서 보기", lambda: self.eye3d.front_view(animate=True)),
+                               ("처음 시점", "처음 시점으로 (더블클릭 · 0)",
+                                lambda: self.eye3d.reset_view(animate=True)),
+                               ("화면 저장…", "지금 보이는 3D 화면을 그림으로 저장", self._save_3d)):
             b = QPushButton(label)
+            b.setToolTip(tip)
             b.clicked.connect(fn)
-            row2.addWidget(b)
+            vr.addWidget(b, 1)
         self.eye3d.relief = self.RELIEF if self.settings.relief3d else 0.0
-        self.eye3d.set_auto_rotate(self.SPIN if self.settings.auto_rotate3d else 0.0)
-        self.lbl_3d = QLabel("")
-        self.lbl_3d.setObjectName("hint3d")
-        self.lbl_3d.setMinimumWidth(0)       # may shrink: never widen the window
-        self.lbl_3d.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        row2.addWidget(self.lbl_zoom3d)
-        row2.addWidget(self.lbl_3d, 1)
+        self.eye3d.glass = self.settings.glass3d / 100.0
+
+        # -- the settings beside the eye: cards -------------------------------------------------------
+        body = QWidget()
+        body.setObjectName("inspectorBody")
+        bl = QVBoxLayout(body)
+        bl.setContentsMargins(12, 10, 12, 12)
+        bl.setSpacing(12)
+        bl.addWidget(card("시점", view_row))
+        bl.addWidget(card("안구 열기", self.seg_view, setting_row("깊이", self.s_cut), setting_row("공막 투명도", self.s_glass),
+                          self.c_xray3d))
+        bl.addWidget(card("효과", self.c_relief3d, self.c_spin3d, self.c_fov3d, self.c_side3d))
+        bl.addWidget(card("표시", self.c_nerve, self.c_muscle, self.c_grid, self.c_adj3d))
+        bl.addWidget(card("사진 맞춤", setting_row("화각", self.sp_fov), setting_row("화각 기준", self.c_fovtype),
+                          setting_row("투영", self.c_proj), setting_row("회전", self.sp_roll), b_save_map))
+        bl.addWidget(self.lbl_3d)
+        bl.addStretch(1)
+        self.inspector = QScrollArea()
+        self.inspector.setObjectName("inspectorScroll")
+        self.inspector.setWidgetResizable(True)
+        self.inspector.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.inspector.setFrameShape(QFrame.Shape.NoFrame)
+        self.inspector.setWidget(body)
+        self.inspector.setFixedWidth(300)
+        self.b_inspector.toggled.connect(self.inspector.setVisible)
+        self._inspector_wheel = motion.SmoothWheel(self.inspector, step=72.0)
+
         self.scan_photo = ScanPhotoView()
         self.scan_photo.hide()
         self.split3d = QSplitter(Qt.Orientation.Horizontal)
@@ -761,13 +836,23 @@ class MainWindow(QMainWindow):
         self._tween = ViewTween(self.eye3d, self)
         self._full3d: QWidget | None = None
         self._set_3d_detail(self.settings.view3d_detail, save=False)
-        g.addLayout(row1, 0, 0)
-        g.addLayout(row2, 1, 0)
-        g.addLayout(row3, 2, 0)
         lay.addWidget(bar)
         self._lay3d = lay
         lay.addWidget(self.split3d, 1)
+        outer.addWidget(main, 1)
+        outer.addWidget(self.inspector)
         return w
+
+    def _sync_view_buttons(self) -> None:
+        """The 앞쪽 절개 / 세로 단면 segments show what the (hidden) selector holds."""
+        b = self._view_buttons.get(self.c_view3d.currentData())
+        if b is not None and not b.isChecked():
+            b.setChecked(True)
+
+    def _on_glass(self, v: int) -> None:
+        self.settings.glass3d = int(v)
+        self.eye3d.glass = v / 100.0
+        self.eye3d.update()
 
     def _reset_toolbars(self) -> None:
         for tb, area in ((self.tb_cmd, Qt.ToolBarArea.RightToolBarArea),
@@ -786,16 +871,21 @@ class MainWindow(QMainWindow):
             "가운데 버튼 드래그(이동 도구는 왼쪽 드래그): 이동 · 더블클릭: 화면 맞춤<br>"
             "오른쪽 클릭: 메뉴 (시신경 위치 지정, 돋보기 배율, 미니맵)<br><br>"
             "<b>3D 안구</b><br>"
-            "간단히 / 자세히: 가벼운 기본 모형 / 실제 해부 구조<br>"
-            "앞쪽 절개 / 세로 단면 + 슬라이더: 안구를 여는 방식과 깊이 · 망막 투시: 망막을 바깥에서 보기<br>"
+            "위 막대: 간단히 / 자세히 (가벼운 기본 모형 / 실제 해부 구조) · 외부 / 내부 · ▶ 슬릿 스캔 · "
+            "사진 펼치기 · 크게 보기 · 설정 (오른쪽 패널 열고 닫기)<br>"
+            "설정 패널 — <b>시점</b>: 정면 · 처음 시점 · 화면 저장 / <b>안구 열기</b>: 앞쪽 절개 · 세로 단면, 깊이, "
+            "공막 투명도, 망막 투시 / <b>효과</b>: 입체 조명 · 자동 회전 · 화각 표시 · 사진 나란히 / "
+            "<b>표시</b>: 시신경 · 외안근 · 각도 격자 / <b>사진 맞춤</b>: 화각 · 투영 · 회전<br>"
+            "공막 투명도: 공막이 유리처럼 비쳐 보이고, 사진이 있는 망막은 진하게 그대로 남습니다 "
+            "(0 = 흰 공막) — 안구를 돌리면 망막이 안구 속 어디에 있는지 보입니다<br>"
             "▶ 슬릿 스캔: 단면에 화각 → 슬릿이 사진을 위에서 아래로 → 사진을 입힌 3D 안구 (누르면 멈춤) · "
             "크게 보기: 화면 전체 (Space 재생, Esc 돌아가기)<br>"
             "드래그: 회전 (돌리다 놓으면 관성으로 더 돕니다) · 휠: 커서가 가리키는 곳으로 확대 · "
             "가운데 버튼 또는 Shift+드래그: 이동<br>"
             "+/−: 확대·축소 · 더블클릭 또는 0: 처음 보기<br>"
             "사진 펼치기: 망막의 사진이 평면 사진으로 펴졌다가 다시 감김 · 입체 조명: 혈관·유두가 도드라져 보임 · "
-            "자동 회전<br>"
-            "내부 (망막 시점)를 누르면 동공을 지나 안으로 들어갑니다<br>"
+            "자동 회전: 손을 떼고 있으면 천천히 돕니다<br>"
+            "내부를 누르면 동공을 지나 안으로 들어갑니다<br>"
             "보기 → 부드러운 움직임: 끄면 확대·회전·전환이 바로 바뀝니다 (원격 접속 등 느린 화면)<br><br>"
             "<b>단축키</b><br>"
             "PageUp / PageDown: 이전 / 다음 사진 · Ctrl+1~4: 2D / 3D / 다중 / 비교 · Ctrl+5: 모두 보기<br>"
@@ -850,14 +940,14 @@ class MainWindow(QMainWindow):
             folders = [f.path for f in self.settings.watch_folders if f.enabled]
             self.lbl_watch.setText(f"● 자동 가져오기 ({len(folders)}개 폴더)")
             self.lbl_watch.setToolTip("감시 중인 폴더:\n" + "\n".join(folders))
-            self.lbl_watch.setStyleSheet("color:#1d7a46; font-weight:600")
+            self.lbl_watch.setStyleSheet(f"color:{theme.GREEN}; font-weight:600")
             if errors:
                 QMessageBox.warning(self, "폴더 감시", "\n".join(errors))
         else:
             self.service.stop_watching()
             self.lbl_watch.setText("자동 가져오기 꺼짐")
             self.lbl_watch.setToolTip("파일 > 폴더 감시 로 다시 켭니다")
-            self.lbl_watch.setStyleSheet("color:#a33")
+            self.lbl_watch.setStyleSheet(f"color:{theme.TEXT3}")
 
     def _scan_now(self) -> None:
         import threading
@@ -961,7 +1051,7 @@ class MainWindow(QMainWindow):
                 it = QTableWidgetItem(text)
                 it.setData(Qt.ItemDataRole.UserRole, ref)
                 if ref == UNASSIGNED:
-                    it.setForeground(Qt.GlobalColor.darkRed)
+                    it.setForeground(QColor(theme.ORANGE))
                 self.patients.setItem(i, j, it)
         self.patients.resizeColumnToContents(0)
         self.patients.blockSignals(False)
@@ -1412,7 +1502,7 @@ class MainWindow(QMainWindow):
         if self._load(row) is None:
             self.view2d.set_rgb(None)
             self.view2d.set_captions()
-            self.lbl_info.setText("<span style='color:#b33'>파일을 찾을 수 없음</span>")
+            self.lbl_info.setText("<span style='color:#ff6961'>파일을 찾을 수 없음</span>")
             return
         # processing steps (sharpen, enhance ...) belong to the photo on screen
         self._ops, self._levels, self._history = [], (0, 255), []
@@ -1439,14 +1529,14 @@ class MainWindow(QMainWindow):
 
         def with_src(text, *fields):
             s = next((source_label(src.get(f)) for f in fields if src.get(f)), "")
-            return f"{text}  <span style='color:#99a'>({s})</span>" if s and text and text != "-" else (text or "-")
+            return f"{text}  <span style='color:#8e8e93'>({s})</span>" if s and text and text != "-" else (text or "-")
 
         p = self.db.get_patient(row["patient_ref"]) if row["patient_ref"] else None
         if p:
             who = with_src(f"{p['patient_id']} {p['name'] or ''}", "patient_id")
         else:
             guess = " ".join(x for x in (meta.get("patient_id"), meta.get("name")) if x)
-            who = "<span style='color:#b33'>미분류</span>" + (f" — 추출값: {guess}" if guess else "")
+            who = "<span style='color:#ff6961'>미분류</span>" + (f" — 추출값: {guess}" if guess else "")
         eye = {"OD": "OD (우안)", "OS": "OS (좌안)", "OU": "OU"}.get(row["laterality"] or "", "")
         mod = MODALITY_LABELS.get(row["modality"] or "", row["modality"] or "")
         device = row["device"] or get_profile(row["profile"]).name
@@ -1844,7 +1934,7 @@ class MainWindow(QMainWindow):
     # -- multi view (VK-2 multiple images) ------------------------------------------------------
     def _multi_label(self, row, rank: int = 0) -> str:
         mod = MODALITY_LABELS.get(row["modality"] or "", "")
-        num = f"<b style='color:#facc15'>{rank}</b>&nbsp; " if rank else ""
+        num = f"<b style='color:#ffd60a'>{rank}</b>&nbsp; " if rank else ""
         return (f"{num}{eye_badge_html(row['laterality'])}&nbsp; "
                 f"{row['exam_date'] or ''} {row['exam_time'] or ''}&nbsp; {mod}")
 
@@ -1976,6 +2066,7 @@ class MainWindow(QMainWindow):
         self.s_cut.setValue(self._cut_values[mode])
         for w in (self.c_view3d, self.s_cut):
             w.blockSignals(False)
+        self._sync_view_buttons()
         self.s_cut.setEnabled(self.r_out.isChecked())
 
     def _set_3d_view(self, mode: str, animate: bool = True) -> None:
@@ -2159,12 +2250,14 @@ class MainWindow(QMainWindow):
         self._end_unwrap()
         self.s_cut.setEnabled(outside)
         self.c_view3d.setEnabled(outside)
+        self.seg_view.setEnabled(outside)
         # 들어가기: in through the pupil / back out (at once when 부드러운 움직임 is off)
         self.eye3d.enter("outside" if outside else "inside")
 
     # -- 효과: 사진 펼치기 · 입체 조명 · 자동 회전 ---------------------------------------------
     RELIEF = 0.6            # strength of 입체 조명
-    SPIN = 12.0             # 자동 회전, degrees per second
+    SPIN = 10.0             # 자동 회전, degrees per second
+    UI_VERSION = 2          # 2: the dark look — 자세히, 유리 공막 and 자동 회전 from the start
 
     def _toggle_unwrap(self) -> None:
         """사진 펼치기 ↔ 망막에 감기: the photo between the retina and a flat sheet at the eye's opening."""
@@ -2209,12 +2302,12 @@ class MainWindow(QMainWindow):
 
     def _on_spin(self, on: bool) -> None:
         self.settings.auto_rotate3d = bool(on)
-        self.eye3d.set_auto_rotate(self.SPIN if on else 0.0)
+        self._apply_spin()
 
     def _on_smooth(self, on: bool) -> None:
         self.settings.smooth_motion = bool(on)
         motion.set_enabled(on)
-        self.eye3d.set_auto_rotate(self.SPIN if self.c_spin3d.isChecked() else 0.0)
+        self._apply_spin()
         self.lbl_status.setText("부드러운 움직임을 켰습니다" if on else
                                 "부드러운 움직임을 껐습니다 — 확대·회전·전환이 바로 바뀝니다")
 
@@ -2288,6 +2381,8 @@ class MainWindow(QMainWindow):
         return next((k for k, page in getattr(self, "_pages", {}).items() if page is w), "")
 
     def _go(self, key: str) -> None:
+        if self.tabs.currentWidget() is not self._pages[key]:
+            self._tab_fade.snap()             # the page on screen fades into the next
         self.tabs.setCurrentWidget(self._pages[key])
 
     def _on_tab(self, i: int) -> None:
@@ -2307,6 +2402,13 @@ class MainWindow(QMainWindow):
             self._fill_compare()
         if key == "all":
             self._fill_overview()
+        self._apply_spin()
+        self._tab_fade.play()
+
+    def _apply_spin(self) -> None:
+        """자동 회전 turns the eye in the 3D tab only (not the small pane of 모두 보기)."""
+        on = self.c_spin3d.isChecked() and self._tab() == "3d"
+        self.eye3d.set_auto_rotate(self.SPIN if on else 0.0)
 
     # -- 모두 보기: 큰 2D + 다중 · 확대 · 3D -------------------------------------------------
     def _build_overview(self) -> QWidget:
@@ -2743,7 +2845,7 @@ class MainWindow(QMainWindow):
             for j, v in enumerate((r["at"].replace("T", " "), r["level"], r["message"], r["path"] or "")):
                 it = QTableWidgetItem(v)
                 if r["level"] == "error":
-                    it.setForeground(Qt.GlobalColor.red)
+                    it.setForeground(QColor(theme.RED))
                 self.log.setItem(i, j, it)
         self.log.resizeColumnToContents(0)
 

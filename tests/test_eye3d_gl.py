@@ -51,7 +51,7 @@ def eye():
 
 
 PLAIN = dict(half=0.0, xray=0.0, scan=None, scan_dim=1.0, scan_beam=1.0, fov_sweep=0.0, fov_alpha=0.0,
-             fov_ring=0.0, black=False, show_nerve=True, relief=0.0, unwrap=0.0, dark=0.0)
+             fov_ring=0.0, black=False, show_nerve=True, relief=0.0, unwrap=0.0, dark=0.0, glass=0.0)
 
 
 def _render(eye, detail="detailed", **state):
@@ -198,6 +198,30 @@ def test_xray_shows_the_retina_on_the_globe(eye, detail):
     assert min(_render(eye, detail, pose=back, show_nerve=False)(0.6, 0.62)) > 150   # the sclera
     r, g, b = _render(eye, detail, xray=1.0, pose=back, show_nerve=False)(0.6, 0.62)  # 망막 투시: the fundus
     assert r > g > b and b < 120
+
+
+@pytest.mark.parametrize("detail", ["simple", "detailed"])
+def test_glass_sclera_keeps_the_photographed_retina_solid(eye, detail):
+    """공막 투명도: the shell turns to glass; where there is a photo the retina stays solid and in
+    full colour, beside it the inside of the eye shows through (frosted at 60 %, clear at 100 %)."""
+    import numpy as np
+
+    back, side = dict(yaw=180.0, pitch=0.0, dist=3.3), dict(yaw=90.0, pitch=0.0, dist=3.3)
+    assert min(_render(eye, detail, pose=back, show_nerve=False)(0.6, 0.62)) > 150      # 0 %: the white sclera
+    some = _render(eye, detail, pose=back, show_nerve=False, glass=0.6)(0.6, 0.62)
+    full = _render(eye, detail, pose=back, show_nerve=False, glass=1.0)(0.6, 0.62)
+    r, g, b = some
+    assert r > g + 50 and g > b and b < 100                          # the fundus, seen from behind …
+    assert max(abs(a - c) for a, c in zip(some, full)) <= 6          # … as solid at 60 % as at 100 %
+    white = _render(eye, detail, pose=side, show_nerve=False)(0.36, 0.5)                # in front of the photo
+    frost = _render(eye, detail, pose=side, show_nerve=False, glass=0.6)(0.36, 0.5)
+    clear = _render(eye, detail, pose=side, show_nerve=False, glass=1.0)(0.36, 0.5)
+    assert sum(white) > sum(frost) + 60 and sum(frost) > sum(clear) + 60
+    look = dict(mode="inside", in_yaw=0.0, in_pitch=0.0, in_fov=60.0)                   # from inside: no glass
+    _render(eye, detail, **look)
+    plain = _frame(eye)
+    _render(eye, detail, glass=0.6, **look)
+    assert np.abs(_frame(eye) - plain).max() <= 2
 
 
 def test_section_and_xray_together(eye):

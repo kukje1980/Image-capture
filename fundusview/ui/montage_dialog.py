@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 
 from .. import montage as mt
 from .. import projection as proj
+from . import theme
 from .image_view import ImageView, to_qimage
 
 NUMBERS = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯"
@@ -471,7 +472,7 @@ class PointPairDialog(QDialog):
         self.anchor.currentIndexChanged.connect(self._anchor_changed)
         self.hint = QLabel()
         self.hint.setWordWrap(True)
-        self.hint.setStyleSheet("color:#1f6f8b; font-weight:600")
+        self.hint.setStyleSheet(f"color:{theme.ACCENT_HI}; font-weight:600")
         b_undo = QPushButton("마지막 점 지우기")
         b_undo.clicked.connect(self.undo)
         b_clear = QPushButton("모두 지우기")
@@ -630,7 +631,7 @@ class MontageDialog(QDialog):
             sig = w.valueChanged if isinstance(w, QDoubleSpinBox) else w.currentIndexChanged
             sig.connect(self._on_geometry)
         self.lbl_fix = QLabel("")
-        self.lbl_fix.setStyleSheet("color:#1d7a46")
+        self.lbl_fix.setStyleSheet(f"color:{theme.GREEN}")
         rot = QHBoxLayout()
         for text, deg, tip in (("⟲ 1°", 1.0, "시계 반대 방향으로 1° 돌리기 ( [ )"),
                                ("⟳ 1°", -1.0, "시계 방향으로 1° 돌리기 ( ] )")):
@@ -653,8 +654,6 @@ class MontageDialog(QDialog):
 
         self.b_auto = QPushButton("자동 합치기")
         self.b_auto.setObjectName("primaryButton")
-        self.b_auto.setStyleSheet("QPushButton{background:#1f6f8b;color:white;font-weight:600;padding:6px 10px}"
-                                  "QPushButton:disabled{background:#9fb4bd}")
         self.b_auto.setToolTip("사진들이 함께 보이는 혈관을 찾아 자동으로 맞춥니다 (화각이 조금 틀려도 고쳐 맞춤)")
         self.b_auto.clicked.connect(self.auto_align)
         self.b_points = QPushButton("기준점으로 맞추기…")
@@ -741,10 +740,10 @@ class MontageDialog(QDialog):
         bar = QHBoxLayout()
         hint = QLabel("드래그: 사진 옮기기 · Ctrl/오른쪽 드래그: 돌리기 · 빈 곳 드래그: 화면 이동 · 휠: 확대 · "
                       "방향키: 0.1° (Shift 1°) · [ ]: 돌리기 · Tab: 다음 사진")
-        hint.setStyleSheet("color:#c8d0d6; background:#111316; padding:3px 6px")
+        hint.setStyleSheet(f"color:{theme.TEXT3}; padding:3px 6px")
         self.lbl_hover = QLabel("")
         self.lbl_hover.setMinimumWidth(130)
-        self.lbl_hover.setStyleSheet("color:#c8d0d6; background:#111316; padding:3px 6px")
+        self.lbl_hover.setStyleSheet(f"color:{theme.TEXT2}; padding:3px 6px")
         bar.addWidget(hint, 1)
         bar.addWidget(self.lbl_hover)
         bar.addWidget(b_fit)
@@ -755,9 +754,10 @@ class MontageDialog(QDialog):
         self._lay3d.setContentsMargins(0, 0, 0, 0)
         self._lbl3d = QLabel("3D 안구를 준비하는 중…")
         self._lbl3d.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._lbl3d.setStyleSheet("color:#c8d0d6")
+        self._lbl3d.setStyleSheet(f"color:{theme.TEXT3}")
         self._lay3d.addWidget(self._lbl3d)
         self.tabs = QTabWidget()
+        self.tabs.setObjectName("views")
         self.tabs.setDocumentMode(True)
         self.tabs.addTab(page_edit, "맞추기 (반투명 겹치기)")
         self.tabs.addTab(self.done_view, "완성")
@@ -833,7 +833,7 @@ class MontageDialog(QDialog):
         return f"{number(k)} {s.label}\n{s.fov_deg:g}°{fix}"
 
     def _set_status(self, text: str, error: bool = False) -> None:
-        self.status.setStyleSheet("color:#b4561a; font-weight:600" if error else "color:#1d7a46")
+        self.status.setStyleSheet(f"color:{theme.ORANGE}; font-weight:600" if error else f"color:{theme.GREEN}")
         self.status.setText(text)
 
     def included(self) -> list[int]:
@@ -1114,7 +1114,8 @@ class MontageDialog(QDialog):
             self._lbl3d.setText(f"3D 안구를 열 수 없습니다: {exc}")
             return
         self.eye.set_detail("detailed")
-        self.eye.relief = 0.6                 # 입체 조명, as in the main window
+        self.eye.relief = 0.6                 # 입체 조명 and 유리 공막, as in the main window
+        self.eye.glass = 0.8
         self._lay3d.removeWidget(self._lbl3d)
         self._lbl3d.hide()
         self._lay3d.addWidget(self.eye, 1)

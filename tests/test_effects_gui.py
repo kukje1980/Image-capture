@@ -69,10 +69,36 @@ def test_browsing_reads_ahead_and_effects_follow_their_controls(app, tmp_path, d
         w.c_relief3d.setChecked(False)
         assert eye.relief == 0.0 and s.relief3d is False
         w.c_relief3d.setChecked(True)
-        assert not w.c_spin3d.isChecked() and eye.auto_rotate == 0.0
+        # 자동 회전: on from the start, turning in the 3D tab only
+        assert w.c_spin3d.isChecked() and eye.auto_rotate == w.SPIN
+        w.c_spin3d.setChecked(False)
+        assert eye.auto_rotate == 0.0 and s.auto_rotate3d is False
         w.c_spin3d.setChecked(True)
         assert eye.auto_rotate == w.SPIN and s.auto_rotate3d is True
+        w._go("2d")
+        assert eye.auto_rotate == 0.0
+        w._go("3d")
+        assert eye.auto_rotate == w.SPIN
         w.c_spin3d.setChecked(False)
+        # 공막 투명도: the glass sclera
+        assert eye.glass == pytest.approx(0.8) and w.s_glass.value() == 80
+        w.s_glass.setValue(0)
+        assert eye.glass == 0.0 and s.glass3d == 0
+        w.s_glass.setValue(60)
+        assert eye.glass == pytest.approx(0.6) and s.glass3d == 60
+        # the two opening modes are one choice, shown by its segments
+        assert w._view_buttons["front"].isChecked() and w.c_view3d.currentData() == "front"
+        w._view_buttons["section"].click()
+        w._tween._finish()
+        assert w.c_view3d.currentData() == "section" and eye.half > 0.0
+        w._view_buttons["front"].click()
+        w._tween._finish()
+        assert w.c_view3d.currentData() == "front" and eye.half == 0.0
+        # the settings beside the eye can be put away
+        assert w.inspector.isVisible()
+        w.b_inspector.click()
+        assert not w.inspector.isVisible()
+        w.b_inspector.click()
         # 사진 펼치기 ↔ 망막에 감기 (motion is off in tests: the end state at once)
         assert w.b_unwrap.text() == "사진 펼치기" and eye.unwrap == 0.0
         w.b_unwrap.click()
@@ -108,4 +134,5 @@ def test_smooth_motion_setting_is_kept(tmp_path):
     from fundusview.config import Settings
 
     s = Settings(library_dir=str(tmp_path / "lib"))
-    assert (s.smooth_motion, s.relief3d, s.auto_rotate3d) == (True, True, False)
+    assert (s.smooth_motion, s.relief3d, s.auto_rotate3d, s.glass3d) == (True, True, True, 80)
+    assert s.view3d_detail == "detailed"
