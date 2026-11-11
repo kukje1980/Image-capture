@@ -48,7 +48,10 @@ def font_families() -> list[str]:
     if sys.platform == "win32":
         return ["Segoe UI Variable Text", "Segoe UI", "Malgun Gothic"]
     if sys.platform == "darwin":
-        return [".AppleSystemUIFont", "Apple SD Gothic Neo"]
+        # the system font by the name Qt gives it (".AppleSystemUIFont" itself makes Qt search every font)
+        from PySide6.QtGui import QFontDatabase
+
+        return [QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont).family(), "Apple SD Gothic Neo"]
     return ["Inter", "Noto Sans CJK KR", "Noto Sans", "DejaVu Sans"]
 
 
@@ -194,6 +197,9 @@ _chrome: _Chrome | None = None
 def apply(app: QApplication) -> None:
     """Dress the whole application (call once, before the first window)."""
     global _chrome
+    hints = app.styleHints()
+    if hasattr(hints, "setColorScheme"):       # Qt 6.8+: dark window frames and title bars (Mac, Windows)
+        hints.setColorScheme(Qt.ColorScheme.Dark)
     app.setStyle("Fusion")
     app.setPalette(palette())
     app.setFont(app_font())
