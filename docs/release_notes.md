@@ -1,27 +1,11 @@
-## 안저 사진 뷰어 — 최신 빌드 (Windows · Mac)
+## 안저 사진 뷰어 — 최신 빌드 (Windows)
 
-아래 **Assets** 에서 내 컴퓨터에 맞는 파일을 눌러 내려받으세요 (로그인 필요 없음).
-
-| 컴퓨터 | 파일 |
-|---|---|
-| Windows 10 / 11 | **FundusViewer-windows.zip** |
-| Mac — Apple Silicon (M1 · M2 · M3 · M4 …) | **FundusViewer-mac-AppleSilicon.dmg** |
-| Mac — Intel | **FundusViewer-mac-Intel.dmg** |
-
-내 Mac의 칩은 화면 왼쪽 위  메뉴 → **이 Mac에 관하여**의 "칩"(Apple M…) 또는 "프로세서"(Intel …)에 나옵니다.
+아래 **Assets** 의 **FundusViewer-windows.zip** 을 눌러 내려받으세요 (Windows 10 / 11, 로그인 필요 없음).
 
 ### Windows 설치·실행
 1. 내려받은 zip 파일의 압축을 풉니다.
 2. `FundusViewer` 폴더 안의 **FundusViewer.exe** 를 실행합니다.
 3. "Windows의 PC 보호" 창이 뜨면 **추가 정보 → 실행** 을 누릅니다 (서명하지 않은 프로그램이라 나오는 경고입니다).
-
-### Mac 설치·실행 (macOS 11 이상)
-1. 내려받은 dmg 파일을 열고 **FundusViewer** 를 **Applications(응용 프로그램)** 폴더로 끌어다 놓습니다.
-2. 응용 프로그램 폴더에서 FundusViewer 를 엽니다. 애플 인증서 없이 만든 앱이라 처음에는 "열 수 없습니다" 경고가 나옵니다.
-   - **macOS 15 (Sequoia) 이상**: 경고 창을 **완료**로 닫고 **시스템 설정 → 개인정보 보호 및 보안** 맨 아래의
-     **그래도 열기** 를 누른 뒤 암호를 넣습니다.
-   - **macOS 14 이하**: 앱을 **Control+클릭 → 열기 → 열기**.
-3. 한 번 열고 나면 다음부터는 그냥 열립니다. Mac에서는 Ctrl 대신 ⌘ 키를 씁니다(⌘+클릭 = 두 번째 사진).
 
 ### 3D — 황반과 시신경 유두를 실제 위치에
 사진에서 **황반**과 **시신경 유두**를 찾아, 황반은 안구 뒤쪽 한가운데(후극)에, 유두는 코쪽 제자리(황반에서 약 4.5 mm)에 오도록

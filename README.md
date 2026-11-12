@@ -47,25 +47,22 @@ https://github.com/kukje1980/Image-capture/releases/download/fundus-viewer-lates
 — 로그인 없이 받아지며 항상 최신 빌드입니다. 압축을 풀고 `FundusViewer\FundusViewer.exe`를 실행합니다
 ("Windows의 PC 보호" 창이 뜨면 **추가 정보 → 실행**).
 
-**내려받기 (Mac, macOS 11 이상):**
-Apple Silicon(M1 · M2 · M3 · M4 …)
-https://github.com/kukje1980/Image-capture/releases/download/fundus-viewer-latest/FundusViewer-mac-AppleSilicon.dmg ·
-Intel https://github.com/kukje1980/Image-capture/releases/download/fundus-viewer-latest/FundusViewer-mac-Intel.dmg
-(내 Mac의 칩은 화면 왼쪽 위  메뉴 → **이 Mac에 관하여**의 "칩" 또는 "프로세서"에 나옵니다)
-— dmg를 열어 FundusViewer를 응용 프로그램 폴더로 끌어다 놓습니다. 애플 개발자 인증서 없이 임시(ad-hoc)
-서명만 한 앱이라 처음 열 때 경고가 나옵니다: macOS 15 이상은 한 번 열어 경고를 닫은 뒤 **시스템 설정 →
-개인정보 보호 및 보안 → 아래쪽 "그래도 열기"**, 14 이하는 앱을 **Control+클릭 → 열기**. Mac에서는 Ctrl 대신
-⌘(⌘+클릭 = 두 번째 사진), 트랙패드 두 손가락 스크롤·벌리기/오므리기로 확대·축소합니다. 설정은
-`~/Library/Application Support/FundusViewer`, 라이브러리는 `문서/FundusViewerLibrary`에 둡니다. 장비 폴더는
-홈 폴더와 연결된 볼륨(`/Volumes`의 USB 디스크·NAS)에서 찾고, 네트워크 공유(SMB·AFP·NFS)의 폴더는 폴링으로
-감시합니다.
-
 **직접 빌드:** Windows는 `build_windows.bat` 실행 → `dist\FundusViewer\FundusViewer.exe` (폴더째 복사해
-사용). Mac은 `./build_mac.sh` → `dist/FundusViewer.app`과 `dist/FundusViewer-mac-<AppleSilicon|Intel>.dmg`
-(빌드하는 Mac의 칩용). GitHub Actions(`fundus-viewer` 워크플로)가 커밋마다 Linux에서 시험(3D 안구 OpenGL
-렌더링 포함)하고 Windows exe와 Mac 앱 두 가지(Apple Silicon · Intel)를 빌드·시험하며, `main` 브랜치의 빌드만
-위 주소(릴리스 `fundus-viewer-latest`)에 올립니다(다른 브랜치·PR은 빌드·시험만). Mac 빌드는 번들 앱을 데모
-사진으로 실제 실행해 보고, 3D 안구를 macOS OpenGL로 렌더링하는 테스트도 거칩니다.
+사용). GitHub Actions(`fundus-viewer` 워크플로)가 커밋마다 Linux에서 시험(3D 안구 OpenGL 렌더링 포함)하고
+Windows exe를 빌드하며, `main` 브랜치의 빌드만 위 주소(릴리스 `fundus-viewer-latest`)에 올립니다(다른
+브랜치·PR은 빌드·시험만).
+
+**Mac:** 프로그램은 macOS 11 이상에서도 동작하지만 Mac용 파일은 지금은 자동으로 만들지 않습니다. 필요하면
+Mac에서 `./build_mac.sh` → `dist/FundusViewer.app`과 `dist/FundusViewer-mac-<AppleSilicon|Intel>.dmg`
+(빌드하는 Mac의 칩용)를 직접 만듭니다. 애플 인증서 없이 임시(ad-hoc) 서명만 한 앱이라 처음 열 때 경고가
+나옵니다: macOS 15 이상은 한 번 열어 경고를 닫은 뒤 **시스템 설정 → 개인정보 보호 및 보안 → 그래도 열기**,
+14 이하는 앱을 **Control+클릭 → 열기**. Mac에서는 Ctrl 대신 ⌘(⌘+클릭 = 두 번째 사진), 트랙패드 두 손가락
+스크롤·벌리기/오므리기로 확대·축소합니다. 설정은 `~/Library/Application Support/FundusViewer`, 라이브러리는
+`문서/FundusViewerLibrary`에 둡니다.
+
+**3D 안구 미리보기 (웹 페이지):** `web3d/eye3d.html` 하나를 브라우저(Chrome·Edge·Safari·Firefox)로 열면 프로그램의
+3D 안구를 설치 없이 돌려 볼 수 있습니다. 새 3D 기능은 여기서 먼저 확인한 뒤 프로그램에 넣습니다. 자세한 내용은
+[아래](#3d-안구-미리보기-웹-페이지).
 
 ## 사용 흐름
 
@@ -548,6 +545,26 @@ DICOM 내보내기 폴더를 감시하세요.
 3D는 OpenGL 2.1이 필요합니다. 그래픽 드라이버가 오래된 PC에서는 **설정 → 일반 → 3D 렌더링 →
 소프트웨어 렌더링**을 고르고 다시 시작합니다(PySide6에 포함된 Mesa `opengl32sw.dll` 사용).
 
+## 3D 안구 미리보기 (웹 페이지)
+
+`web3d/eye3d.html`은 프로그램의 3D 안구를 웹 페이지 한 장에 담은 것입니다. 3D 기능을 설치 없이 빨리 확인하고,
+확인(컨펌)된 것만 프로그램에 넣기 위한 시제품입니다.
+
+* **프로그램과 같은 그림**: 프로그램의 셰이더(`fundusview/ui/eye3d.py`), 안구 모형의 치수·윤곽·질감
+  (`eye_model.py`), 사진을 안구에 얹는 계산(`projection.py`·`placement.py`), 황반·유두 찾기(`imaging.py`)를
+  그대로 옮겼습니다. 셰이더·모형·질감·데모 사진은 `web3d/build.py`가 프로그램에서 직접 꺼내 넣습니다.
+* **되는 것**: 외부/내부(동공을 지나 들어가기), 앞쪽 절개·세로 단면과 깊이, 공막 투명도, 망막 투시, 입체 조명,
+  자동 회전, 화각 표시, 사진 나란히, 사진 펼치기, ▶ 슬릿 스캔, 크게 보기, 시신경·외안근·각도 격자, 실제 위치에
+  맞춤(황반 → 후극, 유두 → 코쪽)과 황반–유두 거리, 화각·투영·회전, 황반–유두 거리로 크기 맞춤. 관성 회전,
+  커서 쪽 확대, 두 손가락 확대(터치).
+* **사진**: 데모 사진 6장(RetiCam 176°, 45° 황반 중심·코쪽·위쪽, 30° 유두 중심, APOLLO 135°)과 **내 사진 열기**
+  (끌어다 놓기도 됨). 내 사진은 브라우저 안에서만 쓰이고 어디에도 올라가지 않습니다. 장비를 고르면 화각·투영이
+  정해지고, 황반·유두를 찾지 못했거나 잘못 찾았으면 **황반 지정 / 유두 지정**으로 사진에서 직접 누릅니다.
+* **없는 것**: 간단히 보기, 2D 화면·측정·환자 목록(3D만 담았습니다).
+
+다시 만들기: `python web3d/build.py` → `web3d/eye3d.html`. 페이지의 동작은 `web3d/app.js`, 모양은 `web3d/app.css`,
+틀은 `web3d/page.html`입니다.
+
 ## 구조
 
 ```
@@ -575,7 +592,8 @@ fundusview/
                     image_view(도구·사진 위 글자·황반/유두 표시),
                     multi_view, disc_pair(디스크 2장 미리 보기·저장·인쇄),
                     montage_dialog(몽타주 편집기: 반투명 겹치기·기준점·완성·3D), histogram, dialogs
-tests/              pytest (추출·투영·영상·가져오기·감시·GUI·디자인·3D 안구 모델·OpenGL 렌더링)
+tests/              pytest (추출·투영·영상·가져오기·감시·GUI·디자인·3D 안구 모델·OpenGL 렌더링·웹 미리보기)
+web3d/              3D 안구 미리보기 웹 페이지 (build.py → eye3d.html)
 ```
 
 라이브러리 폴더(기본: `문서\FundusViewerLibrary`)에는 `fundus.db`, `images\<환자ID>\<검사일>\`
