@@ -240,6 +240,8 @@
       <span class="psep"></span>
       <button class="pbtn pghost" id="pro-comment" title="현재 영상 코멘트 편집"><svg class="ic"><use href="#i-comment"/></svg>코멘트</button>
       <button class="pbtn pghost" id="pro-patient" title="진단명·담당의 등 환자 정보"><svg class="ic"><use href="#i-user"/></svg>환자정보</button>
+      <span class="psep"></span>
+      <button class="pbtn" id="pro-glc" title="녹내장 분석 — 스테레오 보기 · 디스크 C/D · 광각 RNFL · 경과 비교 (MULTI에서 2장 선택 후)"><svg class="ic"><use href="#i-eye"/></svg>녹내장</button>
       <span class="pgrow"></span>
       <button class="pbtn pghost" id="pro-fullscreen" title="영상 영역 전체 화면 (F)"><svg class="ic"><use href="#i-expand"/></svg>전체 화면</button>
       <button class="pbtn pprint" id="pro-print" title="보고서 인쇄 / PDF 저장"><svg class="ic"><use href="#i-printer"/></svg>인쇄·PDF</button>
@@ -550,10 +552,195 @@
   </div>
 </dialog>
 
+<dialog class="glc" id="glc" aria-label="녹내장 분석">
+  <div class="glc-head">
+    <strong class="glc-title">녹내장 분석</strong>
+    <span class="glc-src" id="glc-src"></span>
+    <span class="glc-msg" id="glc-msg" role="status"></span>
+    <button type="button" class="btn btn-primary" id="glc-save" title="지금 보이는 분석 화면을 환자 영상으로 저장 (원본 보존)">이 화면 저장</button>
+    <button type="button" class="btn" id="glc-close">닫기</button>
+  </div>
+  <div class="glc-body">
+<nav class="g-tabs" role="tablist" id="glc-tabs">
+    <button role="tab" data-tab="stereo" aria-selected="true">스테레오 보기</button>
+    <button role="tab" data-tab="disc" aria-selected="false">디스크 C/D</button>
+    <button role="tab" data-tab="wide" aria-selected="false">광각 분석</button>
+    <button role="tab" data-tab="prog" aria-selected="false">경과 비교</button>
+  </nav>
+
+  <!-- ============ 스테레오 ============ -->
+  <section class="g-panel" id="glc-p-stereo">
+    <div class="g-stage">
+      <canvas id="gst-cv" width="600" height="600"></canvas>
+      <canvas id="gst-prof" width="600" height="120" hidden></canvas>
+      <p class="g-hint" id="gst-hint"></p>
+    </div>
+    <aside class="g-side">
+      <div class="g-grp">
+        <h2>사진</h2>
+        <div class="g-row">
+          <label class="btn"><input class="g-vh" type="file" accept="image/*" id="gst-fl">왼쪽 사진</label>
+          <label class="btn"><input class="g-vh" type="file" accept="image/*" id="gst-fr">오른쪽 사진</label>
+          <button class="btn" id="gst-demo">데모</button>
+        </div>
+        <p class="g-note">조이스틱을 2~3mm 옆으로 옮겨 찍은 디스크 사진 2장을 넣습니다.</p>
+      </div>
+      <div class="g-grp">
+        <h2>보기 방식</h2>
+        <div class="g-seg" id="gst-mode">
+          <button data-v="wiggle" aria-pressed="true">위글</button>
+          <button data-v="sbs" aria-pressed="false">나란히(평행)</button>
+          <button data-v="cross" aria-pressed="false">나란히(교차)</button>
+          <button data-v="ana" aria-pressed="false">적청 안경</button>
+          <button data-v="depth" aria-pressed="false">깊이 지도</button>
+        </div>
+        <div class="g-sl" id="gst-speed-box"><label for="gst-speed">위글 속도</label><output id="gst-speed-o">5 Hz</output>
+          <input type="range" id="gst-speed" min="1" max="10" step="1" value="5"></div>
+        <label class="g-chk"><input type="checkbox" id="gst-swap">좌우 바꾸기 (깊이가 뒤집혀 보일 때)</label>
+      </div>
+      <div class="g-grp">
+        <h2>정렬</h2>
+        <div class="g-row">
+          <button class="btn btn-primary" id="gst-auto">자동 정렬</button>
+          <button class="btn" id="gst-zero">보정 해제</button>
+        </div>
+        <div class="g-sl"><label for="gst-dx">좌우 (수렴 위치)</label><output id="gst-dx-o">0 px</output>
+          <input type="range" id="gst-dx" min="-60" max="60" step="0.5" value="0"></div>
+        <div class="g-sl"><label for="gst-dy">상하 어긋남</label><output id="gst-dy-o">0 px</output>
+          <input type="range" id="gst-dy" min="-40" max="40" step="0.5" value="0"></div>
+        <p class="g-status" id="gst-status"></p>
+      </div>
+    </aside>
+  </section>
+
+  <!-- ============ 디스크 C/D ============ -->
+  <section class="g-panel" id="glc-p-disc" hidden>
+    <div class="g-stage">
+      <canvas id="gdc-cv" width="600" height="600"></canvas>
+      <p class="g-hint">초록 타원을 디스크 경계에, 노란 타원을 컵 경계에 맞추세요. 가운데 점은 이동, 가장자리 점은 크기 조절입니다.</p>
+    </div>
+    <aside class="g-side">
+      <div class="g-grp">
+        <h2>사진</h2>
+        <div class="g-row">
+          <label class="btn"><input class="g-vh" type="file" accept="image/*" id="gdc-f">사진 불러오기</label>
+          <button class="btn" id="gdc-from">스테레오 왼쪽 사진 사용</button>
+        </div>
+        <div class="g-seg" id="gdc-eye">
+          <button data-v="OD" aria-pressed="true">OD (우안)</button>
+          <button data-v="OS" aria-pressed="false">OS (좌안)</button>
+        </div>
+        <p class="g-note">정립상 기준입니다. 우안은 화면 오른쪽이 비측입니다.</p>
+      </div>
+      <div class="g-grp">
+        <h2>수직 C/D</h2>
+        <div class="g-row"><span class="g-big" id="gdc-v">–</span><span id="gdc-vp"></span></div>
+        <table class="g-kv" id="gdc-tbl"></table>
+      </div>
+      <div class="g-grp">
+        <h2>림 두께 (ISNT)</h2>
+        <table class="g-kv" id="gdc-rim"></table>
+        <div id="gdc-isnt"></div>
+        <p class="g-note">림 두께는 디스크 수직 지름(DD)에 대한 비율입니다.</p>
+      </div>
+    </aside>
+  </section>
+
+  <!-- ============ 광각 ============ -->
+  <section class="g-panel" id="glc-p-wide" hidden>
+    <div class="g-stage">
+      <canvas id="gwd-cv" width="900" height="620"></canvas>
+      <p class="g-hint" id="gwd-hint"></p>
+    </div>
+    <aside class="g-side">
+      <div class="g-grp">
+        <h2>사진 · 강조</h2>
+        <div class="g-row">
+          <label class="btn"><input class="g-vh" type="file" accept="image/*" id="gwd-f">광각 사진 불러오기</label>
+          <button class="btn" id="gwd-demo">데모</button>
+        </div>
+        <label class="g-chk"><input type="checkbox" id="gwd-rf" checked>레드프리 (녹색 채널)</label>
+        <div class="g-sl"><label for="gwd-k">RNFL 대비 강화</label><output id="gwd-k-o">1.5</output>
+          <input type="range" id="gwd-k" min="0" max="3" step="0.1" value="1.5"></div>
+      </div>
+      <div class="g-grp">
+        <h2>화면을 눌러서</h2>
+        <div class="g-seg" id="gwd-tool">
+          <button data-v="mark" aria-pressed="true">소견 표시</button>
+          <button data-v="disc" aria-pressed="false">디스크 지정</button>
+          <button data-v="fovea" aria-pressed="false">황반 지정</button>
+        </div>
+        <div class="g-row">
+          <select id="gwd-kind" aria-label="소견 종류">
+            <option>RNFL 결손</option><option>디스크 출혈</option><option>기타</option>
+          </select>
+          <button class="btn" id="gwd-clear">표시 모두 지우기</button>
+        </div>
+      </div>
+      <div class="g-grp">
+        <h2>겹쳐 보기</h2>
+        <label class="g-chk"><input type="checkbox" id="gwd-sec" checked>디스크 구역 (Garway-Heath)</label>
+        <label class="g-chk"><input type="checkbox" id="gwd-vf" checked>시야검사 24-2 격자</label>
+        <div class="g-legend" id="gwd-leg"></div>
+        <table class="g-kv" id="gwd-geo"></table>
+      </div>
+      <div class="g-grp">
+        <h2>소견 목록</h2>
+        <ul class="g-marks" id="gwd-list"></ul>
+      </div>
+    </aside>
+  </section>
+
+  <!-- ============ 경과 ============ -->
+  <section class="g-panel" id="glc-p-prog" hidden>
+    <div class="g-stage">
+      <canvas id="gpg-cv" width="600" height="600"></canvas>
+      <p class="g-hint" id="gpg-hint"></p>
+    </div>
+    <aside class="g-side">
+      <div class="g-grp">
+        <h2>사진</h2>
+        <div class="g-row">
+          <label class="btn"><input class="g-vh" type="file" accept="image/*" id="gpg-fa">기준 사진</label>
+          <label class="btn"><input class="g-vh" type="file" accept="image/*" id="gpg-fb">추적 사진</label>
+          <button class="btn" id="gpg-demo">데모</button>
+        </div>
+      </div>
+      <div class="g-grp">
+        <h2>비교 방식</h2>
+        <div class="g-seg" id="gpg-mode">
+          <button data-v="flick" aria-pressed="true">깜빡임</button>
+          <button data-v="blend" aria-pressed="false">겹치기</button>
+          <button data-v="diff" aria-pressed="false">변화 지도</button>
+        </div>
+        <div class="g-sl" id="gpg-speed-box"><label for="gpg-speed">깜빡임 속도</label><output id="gpg-speed-o">2 Hz</output>
+          <input type="range" id="gpg-speed" min="1" max="6" step="1" value="2"></div>
+        <div class="g-sl" id="gpg-mix-box" hidden><label for="gpg-mix">기준 ↔ 추적</label><output id="gpg-mix-o">50%</output>
+          <input type="range" id="gpg-mix" min="0" max="100" step="1" value="50"></div>
+      </div>
+      <div class="g-grp">
+        <h2>정합</h2>
+        <div class="g-row">
+          <button class="btn btn-primary" id="gpg-auto">자동 정합</button>
+          <button class="btn" id="gpg-zero">보정 해제</button>
+        </div>
+        <div class="g-sl"><label for="gpg-dx">좌우</label><output id="gpg-dx-o">0 px</output>
+          <input type="range" id="gpg-dx" min="-60" max="60" step="0.5" value="0"></div>
+        <div class="g-sl"><label for="gpg-dy">상하</label><output id="gpg-dy-o">0 px</output>
+          <input type="range" id="gpg-dy" min="-60" max="60" step="0.5" value="0"></div>
+        <p class="g-status" id="gpg-status"></p>
+      </div>
+    </aside>
+  </section>
+    <p class="g-note glc-foot">측정값은 참고용 추정값입니다. 진단은 의사가 영상을 보고 판단하세요. 깊이 지도는 상대값이며 절대 길이가 아닙니다.</p>
+  </div>
+</dialog>
+
 <div class="toast-wrap" id="toast-wrap" aria-live="polite"></div>
 
 <script src="/static/js/localstore.js"></script>
 <script src="/static/js/app.js"></script>
 <script src="/static/js/pro.js"></script>
+<script src="/static/js/glaucoma.js"></script>
 </body>
 </html>
