@@ -15,7 +15,6 @@
   <span class="zoom" id="zoom" title="처음 보기 대비 확대 배율 · 더블클릭 또는 0: 처음 보기">배율 ×1.0</span>
   <span class="grow"></span>
   <button class="btn primary" id="scan" title="안구를 옆에서 반으로 자른 단면에 화각을 보이고, 슬릿이 사진을 위에서 아래로 훑는 동안 빛이 동공을 지나 같은 망막 위치에 닿는 모습을 보여 줍니다">▶ 슬릿 스캔</button>
-  <button class="btn" id="unwrap" title="망막에 입힌 사진이 떠올라 평면 사진으로 펴지고, 다시 누르면 망막에 감깁니다">사진 펼치기</button>
   <button class="btn" id="full" title="3D 안구를 화면 전체로 (Esc: 돌아가기 · Space: 슬릿 스캔)">크게 보기</button>
   <button class="btn toggle" id="panel" aria-pressed="true" title="오른쪽 설정 패널 보이기 / 숨기기">설정</button>
 </header>
@@ -26,6 +25,7 @@
     <div class="viewport">
       <canvas id="eye" tabindex="0" aria-label="3D 안구 — 드래그: 회전, 휠: 확대, 더블클릭: 처음 보기"></canvas>
       <canvas id="eye-overlay" aria-hidden="true"></canvas>
+      <p class="where" id="where" aria-live="polite" hidden></p>
       <p class="gl-error" id="gl-error"></p>
     </div>
   </section>
@@ -53,12 +53,15 @@
             <option value="OD">OD · 우안</option>
             <option value="OS">OS · 좌안</option>
           </select></div>
+        <label class="row switch" title="사진을 열면 시신경 유두와 황반을 자동으로 찾아 안구의 제자리에 맞춥니다 (프로그램이 사진을 가져올 때와 같은 방법)"><span>황반·유두 자동으로 찾기</span><input type="checkbox" role="switch" id="autofind" checked></label>
         <canvas id="photo" class="photo-preview" aria-label="사진 — 유두(노란 원)와 황반(하늘색 원)"></canvas>
         <p class="photo-name" id="photo-name"></p>
+        <p class="found" id="found" aria-live="polite"></p>
         <div class="row buttons">
-          <button class="btn plain toggle" id="mark-fovea" aria-pressed="false" title="사진에서 황반(중심와)을 눌러 지정합니다">황반 지정</button>
-          <button class="btn plain toggle" id="mark-disc" aria-pressed="false" title="사진에서 시신경 유두를 눌러 지정합니다">유두 지정</button>
-          <button class="btn plain" id="redetect" title="프로그램이 가져올 때와 같은 방법으로 다시 찾습니다">다시 찾기</button>
+          <span class="row-note">고치기</span>
+          <button class="btn plain toggle small" id="mark-fovea" aria-pressed="false" title="자동으로 찾은 위치가 틀렸을 때: 사진에서 황반(중심와)을 눌러 정합니다">황반 지정</button>
+          <button class="btn plain toggle small" id="mark-disc" aria-pressed="false" title="자동으로 찾은 위치가 틀렸을 때: 사진에서 시신경 유두를 눌러 정합니다">유두 지정</button>
+          <button class="btn plain small" id="redetect" title="직접 정한 위치를 지우고 자동으로 다시 찾습니다">다시 찾기</button>
         </div>
         <p class="hint" id="mark-hint" aria-live="polite"></p>
       </div>
@@ -73,15 +76,43 @@
     </div>
 
     <div class="group">
+      <h2 class="group-title">들어가며 보기</h2>
+      <div class="card">
+        <div class="row">
+          <button class="btn primary" id="journey-play" title="안구 전체에서 각막·앞방·동공·수정체·유리체를 지나 망막까지 들어갑니다 (다시 누르면 나옵니다)">▶ 들어가기</button>
+          <span class="row-note">각막 → 동공 → 수정체 → 망막</span>
+        </div>
+        <div class="row"><label class="row-label" for="journey">위치</label>
+          <input type="range" id="journey" min="0" max="100" value="0" title="왼쪽 끝 = 안구 전체, 오른쪽 끝 = 망막 (끌어서 원하는 곳에서 멈춰 보세요)"></div>
+      </div>
+    </div>
+
+    <div class="group">
       <h2 class="group-title">안구 열기</h2>
       <div class="card">
         <div class="seg" role="radiogroup" aria-label="여는 방식">
-          <input type="radio" name="view" id="view-front" checked><label for="view-front" title="앞부분을 잘라 안쪽 망막을 봅니다">앞쪽 절개</label>
-          <input type="radio" name="view" id="view-section"><label for="view-section" title="사진의 세로 자오선을 따라 안구를 잘라 옆에서 봅니다 — 층 구조와 화각 (깊이 왼쪽 끝 = 정확히 반)">세로 단면</label>
+          <input type="radio" name="view" id="view-front" value="front" checked><label for="view-front" title="앞부분을 잘라 안쪽 망막을 봅니다">앞쪽 절개</label>
+          <input type="radio" name="view" id="view-section" value="section"><label for="view-section" title="사진의 세로 자오선을 따라 안구를 잘라 옆에서 봅니다 — 층 구조와 화각 (깊이 왼쪽 끝 = 정확히 반)">세로 단면</label>
+          <input type="radio" name="view" id="view-hsection" value="hsection"><label for="view-hsection" title="사진의 가로 자오선(황반과 시신경 유두를 지나는 선)을 따라 안구를 잘라 위에서 봅니다 (깊이 왼쪽 끝 = 정확히 반)">가로 단면</label>
         </div>
         <div class="row"><label class="row-label" for="cut">깊이</label><input type="range" id="cut" min="-30" max="100" value="25" title="자르는 깊이 (오른쪽 끝 = 닫힌 안구)"></div>
         <div class="row"><label class="row-label" for="glass">공막 투명도</label><input type="range" id="glass" min="0" max="100" value="80" title="공막을 유리처럼 비쳐 보이게 합니다 — 사진이 있는 망막은 진하게 남습니다 (왼쪽 끝 = 흰 공막)"></div>
         <label class="row switch"><span>망막 투시</span><input type="checkbox" role="switch" id="xray"></label>
+      </div>
+    </div>
+
+    <div class="group">
+      <h2 class="group-title">슬릿 스캔</h2>
+      <div class="card">
+        <div class="seg slit" role="radiogroup" aria-label="슬릿이 사진을 지나가는 방향">
+          <input type="radio" name="slitdir" id="slit-down" value="down" checked><label for="slit-down" title="위에서 아래로 (세로 단면)" aria-label="위에서 아래로">↓</label>
+          <input type="radio" name="slitdir" id="slit-up" value="up"><label for="slit-up" title="아래에서 위로 (세로 단면)" aria-label="아래에서 위로">↑</label>
+          <input type="radio" name="slitdir" id="slit-right" value="right"><label for="slit-right" title="왼쪽에서 오른쪽으로 (가로 단면)" aria-label="왼쪽에서 오른쪽으로">→</label>
+          <input type="radio" name="slitdir" id="slit-left" value="left"><label for="slit-left" title="오른쪽에서 왼쪽으로 (가로 단면)" aria-label="오른쪽에서 왼쪽으로">←</label>
+          <input type="radio" name="slitdir" id="slit-all" value="all"><label for="slit-all" title="위↓ 아래↑ 왼→ 오른← 네 방향을 차례로">상하좌우</label>
+        </div>
+        <p class="slit-note" id="slit-note">위에서 아래로 — 세로 단면을 옆에서 봅니다</p>
+        <button class="btn primary wide" id="scan2" title="고른 방향으로 슬릿이 사진을 훑는 동안 빛이 동공을 지나 같은 망막 위치에 닿는 모습을 보여 줍니다">▶ 슬릿 스캔</button>
       </div>
     </div>
 
@@ -98,6 +129,7 @@
     <div class="group">
       <h2 class="group-title">표시</h2>
       <div class="card">
+        <label class="row switch" title="공막·홍채·수정체·시신경을 단순한 모양과 색으로 그려 사진이 얹힌 망막과 그 입체가 잘 보이게 합니다"><span>단순하게 보기 <span class="row-note">망막 강조</span></span><input type="checkbox" role="switch" id="simple"></label>
         <label class="row switch"><span>시신경</span><input type="checkbox" role="switch" id="nerve" checked></label>
         <label class="row switch" title="네 곧은근과 두 빗근의 부착부(절단면)"><span>외안근</span><input type="checkbox" role="switch" id="muscles"></label>
         <label class="row switch" title="황반(후극)에서 10°마다 링, 30°마다 진하게"><span>각도 격자</span><input type="checkbox" role="switch" id="grid"></label>

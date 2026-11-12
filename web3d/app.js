@@ -506,7 +506,9 @@ const E = {
   // view
   mode: 'outside', cut: 0.25, showNerve: true, showMuscles: false, showGrid: false,
   half: 0, xray: 0, scan: null, scanDim: 1, scanBeam: 1, fovSweep: 0, fovAlpha: 0, fovRing: 0, black: false,
-  relief: 0, glass: 0, unwrap: 0, dark: 0, autoRotate: 0,
+  secAxis: 'v', scanSign: -1,   // the section: along the photo's vertical ('v') or horizontal ('h') meridian; the slit's way
+  simple: 0,                    // 단순하게 보기: 0 the detailed look … 1 plain (tweened)
+  relief: 0, glass: 0, dark: 0, autoRotate: 0, outFov: 38,
   yaw: 38, pitch: 18, dist: MD.dist0, target: [0, 0, 0], inYaw: 0, inPitch: 0, inFov: MD.fov0, inZ: 0.35,
   drag: null, dragKind: '', touched: now(), entering: false, enterPlan: [], enterEnd: {}, viewEnds: null,
   rlight: [0, 0.6, 0.8],
@@ -523,10 +525,14 @@ function replace() {
 }
 function setLandmarks(lat, disc, fovea, circle) { E.laterality = lat; E.marks = [disc, fovea, circle]; replace(); redraw(); }
 
-const meridian = () => { const r = rad(E.roll); return [Math.sin(r), Math.cos(r), 0]; };
-function halfPlane() {
-  let k = cross(meridian(), [0, 0, 1]);
-  if (E.discDir && Math.abs(dot(E.discDir, k)) > 1e-6) k = dot(E.discDir, k) > 0 ? k : mul(k, -1);
+// The section (세로 단면 · 가로 단면) and the slit follow a meridian of the photo: its vertical one
+// (up on the photo) or its horizontal one (right on the photo), turned with the photo's roll.
+const slitAngle = (axis = E.secAxis) => (axis === 'h' ? 0 : PI / 2);   // on the photo, from its right
+const meridian = (axis = E.secAxis) => { const a = slitAngle(axis) - rad(E.roll); return [Math.cos(a), Math.sin(a), 0]; };
+function halfPlane(axis = E.secAxis) {
+  let k = cross(meridian(axis), [0, 0, 1]);
+  if (axis === 'h') { /* the lower half stays: seen from above, as the textbook's horizontal section */ }
+  else if (E.discDir && Math.abs(dot(E.discDir, k)) > 1e-6) k = dot(E.discDir, k) > 0 ? k : mul(k, -1);
   else if (E.laterality === 'OS') k = mul(k, -1);
   return [k, 1.05 * (1 - clamp(E.half, 0, 1))];
 }
@@ -538,12 +544,17 @@ function poseFrom(d, dist, target = [0, 0, 0]) {
   d = unit(d);
   return { yaw: ((deg(Math.atan2(d[0], d[2])) % 360) + 360) % 360, pitch: deg(Math.asin(clamp(d[1], -1, 1))), dist, target: target.slice() };
 }
-const sectionPose = () => poseFrom(mul(halfPlane()[0], -1), fit(3.6, 1.3), [0, 0, 0.12]);
-const showcasePose = () => poseFrom(add(mul(halfPlane()[0], -0.70), [0, -0.25, 0.65]), fit(3.8, 1.2));
+// 세로 단면 from the side (the photo's up is up); 가로 단면 from above and a little in front (the
+// photo's right is on the right, the cornea toward the bottom)
+const sectionPose = (axis = E.secAxis) => {
+  const k = halfPlane(axis)[0];
+  return axis === 'h' ? poseFrom(add(mul(k, -1), [0, 0, 0.18]), fit(3.6, 1.3), [0, 0, 0.1]) : poseFrom(mul(k, -1), fit(3.6, 1.3), [0, 0, 0.12]);
+};
+const showcasePose = (axis = E.secAxis) => poseFrom(add(add(mul(halfPlane(axis)[0], -0.70), mul(meridian(axis), -0.25)), [0, 0, 0.65]), fit(3.8, 1.2));
 const tilted = () => E.placement.offsetDeg > 1e-6;
 
-function meridianRows(n = 721) {
-  const tmax = E.thetaMax(), m = meridian(), M = E.placement.matrix;
+function meridianRows(n = 721) {   // along the meridian: angle, place on the photo along that axis (-1…1), inside the field
+  const tmax = E.thetaMax(), m = meridian(), M = E.placement.matrix, alpha = slitAngle();
   const lut = []; for (let k = 0; k <= 256; k++) lut.push(rhoOf(k / 256 * tmax, tmax, E.projection, E.viewpoint, E.radialC));
   const ts = [], rows = [], inside = [];
   for (let i = 0; i < n; i++) {
@@ -552,7 +563,7 @@ function meridianRows(n = 721) {
     const q = m3v(m3T(M), d), theta = Math.acos(clamp(-q[2], -1, 1));
     const x = Math.min(theta, tmax) / tmax * 256, j = Math.min(255, Math.floor(x));
     const rho = lerp(lut[j], lut[j + 1], x - j);
-    ts.push(t); rows.push(rho * Math.sin(Math.atan2(q[1], q[0]) + rad(E.roll))); inside.push(theta <= tmax);
+    ts.push(t); rows.push(rho * Math.cos(Math.atan2(q[1], q[0]) + rad(E.roll) - alpha)); inside.push(theta <= tmax);
   }
   return [ts, rows, inside];
 }
@@ -561,8 +572,8 @@ function fieldOnMeridian() {
   const [t, , inside] = meridianRows(), k = t.filter((_, i) => inside[i]);
   return k.length ? [k[0], k[k.length - 1]] : [-E.thetaMax(), E.thetaMax()];
 }
-function scanTheta(s) {
-  const dy = 1 - 2 * clamp(s, 0, 1), tmax = E.thetaMax();
+function scanTheta(s) {   // where the slit at s (0…1 of its way) falls on the meridian: angle, side
+  const dy = E.scanSign * (2 * clamp(s, 0, 1) - 1), tmax = E.thetaMax();
   if (tilted()) {
     const [t, row, inside] = meridianRows(), k = [];
     for (let i = 0; i < t.length; i++) if (inside[i]) k.push(i);
@@ -592,7 +603,7 @@ function viewBasis() {
   } else {
     const cy = Math.cos(rad(E.yaw)), sy = Math.sin(rad(E.yaw)), cp = Math.cos(rad(E.pitch)), sp = Math.sin(rad(E.pitch));
     const d = [sy * cp, sp, cy * cp];
-    eye = add(E.target, mul(d, E.dist)); f = mul(d, -1); fovy = 38;
+    eye = add(E.target, mul(d, E.dist)); f = mul(d, -1); fovy = E.outFov;
     up = Math.abs(E.pitch) < 89 ? [0, 1, 0] : [0, 0, -1];
   }
   const r = unit(cross(f, up));
@@ -626,6 +637,7 @@ function pick(o, d) {
   };
   let rIn = K.R_RET;
   if (E.mode === 'inside') { const h = hits(rIn); return h ? add(o, mul(d, h[1])) : null; }
+  if (len(o) < 0.999) { const hi = hits(rIn); return hi && hi[1] > 0 ? add(o, mul(d, hi[1])) : null; }
   const h = hits(1);
   if (!h || h[1] <= 0) return null;
   if (halfOn()) {
@@ -715,8 +727,8 @@ function keyTurn(dx, dy) {
   else { E.yaw = (((E.yaw - dx) % 360) + 360) % 360; E.pitch = clamp(E.pitch + dy, -89, 89); }
   redraw();
 }
-function stopMotion() { fling.stop(); zoomGlide.stop(); turnX.stop(); turnY.stop(); viewGlide.stop(); finishEnter(); }
-const moving = () => E.drag != null || fling.running() || zoomGlide.running() || turnX.running() || turnY.running() || viewGlide.running() || E.entering;
+function stopMotion() { fling.stop(); zoomGlide.stop(); turnX.stop(); turnY.stop(); viewGlide.stop(); journey.stop(); }
+const moving = () => E.drag != null || fling.running() || zoomGlide.running() || turnX.running() || turnY.running() || viewGlide.running() || journey.running();
 function glideTo(goal = null, inside = null, duration = 0.45, extra = null, done = null, easing = ease) {
   fling.stop(); zoomGlide.stop(); viewGlide.stop();
   extra = extra || {};
@@ -741,63 +753,81 @@ function viewGlideTo(k) {
   viewChanged();
 }
 function resetView(animate = true) {
-  if (animate && motionOn) { finishEnter(); glideTo(home(), [0, 0, E.FOV0]); return; }
+  if (animate && motionOn) { journey.stop(); glideTo(home(), [0, 0, E.FOV0], 0.45, { outFov: 38 }); return; }
   stopMotion();
-  Object.assign(E, { yaw: 38, pitch: 18, dist: homeDist(), target: [0, 0, 0], inYaw: 0, inPitch: 0, inFov: E.FOV0 });
+  Object.assign(E, { yaw: 38, pitch: 18, dist: homeDist(), target: [0, 0, 0], inYaw: 0, inPitch: 0, inFov: E.FOV0, outFov: 38 });
   viewChanged();
 }
 function frontView(animate = true) {
-  if (animate && motionOn && E.mode === 'outside') { finishEnter(); glideTo({ yaw: 0, pitch: 0, dist: homeDist(), target: [0, 0, 0] }); return; }
+  if (animate && motionOn && E.mode === 'outside') { journey.stop(); glideTo({ yaw: 0, pitch: 0, dist: homeDist(), target: [0, 0, 0] }, null, 0.45, { outFov: 38 }); return; }
   stopMotion();
-  Object.assign(E, { yaw: 0, pitch: 0, dist: homeDist(), target: [0, 0, 0] });
+  Object.assign(E, { yaw: 0, pitch: 0, dist: homeDist(), target: [0, 0, 0], outFov: 38 });
   viewChanged();
 }
-// 들어가기: through the pupil to the retina and back
-function enter(mode) {
-  if (mode === E.mode && !E.entering) return;
-  stopMotion();
-  if (!motionOn) { E.mode = mode; E.dark = 0; viewChanged(); return; }
-  const sq = (t) => t * t;
-  const front = { yaw: 0, pitch: 0, dist: homeDist() * 0.85, target: [0, 0, 0] }, close = { ...front, dist: 1.16 };
-  const switchTo = (m, state = {}) => () => { E.mode = m; Object.assign(E, state); };
-  if (E.half > 0) {
-    E.enterPlan = [[{ extra: { dark: 1 } }, 0.22, sq, switchTo(mode)], [{ extra: { dark: 0 } }, 0.30, easeOut, null]];
-    E.enterEnd = { mode, dark: 0 };
-  } else if (mode === 'inside') {
-    const cut = E.cut;
-    E.enterPlan = [
-      [{ pose: front, extra: { cut: 1, unwrap: 0, xray: 0 } }, 0.45, ease, null],
-      [{ pose: close, extra: { dark: 1 } }, 0.45, sq, switchTo('inside', { cut, inYaw: 0, inPitch: 0, inFov: 26 })],
-      [{ inside: [0, 0, E.FOV0], extra: { dark: 0 } }, 0.60, easeOut, null]];
-    E.enterEnd = { mode: 'inside', cut, dark: 0, unwrap: 0, xray: 0, inYaw: 0, inPitch: 0, inFov: E.FOV0 };
-  } else {
-    const cut = E.cut < 0.999 ? E.cut : 0.25;
-    E.enterPlan = [
-      [{ inside: [0, 0, 26], extra: { dark: 1 } }, 0.40, sq, switchTo('outside', { cut: 1, yaw: 0, pitch: 0, dist: close.dist, target: [0, 0, 0] })],
-      [{ pose: front, extra: { dark: 0 } }, 0.45, easeOut, null],
-      [{ pose: home(), extra: { cut } }, 0.50, ease, null]];
-    E.enterEnd = { mode: 'outside', cut, dark: 0, yaw: E.HOME.yaw, pitch: E.HOME.pitch, dist: homeDist(), target: [0, 0, 0] };
-  }
-  E.entering = true;
-  enterNext();
-}
-function enterNext() {
-  if (!E.enterPlan.length) { finishEnter(); return; }
-  const [goal, dur, easing, after] = E.enterPlan.shift();
-  glideTo(goal.pose || null, goal.inside || null, dur, goal.extra || null, () => { if (after) after(); if (E.entering) enterNext(); }, easing);
-}
-function finishEnter() {
-  if (!E.entering) return;
-  E.entering = false; E.enterPlan = []; viewGlide.stop();
-  Object.assign(E, E.enterEnd);
-  viewChanged();
-}
+// 들어가며 보기: from the whole eye, in through the cornea, the anterior chamber, the pupil, the lens and
+// the vitreous to the retina — nothing goes dark on the way. j: 0 the whole eye … 1 the retina (내부).
+const JOURNEY_Z = 0.35;       // where it ends: the inside view's eye point (EyeView.in_z)
+const journey = {
+  j: 0, from: null, fromCut: 0.25, fromXray: 0, tween: null, playing: false,
+  running() { return this.playing; },
+  begin() {   // the path starts from the eye as it is now (or the start view)
+    if (this.from) return;
+    if (E.mode === 'inside') { this.from = { ...home() }; this.j = 1; }
+    else { this.from = pose(); this.j = 0; }
+    this.fromCut = E.cut < 0.999 ? E.cut : 0.25;
+    this.fromXray = E.xray;
+    if (vt.active()) vt.finish();
+    E.half = 0;
+  },
+  pose(j) {   // the camera and the eye at j
+    const f = this.from, a = 0.32;
+    const out = { mode: j >= 1 ? 'inside' : 'outside', cut: lerp(this.fromCut, 1, ease(j / 0.12)), xray: lerp(this.fromXray, 0, ease(j / 0.12)) };
+    if (j <= a) {   // to the front of the closed eye, coming nearer
+      const k = ease(j / a);
+      Object.assign(out, { yaw: ((lerpAngle(f.yaw, 0, k) % 360) + 360) % 360, pitch: lerp(f.pitch, 0, k), dist: f.dist * (1.9 / f.dist) ** k,
+        target: f.target.map((x) => x * (1 - k)), outFov: 38 });
+    } else {        // along the axis: the cornea, the chamber, the pupil, the lens, the vitreous
+      const k = ease((j - a) / (1 - a));
+      const knots = [[0, 1.9], [0.2, 1.12], [0.78, 0.45], [1, JOURNEY_Z]];   // most of the time from the cornea to the lens
+      let z = JOURNEY_Z;
+      for (let i = 0; i < knots.length - 1; i++) {
+        const [k0, z0] = knots[i], [k1, z1] = knots[i + 1];
+        if (k <= k1) { z = lerp(z0, z1, (k - k0) / (k1 - k0)); break; }
+      }
+      const fov = 38 + (80 - 38) * ease((1.55 - z) / 0.5) + (E.FOV0 - 80) * ease((0.6 - z) / 0.25);
+      Object.assign(out, { yaw: 0, pitch: 0, dist: z, target: [0, 0, 0], outFov: fov });
+    }
+    return out;
+  },
+  apply(j) {
+    this.j = clamp(j, 0, 1);
+    const p = this.pose(this.j);
+    Object.assign(E, { cut: p.cut, xray: p.xray, yaw: p.yaw, pitch: p.pitch, dist: p.dist, target: p.target, outFov: p.outFov });
+    if (p.mode === 'inside') Object.assign(E, { mode: 'inside', inYaw: 0, inPitch: 0, inFov: E.FOV0, inZ: JOURNEY_Z });
+    else E.mode = 'outside';
+    ui.onJourney(this.j);
+    viewChanged();
+  },
+  scrub(j) { this.stop(); this.begin(); this.apply(j); },
+  play(to, done = null) {   // glide to j = to (1 in, 0 out), slowly enough to see where it passes
+    this.stop(); this.begin();
+    const j0 = this.j, dur = Math.max(0.4, 7.5 * Math.abs(to - j0));
+    this.playing = true;
+    this.tween = new Tween((k) => this.apply(lerp(j0, to, k)), dur, (x) => x, () => { this.playing = false; if (done) done(); });
+    this.tween.start();
+  },
+  stop() { if (this.tween) this.tween.stop(); this.playing = false; },
+  end() {   // back to the ordinary views: the path is forgotten
+    this.stop(); this.from = null;
+  },
+};
 // 자동 회전
 const spin = {
   yaw: null,
   step(dt) {
     const t = now();
-    const busy = E.drag != null || fling.running() || zoomGlide.running() || viewGlide.running() || E.entering || E.mode !== 'outside' || E.scan != null || show.playing;
+    const busy = E.drag != null || fling.running() || zoomGlide.running() || viewGlide.running() || journey.running() || E.mode !== 'outside'
+      || E.scan != null || show.playing || len(viewBasis()[0]) < 1.1;   // (not inside the eye on the way in)
     if (busy || this.yaw == null || Math.abs(E.yaw - this.yaw) > 1e-9) { E.touched = t; this.yaw = E.yaw; return E.autoRotate !== 0; }
     const k = clamp((t - E.touched - E.SPIN_WAIT) / 1.5, 0, 1);
     if (k > 0) { E.yaw = (E.yaw + E.autoRotate * k * k * (3 - 2 * k) * dt) % 360; this.yaw = E.yaw; redraw(); }
@@ -831,7 +861,10 @@ const vt = {
   finish() {
     if (!this.live) return;
     this.live = false; ticker.remove(this);
-    E.half = this.to[1]; E.xray = this.to[2]; viewChanged();
+    E.half = this.to[1]; E.xray = this.to[2];
+    const p = this.to[0];   // the camera too (an instant change, or one cut short, ends where it was going)
+    if (p) Object.assign(E, { yaw: p.yaw, pitch: p.pitch, dist: p.dist, target: p.target.slice() });
+    viewChanged();
     const d = this.done; this.done = null; if (d) d();
   },
 };
@@ -950,42 +983,20 @@ async function initGL() {
 // ---------------------------------------------------------------------------------------------
 // drawing: EyeView._paint_scene (the detailed look)
 // ---------------------------------------------------------------------------------------------
+// the way the slit moves over the photo (x to its right, y down)
+function scanDir(axis = E.secAxis, sign = E.scanSign) { const a = slitAngle(axis); return [sign * Math.cos(a), -sign * Math.sin(a)]; }
 function mappingUniforms() {
   const tmax = E.thetaMax();
   let scan = [-1, 0];
-  if (E.scan != null && E.scanDim > 0) scan = [E.center[1] + (2 * clamp(E.scan, 0, 1) - 1) * E.radius[1], Math.min(1, E.scanDim)];
+  if (E.scan != null && E.scanDim > 0) scan = [2 * clamp(E.scan, 0, 1) - 1, Math.min(1, E.scanDim)];
   const tex = !!E.tex;
   return {
     tmax, gmax: gfun(tmax, E.projection, E.viewpoint, tmax, E.radialC), proj: Math.max(0, PROJECTIONS.indexOf(E.projection)),
     d: E.viewpoint, c: E.radialC, center: E.center, radius: E.radius, roll: rad(E.roll), place: m3T(E.placement.matrix),
-    grid: E.showGrid ? 1 : 0, has_tex: tex && !unwrapOn() ? 1 : 0, scan, fovring: E.fovRing,
+    grid: E.showGrid ? 1 : 0, has_tex: tex ? 1 : 0, scan, scan_dir: scanDir(), fovring: E.fovRing,
     relief: tex ? E.relief : 0, texel: E.texel, rlight: m3v(m3T(E.placement.matrix), E.rlight),
   };
 }
-const unwrapOn = () => E.unwrap > 0 && !!E.tex && E.mode === 'outside' && !halfOn() && E.cut < 0.999;
-
-function sheetMesh(rIn, zFlat, rFlat) {
-  const nR = 56, nA = 128, tmax = E.thetaMax(), M = E.placement.matrix;
-  const pos = [], flat = [], uv = [];
-  for (let i = 0; i <= nR; i++) {
-    const rr = i / nR, th = thetaOfRho(rr, tmax, E.projection, E.viewpoint, E.radialC), st = Math.sin(th);
-    for (let j = 0; j <= nA; j++) {
-      const pp = 2 * PI * j / nA;
-      pos.push(...mul(m3v(M, [st * Math.cos(pp), st * Math.sin(pp), -Math.cos(th)]), rIn));
-      flat.push(rr * Math.cos(pp) * rFlat, rr * Math.sin(pp) * rFlat, zFlat);
-      const ph = pp + rad(E.roll);
-      uv.push(E.center[0] + Math.cos(ph) * E.radius[0] * rr, E.center[1] - Math.sin(ph) * E.radius[1] * rr);
-    }
-  }
-  const idx = [];
-  for (let i = 0; i < nR; i++) for (let j = 0; j < nA; j++) {
-    const a = i * (nA + 1) + j, b = a + 1, c = a + nA + 1, d = a + nA + 2;
-    idx.push(a, c, b, b, c, d);
-  }
-  return mesh(pos, flat, idx, uv);
-}
-const SHEET_R = 0.86;
-
 function paintScene(w, h) {
   gl.viewport(0, 0, w, h);
   const [, vf, vr, vu] = viewBasis();
@@ -995,6 +1006,10 @@ function paintScene(w, h) {
   gl.disable(gl.CULL_FACE); gl.disable(gl.BLEND);
   const inside = E.mode === 'inside', half = halfOn(), closed = !inside && !half && E.cut >= 0.999;
   const [mvp, campos] = cameraMats(w / h);
+  // 들어가며 보기: the camera inside the globe (or the cornea) still in the outside view — the coats are
+  // seen from within (their outer faces are not drawn), the inside of the eye is drawn as when opened
+  const within = !inside && (len(campos) < 0.999 || len(sub(campos, [0, 0, K.CORNEA_CENTER_Z])) < K.CORNEA_R
+    || (journey.from != null && journey.j > 0.27));   // (from the cornea on, it is clear: the inside shows through the pupil)
   // the textures, on the units the shaders were told
   const bind = (unitIdx, t) => { gl.activeTexture(gl.TEXTURE0 + unitIdx); gl.bindTexture(gl.TEXTURE_2D, t); };
   bind(MD.units.tex, E.tex || R.empty);
@@ -1005,7 +1020,7 @@ function paintScene(w, h) {
   const lights = inside ? { key: unit([0.15, 0.25, 1]), kx: [1, 0, 0], ky: [0, 1, 0], fill: [0, 0, 1], fx: [1, 0, 0], fy: [0, 1, 0] } : studioLights(campos);
   const [k, off] = half ? halfPlane() : [[0, 0, 0], 1];
   const clip = closed || inside || half ? 2 : E.cut;
-  const common = { mvp, campos, cut: clip, mirror: E.laterality === 'OS' ? 1 : 0, hk: k, hoff: off, ...lights };
+  const common = { mvp, campos, cut: clip, mirror: E.laterality === 'OS' ? 1 : 0, hk: k, hoff: off, simple: E.simple, ...lights };
   const mapping = mappingUniforms();
   const use = (name, extra = {}) => { const p = R.prog[name]; gl.useProgram(p); setU(p, common); setU(p, extra); return p; };
   const glass = inside || half ? 0 : clamp(E.glass, 0, 1);
@@ -1033,9 +1048,9 @@ function paintScene(w, h) {
       drawMesh(dynamic('nerve', E.discDir.map((x) => x.toFixed(6)).join() + E.laterality, () => nerveMesh(E.discDir, E.laterality)));
     }
     if (E.showMuscles) { use('tissue', { kind: 5 }); drawMesh(R.meshes[E.laterality === 'OS' ? 'muscles_OS' : 'muscles_OD']); }
-    if (closed) { use('cornea'); drawMesh(R.meshes.cornea); }
+    if (closed && !within) { use('cornea'); drawMesh(R.meshes.cornea); }
   }
-  if (!closed || glass > 0) {
+  if (!closed || glass > 0 || within) {
     if (inside || half || E.cut > K.IRIS_BACK_Z) {
       use('tissue', { kind: 2 }); drawMesh(R.meshes.iris);
       setU(R.prog.tissue, { kind: 3 }); drawMesh(R.meshes.angle);
@@ -1043,14 +1058,14 @@ function paintScene(w, h) {
     use('wall', { inside: inside ? 1 : 0, light: inside ? [0, 0, 1] : lights.key, open_n: openN, open, side: glass > 0 ? 1 : 0, glass, ...mapping });
     drawMesh(R.meshes.wall);
   }
-  if (unwrapOn()) drawSheet(mvp, lights.key);
   drawBackdrop(w, h);
-  if (inside || half || ((!closed || glass > 0) && E.cut > K.LENS_BACK_Z)) {
+  if (inside || half || within || ((!closed || glass > 0) && E.cut > K.LENS_BACK_Z)) {
     gl.enable(gl.BLEND);
     gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ZERO, gl.ONE);
     gl.depthMask(false);
-    const p = use('clear', { kind: 2 });
-    drawMesh(R.meshes.zonules);
+    // from within the eye the studio's lights are not mirrored in the lens and the cornea
+    const p = use('clear', { kind: 2, within: within || inside ? 1 : 0 });
+    if (E.simple < 0.999) drawMesh(R.meshes.zonules);
     setU(p, { kind: 0 });
     gl.enable(gl.CULL_FACE);
     for (const face of [gl.FRONT, gl.BACK]) { gl.cullFace(face); drawMesh(R.meshes.lens); }
@@ -1058,6 +1073,8 @@ function paintScene(w, h) {
     if (half) {
       use('section', { part: 1 }); drawMesh(R.dyn.half_face);
       use('clear', { kind: 3 }); drawMesh(R.meshes.cornea);
+    } else if (within && closed) {
+      use('clear', { kind: 3 }); drawMesh(R.meshes.cornea);   // the cornea as a clear shell on the way in
     } else if (!inside) {
       const g = dynamic('rim_lens', E.cut.toFixed(4), () => rimFor(E.cut).lens || null);
       if (g) { setU(p, { kind: 1 }); drawMesh(g); }
@@ -1078,19 +1095,6 @@ function paintScene(w, h) {
 }
 let rimCache = [null, {}];
 function rimFor(cut) { if (rimCache[0] !== cut) rimCache = [cut, rimMeshes(cut)]; return rimCache[1]; }
-function drawSheet(mvp, light) {
-  const rIn = K.R_RET - 0.004, zc = cutPlaneZ(E.cut);
-  const rFlat = Math.min(SHEET_R, 0.97 * Math.sqrt(Math.max(rIn * rIn - zc * zc, 0.04)));
-  const key = [rIn, zc, rFlat, E.thetaMax(), E.projection, E.viewpoint, E.radialC, E.roll, E.center, E.radius, E.placement.matrix.map((x) => x.toFixed(6))].join('|');
-  const g = dynamic('sheet', key, () => sheetMesh(rIn, zc + 0.012, rFlat));
-  const p = R.prog.sheet;
-  gl.useProgram(p);
-  setU(p, { mvp, flat: Math.min(1, E.unwrap), light, cutz: zc, sheet_r: rFlat, relief: E.relief, texel: E.texel });
-  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, E.tex || R.empty);
-  gl.enable(gl.BLEND); gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ZERO, gl.ONE);
-  drawMesh(g);
-  gl.disable(gl.BLEND);
-}
 function drawBackdrop(w, h) {
   gl.depthMask(false);
   const p = R.prog.bg; gl.useProgram(p); setU(p, { aspect: w / Math.max(1, h), black: E.black ? 1 : 0 });
@@ -1205,14 +1209,41 @@ function viewChanged() { ui.zoom && (ui.zoom.textContent = `배율 ×${magnifica
 // 슬릿 스캔 (slit_scan.SlitScanShow): a pure function of time
 // ---------------------------------------------------------------------------------------------
 const ramp = (t, t0, t1) => ease((t - t0) / (t1 - t0));
+// The slit can cross the photo four ways; 세로 (down, up) on the vertical section seen from the side,
+// 가로 (right, left) on the horizontal one seen from above. 상하좌우: all four, one after another.
+const SLIT = {
+  down: { axis: 'v', sign: -1, name: '위에서 아래로' },
+  up: { axis: 'v', sign: 1, name: '아래에서 위로' },
+  right: { axis: 'h', sign: 1, name: '왼쪽에서 오른쪽으로' },
+  left: { axis: 'h', sign: -1, name: '오른쪽에서 왼쪽으로' },
+};
+const SLIT_ALL = ['down', 'up', 'right', 'left'];
 const show = {
-  T_SIDE: 1.6, T_FOV: [1.6, 3.4], T_SCAN: [3.4, 8.6], T_DONE: 9.1, T_TURN: [9.1, 12.4], END_HALF: 0.62, SPIN_RATE: 14,
-  timerOn: false, playing: false, showFov: false, xrayAfter: false, t0: 0,
+  T_SIDE: 1.6, T_FOV: [1.6, 3.4], SCAN: 5.2, SCAN_ALL: 4.2, GAP: 0.6, SWITCH: 2.8, DONE: 0.5, TURN: 3.3, END_HALF: 0.62, SPIN_RATE: 14,
+  timerOn: false, playing: false, showFov: false, xrayAfter: false, t0: 0, dir: 'down', segs: [],
+  passes() { return this.dir === 'all' ? SLIT_ALL : [this.dir]; },
   start() {
     stopMotion();
-    Object.assign(E, { mode: 'outside', unwrap: 0, dark: 0 });
+    journey.end();
+    const passes = this.passes(), first = SLIT[passes[0]];
+    Object.assign(E, { mode: 'outside', dark: 0, outFov: 38 });
     this.startPose = pose(); this.startHalf = E.half; this.startXray = E.xray;
-    this.side = sectionPose(); this.end = showcasePose();
+    if (E.secAxis !== first.axis) this.startHalf = 0;   // another plane: it opens anew
+    E.secAxis = first.axis; E.scanSign = first.sign;
+    // the timeline: to the side, the field of view, the passes (a pause between two on one plane, the eye
+    // closing and opening on the other plane between 세로 and 가로), the turn to the showcase, the spin
+    const segs = [], dur = passes.length > 1 ? this.SCAN_ALL : this.SCAN;
+    let t = this.T_FOV[1];
+    passes.forEach((key, i) => {
+      if (i > 0) {
+        const prev = SLIT[passes[i - 1]], cur = SLIT[key], d = prev.axis === cur.axis ? this.GAP : this.SWITCH;
+        segs.push({ kind: prev.axis === cur.axis ? 'gap' : 'switch', t0: t, t1: t + d, from: prev, to: cur }); t += d;
+      }
+      segs.push({ kind: 'scan', t0: t, t1: t + dur, pass: SLIT[key], first: i === 0 }); t += dur;
+    });
+    this.segs = segs; this.last = SLIT[passes[passes.length - 1]];
+    this.T_DONE = t + this.DONE; this.T_TURN = [this.T_DONE, this.T_DONE + this.TURN];
+    this.side = { v: sectionPose('v'), h: sectionPose('h') }; this.end = showcasePose(this.last.axis);
     this.t0 = now(); this.playing = true; this.timerOn = true;
     this.apply(this.frame(0)); requestFrame();
   },
@@ -1225,40 +1256,58 @@ const show = {
     if (wasPlaying && t < this.T_DONE) { E.half = 1; E.xray = this.xrayAfter ? 1 : 0; } else { E.half = this.END_HALF; E.xray = 1; }
     const on = this.showFov ? 1 : 0;
     E.fovSweep = E.fovAlpha = E.fovRing = on;
+    ui.where('');
     redraw(); ui.onScanStopped();
   },
   frame(t) {
-    const side = this.side, end = this.end, ring = this.showFov ? 1 : 0;
-    const F = (p, half, xray, scan, dim, beam, sweep, alpha, fring, phase) => ({ pose: p, half, xray, scan, dim, beam, sweep, alpha, fring, phase });
+    const end = this.end, ring = this.showFov ? 1 : 0, first = SLIT[this.passes()[0]];
+    const F = (p, half, xray, scan, dim, beam, sweep, alpha, fring, phase, slit = first) =>
+      ({ pose: p, half, xray, scan, dim, beam, sweep, alpha, fring, phase, axis: slit.axis, sign: slit.sign, name: slit.name });
+    const side = this.side[first.axis];
     if (t < this.T_SIDE) {
       const k = ramp(t, 0, this.T_SIDE);
       return F(lerpPose(this.startPose, side, k), lerp(this.startHalf, 1, ramp(t, 0.2, 1.45)), lerp(this.startXray, 0, ramp(t, 0, 0.8)),
         null, 0, 0, 0, 0, lerp(ring, 0, k), 'side');
     }
     if (t < this.T_FOV[1]) { const t0 = this.T_FOV[0]; return F(side, 1, 0, 0, ramp(t, t0 + 0.2, t0 + 1.4), 0, ramp(t, t0, t0 + 1.2), 1, 0, 'fov'); }
-    if (t < this.T_DONE) {
-      const [t0, t1] = this.T_SCAN, s = 0.5 - 0.5 * Math.cos(PI * clamp((t - t0) / (t1 - t0), 0, 1));
-      const beam = ramp(t, t0, t0 + 0.25) * (1 - ramp(t, t1, t1 + 0.35));
-      return F(side, 1, 0, s, 1 - ramp(t, t1, this.T_DONE), beam, 1, 1, 0, 'scan');
+    for (const g of this.segs) {
+      if (t >= g.t1) continue;
+      if (g.kind === 'scan') {
+        const { t0, t1 } = g, s = 0.5 - 0.5 * Math.cos(PI * clamp((t - t0) / (t1 - t0), 0, 1));
+        const beam = ramp(t, t0, t0 + 0.25) * (1 - ramp(t, t1, t1 + 0.35));
+        const dim = g.first ? 1 : ramp(t, t0, t0 + 0.35);   // a later pass: the photo darkens again as it starts
+        return F(this.side[g.pass.axis], 1, 0, s, dim, beam, 1, 1, 0, 'scan', g.pass);
+      }
+      if (g.kind === 'gap') return F(this.side[g.to.axis], 1, 0, 1, 1 - ramp(t, g.t0, g.t0 + 0.3), 0, 1, 1, 0, 'gap', g.from);
+      // switch: the eye closes on the old plane, turns to the new one and opens on it
+      const { t0, t1 } = g, mid = 0.5 * (t0 + t1), on = t < mid ? g.from : g.to;
+      const half = t < mid ? 1 - ramp(t, t0, t0 + 1.0) : ramp(t, t1 - 1.0, t1);
+      const p = lerpPose(this.side[g.from.axis], this.side[g.to.axis], ramp(t, t0 + 0.2, t1 - 0.2));
+      const sweep = t < mid ? 1 : ramp(t, t1 - 0.9, t1), alpha = t < mid ? 1 - ramp(t, t0, t0 + 0.6) : ramp(t, t1 - 0.9, t1 - 0.3);
+      return F(p, half, 0, null, 0, 0, sweep, alpha, 0, 'switch', on);
     }
+    const last = this.last;
+    if (t < this.T_DONE) return F(this.side[last.axis], 1, 0, 1, 1 - ramp(t, this.T_DONE - this.DONE, this.T_DONE), 0, 1, 1, 0, 'done', last);
     const [t0, t1] = this.T_TURN;
     if (t < t1) {
-      return F(lerpPose(side, end, ramp(t, t0, t1)), lerp(1, this.END_HALF, ramp(t, t0 + 0.3, t1 - 0.6)), ramp(t, t0, t0 + 1.8),
-        null, 0, 0, 1, 1 - ramp(t, t0, t0 + 0.5), ramp(t, t0 + 1.2, t0 + 2.2), 'turn');
+      return F(lerpPose(this.side[last.axis], end, ramp(t, t0, t1)), lerp(1, this.END_HALF, ramp(t, t0 + 0.3, t1 - 0.6)), ramp(t, t0, t0 + 1.8),
+        null, 0, 0, 1, 1 - ramp(t, t0, t0 + 0.5), ramp(t, t0 + 1.2, t0 + 2.2), 'turn', last);
     }
     const ts = t - t1, sp = this.SPIN_RATE * (ts - 1.5 * (1 - Math.exp(-ts / 1.5)));
-    return F({ ...end, yaw: (end.yaw + sp) % 360 }, this.END_HALF, 1, null, 0, 0, 1, 0, lerp(1, ring, ramp(ts, 1.5, 3.0)), 'spin');
+    return F({ ...end, yaw: (end.yaw + sp) % 360 }, this.END_HALF, 1, null, 0, 0, 1, 0, lerp(1, ring, ramp(ts, 1.5, 3.0)), 'spin', last);
   },
   apply(f) {
-    Object.assign(E, { half: f.half, xray: f.xray, scan: f.scan, scanDim: f.dim, scanBeam: f.beam, fovSweep: f.sweep, fovAlpha: f.alpha, fovRing: f.fring });
+    Object.assign(E, { half: f.half, xray: f.xray, scan: f.scan, scanDim: f.dim, scanBeam: f.beam, fovSweep: f.sweep, fovAlpha: f.alpha, fovRing: f.fring,
+      secAxis: f.axis, scanSign: f.sign });
     Object.assign(E, { yaw: f.pose.yaw, pitch: f.pose.pitch, dist: f.pose.dist, target: f.pose.target.slice() });
-    views.side.setScan(f.scan, f.dim);
+    views.side.setScan(f.scan, f.dim, scanDir(f.axis, f.sign));
+    if (this.playing) ui.where(['fov', 'scan', 'gap', 'switch'].includes(f.phase) ? `슬릿 — ${f.name}` + (f.axis === 'h' ? ' · 가로 단면' : ' · 세로 단면') : '');
     viewChanged();
   },
   tick() {
     const t = now() - this.t0;
     this.apply(this.frame(t));
-    if (this.playing && t >= this.T_TURN[1]) { this.playing = false; ui.onScanFinished(); }
+    if (this.playing && t >= this.T_TURN[1]) { this.playing = false; ui.where(''); ui.onScanFinished(); }
   },
 };
 
@@ -1285,28 +1334,29 @@ function downsample(px, maxSide) {   // every step-th pixel, as imaging._downsam
   return { w, h, lum, green, step };
 }
 function percentile(arr, p) { const a = Float32Array.from(arr).sort(); return a[Math.min(a.length - 1, Math.floor(p / 100 * (a.length - 1)))]; }
-function blur(src, w, h, sigma) {   // a Gaussian as three box blurs (reflected edges)
-  if (sigma < 0.5) return Float32Array.from(src);
-  const n = 3, wIdeal = Math.sqrt(12 * sigma * sigma / n + 1);
-  let wl = Math.floor(wIdeal); if (wl % 2 === 0) wl--;
-  const m = Math.round((12 * sigma * sigma - n * wl * wl - 4 * n * wl - 3 * n) / (-4 * wl - 4));
-  const sizes = [0, 1, 2].map((i) => (i < m ? wl : wl + 2));
-  let a = Float32Array.from(src), b = new Float32Array(src.length);
-  const refl = (i, n) => { while (i < 0 || i >= n) i = i < 0 ? -i - 1 : 2 * n - i - 1; return i; };
-  for (const size of sizes) {
-    const r = (size - 1) >> 1;
-    for (let y = 0; y < h; y++) {   // horizontal
-      let acc = 0; const row = y * w;
-      for (let i = -r - 1; i < r; i++) acc += a[row + refl(i, w)];
-      for (let x = 0; x < w; x++) { acc += a[row + refl(x + r, w)] - a[row + refl(x - r - 1, w)]; b[row + x] = acc / size; }
-    }
-    for (let x = 0; x < w; x++) {   // vertical
-      let acc = 0;
-      for (let i = -r - 1; i < r; i++) acc += b[refl(i, h) * w + x];
-      for (let y = 0; y < h; y++) { acc += b[refl(y + r, h) * w + x] - b[refl(y - r - 1, h) * w + x]; a[y * w + x] = acc / size; }
-    }
+function blur(src, w, h, sigma) {   // imaging.gaussian_blur: a separable Gaussian, 3 σ each way, mirrored at the edges
+  if (sigma < 0.3) return Float32Array.from(src);
+  const rad = Math.max(1, Math.floor(3 * sigma)), n = 2 * rad + 1, k = new Float64Array(n);
+  let sum = 0;
+  for (let i = 0; i < n; i++) { const x = i - rad; k[i] = Math.exp(-x * x / (2 * sigma * sigma)); sum += k[i]; }
+  for (let i = 0; i < n; i++) k[i] /= sum;
+  const refl = (i, m) => {   // numpy's "reflect": … c b | a b c … (the edge is not repeated)
+    if (m === 1) return 0;
+    const p = 2 * (m - 1);
+    i = ((i % p) + p) % p;
+    return i < m ? i : p - i;
+  };
+  const tmp = new Float64Array(w * h), out = new Float32Array(w * h);
+  const ix = new Int32Array(w + 2 * rad); for (let i = 0; i < ix.length; i++) ix[i] = refl(i - rad, w);
+  for (let y = 0; y < h; y++) {   // along the rows
+    const row = y * w;
+    for (let x = 0; x < w; x++) { let acc = 0; for (let i = 0; i < n; i++) acc += k[i] * src[row + ix[x + i]]; tmp[row + x] = acc; }
   }
-  return a;
+  const iy = new Int32Array(h + 2 * rad); for (let i = 0; i < iy.length; i++) iy[i] = refl(i - rad, h) * w;
+  for (let y = 0; y < h; y++) {   // along the columns
+    for (let x = 0; x < w; x++) { let acc = 0; for (let i = 0; i < n; i++) acc += k[i] * tmp[iy[y + i] + x]; out[y * w + x] = acc; }
+  }
+  return out;
 }
 function detectCircle(px) {
   const s = downsample(px, 512), { w, h, lum, step } = s;
@@ -1469,26 +1519,30 @@ function analysePhoto(img, meta) {
   const px = pixelsOf(img, maxTex);
   const k = px.scale;
   const P = { img, px, label: meta.label, key: meta.key || 'own', eye: meta.eye || null, eyeSetting: meta.eyeSetting || 'auto',
-    fov: meta.fov, fovType: meta.fov_type, projection: meta.projection, device: meta.device, own: !!meta.own };
-  if (meta.circle) {
-    P.circle = meta.circle.map((v) => v * k);
-    P.disc = meta.disc ? meta.disc.map((v) => v * k) : null;
-    P.fovea = meta.fovea ? meta.fovea.map((v) => v * k) : null;
-  } else findLandmarks(P);
+    fov: meta.fov, fovType: meta.fov_type, projection: meta.projection, device: meta.device, own: !!meta.own,
+    disc: null, fovea: null, hand: { disc: false, fovea: false } };
+  P.circle = detectCircle(px);
+  if ($('autofind').checked) findLandmarks(P);
   P.alpha = fundusAlpha(px, P.circle);
   return P;
 }
-function findLandmarks(P) {   // as the program does when it imports a photo
+// 황반·유두 자동으로 찾기 (the default): the optic disc where vessels gather on a bright cup, then the
+// dark macula where that disc says it should be — what the program does when it imports a photo.
+// A place set by hand (황반 지정 · 유두 지정) is kept.
+function findLandmarks(P) {
   const px = P.px;
-  P.circle = detectCircle(px);
   const tmax = deg(thetaMax(P.fov, P.fovType));
-  const disc = detectDisc(px, P.circle, Math.min(0.25, 3.8 / Math.max(tmax, 5)), P.device === 'camera45' ? 0.7 : 0.5);
-  P.disc = disc ? disc.slice(0, 2) : null;
-  if (P.eyeSetting === 'auto') P.eye = lateralityFromDisc(disc, P.circle) || P.eye;
-  const cam = new Camera(...P.circle, P.fov, P.fovType, P.projection);
-  const f = P.disc ? detectFovea(px, cam, P.disc, P.eyeSetting === 'auto' ? null : P.eye) : null;
-  P.fovea = f ? f.slice(0, 2) : null;
-  if (f && P.eyeSetting === 'auto') P.eye = f[3];   // the fovea lies temporal of the disc: that tells the eye
+  if (!P.hand.disc) {
+    const disc = detectDisc(px, P.circle, Math.min(0.25, 3.8 / Math.max(tmax, 5)), P.device === 'camera45' ? 0.7 : 0.5);
+    P.disc = disc ? disc.slice(0, 2) : null;
+    if (P.eyeSetting === 'auto') P.eye = lateralityFromDisc(disc, P.circle) || P.eye;
+  }
+  if (!P.hand.fovea) {
+    const cam = new Camera(...P.circle, P.fov, P.fovType, P.projection);
+    const f = P.disc ? detectFovea(px, cam, P.disc, P.eyeSetting === 'auto' ? null : P.eye) : null;
+    P.fovea = f ? f.slice(0, 2) : null;
+    if (f && P.eyeSetting === 'auto') P.eye = f[3];   // the fovea lies temporal of the disc: that tells the eye
+  }
 }
 function showPhoto(P) {
   photo.current = P;
@@ -1509,9 +1563,9 @@ function showPhoto(P) {
 // the flat photo (inspector preview and 사진 나란히): image circle, disc, fovea, the slit
 // ---------------------------------------------------------------------------------------------
 class PhotoCanvas {
-  constructor(el, { marks = true, crop = false } = {}) { this.el = el; this.marks = marks; this.crop = crop; this.scan = null; this.dim = 1; }
+  constructor(el, { marks = true, crop = false } = {}) { this.el = el; this.marks = marks; this.crop = crop; this.scan = null; this.dim = 1; this.dir = [0, 1]; }
   set(P) { this.P = P; this.draw(); }
-  setScan(s, dim = 1) { this.scan = s; this.dim = dim; this.draw(); }
+  setScan(s, dim = 1, dir = [0, 1]) { this.scan = s; this.dim = dim; this.dir = dir; this.draw(); }
   rect() {
     const P = this.P, cw = this.el.clientWidth, ch = this.el.clientHeight;
     if (!P) return null;
@@ -1536,18 +1590,22 @@ class PhotoCanvas {
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(P.px.canvas, sx, sy, sw, sh, r.x, r.y, sw * r.s, sh * r.s);
     ctx.restore();
-    if (this.scan != null && this.dim > 0) {   // below the slit: not scanned yet; the slit glows
-      const top = Y(P.circle[1] - P.circle[2]), bottom = Y(P.circle[1] + P.circle[2]);
-      const y = clamp(top + (bottom - top) * clamp(this.scan, 0, 1), r.y, r.y + sh * r.s), x0 = r.x, x1 = r.x + sw * r.s;
-      ctx.fillStyle = `rgba(0,0,0,${0.75 * this.dim})`; ctx.fillRect(x0, y, x1 - x0, r.y + sh * r.s - y);
-      const hgt = (bottom - top) * 0.05, gr = ctx.createLinearGradient(0, y - hgt, 0, y);
+    if (this.scan != null && this.dim > 0) {   // ahead of the slit: not scanned yet; the slit glows
+      // drawn turned so that the slit moves down the page (this.dir: its way on the photo)
+      const R0 = P.circle[2] * r.s, big = 2 * Math.hypot(cw, ch), y = (2 * clamp(this.scan, 0, 1) - 1) * R0;
+      ctx.save();
+      ctx.beginPath(); ctx.rect(r.x, r.y, sw * r.s, sh * r.s); ctx.clip();
+      ctx.translate(X(P.circle[0]), Y(P.circle[1])); ctx.rotate(Math.atan2(-this.dir[0], this.dir[1]));
+      ctx.fillStyle = `rgba(0,0,0,${0.75 * this.dim})`; ctx.fillRect(-big, y, 2 * big, big);
+      const hgt = 2 * R0 * 0.05, gr = ctx.createLinearGradient(0, y - hgt, 0, y);
       gr.addColorStop(0, 'rgba(255,110,50,0)'); gr.addColorStop(1, `rgba(255,110,50,${0.27 * this.dim})`);
-      ctx.fillStyle = gr; ctx.fillRect(x0, y - hgt, x1 - x0, hgt);
-      const lw = Math.max(1.5, (bottom - top) / 260);
+      ctx.fillStyle = gr; ctx.fillRect(-big, y - hgt, 2 * big, hgt);
+      const lw = Math.max(1.5, 2 * R0 / 260);
       for (const [wm, col] of [[6, [255, 80, 30, 0.18]], [3, [255, 95, 40, 0.43]], [1.4, [255, 120, 60, 0.92]], [0.5, [255, 225, 190, 1]]]) {
         ctx.strokeStyle = `rgba(${col[0]},${col[1]},${col[2]},${col[3] * this.dim})`; ctx.lineWidth = lw * wm;
-        ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(-big, y); ctx.lineTo(big, y); ctx.stroke();
       }
+      ctx.restore();
     }
     if (!this.marks) return;
     ctx.setLineDash([5, 4]); ctx.strokeStyle = 'rgba(80,200,255,0.65)'; ctx.lineWidth = 1;
@@ -1574,7 +1632,7 @@ const views = { preview: null, side: null };   // the inspector's photo and 사�
 // ---------------------------------------------------------------------------------------------
 const $ = (id) => document.getElementById(id);
 const ui = {
-  cutValues: { front: 25, section: 0 },
+  cutValues: { front: 25, section: 0, hsection: 0 },
   view: 'front',
   marking: null,
   init() {
@@ -1593,18 +1651,24 @@ const ui = {
       $(id).addEventListener('click', () => this.setMarking(this.marking === what ? null : what));
     }
     $('redetect').addEventListener('click', () => this.redetect());
+    $('autofind').addEventListener('change', () => this.onAutofind($('autofind').checked));
     $('photo').addEventListener('click', (e) => this.onPhotoClick(e));
     // the bar
     for (const b of document.querySelectorAll('[name=mode]')) b.addEventListener('change', () => this.on3dMode($('mode-out').checked));
     $('scan').addEventListener('click', () => this.toggleScan());
-    $('unwrap').addEventListener('click', () => this.toggleUnwrap());
     $('full').addEventListener('click', () => this.toggleFull());
     $('panel').addEventListener('click', () => { const on = document.body.classList.toggle('no-panel'); $('panel').setAttribute('aria-pressed', String(!on)); setTimeout(() => { redraw(); views.preview.draw(); }, 0); });
     // 시점
-    $('front').addEventListener('click', () => { show.stop(); frontView(true); });
-    $('home').addEventListener('click', () => { show.stop(); resetView(true); });
+    $('front').addEventListener('click', () => { show.stop(); this.leaveJourney(); frontView(true); });
+    $('home').addEventListener('click', () => { show.stop(); this.leaveJourney(); resetView(true); });
+    // 들어가며 보기
+    $('journey-play').addEventListener('click', () => this.playJourney());
+    $('journey').addEventListener('input', () => { show.stop(); journey.scrub(+$('journey').value / 100); });
     // 안구 열기
-    for (const b of document.querySelectorAll('[name=view]')) b.addEventListener('change', () => this.setView($('view-section').checked ? 'section' : 'front'));
+    for (const b of document.querySelectorAll('[name=view]')) b.addEventListener('change', () => this.setView(b.value));
+    // 슬릿 스캔
+    for (const b of document.querySelectorAll('[name=slitdir]')) b.addEventListener('change', () => this.onSlitDir(b.value));
+    $('scan2').addEventListener('click', () => this.toggleScan());
     $('cut').addEventListener('input', () => this.onCut(+$('cut').value));
     $('glass').addEventListener('input', () => { E.glass = +$('glass').value / 100; redraw(); });
     $('xray').addEventListener('change', () => this.onXray($('xray').checked));
@@ -1617,6 +1681,7 @@ const ui = {
     $('nerve').addEventListener('change', () => { E.showNerve = $('nerve').checked; redraw(); });
     $('muscles').addEventListener('change', () => { E.showMuscles = $('muscles').checked; redraw(); });
     $('grid').addEventListener('change', () => { E.showGrid = $('grid').checked; redraw(); });
+    $('simple').addEventListener('change', () => this.onSimple($('simple').checked));
     // 사진 맞춤
     $('align').addEventListener('change', () => { E.align = $('align').checked; replace(); this.caption(); redraw(); });
     const pj = $('projection');
@@ -1639,10 +1704,10 @@ const ui = {
   loadDemo(i) {
     const meta = DATA.photos[i];
     loadImage(meta.src).then((img) => {
-      show.stop(); this.endUnwrap();
+      show.stop();
       const P = analysePhoto(img, { ...meta, eyeSetting: meta.eye });
       showPhoto(P);
-      this.status(`${meta.label} — 데모 사진`);
+      this.status(`${meta.label} — ${$('autofind').checked ? this.foundText(P) : '데모 사진'}`);
     });
   },
   loadFile(file) {
@@ -1655,12 +1720,10 @@ const ui = {
       const P = analysePhoto(img, { label: file.name, fov: dev.fov, fov_type: dev.fov_type, projection: dev.projection, device: devKey, own: true,
         eye: eye === 'auto' ? null : eye, eyeSetting: eye });
       URL.revokeObjectURL(url);
-      show.stop(); this.endUnwrap();
+      show.stop();
       showPhoto(P);
       $('photo-select').value = '';
-      const found = P.disc && P.fovea ? '유두와 황반을 찾았습니다' : P.disc ? '유두를 찾았습니다 (황반은 사진에 없거나 찾지 못했습니다)'
-        : '유두와 황반을 찾지 못했습니다 (사진에서 직접 지정하세요)';
-      this.status(`${file.name} — ${found}`);
+      this.status(`${file.name} — ${$('autofind').checked ? this.foundText(P) : '자동으로 찾기가 꺼져 있습니다'}`);
     }).catch(() => { URL.revokeObjectURL(url); this.status('이 파일은 열 수 없습니다'); });
   },
   syncPhoto() {
@@ -1669,7 +1732,9 @@ const ui = {
     $('fov').value = P.fov; $('fovtype').value = P.fovType; $('projection').value = P.projection; $('roll').value = 0;
     $('lat').value = P.eyeSetting === 'auto' ? 'auto' : (P.eye || 'auto');
     $('device').value = P.device || 'camera45';
-    $('photo-name').textContent = P.label + (P.eye ? ` · ${P.eye === 'OD' ? '우안' : '좌안'}` : '');
+    const eyeName = P.eye ? (P.eye === 'OD' ? '우안' : '좌안') : '';
+    $('photo-name').textContent = P.label + (eyeName && !P.label.includes(eyeName) ? ` · ${eyeName}` : '');
+    this.foundLine();
     this.setMarking(null);
     this.caption();
   },
@@ -1677,7 +1742,9 @@ const ui = {
     const P = photo.current;
     if (!P) return;
     P.fov = +$('fov').value || P.fov; P.fovType = $('fovtype').value; P.projection = $('projection').value;
-    const eye = $('lat').value; P.eyeSetting = eye; if (eye !== 'auto') P.eye = eye;
+    const eye = $('lat').value, eyeChanged = eye !== P.eyeSetting;
+    P.eyeSetting = eye; if (eye !== 'auto') P.eye = eye;
+    if (eyeChanged && $('autofind').checked) { findLandmarks(P); this.syncPhoto(); }   // the macula is looked for on that eye's side
     Object.assign(E, { fov: P.fov, fovType: P.fovType, projection: P.projection, roll: +$('roll').value || 0 });
     setLandmarks(P.eye, P.disc, P.fovea, P.circle);
     views.preview.draw(); this.caption();
@@ -1686,11 +1753,31 @@ const ui = {
     const P = photo.current, dev = DATA.devices[$('device').value];
     if (!P) return;
     Object.assign(P, { device: $('device').value, fov: dev.fov, fovType: dev.fov_type, projection: dev.projection });
-    findLandmarks(P);
+    if ($('autofind').checked) findLandmarks(P);
     Object.assign(E, { fov: P.fov, fovType: P.fovType, projection: P.projection });
     setLandmarks(P.eye, P.disc, P.fovea, P.circle);
     this.syncPhoto();
     this.status(`${dev.label}의 화각·투영으로 바꾸고 황반·유두를 다시 찾았습니다`);
+  },
+  foundLine() {   // where each landmark came from
+    const P = photo.current;
+    if (!P) { $('found').textContent = ''; return; }
+    const part = (name, has, hand) => `<span class="${has ? (hand ? 'hand' : 'auto') : 'none'}">${name} ${has ? (hand ? '직접 지정' : '자동으로 찾음') : '없음'}</span>`;
+    $('found').innerHTML = part('유두', !!P.disc, P.hand.disc) + ' · ' + part('황반', !!P.fovea, P.hand.fovea);
+  },
+  onAutofind(on) {
+    const P = photo.current;
+    if (!P) return;
+    if (on) findLandmarks(P);
+    else { if (!P.hand.disc) P.disc = null; if (!P.hand.fovea) P.fovea = null; }
+    setLandmarks(P.eye, P.disc, P.fovea, P.circle);
+    views.preview.draw(); this.caption();
+    this.status(on ? this.foundText(P) : '자동으로 찾기를 껐습니다 — 황반·유두를 직접 지정하거나 사진 중심을 후극에 둡니다');
+  },
+  foundText(P) {
+    return P.disc && P.fovea ? '유두와 황반을 자동으로 찾아 제자리에 맞췄습니다'
+      : P.disc ? '유두를 자동으로 찾았습니다 (황반은 사진에 없거나 찾지 못했습니다 — 유두를 코쪽 제자리에 맞춤)'
+        : '유두와 황반을 찾지 못했습니다 — 사진에서 직접 지정할 수 있습니다';
   },
   setMarking(what) {
     this.marking = what;
@@ -1704,27 +1791,29 @@ const ui = {
     if (!P || !this.marking) return;
     const b = $('photo').getBoundingClientRect(), p = views.preview.toPhoto(e.clientX - b.left, e.clientY - b.top);
     if (!p) return;
-    if (this.marking === 'fovea') P.fovea = p; else {
-      P.disc = p;
-      if (P.fovea) {   // a fovea far from the new disc: looked for again beside it
+    if (this.marking === 'fovea') { P.fovea = p; P.hand.fovea = true; } else {
+      P.disc = p; P.hand.disc = true;
+      if (P.fovea && !P.hand.fovea) {   // a fovea far from the new disc: looked for again beside it
         const cam = E.photoCamera(P.circle), a = cam.direction(...P.fovea), d = cam.direction(...p);
         if (!a || !d || angleBetween(a, d) < 12 || angleBetween(a, d) > 32) P.fovea = null;
       }
-      if (!P.fovea) { const f = detectFovea(P.px, E.photoCamera(P.circle), P.disc, P.eye); P.fovea = f ? f.slice(0, 2) : null; }
+      if (!P.fovea && $('autofind').checked) { const f = detectFovea(P.px, E.photoCamera(P.circle), P.disc, P.eye); P.fovea = f ? f.slice(0, 2) : null; }
     }
     const what = this.marking;
     this.setMarking(null);
     setLandmarks(P.eye, P.disc, P.fovea, P.circle);
-    views.preview.draw(); this.caption();
+    views.preview.draw(); this.caption(); this.foundLine();
     this.status(what === 'fovea' ? '황반 위치를 정했습니다 — 3D에서 안구 뒤쪽 한가운데에 맞췄습니다' : '시신경 유두 위치를 정했습니다');
   },
   redetect() {
     const P = photo.current;
     if (!P) return;
+    P.hand = { disc: false, fovea: false };
+    if (!$('autofind').checked) { $('autofind').checked = true; }
     findLandmarks(P);
     setLandmarks(P.eye, P.disc, P.fovea, P.circle);
-    views.preview.draw(); this.caption();
-    this.status('황반·유두를 다시 찾았습니다' + (P.fovea ? '' : ' (황반은 찾지 못했습니다)'));
+    views.preview.draw(); this.caption(); this.foundLine();
+    this.status('직접 정한 위치를 지우고 다시 찾았습니다 — ' + this.foundText(P));
   },
   caption() {   // MainWindow._placement_text
     const tmax = deg(E.thetaMax()), pl = E.placement;
@@ -1752,23 +1841,29 @@ const ui = {
   onCut(v) {
     if (show.timerOn) show.stop();
     this.cutValues[this.view] = v;
-    if (this.view === 'section') { vt.finish(); E.half = 1 - v / 100; } else E.cut = v < 100 ? v / 100 : 1;
+    if (this.view !== 'front') { vt.finish(); E.half = 1 - v / 100; } else E.cut = v < 100 ? v / 100 : 1;
     redraw();
   },
   syncView(mode) {
     this.view = mode;
     $('view-' + mode).checked = true;
     const cut = $('cut');
-    cut.min = mode === 'section' ? 0 : -30; cut.value = this.cutValues[mode];
+    cut.min = mode === 'front' ? -30 : 0; cut.value = this.cutValues[mode];
   },
   setView(mode, animate = true) {
     show.stop();
-    if (mode === 'section') this.endUnwrap();
+    this.leaveJourney();
     this.syncView(mode);
     E.cut = 1;
     let goal, half, done = null;
-    if (mode === 'section') { goal = sectionPose(); half = 1 - this.cutValues.section / 100; }
-    else { goal = E.half < 0.5 ? null : home(); half = 0; done = () => this.onCut(+$('cut').value); }
+    if (mode !== 'front') {
+      const axis = mode === 'hsection' ? 'h' : 'v';
+      if (axis !== E.secAxis && E.half > 0.01 && animate) {   // the other plane: close on this one, open on that one
+        vt.go(null, 0, E.xray, 0.4, () => { E.secAxis = axis; this.setView(mode, animate); });
+        return;
+      }
+      E.secAxis = axis; goal = sectionPose(); half = 1 - this.cutValues[mode] / 100;
+    } else { goal = E.half < 0.5 ? null : home(); half = 0; done = () => this.onCut(+$('cut').value); }
     if (!$('mode-out').checked) goal = null;
     vt.go(goal, half, E.xray, animate ? 0.9 : 0, done);
     this.applyFovMarks();
@@ -1789,6 +1884,25 @@ const ui = {
     E.black = on || !!document.fullscreenElement;
     setTimeout(() => { redraw(); views.side.draw(); }, 0);
   },
+  onSlitDir(dir) {
+    show.dir = dir;
+    const p = dir === 'all' ? null : SLIT[dir];
+    $('slit-note').textContent = p ? `${p.name} — ${p.axis === 'h' ? '가로 단면을 위에서' : '세로 단면을 옆에서'} 봅니다`
+      : '위↓ 아래↑ (세로 단면) 다음 왼→ 오른← (가로 단면) 차례로';
+    if (show.playing) { show.stop(); this.toggleScan(); }
+  },
+  onSimple(on) {   // 단순하게 보기: the coats, the iris and the lens fade to plain shapes; the retina stays as it is
+    const from = E.simple, to = on ? 1 : 0;
+    if (this.simpleTween) this.simpleTween.stop();
+    this.simpleTween = new Tween((k) => { E.simple = lerp(from, to, k); redraw(); }, 0.45);
+    this.simpleTween.start();
+  },
+  where(text) {   // the name chip over the eye
+    const tag = $('where');
+    clearTimeout(this.whereTimer);
+    if (text) { tag.textContent = text; tag.hidden = false; } else if (!journey.from) tag.hidden = true;
+  },
+  scanButtons(text) { $('scan').textContent = text; $('scan2').textContent = text; },
   toggleScan() {
     if (show.playing) { show.stop(); return; }
     show.xrayAfter = $('xray').checked;
@@ -1797,45 +1911,57 @@ const ui = {
     if (!$('sidephoto').checked) { $('sidephoto').checked = true; this.onSidePhoto(true); }
     vt.finish();
     show.showFov = $('fovmarks').checked;
-    this.endUnwrap();
+    this.leaveJourney();
     E.cut = 1;
-    this.cutValues.section = 0;
-    this.syncView('section');
+    const first = SLIT[show.passes()[0]];
+    this.cutValues.section = this.cutValues.hsection = 0;
+    this.syncView(first.axis === 'h' ? 'hsection' : 'section');
     setTimeout(() => show.start(), 30);
-    $('scan').textContent = '■ 멈춤';
+    this.scanButtons('■ 멈춤');
     this.status('슬릿 스캔 — 안구를 누르거나 돌리면 멈춥니다');
   },
   syncFromEye() {
-    this.cutValues.section = Math.round(100 * (1 - E.half));
-    this.syncView('section');
+    const mode = E.secAxis === 'h' ? 'hsection' : 'section';
+    this.cutValues[mode] = Math.round(100 * (1 - E.half));
+    this.syncView(mode);
     $('xray').checked = E.xray > 0.5;
   },
-  onScanFinished() { $('scan').textContent = '▶ 슬릿 스캔'; this.syncFromEye(); },
-  onScanStopped() { $('scan').textContent = '▶ 슬릿 스캔'; this.syncFromEye(); this.applyFovMarks(); },
-  on3dMode(outside) {
-    show.stop(); vt.finish(); this.endUnwrap();
+  onScanFinished() { this.scanButtons('▶ 슬릿 스캔'); this.syncFromEye(); },
+  onScanStopped() { this.scanButtons('▶ 슬릿 스캔'); this.syncFromEye(); this.applyFovMarks(); },
+  on3dMode(outside) {   // 외부 | 내부: along the way in (or back out), nothing goes dark
+    show.stop(); vt.finish();
     $('cut').disabled = !outside;
     for (const b of document.querySelectorAll('[name=view]')) b.disabled = !outside;
-    enter(outside ? 'outside' : 'inside');
+    if (this.view !== 'front' && !outside) this.syncView('front');
+    journey.play(outside ? 0 : 1, () => { if (outside) this.leaveJourney(true); });
   },
-  toggleUnwrap() {
-    if (!photo.current) { this.status('사진을 먼저 고르세요'); return; }
-    show.stop(); vt.finish(); stopMotion();
-    if (E.unwrap < 0.5) {
-      if (!$('mode-out').checked) { $('mode-out').checked = true; stopMotion(); E.mode = 'outside'; }
-      if (this.view !== 'front' || E.half > 0) { this.setView('front', false); vt.finish(); }
-      if (+$('cut').value > 45) $('cut').value = 25;
-      this.onCut(+$('cut').value);
-      glideTo({ yaw: 0, pitch: 0, dist: fit(E.DIST0, 1.1), target: [0, 0, 0] }, null, 1.25, { unwrap: 1 });
-      $('unwrap').textContent = '망막에 감기';
-      this.status('사진 펼치기 — 망막의 사진이 평면 사진으로 펴졌습니다 (다시 누르면 망막에 감깁니다)');
-    } else {
-      glideTo(home(), null, 1.25, { unwrap: 0 });
-      $('unwrap').textContent = '사진 펼치기';
-      this.status('사진을 망막에 감았습니다');
-    }
+  // 들어가며 보기
+  playJourney() {
+    if (journey.running()) { journey.stop(); return; }
+    show.stop();
+    const to = journey.j >= 0.999 ? 0 : 1;
+    journey.play(to, () => { if (to === 0) this.leaveJourney(true); });
   },
-  endUnwrap() { if (E.unwrap > 0) { stopMotion(); E.unwrap = 0; redraw(); } $('unwrap').textContent = '사진 펼치기'; },
+  leaveJourney(glide = false) {   // back to the ordinary outside view (the front cut as the slider says)
+    if (!journey.from) return;
+    journey.end();
+    if (E.mode === 'inside') return;
+    const cut = +$('cut').value;
+    if (glide) glideTo(home(), null, 0.6, { cut: cut < 100 ? cut / 100 : 1, outFov: 38 });
+    else { E.outFov = 38; E.cut = cut < 100 ? cut / 100 : 1; }
+  },
+  onJourney(j) {   // the slider, the 외부 | 내부 switch and the name of the place passed
+    $('journey').value = Math.round(j * 100);
+    $('journey-play').textContent = journey.running() ? '■ 멈춤' : j >= 0.999 ? '◀ 나오기' : '▶ 들어가기';
+    $(j >= 0.999 ? 'mode-in' : 'mode-out').checked = true;
+    const z = len(viewBasis()[0]);
+    const where = j <= 0.001 ? '' : j >= 0.999 ? '망막 — 황반과 시신경 유두 (망막 시점)' : j < 0.32 ? '안구 전체 — 각막 쪽으로'
+      : z > 1.09 ? '각막 앞' : z > 0.83 ? '앞방 — 각막과 홍채 사이 (방수)' : z > 0.785 ? '동공 — 홍채 가운데'
+      : z > 0.46 ? '수정체' : '유리체 — 앞에 망막이 보입니다';
+    const tag = $('where');
+    if (where) { tag.textContent = where; tag.hidden = false; clearTimeout(this.whereTimer); }
+    if (j >= 0.999 || j <= 0.001) this.whereTimer = setTimeout(() => { tag.hidden = true; }, j >= 0.999 ? 2500 : 0);
+  },
   toggleFull() {
     if (document.fullscreenElement) { document.exitFullscreen().catch(() => {}); return; }
     const el = $('stage');
@@ -1845,7 +1971,7 @@ const ui = {
     const vel = new Velocity();
     const pointers = new Map();
     let press = null, pinch = null;
-    const interacted = () => { if (show.timerOn) show.stop(); if (vt.active()) vt.finish(); };
+    const interacted = () => { if (show.timerOn) show.stop(); if (vt.active()) vt.finish(); if (journey.running()) { journey.stop(); ui.onJourney(journey.j); } };
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     canvas.addEventListener('pointerdown', (e) => {
       canvas.setPointerCapture(e.pointerId);
@@ -1886,7 +2012,7 @@ const ui = {
     canvas.addEventListener('pointercancel', up);
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
-      fling.stop(); viewGlide.stop(); finishEnter(); E.touched = now(); interacted();
+      fling.stop(); viewGlide.stop(); E.touched = now(); interacted();
       zoomPos = [e.offsetX, e.offsetY];
       const px = e.deltaMode === 1 ? e.deltaY * 40 : e.deltaMode === 2 ? e.deltaY * 800 : e.deltaY;
       zoomGlide.add(clamp(-px / 100, -6, 6));
@@ -1895,7 +2021,7 @@ const ui = {
     canvas.addEventListener('keydown', (e) => {
       const k = e.key;
       if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', '+', '=', '-', '_', '0', 'Home'].includes(k)) {
-        e.preventDefault(); interacted(); E.touched = now(); fling.stop(); viewGlide.stop(); finishEnter();
+        e.preventDefault(); interacted(); E.touched = now(); fling.stop(); viewGlide.stop();
       }
       if (k === 'ArrowLeft') turnX.add(-10); else if (k === 'ArrowRight') turnX.add(10);
       else if (k === 'ArrowUp') turnY.add(-10); else if (k === 'ArrowDown') turnY.add(10);
@@ -1927,7 +2053,8 @@ async function main() {
   ui.loadDemo(0);
   setAutoRotate($('spin').checked ? MD.spin : 0);
   viewChanged();
-  window.eye3d = { E, ui, show, redraw, setAutoRotate, enter, frontView, resetView, glideTo, motionOn, cameraMats, m4v, R, gl, renderNow: render };   // for checks from the console
+  window.eye3d = { E, ui, show, journey, redraw, setAutoRotate, frontView, resetView, glideTo, motionOn, cameraMats, m4v, R, gl, renderNow: render,
+    find: { pixelsOf, detectCircle, detectDisc, detectFovea, blur } };   // for checks from the console
 }
 main();
 })();

@@ -22,7 +22,7 @@ def _build_module():
 def test_shaders_are_rewritten_for_webgl2():
     b = _build_module()
     sh = b.shaders()
-    assert set(sh) >= {"sclera", "cornea", "wall", "tissue", "clear", "section", "sheet", "bg", "fade"}
+    assert set(sh) >= {"sclera", "cornea", "wall", "tissue", "clear", "section", "bg", "fade"}
     for name, s in sh.items():
         for stage in ("vs", "fs"):
             src = s[stage]
@@ -32,6 +32,12 @@ def test_shaders_are_rewritten_for_webgl2():
         assert "attribute" not in s["vs"] and re.search(r"\bin vec3 a_pos;", s["vs"])
         assert "gl_FragColor" not in s["fs"] and "out vec4 fragColor_;" in s["fs"]
     assert "uniform mat3  u_place;" in sh["wall"]["fs"]                 # the photo's placement on the eye
+    # the page's own lines (WEB_PATCHES): every one still finds its place in the program's shaders
+    for part in {p for p, _, _ in b.WEB_PATCHES}:
+        assert b.block(part) != getattr(b.e3, part), part               # (each line must match once, in order)
+    for name in ("sclera", "cornea", "wall", "tissue", "clear", "section"):
+        assert "uniform float u_simple;" in sh[name]["fs"], name        # 단순하게 보기
+    assert "u_scan_dir" in sh["wall"]["fs"] and "u_within" in sh["clear"]["fs"]   # 슬릿 방향; no studio lights inside
 
 
 def test_the_page_is_built_in_one_file(tmp_path):
@@ -53,5 +59,9 @@ def test_the_page_is_built_in_one_file(tmp_path):
     for p in photos.values():                                         # found as the program finds them on import
         assert p["src"].startswith("data:image/jpeg;base64,") and len(p["circle"]) == 3 and p["disc"] is not None
     assert photos["cam45_nasal"]["fovea"] is not None and photos["cam30_disc"]["fovea"] is None   # the macula off the photo
+    for control in ('id="autofind"', 'id="simple"', 'id="view-hsection"', 'name="slitdir"', 'id="journey"'):
+        assert control in page, control
+    assert 'id="autofind" checked' in page                             # finding the macula and disc is the default
+    assert "사진 펼치기" not in page and 'id="unwrap"' not in page
     m = data["model"]
     assert m["consts"]["R_RET"] == pytest.approx(0.9) and len(m["wall_base"]["z"]) == len(m["wall_base"]["r"])
