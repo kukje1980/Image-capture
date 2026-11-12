@@ -19,7 +19,10 @@ The rest of the eye is an anatomical model (``eye_model.py``, 1 = 12 mm):
   and the retinal layers, or the ciliary body in front of the ora serrata
 * inside — retina (photo + procedural periphery), the scalloped ora,
   pars plana, 72 ciliary processes, zonules, lens (nucleus in section),
-  back of the iris, chamber angle; the rim of the cut casts its shadow
+  back of the iris, chamber angle; evenly lit (the rim of the cut casts no shadow)
+* 망막 높낮이 — over the photographed field a fine mesh raised by the retina's
+  relief (``relief.py``: vessels stand up, the disc has its cup, the fovea
+  its pit), the wall left open beneath it
 * optic nerve in its dural sheath (cut end: central retinal artery and
   vein, fascicles), optional extraocular muscle stumps
 
@@ -28,11 +31,18 @@ Looks (``detail``)
     photo inside, a flat iris, a glassy cornea and a plain nerve.
   * 자세히 ("detailed"): the anatomical model above.
 
+단순하게 보기 (``simple`` 0 … 1, the detailed look): the sclera, iris, lens,
+zonules, ciliary body, periphery and optic nerve fade to plain shapes and
+colours; the photographed retina and its relief stay as they are.
+
 Modes
   * 외부 (outside): the eyeball can be rotated; the front cut opens the eye
     so the retina is seen inside the eye cup.
   * 내부 (inside): the camera sits inside the eye and looks at the retina,
     like an ophthalmoscope with an unlimited field.
+  * 들어가며 보기 (``journey_*``): from the whole eye in through the cornea, the
+    anterior chamber, the pupil, the lens and the vitreous to the retina —
+    nothing goes dark; the way can be played or stopped anywhere.
 
 Outside views (besides the front cut)
   * 세로 단면 (``half``): the eye cut in half along the vertical meridian of
@@ -43,9 +53,10 @@ Outside views (besides the front cut)
   * 망막 투시 (``xray``): the outer coats behind the ora are see-through, so the
     retina with the photo is seen on the globe from outside (mirrored, as it
     would be); in front of the ora the eye keeps its sclera, cornea and iris.
-  * 슬릿 스캔 (``scan``): a horizontal slit runs down the photo; on the retina
-    the unscanned part is dark and the slit glows, and in the section view
-    the slit beam goes through the pupil to the retina.
+  * 슬릿 스캔 (``scan``): a slit crosses the photo (down, up, right or left —
+    ``slit_axis``, ``scan_sign``); on the retina the unscanned part is dark
+    and the slit glows, and in the section view the slit beam goes through
+    the pupil to the retina.
 
 Requires OpenGL 2.1. On PCs without a capable driver, start with the
 ``software`` OpenGL setting (Mesa llvmpipe, bundled with PySide6).
@@ -64,6 +75,7 @@ from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
 from .. import placement
 from .. import projection as proj
+from .. import relief as rl
 from ..config import config_dir
 from . import eye_model as em
 from . import motion
@@ -166,6 +178,7 @@ uniform float u_cut;
 uniform int u_mirror;
 uniform vec3 u_hk;        // 세로 단면: points with dot(p, u_hk) < -u_hoff are cut away (u_hk = 0: none)
 uniform float u_hoff;
+uniform float u_simple;   // 단순하게 보기: 0 the detailed look … 1 plain
 varying vec3 v_obj;
 varying vec3 v_n;
 varying vec2 v_uv;
@@ -230,14 +243,23 @@ uniform vec2  u_radius;   // image-circle radius (texture coords, x and y)
 uniform float u_roll;
 uniform mat3  u_place;    // eye → the photo's own frame: where the photo lies on the retina (placement.py)
 uniform float u_grid;     // > 0: draw 10°/30° retinal angle rings
-uniform vec2  u_scan;     // slit scan: (slit row in texture v, darkness of the unscanned part); y = 0: off
+uniform vec2  u_scan;     // slit scan: (the slit along u_scan_dir, -1…1 over the image circle; darkness of
+                          // the part not scanned yet); y = 0: off
+uniform vec2  u_scan_dir; // the way the slit moves over the photo (x to its right, y down)
 uniform float u_fovring;  // > 0: mark the edge of the photographed field
 uniform float u_relief;   // 입체 조명: vessels and the disc catch a raking light (0 = off)
 uniform vec2  u_texel;    // one texel of the photo (texture coordinates)
 uniform vec3  u_rlight;   // direction to that light (the photo's frame)
 
-// brightness from a coarser level of the photo: the relief follows vessels, not the grain
-float lum_(vec2 uv) { return dot(texture2D(u_tex, uv, 1.0).rgb, vec3(0.299, 0.587, 0.114)); }
+uniform sampler2D u_hmap;  // 망막 높낮이: the height of the retinal surface over the photo (relief.py), 16 bits in R, G
+uniform float u_hmap_on;   // 0 the relief from the photo's brightness … 1 from the height map
+float height_(vec2 uv) { vec4 h = texture2D(u_hmap, uv); return (h.r * 65280.0 + h.g * 255.0) / 65535.0 * 2.0 - 1.0; }
+// brightness from a coarser level of the photo: the relief follows vessels, not the grain (dark stands
+// up, pale sinks); with the height map, its heights read the same way: raised vessels, the cup, the pit
+float lum_(vec2 uv) {
+    float l = dot(texture2D(u_tex, uv, 1.0).rgb, vec3(0.299, 0.587, 0.114));
+    return u_hmap_on > 0.0 ? mix(l, 0.45 - 0.20 * height_(uv), u_hmap_on) : l;
+}
 
 float cbrt_(float x) { return sign(x) * pow(abs(x), 1.0 / 3.0); }
 
@@ -277,7 +299,7 @@ vec4 photo(vec3 d) {
         t.rgb *= clamp(1.0 + 5.5 * u_relief * dot(slope, u_rlight), 0.45, 1.7);
     }
     if (u_scan.y > 0.0) {                    // below the slit: not scanned yet; the slit glows
-        float dv = (uv.y - u_scan.x) / max(u_radius.y, 1e-4);
+        float dv = dot((uv - u_center) / max(u_radius, vec2(1e-4)), u_scan_dir) - u_scan.x;
         t.rgb *= 1.0 - 0.76 * u_scan.y * smoothstep(-0.004, 0.004, dv);
         t.rgb += vec3(1.0, 0.42, 0.16) * (exp(-dv * dv / 0.00006) * 1.1 + exp(-dv * dv / 0.0012) * 0.25) * u_scan.y;
     }
@@ -309,6 +331,7 @@ vec3 fundus(vec3 d, float z, out float w) {
     float dx = u_mirror == 1 ? -d.x : d.x;
     float phim = u_mirror == 1 ? (phi > 0.0 ? @PI@ - phi : -@PI@ - phi) : phi;   // anatomical azimuth
     vec3 ret = texture2D(u_peri, vec2(dx, d.y) / max(1.0 - d.z, 0.05) * @PERI_K@ + 0.5).rgb;
+    if (u_simple > 0.0) ret = mix(ret, texture2D(u_peri, vec2(dx, d.y) / max(1.0 - d.z, 0.05) * @PERI_K@ + 0.5, 7.0).rgb, u_simple);
     vec4 t = photo(d);
     ret = retina_marks(mix(ret, t.rgb, t.a), d);
     w = 1.0;
@@ -324,6 +347,7 @@ vec3 fundus(vec3 d, float z, out float w) {
     vec3 proc = mix(vec3(0.06, 0.04, 0.028), vec3(0.27, 0.20, 0.16), smoothstep(0.30, 0.95, crest));
     cil = mix(cil, proc, smoothstep(@PLIC0@ - 0.015, @PLIC0@ + 0.025, z));
     cil = mix(cil, vec3(0.05, 0.035, 0.025), smoothstep(0.772, 0.795, z));
+    cil = mix(cil, vec3(0.13, 0.09, 0.065), u_simple);
     w = 1.0 - smoothstep(ora - 0.003, ora + 0.003, theta);
     return mix(cil, ret, w);
 }
@@ -337,7 +361,7 @@ vec3 sclera_albedo(vec3 p) {
     if (u_mirror == 1) q.x = -q.x;
     vec3 ca = texture2D(u_scl_a, q.xy / max(1.0 + q.z, 0.05) * @SCL_K@ + 0.5).rgb;
     vec3 cp = texture2D(u_scl_p, q.xy / max(1.0 - q.z, 0.05) * @SCL_K@ + 0.5).rgb;
-    return mix(cp, ca, smoothstep(-0.15, 0.15, q.z));
+    return mix(mix(cp, ca, smoothstep(-0.15, 0.15, q.z)), vec3(0.80, 0.80, 0.79), u_simple);
 }
 vec3 sclera_shade(vec3 alb, vec3 n, vec3 v, float gloss) {
     vec3 c = wet(alb, n, v, gloss, 0.12);
@@ -366,7 +390,14 @@ vec3 iris_lit(vec2 xy, vec3 L, vec3 V, float light) {
     vec3 amb = vec3(mix(0.08, 0.22, 0.5 + 0.5 * nb.y)) + 0.2 * max(dot(nb, u_fill), 0.0);
     vec3 c = lin(t.rgb) * ao * under * (light * 1.6 * max(dot(nb, L), 0.0) + amb);
     vec3 h = normalize(L + V);
-    return c + vec3(0.05) * pow(max(dot(nb, h), 0.0), 20.0) * light * ao * under;
+    c += vec3(0.05) * pow(max(dot(nb, h), 0.0), 20.0) * light * ao * under;
+    if (u_simple > 0.0) {   // an even brown ring, darker at the pupil margin and toward the root
+        float rr = length(xy);
+        vec3 flat_ = lin(vec3(0.36, 0.27, 0.20)) * mix(0.72, 1.0, smoothstep(@PUPIL_R@, @PUPIL_R@ * 1.5, rr))
+                   * mix(1.0, 0.6, smoothstep(@IRIS_ROOT_R@ * 0.85, @IRIS_ROOT_R@, rr));
+        c = mix(c, flat_ * (light * 1.3 * max(L.z, 0.0) + 0.22), u_simple);
+    }
+    return c;
 }
 """
 
@@ -393,9 +424,9 @@ void main() {
     vec3 v = normalize(u_campos - v_obj);
     vec3 n = normalize(v_n);
     float dn = acos(clamp(dot(p, u_disc), -1.0, 1.0));     // angle from the optic nerve
-    vec3 alb = mix(sclera_albedo(p), vec3(0.36, 0.11, 0.10), spca(p, dn) * 0.6);
+    vec3 alb = mix(sclera_albedo(p), vec3(0.36, 0.11, 0.10), spca(p, dn) * 0.6 * (1.0 - u_simple));
     float ao = mix(0.55, 1.0, smoothstep(0.235, 0.36, dn));
-    vec3 c = sclera_shade(lin(alb) * ao, n, v, 1.0);
+    vec3 c = sclera_shade(lin(alb) * ao, n, v, 1.0 - 0.6 * u_simple);
     if (u_xray > 0.0) {   // only where the retina lies behind: the front keeps its white sclera
         float w;
         vec3 f = lin(fundus(p, v_obj.z, w)) * mix(0.75, 1.0, smoothstep(0.235, 0.36, dn));
@@ -412,7 +443,7 @@ void main() {
         vec3 h = normalize(u_key + v);
         float glint = pow(max(dot(n, h), 0.0), 120.0) + 0.32 * softbox(reflect(-v, n), u_key, u_kx, u_ky,
                                                                      vec2(0.24, 0.17), 0.05, 0.03);
-        float body = clamp(0.07 + 0.70 * edge + 0.50 * vessel + glint, 0.0, 1.0);
+        float body = clamp(mix(0.07 + 0.70 * edge + 0.50 * vessel + glint, 0.02 + 0.42 * edge + 0.5 * glint, u_simple), 0.0, 1.0);
         a = mix(1.0, body, u_glass);
         // over the photographed retina the glass is clear whatever the setting: the photo shows strong
         float cover = photo(p).a * smoothstep(0.0, 0.25, u_glass);
@@ -471,8 +502,8 @@ void main() {
 WALL_FRAG = """
 uniform int   u_inside;
 uniform vec3  u_light;
-uniform vec3  u_open_n;   // the opening (outside mode): points q with dot(q, u_open_n) > u_open
-uniform float u_open;     // are open, so the rim of the cut shadows the wall
+uniform float u_hole;     // 망막 높낮이: the photographed field is drawn by the relief sheet, the wall leaves
+                          // it open (inside theta < u_hole × the field's half angle); 0: no hole
 uniform int   u_side;     // 유리 공막: 0 the whole wall (as ever), 1 only its inside (the far wall),
                           // 2 only the outside of the near wall — solid where the photo lies, else clear
 uniform float u_glass;
@@ -480,6 +511,7 @@ uniform float u_glass;
 void main() {
     if (v_obj.z > u_cut + 1e-4 || cut_away(v_obj)) discard;   // section faces lie exactly at the cut
     vec3 d = normalize(v_obj);
+    if (u_hole > 0.0 && u_has_tex == 1 && acos(clamp(-(u_place * d).z, -1.0, 1.0)) < u_tmax * u_hole) discard;
     vec3 n = normalize(v_n);
     float on_ret;
     vec3 col = fundus(d, v_obj.z, on_ret);
@@ -498,16 +530,15 @@ void main() {
         return;
     }
 
+    // No shadow of the cut's rim: the retina is lit evenly, only gently darker away from the light,
+    // and its relief (the relief sheet's own slopes against the sphere's) catches the light.
     float diff = max(dot(n, u_light), 0.0);
-    float lit = 1.0;
-    if (u_inside == 0) {   // where the light ray from this point meets the wall again
-        vec3 q = v_obj - 2.0 * dot(v_obj, u_light) * u_light;
-        lit = smoothstep(u_open - 0.05, u_open + 0.05, dot(q, u_open_n));
-    }
-    vec3 outc = col * (0.62 + 0.38 * diff * lit);
+    float bump = (dot(n, u_light) - dot(-d, u_light)) * on_ret;
+    float shade = mix(0.62 + 0.38 * diff, 0.80 + 0.20 * max(dot(-d, u_light), 0.0) + 1.1 * bump, on_ret);
+    vec3 outc = col * clamp(shade, 0.35, 1.5);
     if (u_inside == 0) {   // inner limiting membrane / ciliary sheen
         vec3 h = normalize(u_light + normalize(u_campos - v_obj));
-        outc += vec3(0.10) * pow(max(dot(n, h), 0.0), 60.0) * lit * mix(0.4, 1.0, on_ret);
+        outc += vec3(0.10) * pow(max(dot(n, h), 0.0), 60.0) * mix(0.4, 1.0, on_ret);
     }
     gl_FragColor = vec4(outc, 1.0);
 }
@@ -632,17 +663,18 @@ void main() {
         if (n.z > 0.7) col = iris_lit(v_obj.xy, u_key, v, 1.0);
         else if (n.z < -0.7) {               // posterior pigment epithelium with radial folds
             float a = atan(v_obj.y, v_obj.x);
-            col = lighting(lin(vec3(0.06, 0.035, 0.025) * (0.8 + 0.2 * sin(a * 110.0))), n, 0.2);
+            col = lighting(lin(vec3(0.06, 0.035, 0.025) * (0.8 + 0.2 * (1.0 - u_simple) * sin(a * 110.0))), n, 0.2);
         } else col = lighting(lin(vec3(0.07, 0.045, 0.03)), n, 0.2);
     }
-    else if (u_kind == 3) col = wet(lin(gonio(v_obj.z)), n, v, 0.3, 0.3);
-    else if (u_kind == 4) col = nerve(n, v);
-    else col = muscle(n, v);
+    else if (u_kind == 3) col = wet(lin(mix(gonio(v_obj.z), vec3(0.30, 0.22, 0.17), u_simple)), n, v, 0.3, 0.3);
+    else if (u_kind == 4) col = mix(nerve(n, v), wet(lin(vec3(0.84, 0.79, 0.71)), n, v, 0.25, 0.2), u_simple);
+    else col = mix(muscle(n, v), wet(lin(vec3(0.56, 0.24, 0.20)), n, v, 0.3, 0.2), u_simple);
     gl_FragColor = vec4(tonemap(col), 1.0);
 }
 """
 
 CLEAR_FRAG = """
+uniform float u_within;
 uniform int u_kind;   // 0 lens surface, 1 lens section, 2 zonules, 3 cornea (세로 단면: a clear shell)
 void main() {
     if (v_obj.z > u_cut + 1e-4 || cut_away(v_obj)) discard;   // section faces lie exactly at u_cut
@@ -650,21 +682,22 @@ void main() {
     if (u_kind == 3) {
         vec3 n = normalize(v_n);
         float F = 0.03 + 0.97 * pow(1.0 - abs(dot(n, v)), 5.0);
-        vec3 refl = tonemap(env(reflect(-v, n * sign(dot(n, v)))) * F);
+        vec3 refl = tonemap(env(reflect(-v, n * sign(dot(n, v)))) * F * (1.0 - u_within));
         float lr = clamp(dot(refl, vec3(0.333)), 0.0, 1.0);
         float a = clamp(0.07 + lr, 0.0, 0.9);
         gl_FragColor = vec4((vec3(0.80, 0.86, 0.92) * 0.07 + refl * lr) / max(a, 1e-3), a);
         return;
     }
     if (u_kind == 2) {
-        gl_FragColor = vec4(tonemap(lighting(lin(vec3(0.92, 0.91, 0.86)), vec3(0.0, 0.0, 1.0), 1.0)), 0.35);
+        gl_FragColor = vec4(tonemap(lighting(lin(vec3(0.92, 0.91, 0.86)), vec3(0.0, 0.0, 1.0), 1.0)), 0.35 * (1.0 - u_simple));
         return;
     }
     if (u_kind == 1) {                       // section: yellowish nucleus, lamellar cortex, capsule
         float rho = v_uv.x;
         float nuc = 1.0 - smoothstep(0.48, 0.62, rho);
         vec3 c = mix(vec3(0.94, 0.93, 0.89), vec3(0.88, 0.79, 0.58), nuc) * (0.98 + 0.02 * sin(rho * 90.0));
-        float a = mix(0.20, 0.38, nuc);
+        float a = mix(mix(0.20, 0.38, nuc), 0.12, u_simple);
+        c = mix(c, vec3(0.93, 0.91, 0.87), u_simple);
         float cap = smoothstep(0.95, 0.99, rho);
         gl_FragColor = vec4(tonemap(lighting(lin(mix(c, vec3(0.97), cap)), vec3(0.0, 0.0, 1.0), 0.3)),
                             mix(a, 0.75, cap));
@@ -673,9 +706,9 @@ void main() {
     vec3 n = normalize(v_n);
     if (!gl_FrontFacing) n = -n;
     float F = 0.02 + 0.98 * pow(1.0 - abs(dot(n, v)), 5.0);
-    vec3 refl = tonemap(env(reflect(-v, n)) * F * 0.6);
+    vec3 refl = tonemap(env(reflect(-v, n)) * F * 0.6 * (1.0 - 0.5 * u_simple) * (1.0 - u_within));
     vec3 body = tonemap(lighting(lin(vec3(0.93, 0.88, 0.70)), n, 0.5) * 0.3);
-    float ab = 0.14 + 0.5 * F;
+    float ab = mix(0.14 + 0.5 * F, 0.035 + 0.3 * F, u_simple);
     float lr = clamp(dot(refl, vec3(0.333)), 0.0, 1.0);
     float a = clamp(ab + lr, 0.0, 1.0);
     gl_FragColor = vec4((body * ab + refl * lr) / max(a, 1e-3), a);
@@ -732,8 +765,8 @@ void main() {
     if (kind == 3) {                         // lens: clear cortex, yellowish nucleus, glossy capsule
         float nuc = 1.0 - smoothstep(0.48, 0.62, aux);
         float cap = smoothstep(0.95, 0.99, aux);
-        vec3 c = tonemap(lighting(lin(mix(lens_layers(aux), vec3(0.97), cap)), n, 0.3));
-        gl_FragColor = vec4(c, mix(mix(0.16, 0.42, nuc), 0.7, cap));
+        vec3 c = tonemap(lighting(lin(mix(mix(lens_layers(aux), vec3(0.93, 0.92, 0.88), u_simple), vec3(0.97), cap)), n, 0.3));
+        gl_FragColor = vec4(c, mix(mix(mix(0.16, 0.42, nuc), 0.7, cap), mix(0.10, 0.45, cap), u_simple));
         return;
     }
     vec3 c;
@@ -742,7 +775,7 @@ void main() {
     else if (kind == 2) {                    // iris: stroma over the dark pigment epithelium
         float a = atan(p.y, p.x) + p.z;
         c = aux < 0.007 ? vec3(0.06, 0.035, 0.025)
-                        : vec3(0.30, 0.18, 0.09) * (0.85 + 0.15 * sin(ra * 260.0 + sin(a * 40.0) * 2.0));
+                        : vec3(0.30, 0.18, 0.09) * (0.85 + 0.15 * (1.0 - u_simple) * sin(ra * 260.0 + sin(a * 40.0) * 2.0));
     } else {                                 // cornea: epithelium, lamellar stroma, endothelium
         float t = (@CORNEA_R@ - dc) / @CORNEA_T@;
         c = vec3(0.86, 0.88, 0.90) * (0.97 + 0.03 * sin(dc * 3000.0));
@@ -861,70 +894,6 @@ void main() {
 }
 """
 
-# 사진 펼치기: the photographed part of the retina as a sheet of its own. Each vertex knows where it
-# lies on the retina (a_pos) and on the flat photo held at the eye's opening (a_nrm); u_flat moves
-# it between the two, the middle of the photo first.
-SHEET_VERT = """
-attribute vec3 a_pos;
-attribute vec3 a_nrm;
-attribute vec2 a_uv;
-uniform mat4 u_mvp;
-uniform float u_flat;
-uniform float u_sheet_r;  // radius of the flat photo
-varying vec3 v_obj;
-varying vec3 v_n;
-varying vec2 v_uv;
-varying float v_front;
-void main() {
-    float rho = length(a_nrm.xy) / u_sheet_r;
-    float k = clamp(u_flat * 1.35 - 0.35 * rho, 0.0, 1.0);
-    k = k * k * (3.0 - 2.0 * k);
-    vec3 p = mix(a_pos, a_nrm, k);
-    v_obj = p;
-    v_n = normalize(mix(-normalize(a_pos), vec3(0.0, 0.0, 1.0), k));
-    v_uv = a_uv;
-    v_front = a_pos.z;
-    gl_ClipVertex = vec4(p, 1.0);
-    gl_Position = u_mvp * vec4(p, 1.0);
-}
-"""
-
-SHEET_FRAG = """
-uniform sampler2D u_tex;
-uniform vec3  u_light;
-uniform float u_flat;
-uniform float u_cutz;     // the eye's opening: a wide photo reaches in front of it
-uniform float u_relief;
-uniform vec2  u_texel;
-varying vec3 v_obj;
-varying vec3 v_n;
-varying vec2 v_uv;
-varying float v_front;
-float lum_(vec2 uv) { return dot(texture2D(u_tex, uv, 1.0).rgb, vec3(0.299, 0.587, 0.114)); }
-void main() {
-    vec4 t = texture2D(u_tex, v_uv);
-    // on the retina only what the opened eye shows; lifting off, the whole photo appears
-    float a = t.a * mix(1.0 - smoothstep(u_cutz - 0.01, u_cutz + 0.01, v_front), 1.0, smoothstep(0.0, 0.25, u_flat));
-    if (a < 0.03) discard;
-    vec3 n = normalize(v_n);
-    if (u_relief > 0.0) {                    // as on the retina, with the sheet's own directions
-        vec3 dp1 = dFdx(v_obj), dp2 = dFdy(v_obj);
-        vec2 d1 = dFdx(v_uv), d2 = dFdy(v_uv);
-        float det = d1.x * d2.y - d1.y * d2.x;
-        if (abs(det) > 1e-12) {
-            vec3 right = normalize((dp1 * d2.y - dp2 * d1.y) / det);
-            vec3 down = normalize((dp2 * d1.x - dp1 * d2.x) / det);
-            vec2 e = u_texel * 2.2;
-            float gx = lum_(v_uv + vec2(e.x, 0.0)) - lum_(v_uv - vec2(e.x, 0.0));
-            float gy = lum_(v_uv - vec2(0.0, e.y)) - lum_(v_uv + vec2(0.0, e.y));
-            t.rgb *= clamp(1.0 + 5.5 * u_relief * (1.0 - u_flat) * dot(gx * right - gy * down, u_light), 0.45, 1.7);
-        }
-    }
-    float diff = 0.62 + 0.38 * max(dot(n, u_light), 0.0);
-    gl_FragColor = vec4(t.rgb * mix(diff, 1.0, u_flat), a);
-}
-"""
-
 # A frame drawn small (while the eye moves on a slow computer), stretched over the widget.
 BLIT_VERT = """
 attribute vec3 a_pos;
@@ -951,10 +920,8 @@ void main() {
 }
 """
 
-SHEET_R = 0.86            # largest radius of the flat photo at the eye's opening (eye radii)
-
 # texture units
-_UNITS = {"tex": 0, "iris": 1, "scl_a": 2, "scl_p": 3, "peri": 4}
+_UNITS = {"tex": 0, "iris": 1, "scl_a": 2, "scl_p": 3, "peri": 4, "hmap": 5}
 
 _TEX_LOCK = threading.Lock()
 _TEXTURES: dict | None = None
@@ -1052,6 +1019,15 @@ class _Mesh:
         gl.glDeleteBuffers(len(self.vbo) + 1, self.vbo + [self.ibo])
 
 
+def _ease(x: float) -> float:
+    t = min(1.0, max(0.0, x))
+    return t * t * (3.0 - 2.0 * t)
+
+
+def _lerp(a: float, b: float, t: float) -> float:
+    return a + (b - a) * t
+
+
 def _smooth(e0: float, e1: float, x: float) -> float:
     t = min(1.0, max(0.0, (x - e0) / (e1 - e0)))
     return t * t * (3.0 - 2.0 * t)
@@ -1068,7 +1044,8 @@ class _Spin(motion._Anim):
         e = self.eye
         now = time.perf_counter()
         busy = (e._drag is not None or e._fling.running() or e._zoom_glide.running() or e._view_glide.running()
-                or e._entering or e.mode != "outside" or e.scan is not None)
+                or e._entering or e.journey_running() or e.mode != "outside" or e.scan is not None
+                or float(np.linalg.norm(e._view_basis()[0])) < 1.1)   # (not inside the eye on the way in)
         if busy or self._yaw is None or abs(e.yaw - self._yaw) > 1e-9:
             e._touched = now                   # someone else turned it: wait again
             self._yaw = e.yaw
@@ -1087,6 +1064,7 @@ class EyeView(QOpenGLWidget):
     glError = Signal(str)
     zoomChanged = Signal(float)        # magnification relative to the start view
     interacted = Signal()              # the user dragged, zoomed or pressed a view key
+    journeyChanged = Signal(float)     # 들어가며 보기: where on the way (0 the whole eye … 1 the retina)
 
     DETAILS = ("simple", "detailed")
     SPIN_WAIT = 3.0                    # seconds left alone before 자동 회전 starts turning again
@@ -1131,7 +1109,9 @@ class EyeView(QOpenGLWidget):
         # 세로 단면 / 망막 투시 / 슬릿 스캔 (all 0 / None: the plain outside view)
         self.half = 0.0                # 0 … 1: the section plane slides in until half the eye is cut away
         self.xray = 0.0                # 0 … 1: the outer coats turn see-through (retina seen from outside)
-        self.scan: float | None = None # slit position: 0 top … 1 bottom of the photo
+        self.scan: float | None = None # slit position: 0 … 1 of its way over the photo
+        self.slit_axis = "v"           # … along the photo's vertical ("v") or horizontal ("h") axis
+        self.scan_sign = -1.0          # … from its top / right end (-1 / +1 on "v": down / up; "h": left / right)
         self.scan_dim = 1.0            # darkness of the not yet scanned part (0 … 1)
         self.scan_beam = 1.0           # opacity of the slit beam in the section view
         self.fov_sweep = 0.0           # 0 … 1: the field-of-view rays open from the posterior pole
@@ -1141,12 +1121,20 @@ class EyeView(QOpenGLWidget):
         # 효과
         self.relief = 0.0              # 입체 조명 0 … 1: vessels and the disc in relief under the light
         self.glass = 0.0               # 유리 공막 0 … 1: the sclera see-through, the photographed retina solid
-        self.unwrap = 0.0              # 사진 펼치기 0 … 1: the photo lifts off the retina and lies flat
-        self.dark = 0.0                # 0 … 1: the picture fades to black (through the pupil)
+        self.simple = 0.0              # 단순하게 보기 0 … 1: coats, iris, lens and nerve plain, the retina as it is
+        self.relief_on = True          # 망막 높낮이: the photographed retina raised by its relief (relief.py)
+        self.relief_amount = 0.036     # … the height of +1 (eye radii)
+        self.dark = 0.0                # 0 … 1: the picture fades to black (the simple model's way in)
         self.auto_rotate = 0.0         # 자동 회전, degrees / s (0 = off)
         self.yaw, self.pitch, self.dist = 38.0, 18.0, self.DIST0
         self.target = np.zeros(3)      # orbit pivot (outside): moves toward what is zoomed into
         self.in_yaw, self.in_pitch, self.in_fov, self.in_z = 0.0, 0.0, self.FOV0, 0.35
+        self.out_fov = 38.0            # outside field of view (들어가며 보기 widens it on the way in)
+        # 들어가며 보기: 0 the whole eye … 1 the retina (내부)
+        self.journey_j = 0.0
+        self._journey_from: dict | None = None
+        self._journey_cut, self._journey_xray = 0.25, 0.0
+        self._journey_tween = motion.Tween(lambda k: None, 0.0)
         self._drag: QPointF | None = None
         self._drag_kind = ""
         # motion: a flick keeps turning, the wheel's zoom glides, view changes ease (motion.py)
@@ -1182,6 +1170,14 @@ class EyeView(QOpenGLWidget):
         self._rim_cache: tuple = (None, {})
         self._clip_ok = False
         self._rlight = np.array([0.0, 0.6, 0.8])
+        # 망막 높낮이: the photo it was made from, the vessels found in it, the heights and their texture
+        self._relief_rgb: np.ndarray | None = None
+        self._relief_circle = None
+        self._vessel: tuple | None = None          # (key, strength, step)
+        self._hmap: tuple | None = None            # (heights, step)
+        self._hmap_ver = 0
+        self._hmap_dirty = False
+        self._hmap_tex = None
         warm_up_textures()
 
     # -- public API ----------------------------------------------------------
@@ -1201,6 +1197,10 @@ class EyeView(QOpenGLWidget):
             cx, cy, r = circle or (w / 2, h / 2, min(w, h) / 2)
             self._center = (cx / w, cy / h)
             self._radius = (r / w, r / h)
+        self._relief_rgb = rgb
+        self._relief_circle = None if rgb is None else (cx, cy, r)
+        self._vessel = None
+        self._update_relief()
         self._tex_dirty = True
         self.update()
 
@@ -1251,6 +1251,45 @@ class EyeView(QOpenGLWidget):
                                  laterality=self.laterality, align=self.align)
         self.placement = pl
         self.disc_dir = pl.disc if pl.disc is not None else placement.anatomical_disc(self.laterality)
+        self._update_relief()
+
+    # -- 망막 높낮이 -------------------------------------------------------------------
+    def _update_relief(self) -> None:
+        """The heights of the retina under the photo (relief.py): the vessels (kept while the photo and
+        its field stay), the disc's cup and the foveal pit where the photo has them."""
+        rgb, circle = self._relief_rgb, self._relief_circle
+        if rgb is None or circle is None or not circle[2]:
+            self._hmap = None
+        else:
+            tmax_deg = math.degrees(self.theta_max)
+            key = (id(rgb), round(tmax_deg, 1))
+            if self._vessel is None or self._vessel[0] != key:
+                v, step = rl.vessels(rgb, circle, tmax_deg)
+                self._vessel = (key, v, step)
+            _, v, step = self._vessel
+            disc_px, fovea_px, _ = self._marks
+            self._hmap = (rl.height_map(v, step, circle, tmax_deg, disc_px, fovea_px), step)
+        self._hmap_ver += 1
+        self._hmap_dirty = True
+
+    def relief_sheet_on(self) -> bool:
+        """The relief sheet is drawn: 자세히, 망막 높낮이 on, a photo and its heights."""
+        return (self.detail == "detailed" and self.relief_on and self.relief_amount > 1e-4
+                and self._hmap is not None and self._tex is not None)
+
+    def _relief_sheet(self):
+        if not self.relief_sheet_on():
+            return None
+        H, step = self._hmap
+        cam = self.photo_camera(self._relief_circle)
+        key = (self._hmap_ver, round(self.relief_amount, 4), self.fov_deg, self.fov_type, self.projection,
+               self.viewpoint, self.radial_c, self.roll_deg, self.placement.matrix.round(6).tobytes())
+
+        def build():
+            pos, nrm, idx = rl.sheet_mesh(H, step, self._relief_circle, cam, self.placement.matrix,
+                                          self.relief_amount, em.R_RET)
+            return em.MeshData(pos, nrm, idx)
+        return self._dynamic("relief", key, build)
 
     def set_detail(self, detail: str) -> None:
         """간단히 ("simple") or 자세히 ("detailed")."""
@@ -1261,28 +1300,36 @@ class EyeView(QOpenGLWidget):
     def set_mode(self, mode: str) -> None:
         """외부 ("outside") or 내부 ("inside"), at once (``enter`` glides there)."""
         self.stop_motion()
-        self.mode, self.dark = mode, 0.0
+        self.journey_end()
+        self.mode, self.dark, self.out_fov = mode, 0.0, 38.0
+        self.journey_j = 1.0 if mode == "inside" else 0.0
+        self.journeyChanged.emit(self.journey_j)
         self._view_changed()
 
     HOME = {"yaw": 38.0, "pitch": 18.0, "dist": DIST0, "target": (0.0, 0.0, 0.0)}
 
     def reset_view(self, animate: bool = False) -> None:
+        self.journey_leave()
         if animate and motion.enabled() and self.isVisible():
             self._finish_enter()
-            self.glide_to(dict(self.HOME), inside=(0.0, 0.0, self.FOV0))
+            self.glide_to(dict(self.HOME), inside=(0.0, 0.0, self.FOV0), extra={"out_fov": 38.0})
             return
         self.stop_motion()
+        self.out_fov = 38.0
         self.yaw, self.pitch, self.dist = 38.0, 18.0, self.DIST0
         self.target = np.zeros(3)
         self.in_yaw, self.in_pitch, self.in_fov = 0.0, 0.0, self.FOV0
         self._view_changed()
 
     def front_view(self, animate: bool = False) -> None:
+        self.journey_leave()
         if animate and motion.enabled() and self.isVisible() and self.mode == "outside":
             self._finish_enter()
-            self.glide_to({"yaw": 0.0, "pitch": 0.0, "dist": self.DIST0, "target": (0.0, 0.0, 0.0)})
+            self.glide_to({"yaw": 0.0, "pitch": 0.0, "dist": self.DIST0, "target": (0.0, 0.0, 0.0)},
+                          extra={"out_fov": 38.0})
             return
         self.stop_motion()
+        self.out_fov = 38.0
         self.yaw, self.pitch, self.dist = 0.0, 0.0, self.DIST0
         self.target = np.zeros(3)
         self._view_changed()
@@ -1296,16 +1343,19 @@ class EyeView(QOpenGLWidget):
         self._turn_y.stop()
         self._view_glide.stop()
         self._finish_enter()
+        if self._journey_tween.running():      # 들어가며 보기 stops where it is
+            self._journey_tween.stop()
+            self.journeyChanged.emit(self.journey_j)
 
     def moving(self) -> bool:
         return (self._drag is not None or self._fling.running() or self._zoom_glide.running()
                 or self._turn_x.running() or self._turn_y.running() or self._view_glide.running()
-                or self._entering)
+                or self._entering or self._journey_tween.running())
 
     def glide_to(self, pose: dict | None = None, inside: tuple | None = None, duration: float = 0.45,
                  extra: dict | None = None, done=None, easing=motion.ease_in_out) -> None:
         """Ease the camera to ``pose`` (outside: yaw / pitch / dist / target) and ``inside`` =
-        (yaw, pitch, field of view); ``extra`` = other attributes to ease along (cut, unwrap …)."""
+        (yaw, pitch, field of view); ``extra`` = other attributes to ease along (cut, out_fov …)."""
         self._fling.stop()
         self._zoom_glide.stop()
         self._view_glide.stop()
@@ -1373,11 +1423,23 @@ class EyeView(QOpenGLWidget):
         self._spin.stop()
         super().hideEvent(e)
 
-    # -- 들어가기: through the pupil to the retina and back ---------------------------
+    # -- 들어가기: 들어가며 보기 (자세히), a fade through black (간단히) ------------------------------
+    JOURNEY_Z = 0.35               # where the way in ends: the inside view's eye point (in_z)
+
     def enter(self, mode: str, animate: bool = True) -> None:
-        """Go to 내부 ("inside") or 외부 ("outside"). Animated, the camera comes to the front of the
-        closed eye, dives through the pupil into the dark and comes out looking at the retina
-        (and the same way back out). The simple model and 세로 단면 just fade through black."""
+        """Go to 내부 ("inside") or 외부 ("outside"). 자세히: 들어가며 보기 — from the whole eye in through
+        the cornea, the chamber, the pupil, the lens and the vitreous to the retina, nothing going dark
+        (and the same way back out). The simple model fades through black."""
+        if self.detail == "detailed":
+            if self._journey_from is None and not self._entering and mode == self.mode:
+                return
+            if not (animate and motion.enabled() and self.isVisible()):
+                self.journey_scrub(1.0 if mode == "inside" else 0.0)
+                if mode != "inside":
+                    self.journey_end()
+                return
+            self.journey_play(1.0 if mode == "inside" else 0.0, done=None if mode == "inside" else self.journey_end)
+            return
         if mode == self.mode and not self._entering:
             return
         self.stop_motion()
@@ -1385,9 +1447,6 @@ class EyeView(QOpenGLWidget):
             self.set_mode(mode)
             return
         sq = lambda t: t * t                                 # noqa: E731 - speeding up into the dark
-        front = {"yaw": 0.0, "pitch": 0.0, "dist": self.DIST0 * 0.85, "target": (0.0, 0.0, 0.0)}
-        close = dict(front, dist=1.16)                       # at the cornea: the pupil fills the view
-        dive = self.detail == "detailed" and self.half <= 0.0
 
         def switch_to(m, **state):
             def go():
@@ -1396,32 +1455,106 @@ class EyeView(QOpenGLWidget):
                     setattr(self, name, value)
             return go
 
-        if not dive:
-            self._enter_plan = [(dict(extra={"dark": 1.0}), 0.22, sq, switch_to(mode)),
-                                (dict(extra={"dark": 0.0}), 0.30, motion.ease_out, None)]
-            self._enter_end = dict(mode=mode, dark=0.0)
-        elif mode == "inside":
-            cut = self.cut
-            into = switch_to("inside", cut=cut, in_yaw=0.0, in_pitch=0.0, in_fov=26.0)
-            self._enter_plan = [
-                (dict(pose=front, extra={"cut": 1.0, "unwrap": 0.0, "xray": 0.0}), 0.45, motion.ease_in_out, None),
-                (dict(pose=close, extra={"dark": 1.0}), 0.45, sq, into),
-                (dict(inside=(0.0, 0.0, self.FOV0), extra={"dark": 0.0}), 0.60, motion.ease_out, None),
-            ]
-            self._enter_end = dict(mode="inside", cut=cut, dark=0.0, unwrap=0.0, xray=0.0,
-                                   in_yaw=0.0, in_pitch=0.0, in_fov=self.FOV0)
-        else:
-            cut = self.cut if self.cut < 0.999 else 0.25
-            out = switch_to("outside", cut=1.0, yaw=0.0, pitch=0.0, dist=close["dist"], target=np.zeros(3))
-            self._enter_plan = [
-                (dict(inside=(0.0, 0.0, 26.0), extra={"dark": 1.0}), 0.40, sq, out),
-                (dict(pose=front, extra={"dark": 0.0}), 0.45, motion.ease_out, None),
-                (dict(pose=dict(self.HOME), extra={"cut": cut}), 0.50, motion.ease_in_out, None),
-            ]
-            self._enter_end = dict(mode="outside", cut=cut, dark=0.0, yaw=self.HOME["yaw"],
-                                   pitch=self.HOME["pitch"], dist=self.DIST0, target=np.zeros(3))
+        self._enter_plan = [(dict(extra={"dark": 1.0}), 0.22, sq, switch_to(mode)),
+                            (dict(extra={"dark": 0.0}), 0.30, motion.ease_out, None)]
+        self._enter_end = dict(mode=mode, dark=0.0)
         self._entering = True
         self._enter_next()
+
+    def _journey_begin(self) -> None:
+        """The way starts from the eye as it is now (from inside: from the start view)."""
+        if self._journey_from is not None:
+            return
+        self._finish_enter()
+        if self.mode == "inside":
+            self._journey_from, self.journey_j = dict(self.HOME), 1.0
+        else:
+            self._journey_from, self.journey_j = self.pose(), 0.0
+        self._journey_cut = self.cut if self.cut < 0.999 else 0.25
+        self._journey_xray = self.xray
+        self.half = 0.0
+
+    def journey_pose(self, j: float) -> dict:
+        """The camera and the eye at ``j``: to the front of the closed eye coming nearer, then along the
+        axis — the cornea, the chamber, the pupil, the lens (most of the time), the vitreous."""
+        f, a = self._journey_from or dict(self.HOME), 0.32
+        out = {"mode": "inside" if j >= 1.0 else "outside",
+               "cut": _lerp(self._journey_cut, 1.0, _ease(j / 0.12)), "xray": _lerp(self._journey_xray, 0.0, _ease(j / 0.12))}
+        if j <= a:
+            k = _ease(j / a)
+            dy = (0.0 - f["yaw"] + 180.0) % 360.0 - 180.0
+            out.update(yaw=(f["yaw"] + dy * k) % 360.0, pitch=_lerp(f["pitch"], 0.0, k),
+                       dist=f["dist"] * (1.9 / f["dist"]) ** k,
+                       target=tuple(float(x) * (1.0 - k) for x in f["target"]), out_fov=38.0)
+        else:
+            k = _ease((j - a) / (1.0 - a))
+            knots = ((0.0, 1.9), (0.2, 1.12), (0.78, 0.45), (1.0, self.JOURNEY_Z))
+            z = self.JOURNEY_Z
+            for (k0, z0), (k1, z1) in zip(knots, knots[1:]):
+                if k <= k1:
+                    z = _lerp(z0, z1, (k - k0) / (k1 - k0))
+                    break
+            fov = 38.0 + (80.0 - 38.0) * _ease((1.55 - z) / 0.5) + (self.FOV0 - 80.0) * _ease((0.6 - z) / 0.25)
+            out.update(yaw=0.0, pitch=0.0, dist=z, target=(0.0, 0.0, 0.0), out_fov=fov)
+        return out
+
+    def _journey_apply(self, j: float) -> None:
+        self.journey_j = min(1.0, max(0.0, j))
+        p = self.journey_pose(self.journey_j)
+        self.cut, self.xray, self.out_fov = p["cut"], p["xray"], p["out_fov"]
+        self.yaw, self.pitch, self.dist = p["yaw"], p["pitch"], p["dist"]
+        self.target = np.asarray(p["target"], np.float64)
+        if p["mode"] == "inside":
+            self.mode, self.in_yaw, self.in_pitch, self.in_fov, self.in_z = "inside", 0.0, 0.0, self.FOV0, self.JOURNEY_Z
+        else:
+            self.mode = "outside"
+        self.journeyChanged.emit(self.journey_j)
+        self._view_changed()
+
+    def journey_scrub(self, j: float) -> None:
+        """Be at ``j`` on the way in at once (the 위치 slider)."""
+        self._journey_tween.stop()
+        self._fling.stop()
+        self._view_glide.stop()
+        self._journey_begin()
+        self._journey_apply(j)
+
+    def journey_play(self, to: float, done=None) -> None:
+        """Glide to ``to`` (1 in, 0 out), slowly enough to see where it passes."""
+        self._journey_tween.stop()
+        self._fling.stop()
+        self._zoom_glide.stop()
+        self._view_glide.stop()
+        self._journey_begin()
+        j0 = self.journey_j
+        self._journey_tween = motion.Tween(lambda k: self._journey_apply(j0 + (to - j0) * k),
+                                           max(0.4, 7.5 * abs(to - j0)), lambda x: x, done)
+        self._journey_tween.start()
+
+    def journey_running(self) -> bool:
+        return self._journey_tween.running()
+
+    def journey_end(self) -> None:
+        """Back to the ordinary views: the way is forgotten (the eye stays as it is)."""
+        self._journey_tween.stop()
+        self._journey_from = None
+        if self.mode == "outside":
+            self.out_fov = 38.0
+            self.update()
+
+    def journey_on(self) -> bool:
+        return self._journey_from is not None
+
+    def journey_leave(self) -> None:
+        """A view of the closed or opened eye from outside takes over from 들어가며 보기."""
+        if self._journey_from is None:
+            return
+        cut = self._journey_cut
+        self.journey_end()
+        if self.mode == "outside":
+            self.cut = cut
+            self.journey_j = 0.0
+            self.journeyChanged.emit(0.0)
 
     def _enter_next(self) -> None:
         if not self._enter_plan:
@@ -1449,10 +1582,18 @@ class EyeView(QOpenGLWidget):
         self._view_changed()
 
     # -- 세로 단면 · 망막 투시 · 슬릿 스캔 ------------------------------------------
-    def meridian(self) -> np.ndarray:
-        """Direction of the photo's vertical meridian (image up) on the eye: +y turned by the roll."""
-        r = math.radians(self.roll_deg)
-        return np.array([math.sin(r), math.cos(r), 0.0])
+    def meridian(self, axis: str = "v") -> np.ndarray:
+        """Direction of the photo's vertical meridian (image up; ``axis`` "h": its horizontal one, image
+        right) on the eye, turned by the roll."""
+        a = (0.0 if axis == "h" else math.pi / 2) - math.radians(self.roll_deg)
+        return np.array([math.cos(a), math.sin(a), 0.0])
+
+    def scan_dir(self, axis: str | None = None, sign: float | None = None) -> tuple[float, float]:
+        """The way the slit moves over the photo (x to its right, y down)."""
+        axis = self.slit_axis if axis is None else axis
+        sign = self.scan_sign if sign is None else sign
+        a = 0.0 if axis == "h" else math.pi / 2
+        return (sign * math.cos(a), -sign * math.sin(a))
 
     def half_plane(self) -> tuple[np.ndarray, float]:
         """Section plane of 세로 단면: unit normal ``k`` into the kept half and offset ``off``;
@@ -1531,8 +1672,9 @@ class EyeView(QOpenGLWidget):
 
     def scan_theta(self, s: float) -> tuple[float, float]:
         """Retinal angle (from the posterior pole) and side (+1 superior, -1 inferior) that the
-        slit at ``s`` (0 top … 1 bottom of the photo) reaches on the section's meridian."""
-        dy = 1.0 - 2.0 * min(1.0, max(0.0, s))
+        slit at ``s`` (0 … 1 of its way: down from the top, or up with ``scan_sign`` +1) reaches on
+        the section's meridian."""
+        dy = self.scan_sign * (2.0 * min(1.0, max(0.0, s)) - 1.0)
         tmax = self.theta_max
         if self._tilted():                    # a photo not centred on the pole: where its row crosses the section
             t, row, inside = self._meridian_rows()
@@ -1567,6 +1709,7 @@ class EyeView(QOpenGLWidget):
             self._loc.clear()
             self._meshes, self._keys, self._stale = {}, {}, []
             self._tex = None
+            self._hmap_tex, self._hmap_dirty = None, True
             self._prog = {
                 "bg": self._program(_glsl(BG_VERT), _glsl(BG_FRAG)),
                 "sclera": self._program(_glsl(VERT), _glsl(COMMON, SCLERA_LIB, MAPPING_LIB, RETINA_LIB,
@@ -1578,7 +1721,6 @@ class EyeView(QOpenGLWidget):
                 "section": self._program(_glsl(VERT), _glsl(COMMON, WALL_LAYERS_LIB, SECTION_FRAG)),
                 "simple_eye": self._program(_glsl(VERT), _glsl(MAPPING_LIB, SIMPLE_EYE_FRAG)),
                 "simple_solid": self._program(_glsl(VERT), _glsl(SIMPLE_SOLID_FRAG)),
-                "sheet": self._program(_glsl(SHEET_VERT), _glsl(SHEET_FRAG)),
                 "blit": self._program(_glsl(BLIT_VERT), _glsl(BLIT_FRAG)),
                 "fade": self._program(_glsl(BG_VERT), _glsl(FADE_FRAG)),
             }
@@ -1682,6 +1824,16 @@ class EyeView(QOpenGLWidget):
         if self._rgba is not None:
             self._tex = self._make_texture(self._rgba)
 
+    def _upload_hmap(self) -> None:
+        """The heights of 망막 높낮이 as a texture (16 bits in R and G), for the relief's shading."""
+        gl = self.gl
+        if self._hmap_tex is not None:
+            gl.glDeleteTextures([self._hmap_tex])
+            self._hmap_tex = None
+        self._hmap_dirty = False
+        if self._hmap is not None:
+            self._hmap_tex = self._make_texture(rl.encode16(self._hmap[0]))
+
     def _set(self, prog, **values) -> None:
         """Set uniforms ``u_<name>``: int → 1i, float → 1f, 2/3-vectors, 3×3 and 4×4 matrices."""
         gl = self.gl
@@ -1738,7 +1890,7 @@ class EyeView(QOpenGLWidget):
             cy_, sy = math.cos(math.radians(self.yaw)), math.sin(math.radians(self.yaw))
             cp, sp = math.cos(math.radians(self.pitch)), math.sin(math.radians(self.pitch))
             d = np.array([sy * cp, sp, cy_ * cp])
-            eye, f, fovy = self.target + self.dist * d, -d, 38.0
+            eye, f, fovy = self.target + self.dist * d, -d, self.out_fov
             up = (0.0, 1.0, 0.0) if abs(self.pitch) < 89 else (0.0, 0.0, -1.0)
         r = _unit(np.cross(f, up))
         return eye, f, r, np.cross(r, f), fovy
@@ -1930,72 +2082,22 @@ class EyeView(QOpenGLWidget):
         tmax = self.theta_max
         scan = (-1.0, 0.0)
         if self.scan is not None and self.scan_dim > 0.0:
-            scan = (self._center[1] + (2.0 * min(1.0, max(0.0, self.scan)) - 1.0) * self._radius[1],
-                    float(min(1.0, self.scan_dim)))
+            scan = (2.0 * min(1.0, max(0.0, self.scan)) - 1.0, float(min(1.0, self.scan_dim)))
         tex = self._tex is not None
         return dict(tmax=tmax, gmax=proj.g(tmax, self.projection, self.viewpoint, tmax=tmax, c=self.radial_c),
                     proj=proj.PROJECTION_INDEX.get(self.projection, 0), d=self.viewpoint, c=self.radial_c,
                     center=self._center, radius=self._radius, roll=math.radians(self.roll_deg),
                     place=self.placement.matrix.T, grid=1.0 if self.show_grid else 0.0,
-                    has_tex=int(tex and not self._unwrap_on()),      # 펼치기: the photo is on its sheet
-                    scan=scan, fovring=float(self.fov_ring),
+                    has_tex=int(tex), scan=scan, scan_dir=self.scan_dir(), fovring=float(self.fov_ring),
                     relief=float(self.relief) if tex else 0.0, texel=self._texel(),
-                    rlight=self.placement.matrix.T @ self._rlight)
+                    rlight=self.placement.matrix.T @ self._rlight,
+                    hmap_on=1.0 if self.relief_sheet_on() else 0.0)
 
     def _texel(self) -> tuple[float, float]:
         if self._rgba is None:
             return (0.001, 0.001)
         h, w = self._rgba.shape[:2]
         return (1.0 / w, 1.0 / h)
-
-    def _unwrap_on(self) -> bool:
-        """사진 펼치기 is drawn: the open eye seen from outside, with a photo."""
-        return (self.unwrap > 0.0 and self._tex is not None and self.mode == "outside"
-                and not self._half_on() and self.cut < 0.999)
-
-    def _sheet_mesh(self, r_in: float, z_flat: float, r_flat: float) -> em.MeshData:
-        """The photographed field as a polar grid: on the retina (``pos``), flat at the eye's opening
-        (``nrm`` — the sheet's shader moves each vertex between the two), photo coordinates (``uv``)."""
-        n_r, n_a = 56, 128
-        tmax = self.theta_max
-        rho = np.linspace(0.0, 1.0, n_r + 1)
-        theta = np.array([proj.theta_of_rho(float(x), tmax, self.projection, self.viewpoint, c=self.radial_c)
-                          for x in rho])
-        phi = np.linspace(0.0, 2.0 * math.pi, n_a + 1)
-        tt, pp = np.meshgrid(theta, phi, indexing="ij")
-        rr = np.meshgrid(rho, phi, indexing="ij")[0]
-        st = np.sin(tt)
-        pos = np.stack([st * np.cos(pp), st * np.sin(pp), -np.cos(tt)], axis=-1) @ self.placement.matrix.T * r_in
-        flat = np.stack([rr * np.cos(pp) * r_flat, rr * np.sin(pp) * r_flat, np.full_like(rr, z_flat)], axis=-1)
-        ph = pp + math.radians(self.roll_deg)
-        uv = np.stack([self._center[0] + np.cos(ph) * self._radius[0] * rr,
-                       self._center[1] - np.sin(ph) * self._radius[1] * rr], axis=-1)
-        i, j = np.meshgrid(np.arange(n_r), np.arange(n_a), indexing="ij")
-        a = (i * (n_a + 1) + j).ravel()
-        b, c, d = a + 1, a + n_a + 1, a + n_a + 2
-        idx = np.stack([a, c, b, b, c, d], axis=1).astype(np.uint32).ravel()
-        return em.MeshData(pos.reshape(-1, 3).astype(np.float32), flat.reshape(-1, 3).astype(np.float32),
-                           idx, uv.reshape(-1, 2).astype(np.float32))
-
-    def _draw_sheet(self, gl, mvp, light) -> None:
-        """사진 펼치기: the photo between the retina and a flat sheet at the eye's opening."""
-        r_in = (1.0 if self.detail == "simple" else em.R_RET) - 0.004
-        zc = float(em.cut_plane_z(self.cut))
-        r_flat = min(SHEET_R, 0.97 * math.sqrt(max(r_in * r_in - zc * zc, 0.04)))
-        key = (round(r_in, 4), round(zc, 4), round(r_flat, 4), round(self.theta_max, 6), self.projection,
-               self.viewpoint, self.radial_c, self.roll_deg, self._center, self._radius,
-               self.placement.matrix.round(6).tobytes())
-        mesh = self._dynamic("sheet", key, lambda: self._sheet_mesh(r_in, zc + 0.012, r_flat))
-        p = self._prog["sheet"]
-        gl.glUseProgram(p)
-        self._set(p, mvp=mvp, flat=float(min(1.0, self.unwrap)), light=light, cutz=zc, sheet_r=float(r_flat),
-                  relief=float(self.relief), texel=self._texel())
-        gl.glActiveTexture(gl.GL_TEXTURE0)
-        gl.glBindTexture(gl.GL_TEXTURE_2D, self._tex or 0)
-        gl.glEnable(gl.GL_BLEND)
-        gl.glBlendFuncSeparate(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA, gl.GL_ZERO, gl.GL_ONE)
-        mesh.draw(gl)
-        gl.glDisable(gl.GL_BLEND)
 
     def _draw_backdrop(self, gl) -> None:
         """The studio background, only where nothing was drawn (before anything see-through)."""
@@ -2007,7 +2109,7 @@ class EyeView(QOpenGLWidget):
         gl.glDepthMask(gl.GL_TRUE)
 
     def _draw_dark(self, gl) -> None:
-        """The fade to black of 들어가기."""
+        """The fade to black of 들어가기 (the simple model)."""
         if self.dark <= 0.002:
             return
         p = self._prog["fade"]
@@ -2136,6 +2238,8 @@ class EyeView(QOpenGLWidget):
             self._stale.pop().delete(gl)
         if self._tex_dirty:
             self._upload_texture()
+        if self._hmap_dirty:
+            self._upload_hmap()
         gl.glViewport(0, 0, w, h)
         _, vf, vr, vu, _ = self._view_basis()
         self._rlight = _unit(-0.55 * vr + 0.75 * vu - 0.35 * vf)   # 입체 조명: from the upper left of the view
@@ -2163,7 +2267,8 @@ class EyeView(QOpenGLWidget):
 
         for name, unit in _UNITS.items():
             gl.glActiveTexture(gl.GL_TEXTURE0 + unit)
-            gl.glBindTexture(gl.GL_TEXTURE_2D, (self._tex or 0) if name == "tex" else self._model_tex[name])
+            tex = {"tex": self._tex, "hmap": self._hmap_tex}.get(name, self._model_tex.get(name))
+            gl.glBindTexture(gl.GL_TEXTURE_2D, tex or 0)
         gl.glActiveTexture(gl.GL_TEXTURE0)
         gl.glEnable(gl.GL_DEPTH_TEST)
 
@@ -2175,7 +2280,14 @@ class EyeView(QOpenGLWidget):
         k, off = self.half_plane() if half else (np.zeros(3), 1.0)
         clip = 2.0 if closed or inside or half else float(self.cut)
         common = dict(mvp=mvp, campos=campos, cut=clip, mirror=int(self.laterality == "OS"),
-                      hk=k, hoff=float(off), **lights)
+                      hk=k, hoff=float(off), simple=float(self.simple), **lights)
+        # 들어가며 보기: the camera inside the globe (or the cornea) in the outside view — the coats are seen
+        # from within (their outer faces are not drawn), the inside of the eye is drawn as when opened;
+        # from the cornea on, it is a clear shell and the inside shows through the pupil
+        within = not inside and (float(np.linalg.norm(campos)) < 0.999
+                                 or float(np.linalg.norm(campos - np.array([0.0, 0.0, em.CORNEA_CENTER_Z]))) < em.CORNEA_R
+                                 or (self._journey_from is not None and self.journey_j > 0.27))
+        sheet = self._relief_sheet()          # 망막 높낮이: the photographed field raised, the wall open there
         mapping = self._mapping_uniforms()
 
         def use(name, **extra):
@@ -2201,10 +2313,13 @@ class EyeView(QOpenGLWidget):
         # inside first (the far wall, solid), then the outside of the near wall (solid only where
         # the photo lies). 세로 단면 and the inside view keep the solid coat.
         glass = 0.0 if (inside or half) else float(min(1.0, max(0.0, self.glass)))
-        if half:
-            open_n, open_ = -k, float(off)
-        else:
-            open_n, open_ = (0.0, 0.0, 1.0), float(em.cut_plane_z(self.cut))
+
+        def draw_wall(**extra):
+            p = use("wall", hole=0.995 if sheet is not None else 0.0, **extra, **mapping)
+            self._meshes["wall"].draw(gl)
+            if sheet is not None:
+                self._set(p, hole=0.0)
+                sheet.draw(gl)
 
         def draw_sclera():
             use("sclera", clip=float(em.LIMBUS_Z if closed or half else min(self.cut, em.LIMBUS_Z)),
@@ -2245,32 +2360,29 @@ class EyeView(QOpenGLWidget):
                 use("tissue", kind=5)
                 self._dynamic("muscles", self.laterality, lambda: em.muscle_mesh(self.laterality)).draw(gl)
             # -- cornea (ray traced: iris, pupil, limbus, catchlight) --------------
-            if closed:
+            if closed and not within:
                 use("cornea")
                 self._meshes["cornea"].draw(gl)
 
         # -- iris, chamber angle, retina and inner wall ------------------------------
-        if not closed or glass > 0.0:             # (through glass the closed eye shows its inside too)
+        if not closed or glass > 0.0 or within:   # (through glass the closed eye shows its inside too)
             if inside or half or self.cut > em.IRIS_BACK_Z:      # otherwise cut away entirely
                 use("tissue", kind=2)
                 self._meshes["iris"].draw(gl)
                 self._set(self._prog["tissue"], kind=3)
                 self._meshes["angle"].draw(gl)
-            use("wall", inside=int(inside), light=lights["key"] if not inside else (0.0, 0.0, 1.0),
-                open_n=open_n, open=open_, side=1 if glass > 0.0 else 0, glass=glass, **mapping)
-            self._meshes["wall"].draw(gl)
+            draw_wall(inside=int(inside), light=lights["key"] if not inside else (0.0, 0.0, 1.0),
+                      side=1 if glass > 0.0 else 0, glass=glass)
 
         # -- background, only where nothing was drawn (before the transparent media) --
         if clip_plane:
             gl.glDisable(gl.GL_CLIP_PLANE0)
         if half_clip:
             gl.glDisable(gl.GL_CLIP_PLANE1)
-        if self._unwrap_on():
-            self._draw_sheet(gl, mvp, lights["key"])
         self._draw_backdrop(gl)
 
         # -- transparent media ----------------------------------------------------
-        if inside or half or ((not closed or glass > 0.0) and self.cut > em.LENS_BACK_Z):
+        if inside or half or within or ((not closed or glass > 0.0) and self.cut > em.LENS_BACK_Z):
             gl.glEnable(gl.GL_BLEND)
             # Keep destination alpha at 1: QOpenGLWidget composites its FBO as
             # premultiplied, so alpha < 1 here shows as colour artifacts.
@@ -2280,8 +2392,10 @@ class EyeView(QOpenGLWidget):
                 gl.glEnable(gl.GL_CLIP_PLANE0)
             if half_clip:
                 gl.glEnable(gl.GL_CLIP_PLANE1)
-            p = use("clear", kind=2)
-            self._meshes["zonules"].draw(gl)
+            # (from within the eye the studio's lights are not mirrored in the lens and the cornea)
+            p = use("clear", kind=2, within=1.0 if (within or inside) else 0.0)
+            if self.simple < 0.999:
+                self._meshes["zonules"].draw(gl)
             self._set(p, kind=0)
             gl.glEnable(gl.GL_CULL_FACE)
             for face in (gl.GL_FRONT, gl.GL_BACK):        # far side of the lens first
@@ -2297,6 +2411,9 @@ class EyeView(QOpenGLWidget):
                 if half_clip:
                     gl.glEnable(gl.GL_CLIP_PLANE1)
                 p = use("clear", kind=3)
+                self._meshes["cornea"].draw(gl)
+            elif within and closed:               # the cornea as a clear shell on the way in
+                use("clear", kind=3)
                 self._meshes["cornea"].draw(gl)
             elif not inside:
                 lens_cap = self._dynamic("rim_lens", round(self.cut, 4), lambda: self._rim("lens"))
@@ -2317,8 +2434,7 @@ class EyeView(QOpenGLWidget):
             gl.glDepthMask(gl.GL_FALSE)
             if clip_plane:
                 gl.glEnable(gl.GL_CLIP_PLANE0)
-            use("wall", inside=0, light=lights["key"], open_n=open_n, open=open_, side=2, glass=glass, **mapping)
-            self._meshes["wall"].draw(gl)
+            draw_wall(inside=0, light=lights["key"], side=2, glass=glass)
             if clip_plane:
                 gl.glDisable(gl.GL_CLIP_PLANE0)
             draw_sclera()
@@ -2373,9 +2489,6 @@ class EyeView(QOpenGLWidget):
                           lambda: self._section_quad(k, off)).draw(gl)
             if half_clip:
                 gl.glEnable(gl.GL_CLIP_PLANE1)
-            gl.glUseProgram(s)
-        if self._unwrap_on():
-            self._draw_sheet(gl, mvp, light)
             gl.glUseProgram(s)
         if not inside:
             if half_clip:

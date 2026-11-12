@@ -159,13 +159,20 @@ class Importer:
         if meta.modality not in ("montage", "anterior"):
             disc = imaging.detect_disc(rgb, circle, disc_frac=min(0.25, 3.8 / max(tmax_deg, 5.0)),
                                        search=profile.disc_search)
-        if not meta.laterality and meta.modality not in ("montage", "anterior"):
+        guessed = not meta.laterality and meta.modality not in ("montage", "anterior")
+        if guessed:
             meta.set("laterality", imaging.laterality_from_disc(disc, circle), "disc-estimate")
         fovea = None                    # with the disc it says where the photo lies on the eye (3D)
         if disc is not None:
             cam = placement.Camera(*circle, meta.fov_deg or profile.fov_deg, meta.fov_type or profile.fov_type,
                                    meta.projection or profile.projection, profile.viewpoint, profile.radial_c)
-            fovea = imaging.detect_fovea(rgb, cam, disc[:2], meta.laterality)
+            # an eye the file does not name: the macula is looked for on both sides of the disc, and the
+            # side it is on (temporal of the disc) tells the eye better than where the disc lies
+            found = imaging.detect_fovea(rgb, cam, disc[:2], None if guessed else meta.laterality, with_side=True)
+            if found is not None:
+                fovea = found[:3]
+                if guessed and found[3] != meta.laterality:
+                    meta.set("laterality", found[3], "fovea-estimate")
 
         # -- store the file -------------------------------------------------
         pid_dir = safe_component(meta.patient_id or "", "_미분류")

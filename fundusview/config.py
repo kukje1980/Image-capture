@@ -80,6 +80,10 @@ class Settings:
     auto_rotate3d: bool = True
     glass3d: int = 80               # 공막 투명도 0 … 100 (0 = the opaque white sclera)
     align3d: bool = True            # 3D: the photo's fovea / disc at their place on the eye (placement.py)
+    surface3d: bool = True          # 3D 망막 입체: 표면 높낮이 (the retina raised by its relief, relief.py)
+    surface_height3d: int = 45      # … 높이 0 … 100
+    simple3d: bool = False          # 3D 단순하게 보기 (coats, iris, lens and nerve plain)
+    slit_dir3d: str = "down"        # 슬릿 스캔: "down", "up", "right", "left" or "all" (상하좌우)
     # the look this settings file was last used with: a newer one may adopt new defaults once
     ui_version: int = 0
     # Extra user-defined filename regexes tried before the profile patterns.

@@ -1,5 +1,5 @@
-"""Main window: photos are read ahead while browsing, and the 3D effects (사진 펼치기 · 입체 조명 ·
-자동 회전 · 들어가기) and 보기 → 부드러운 움직임 do what their controls say."""
+"""Main window: photos are read ahead while browsing, and the 3D effects (망막 입체 · 단순하게 보기 ·
+입체 조명 · 자동 회전 · 들어가며 보기 · 슬릿 방향) and 보기 → 부드러운 움직임 do what their controls say."""
 import os
 import time
 
@@ -99,26 +99,43 @@ def test_browsing_reads_ahead_and_effects_follow_their_controls(app, tmp_path, d
         w.b_inspector.click()
         assert not w.inspector.isVisible()
         w.b_inspector.click()
-        # 사진 펼치기 ↔ 망막에 감기 (motion is off in tests: the end state at once)
-        assert w.b_unwrap.text() == "사진 펼치기" and eye.unwrap == 0.0
-        w.b_unwrap.click()
-        assert eye.unwrap == 1.0 and (eye.yaw, eye.pitch) == (0.0, 0.0) and w.b_unwrap.text() == "망막에 감기"
-        assert eye.mode == "outside" and eye.half == 0.0 and eye.cut == 0.25
-        w.b_unwrap.click()
-        assert eye.unwrap == 0.0 and (eye.yaw, eye.pitch) == (38.0, 18.0) and w.b_unwrap.text() == "사진 펼치기"
-        # another view takes the photo back onto the retina
-        w.b_unwrap.click()
-        w.r_in.setChecked(True)                               # 내부: in through the pupil
-        assert eye.mode == "inside" and eye.unwrap == 0.0 and w.b_unwrap.text() == "사진 펼치기"
-        w.r_out.setChecked(True)
-        assert eye.mode == "outside" and eye.dark == 0.0
-        w.b_unwrap.click()
-        w.c_view3d.setCurrentIndex(w.c_view3d.findData("section"))
-        w._tween._finish()                                    # (the glide to the section: its end, not its first step)
-        assert eye.unwrap == 0.0 and eye.half > 0.0
-        w.b_unwrap.click()                                    # from 세로 단면: back to the opened eye first
-        assert eye.unwrap == 1.0 and eye.half == 0.0 and w.c_view3d.currentData() == "front"
-        w.b_unwrap.click()
+        # 망막 입체: 표면 높낮이 on from the start, its height on the slider
+        assert w.c_surface3d.isChecked() and eye.relief_on and eye._hmap is not None      # (the heights, from the photo)
+        assert eye.relief_amount == pytest.approx(s.surface_height3d / 100.0 * w.HEIGHT_MAX)
+        w.s_height3d.setValue(80)
+        assert eye.relief_amount == pytest.approx(0.8 * w.HEIGHT_MAX) and s.surface_height3d == 80
+        w.c_surface3d.setChecked(False)
+        assert not eye.relief_on and not eye.relief_sheet_on() and s.surface3d is False and not w.s_height3d.isEnabled()
+        w.c_surface3d.setChecked(True)
+        # 단순하게 보기 (motion off in tests: at once)
+        motion.set_enabled(False)
+        assert not w.c_simple3d.isChecked() and eye.simple == 0.0
+        w.c_simple3d.setChecked(True)
+        assert eye.simple == 1.0 and s.simple3d is True
+        w.c_simple3d.setChecked(False)
+        assert eye.simple == 0.0
+        # 사진 펼치기 is gone
+        assert not hasattr(w, "b_unwrap") and not hasattr(eye, "unwrap")
+        # 들어가며 보기: in through the pupil to the retina, and back out (at once with motion off)
+        assert w.b_journey.text() == "▶ 들어가기" and w.s_journey.value() == 0
+        w.b_journey.click()
+        assert eye.mode == "inside" and w.r_in.isChecked() and w.s_journey.value() == 100
+        assert w.b_journey.text() == "◀ 나오기" and eye.dark == 0.0
+        w.b_journey.click()
+        assert eye.mode == "outside" and w.r_out.isChecked() and w.s_journey.value() == 0
+        w.s_journey.setValue(62)                              # stopped in the anterior chamber
+        assert eye.mode == "outside" and eye.journey_j == pytest.approx(0.62) and eye.dist < 1.12
+        assert w._where.isVisible() and "앞방" in w._where.text()
+        eye.reset_view(animate=True)                          # 처음 시점: an ordinary view takes over
+        assert not eye.journey_on() and eye.out_fov == 38.0 and eye.cut == pytest.approx(0.25)
+        # 슬릿 스캔: the way of the slit, remembered
+        assert w._show.direction == "down" and w._slit_buttons["down"].isChecked()
+        w._slit_buttons["right"].click()
+        assert w._show.direction == "right" and s.slit_dir3d == "right" and "망막 위로" in w.lbl_slit.text()
+        w._slit_buttons["all"].click()
+        assert w._show.passes() == ("down", "up", "right", "left")
+        w._slit_buttons["down"].click()
+        motion.set_enabled(True)
         # -- 보기 → 부드러운 움직임
         assert w.act_smooth.isChecked() and s.smooth_motion is True
         w.act_smooth.setChecked(False)

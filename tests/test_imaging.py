@@ -98,3 +98,26 @@ def test_shrink_and_qimage_copies():
     pm = to_pixmap(rgb)
     assert (pm.width(), pm.height()) == (400, 300) and app is not None
     assert np.array_equal(from_qimage(pm.toImage()), rgb)
+
+
+@pytest.mark.parametrize("eye", ["OD", "OS"])
+def test_fovea_tells_an_unknown_eye(eye):
+    """A nasal photo whose eye is not named: the macula is looked for on both sides of the disc,
+    and the side it is found on names the eye (as the web page does)."""
+    import math
+
+    from fundusview import demo, imaging, placement
+    from fundusview import projection as proj
+
+    gaze = (27.0, 1.0, 2.0) if eye == "OD" else (-27.0, 1.0, -2.0)
+    rgb = demo.synth_fundus(eye=eye, fov_deg=45.0, size=(900, 900), fov_type="external",
+                            projection="perspective", seed=31, gaze=gaze)
+    circle = imaging.detect_circle(rgb)
+    tmax = math.degrees(proj.theta_max(45.0, "external"))
+    disc = imaging.detect_disc(rgb, circle, disc_frac=min(0.25, 3.8 / tmax), search=0.7)
+    assert disc is not None
+    cam = placement.Camera(*circle, 45.0, "external", "perspective")
+    found = imaging.detect_fovea(rgb, cam, disc[:2], None, with_side=True)
+    assert found is not None and found[3] == eye
+    named = imaging.detect_fovea(rgb, cam, disc[:2], eye)
+    assert named is not None and math.hypot(found[0] - named[0], found[1] - named[1]) < 3.0
