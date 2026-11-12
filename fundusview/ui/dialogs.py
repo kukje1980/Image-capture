@@ -22,7 +22,7 @@ from . import theme
 SOURCE_LABELS = {
     "dicom": "DICOM", "reticam": "RetiCam 데이터", "apollo": "APOLLO 데이터", "apollo-json": "APOLLO 환자 파일", "folder": "폴더 이름",
     "filename": "파일 이름", "exif": "EXIF", "jpeg-comment": "JPEG 주석", "png-text": "PNG 텍스트",
-    "xmp": "XMP", "profile": "프로필 기본값", "file-time": "파일 시각", "disc-estimate": "시신경 위치로 추정",
+    "xmp": "XMP", "profile": "프로필 기본값", "file-time": "파일 시각", "disc-estimate": "시신경 위치로 추정", "fovea-estimate": "황반 위치로 추정",
     "manual": "직접 입력",
 }
 EYES = [("", "-"), ("OD", "OD (우안)"), ("OS", "OS (좌안)"), ("OU", "OU (양안)")]

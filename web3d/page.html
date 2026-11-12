@@ -68,6 +68,15 @@
     </div>
 
     <div class="group">
+      <h2 class="group-title">망막 입체</h2>
+      <div class="card">
+        <label class="row switch" title="혈관은 솟고, 시신경 유두의 함몰(cup)과 황반의 오목(pit)은 파이도록 사진이 얹힌 망막 표면을 실제로 올리고 내립니다 — 돌려 보면 높낮이가 보입니다"><span>표면 높낮이</span><input type="checkbox" role="switch" id="surface" checked></label>
+        <div class="row"><label class="row-label" for="height">높이</label><input type="range" id="height" min="0" max="100" value="45" title="높낮이를 얼마나 크게 보일지 (실제보다 과장해서 보여 줍니다)"></div>
+        <label class="row switch" title="표면의 높낮이에 비스듬한 빛을 비춰 혈관과 유두·황반이 도드라져 보이게 합니다"><span>입체 조명</span><input type="checkbox" role="switch" id="relief" checked></label>
+      </div>
+    </div>
+
+    <div class="group">
       <h2 class="group-title">시점</h2>
       <div class="card"><div class="row buttons">
         <button class="btn plain" id="front">정면</button>
@@ -93,7 +102,6 @@
         <div class="seg" role="radiogroup" aria-label="여는 방식">
           <input type="radio" name="view" id="view-front" value="front" checked><label for="view-front" title="앞부분을 잘라 안쪽 망막을 봅니다">앞쪽 절개</label>
           <input type="radio" name="view" id="view-section" value="section"><label for="view-section" title="사진의 세로 자오선을 따라 안구를 잘라 옆에서 봅니다 — 층 구조와 화각 (깊이 왼쪽 끝 = 정확히 반)">세로 단면</label>
-          <input type="radio" name="view" id="view-hsection" value="hsection"><label for="view-hsection" title="사진의 가로 자오선(황반과 시신경 유두를 지나는 선)을 따라 안구를 잘라 위에서 봅니다 (깊이 왼쪽 끝 = 정확히 반)">가로 단면</label>
         </div>
         <div class="row"><label class="row-label" for="cut">깊이</label><input type="range" id="cut" min="-30" max="100" value="25" title="자르는 깊이 (오른쪽 끝 = 닫힌 안구)"></div>
         <div class="row"><label class="row-label" for="glass">공막 투명도</label><input type="range" id="glass" min="0" max="100" value="80" title="공막을 유리처럼 비쳐 보이게 합니다 — 사진이 있는 망막은 진하게 남습니다 (왼쪽 끝 = 흰 공막)"></div>
@@ -107,8 +115,8 @@
         <div class="seg slit" role="radiogroup" aria-label="슬릿이 사진을 지나가는 방향">
           <input type="radio" name="slitdir" id="slit-down" value="down" checked><label for="slit-down" title="위에서 아래로 (세로 단면)" aria-label="위에서 아래로">↓</label>
           <input type="radio" name="slitdir" id="slit-up" value="up"><label for="slit-up" title="아래에서 위로 (세로 단면)" aria-label="아래에서 위로">↑</label>
-          <input type="radio" name="slitdir" id="slit-right" value="right"><label for="slit-right" title="왼쪽에서 오른쪽으로 (가로 단면)" aria-label="왼쪽에서 오른쪽으로">→</label>
-          <input type="radio" name="slitdir" id="slit-left" value="left"><label for="slit-left" title="오른쪽에서 왼쪽으로 (가로 단면)" aria-label="오른쪽에서 왼쪽으로">←</label>
+          <input type="radio" name="slitdir" id="slit-right" value="right"><label for="slit-right" title="왼쪽에서 오른쪽으로 (앞을 연 안구의 망막 위로)" aria-label="왼쪽에서 오른쪽으로">→</label>
+          <input type="radio" name="slitdir" id="slit-left" value="left"><label for="slit-left" title="오른쪽에서 왼쪽으로 (앞을 연 안구의 망막 위로)" aria-label="오른쪽에서 왼쪽으로">←</label>
           <input type="radio" name="slitdir" id="slit-all" value="all"><label for="slit-all" title="위↓ 아래↑ 왼→ 오른← 네 방향을 차례로">상하좌우</label>
         </div>
         <p class="slit-note" id="slit-note">위에서 아래로 — 세로 단면을 옆에서 봅니다</p>
@@ -119,7 +127,6 @@
     <div class="group">
       <h2 class="group-title">효과</h2>
       <div class="card">
-        <label class="row switch" title="사진의 밝기를 높낮이로 읽어 혈관과 시신경 유두가 도드라져 보이게 비춥니다"><span>입체 조명</span><input type="checkbox" role="switch" id="relief" checked></label>
         <label class="row switch" title="손을 떼고 있으면 안구가 천천히 돕니다 (만지면 멈췄다가 다시 돕니다)"><span>자동 회전</span><input type="checkbox" role="switch" id="spin" checked></label>
         <label class="row switch" title="세로 단면에는 안구 중심에서 잰 화각, 다른 보기에는 망막 위 촬영 범위의 경계"><span>화각 표시</span><input type="checkbox" role="switch" id="fovmarks"></label>
         <label class="row switch" title="3D 안구 옆에 사진을 평면으로 함께 보여 줍니다"><span>사진 나란히</span><input type="checkbox" role="switch" id="sidephoto"></label>

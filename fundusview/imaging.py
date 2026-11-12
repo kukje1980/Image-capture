@@ -200,7 +200,7 @@ def _blur(a: np.ndarray, sigma: float) -> np.ndarray:
 
 
 def detect_fovea(rgb: np.ndarray, cam, disc, laterality: str | None = None, *,
-                 window_deg: float = 7.0) -> tuple[float, float, float] | None:
+                 window_deg: float = 7.0, with_side: bool = False):
     """The fovea ``(x, y, confidence)`` or ``None``.
 
     The macula is a dark, vessel-free patch about 4.5 mm temporal of the disc and a little below
@@ -209,14 +209,19 @@ def detect_fovea(rgb: np.ndarray, cam, disc, laterality: str | None = None, *,
     channel against its surroundings — the foveal reflex and thin vessels are blurred away).
     ``None`` without a disc, when the macula is outside the photo, or when nothing dark enough is
     there (then the disc alone places the photo).
+
+    An eye not known (``laterality`` None) is looked at on both sides of the disc, the side the
+    disc's place suggests first; the macula found tells the eye (``with_side``: the result is
+    ``(x, y, confidence, "OD" | "OS")``).
     """
     from . import placement
 
     if disc is None or cam is None or not cam.r:
         return None
-    sides = [laterality] if laterality in ("OD", "OS") else [placement.side_of(disc, cam, None)]
-    if sides[0] is None:                             # a disc-centred photo of an unknown eye: try both
-        sides = ["OD", "OS"]
+    if laterality in ("OD", "OS"):
+        sides = [laterality]
+    else:                                            # an unknown eye: both sides, the likelier first
+        sides = ["OS", "OD"] if placement.side_of(disc, cam, None) == "OS" else ["OD", "OS"]
     small, step = _downsample(rgb, 384)
     h, w = small.shape[:2]
     green = small[..., 1].astype(np.float64) if small.ndim == 3 else small.astype(np.float64)
@@ -262,12 +267,12 @@ def detect_fovea(rgb: np.ndarray, cam, disc, laterality: str | None = None, *,
             fx, fy = float((wgt * xx).sum() / wgt.sum()), float((wgt * yy).sum() / wgt.sum())
         else:
             fx, fy = float(ix), float(iy)
-        cand = ((fx + 0.5) * step, (fy + 0.5) * step, conf, math.hypot(fx - gx, fy - gy))
+        cand = ((fx + 0.5) * step, (fy + 0.5) * step, conf, side, math.hypot(fx - gx, fy - gy))
         if best is None or cand[2] > best[2]:
             best = cand
     if best is None or best[2] < 1.2:
         return None
-    return best[:3]
+    return best[:4] if with_side else best[:3]
 
 
 def fundus_alpha(rgb: np.ndarray, circle: tuple[float, float, float] | None = None) -> np.ndarray:

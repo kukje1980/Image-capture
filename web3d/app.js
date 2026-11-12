@@ -506,8 +506,9 @@ const E = {
   // view
   mode: 'outside', cut: 0.25, showNerve: true, showMuscles: false, showGrid: false,
   half: 0, xray: 0, scan: null, scanDim: 1, scanBeam: 1, fovSweep: 0, fovAlpha: 0, fovRing: 0, black: false,
-  secAxis: 'v', scanSign: -1,   // the section: along the photo's vertical ('v') or horizontal ('h') meridian; the slit's way
+  slitAxis: 'v', scanSign: -1,  // the slit's way over the photo: along its vertical ('v') or horizontal ('h') axis, from which end
   simple: 0,                    // 단순하게 보기: 0 the detailed look … 1 plain (tweened)
+  reliefOn: true, reliefAmount: 0.45 * 0.08, hmap: null, hmapTex: null, hmapVer: 0,   // 망막 높낮이
   relief: 0, glass: 0, dark: 0, autoRotate: 0, outFov: 38,
   yaw: 38, pitch: 18, dist: MD.dist0, target: [0, 0, 0], inYaw: 0, inPitch: 0, inFov: MD.fov0, inZ: 0.35,
   drag: null, dragKind: '', touched: now(), entering: false, enterPlan: [], enterEnd: {}, viewEnds: null,
@@ -523,16 +524,15 @@ function replace() {
   E.placement = pl;
   E.discDir = pl.disc || anatomicalDisc(E.laterality);
 }
-function setLandmarks(lat, disc, fovea, circle) { E.laterality = lat; E.marks = [disc, fovea, circle]; replace(); redraw(); }
+function setLandmarks(lat, disc, fovea, circle) { E.laterality = lat; E.marks = [disc, fovea, circle]; replace(); updateRelief(); redraw(); }
 
-// The section (세로 단면 · 가로 단면) and the slit follow a meridian of the photo: its vertical one
-// (up on the photo) or its horizontal one (right on the photo), turned with the photo's roll.
-const slitAngle = (axis = E.secAxis) => (axis === 'h' ? 0 : PI / 2);   // on the photo, from its right
-const meridian = (axis = E.secAxis) => { const a = slitAngle(axis) - rad(E.roll); return [Math.cos(a), Math.sin(a), 0]; };
-function halfPlane(axis = E.secAxis) {
-  let k = cross(meridian(axis), [0, 0, 1]);
-  if (axis === 'h') { /* the lower half stays: seen from above, as the textbook's horizontal section */ }
-  else if (E.discDir && Math.abs(dot(E.discDir, k)) > 1e-6) k = dot(E.discDir, k) > 0 ? k : mul(k, -1);
+// 세로 단면 follows the photo's vertical meridian (up on the photo), turned with the photo's roll; the
+// slit moves along the photo's vertical ('v') or horizontal ('h') axis.
+const slitAngle = (axis = E.slitAxis) => (axis === 'h' ? 0 : PI / 2);   // on the photo, from its right
+const meridian = (axis = 'v') => { const a = slitAngle(axis) - rad(E.roll); return [Math.cos(a), Math.sin(a), 0]; };
+function halfPlane() {
+  let k = cross(meridian(), [0, 0, 1]);
+  if (E.discDir && Math.abs(dot(E.discDir, k)) > 1e-6) k = dot(E.discDir, k) > 0 ? k : mul(k, -1);
   else if (E.laterality === 'OS') k = mul(k, -1);
   return [k, 1.05 * (1 - clamp(E.half, 0, 1))];
 }
@@ -544,17 +544,12 @@ function poseFrom(d, dist, target = [0, 0, 0]) {
   d = unit(d);
   return { yaw: ((deg(Math.atan2(d[0], d[2])) % 360) + 360) % 360, pitch: deg(Math.asin(clamp(d[1], -1, 1))), dist, target: target.slice() };
 }
-// 세로 단면 from the side (the photo's up is up); 가로 단면 from above and a little in front (the
-// photo's right is on the right, the cornea toward the bottom)
-const sectionPose = (axis = E.secAxis) => {
-  const k = halfPlane(axis)[0];
-  return axis === 'h' ? poseFrom(add(mul(k, -1), [0, 0, 0.18]), fit(3.6, 1.3), [0, 0, 0.1]) : poseFrom(mul(k, -1), fit(3.6, 1.3), [0, 0, 0.12]);
-};
-const showcasePose = (axis = E.secAxis) => poseFrom(add(add(mul(halfPlane(axis)[0], -0.70), mul(meridian(axis), -0.25)), [0, 0, 0.65]), fit(3.8, 1.2));
+const sectionPose = () => poseFrom(mul(halfPlane()[0], -1), fit(3.6, 1.3), [0, 0, 0.12]);
+const showcasePose = () => poseFrom(add(mul(halfPlane()[0], -0.70), [0, -0.25, 0.65]), fit(3.8, 1.2));
 const tilted = () => E.placement.offsetDeg > 1e-6;
 
 function meridianRows(n = 721) {   // along the meridian: angle, place on the photo along that axis (-1…1), inside the field
-  const tmax = E.thetaMax(), m = meridian(), M = E.placement.matrix, alpha = slitAngle();
+  const tmax = E.thetaMax(), m = meridian(), M = E.placement.matrix, alpha = slitAngle('v');
   const lut = []; for (let k = 0; k <= 256; k++) lut.push(rhoOf(k / 256 * tmax, tmax, E.projection, E.viewpoint, E.radialC));
   const ts = [], rows = [], inside = [];
   for (let i = 0; i < n; i++) {
@@ -573,7 +568,7 @@ function fieldOnMeridian() {
   return k.length ? [k[0], k[k.length - 1]] : [-E.thetaMax(), E.thetaMax()];
 }
 function scanTheta(s) {   // where the slit at s (0…1 of its way) falls on the meridian: angle, side
-  const dy = E.scanSign * (2 * clamp(s, 0, 1) - 1), tmax = E.thetaMax();
+  const dy = E.scanSign * (2 * clamp(s, 0, 1) - 1), tmax = E.thetaMax();   // (on 세로 단면: the slit moves up or down)
   if (tilted()) {
     const [t, row, inside] = meridianRows(), k = [];
     for (let i = 0; i < t.length; i++) if (inside[i]) k.push(i);
@@ -758,10 +753,11 @@ function resetView(animate = true) {
   Object.assign(E, { yaw: 38, pitch: 18, dist: homeDist(), target: [0, 0, 0], inYaw: 0, inPitch: 0, inFov: E.FOV0, outFov: 38 });
   viewChanged();
 }
+const frontPose = () => ({ yaw: 0, pitch: 0, dist: homeDist(), target: [0, 0, 0] });
 function frontView(animate = true) {
-  if (animate && motionOn && E.mode === 'outside') { journey.stop(); glideTo({ yaw: 0, pitch: 0, dist: homeDist(), target: [0, 0, 0] }, null, 0.45, { outFov: 38 }); return; }
+  if (animate && motionOn && E.mode === 'outside') { journey.stop(); glideTo(frontPose(), null, 0.45, { outFov: 38 }); return; }
   stopMotion();
-  Object.assign(E, { yaw: 0, pitch: 0, dist: homeDist(), target: [0, 0, 0], outFov: 38 });
+  Object.assign(E, { ...frontPose(), outFov: 38 });
   viewChanged();
 }
 // 들어가며 보기: from the whole eye, in through the cornea, the anterior chamber, the pupil, the lens and
@@ -846,7 +842,7 @@ const vt = {
     this.finish(); stopMotion();
     this.from = [pose(), E.half, E.xray]; this.to = [goal, half, xray];
     this.t0 = now(); this.dur = Math.max(duration, 1e-3); this.done = done;
-    if (!motionOn || duration <= 0) { this.live = true; this.finish(); return; }
+    if (!motionOn || duration <= 0) { this.live = true; this.finish(true); return; }
     this.live = true; ticker.add(this);
   },
   step() {
@@ -858,12 +854,12 @@ const vt = {
     return true;
   },
   active() { return !!this.live; },
-  finish() {
-    if (!this.live) return;
+  finish(withPose = false) {   // the cut and the coats reach their goal; the camera only for an instant change
+    if (!this.live) return;     // (a touch ends the glide where the camera is, as in the program)
     this.live = false; ticker.remove(this);
     E.half = this.to[1]; E.xray = this.to[2];
-    const p = this.to[0];   // the camera too (an instant change, or one cut short, ends where it was going)
-    if (p) Object.assign(E, { yaw: p.yaw, pitch: p.pitch, dist: p.dist, target: p.target.slice() });
+    const p = this.to[0];
+    if (p && withPose) Object.assign(E, { yaw: p.yaw, pitch: p.pitch, dist: p.dist, target: p.target.slice() });
     viewChanged();
     const d = this.done; this.done = null; if (d) d();
   },
@@ -984,7 +980,7 @@ async function initGL() {
 // drawing: EyeView._paint_scene (the detailed look)
 // ---------------------------------------------------------------------------------------------
 // the way the slit moves over the photo (x to its right, y down)
-function scanDir(axis = E.secAxis, sign = E.scanSign) { const a = slitAngle(axis); return [sign * Math.cos(a), -sign * Math.sin(a)]; }
+function scanDir(axis = E.slitAxis, sign = E.scanSign) { const a = slitAngle(axis); return [sign * Math.cos(a), -sign * Math.sin(a)]; }
 function mappingUniforms() {
   const tmax = E.thetaMax();
   let scan = [-1, 0];
@@ -995,6 +991,7 @@ function mappingUniforms() {
     d: E.viewpoint, c: E.radialC, center: E.center, radius: E.radius, roll: rad(E.roll), place: m3T(E.placement.matrix),
     grid: E.showGrid ? 1 : 0, has_tex: tex ? 1 : 0, scan, scan_dir: scanDir(), fovring: E.fovRing,
     relief: tex ? E.relief : 0, texel: E.texel, rlight: m3v(m3T(E.placement.matrix), E.rlight),
+    hmap_on: reliefSheetOn() ? 1 : 0,
   };
 }
 function paintScene(w, h) {
@@ -1014,6 +1011,7 @@ function paintScene(w, h) {
   const bind = (unitIdx, t) => { gl.activeTexture(gl.TEXTURE0 + unitIdx); gl.bindTexture(gl.TEXTURE_2D, t); };
   bind(MD.units.tex, E.tex || R.empty);
   for (const n of ['iris', 'scl_a', 'scl_p', 'peri']) bind(MD.units[n], R.mtex[n]);
+  bind(MD.units.hmap, E.hmapTex || R.empty);
   gl.activeTexture(gl.TEXTURE0);
   gl.enable(gl.DEPTH_TEST);
 
@@ -1024,7 +1022,6 @@ function paintScene(w, h) {
   const mapping = mappingUniforms();
   const use = (name, extra = {}) => { const p = R.prog[name]; gl.useProgram(p); setU(p, common); setU(p, extra); return p; };
   const glass = inside || half ? 0 : clamp(E.glass, 0, 1);
-  const [openN, open] = half ? [mul(k, -1), off] : [[0, 0, 1], cutPlaneZ(E.cut)];
   const drawSclera = () => {
     use('sclera', { clip: closed || half ? K.LIMBUS_Z : Math.min(E.cut, K.LIMBUS_Z), disc: E.discDir || [0.37, 0.02, -0.93],
       xray: E.xray, glass, ...mapping });
@@ -1055,8 +1052,10 @@ function paintScene(w, h) {
       use('tissue', { kind: 2 }); drawMesh(R.meshes.iris);
       setU(R.prog.tissue, { kind: 3 }); drawMesh(R.meshes.angle);
     }
-    use('wall', { inside: inside ? 1 : 0, light: inside ? [0, 0, 1] : lights.key, open_n: openN, open, side: glass > 0 ? 1 : 0, glass, ...mapping });
+    const sheet = reliefSheet();   // 망막 높낮이: the photographed field as the relief sheet, the wall open there
+    const pw = use('wall', { inside: inside ? 1 : 0, light: inside ? [0, 0, 1] : lights.key, side: glass > 0 ? 1 : 0, glass, hole: sheet ? 0.995 : 0, ...mapping });
     drawMesh(R.meshes.wall);
+    if (sheet) { setU(pw, { hole: 0 }); drawMesh(sheet); }
   }
   drawBackdrop(w, h);
   if (inside || half || within || ((!closed || glass > 0) && E.cut > K.LENS_BACK_Z)) {
@@ -1085,8 +1084,10 @@ function paintScene(w, h) {
     gl.enable(gl.BLEND);
     gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ZERO, gl.ONE);
     gl.depthMask(false);
-    use('wall', { inside: 0, light: lights.key, open_n: openN, open, side: 2, glass, ...mapping });
+    const sheet = reliefSheet();
+    const pw = use('wall', { inside: 0, light: lights.key, side: 2, glass, hole: sheet ? 0.995 : 0, ...mapping });
     drawMesh(R.meshes.wall);
+    if (sheet) { setU(pw, { hole: 0 }); drawMesh(sheet); }
     drawSclera();
     gl.depthMask(true); gl.disable(gl.BLEND);
   }
@@ -1209,15 +1210,17 @@ function viewChanged() { ui.zoom && (ui.zoom.textContent = `배율 ×${magnifica
 // 슬릿 스캔 (slit_scan.SlitScanShow): a pure function of time
 // ---------------------------------------------------------------------------------------------
 const ramp = (t, t0, t1) => ease((t - t0) / (t1 - t0));
-// The slit can cross the photo four ways; 세로 (down, up) on the vertical section seen from the side,
-// 가로 (right, left) on the horizontal one seen from above. 상하좌우: all four, one after another.
+// The slit can cross the photo four ways. Down and up: on 세로 단면 seen from the side, the beam through
+// the pupil to the retina. Right and left: on the eye opened at the front, seen from the front, the
+// slit sweeping over the retina. 상하좌우: all four, one after another.
 const SLIT = {
-  down: { axis: 'v', sign: -1, name: '위에서 아래로' },
-  up: { axis: 'v', sign: 1, name: '아래에서 위로' },
-  right: { axis: 'h', sign: 1, name: '왼쪽에서 오른쪽으로' },
-  left: { axis: 'h', sign: -1, name: '오른쪽에서 왼쪽으로' },
+  down: { axis: 'v', sign: -1, stage: 'section', name: '위에서 아래로' },
+  up: { axis: 'v', sign: 1, stage: 'section', name: '아래에서 위로' },
+  right: { axis: 'h', sign: 1, stage: 'front', name: '왼쪽에서 오른쪽으로' },
+  left: { axis: 'h', sign: -1, stage: 'front', name: '오른쪽에서 왼쪽으로' },
 };
 const SLIT_ALL = ['down', 'up', 'right', 'left'];
+const FRONT_CUT = 0.25;   // the front opening for the right/left passes
 const show = {
   T_SIDE: 1.6, T_FOV: [1.6, 3.4], SCAN: 5.2, SCAN_ALL: 4.2, GAP: 0.6, SWITCH: 2.8, DONE: 0.5, TURN: 3.3, END_HALF: 0.62, SPIN_RATE: 14,
   timerOn: false, playing: false, showFov: false, xrayAfter: false, t0: 0, dir: 'down', segs: [],
@@ -1227,23 +1230,25 @@ const show = {
     journey.end();
     const passes = this.passes(), first = SLIT[passes[0]];
     Object.assign(E, { mode: 'outside', dark: 0, outFov: 38 });
-    this.startPose = pose(); this.startHalf = E.half; this.startXray = E.xray;
-    if (E.secAxis !== first.axis) this.startHalf = 0;   // another plane: it opens anew
-    E.secAxis = first.axis; E.scanSign = first.sign;
-    // the timeline: to the side, the field of view, the passes (a pause between two on one plane, the eye
-    // closing and opening on the other plane between 세로 and 가로), the turn to the showcase, the spin
+    this.startPose = pose(); this.startHalf = E.half; this.startXray = E.xray; this.startCut = E.cut;
+    E.slitAxis = first.axis; E.scanSign = first.sign;
+    // the timeline: to the first stage, the field of view, the passes (a pause between two on one
+    // stage; between 세로 단면 and the front opening the section closes as the front opens), the turn
+    // to the showcase, the spin
     const segs = [], dur = passes.length > 1 ? this.SCAN_ALL : this.SCAN;
     let t = this.T_FOV[1];
     passes.forEach((key, i) => {
       if (i > 0) {
-        const prev = SLIT[passes[i - 1]], cur = SLIT[key], d = prev.axis === cur.axis ? this.GAP : this.SWITCH;
-        segs.push({ kind: prev.axis === cur.axis ? 'gap' : 'switch', t0: t, t1: t + d, from: prev, to: cur }); t += d;
+        const prev = SLIT[passes[i - 1]], cur = SLIT[key], same = prev.stage === cur.stage, d = same ? this.GAP : this.SWITCH;
+        segs.push({ kind: same ? 'gap' : 'switch', t0: t, t1: t + d, from: prev, to: cur }); t += d;
       }
       segs.push({ kind: 'scan', t0: t, t1: t + dur, pass: SLIT[key], first: i === 0 }); t += dur;
     });
     this.segs = segs; this.last = SLIT[passes[passes.length - 1]];
     this.T_DONE = t + this.DONE; this.T_TURN = [this.T_DONE, this.T_DONE + this.TURN];
-    this.side = { v: sectionPose('v'), h: sectionPose('h') }; this.end = showcasePose(this.last.axis);
+    this.at = { section: { pose: sectionPose(), half: 1, cut: 1 }, front: { pose: { ...frontPose(), dist: fit(E.DIST0, 1.15) }, half: 0, cut: FRONT_CUT } };
+    this.end = this.last.stage === 'section' ? { pose: showcasePose(), half: this.END_HALF, cut: 1, xray: 1 }
+      : { pose: home(), half: 0, cut: FRONT_CUT, xray: 0 };
     this.t0 = now(); this.playing = true; this.timerOn = true;
     this.apply(this.frame(0)); requestFrame();
   },
@@ -1253,55 +1258,61 @@ const show = {
     const wasPlaying = this.playing; this.playing = false;
     const t = now() - this.t0;
     E.scan = null; E.scanBeam = 0; views.side.setScan(null);
-    if (wasPlaying && t < this.T_DONE) { E.half = 1; E.xray = this.xrayAfter ? 1 : 0; } else { E.half = this.END_HALF; E.xray = 1; }
+    if (wasPlaying && t < this.T_DONE) { if (E.half > 0.01) E.half = 1; E.xray = this.xrayAfter ? 1 : 0; }
+    else { E.half = this.end.half; E.cut = this.end.cut; E.xray = this.end.xray; }
     const on = this.showFov ? 1 : 0;
     E.fovSweep = E.fovAlpha = E.fovRing = on;
     ui.where('');
     redraw(); ui.onScanStopped();
   },
   frame(t) {
-    const end = this.end, ring = this.showFov ? 1 : 0, first = SLIT[this.passes()[0]];
-    const F = (p, half, xray, scan, dim, beam, sweep, alpha, fring, phase, slit = first) =>
-      ({ pose: p, half, xray, scan, dim, beam, sweep, alpha, fring, phase, axis: slit.axis, sign: slit.sign, name: slit.name });
-    const side = this.side[first.axis];
+    const ring = this.showFov ? 1 : 0, first = SLIT[this.passes()[0]];
+    const F = (p, half, cut, xray, scan, dim, beam, sweep, alpha, fring, phase, slit = first) =>
+      ({ pose: p, half, cut, xray, scan, dim, beam, sweep, alpha, fring, phase, axis: slit.axis, sign: slit.sign, name: slit.name, stage: slit.stage });
+    const st = this.at[first.stage];
     if (t < this.T_SIDE) {
-      const k = ramp(t, 0, this.T_SIDE);
-      return F(lerpPose(this.startPose, side, k), lerp(this.startHalf, 1, ramp(t, 0.2, 1.45)), lerp(this.startXray, 0, ramp(t, 0, 0.8)),
-        null, 0, 0, 0, 0, lerp(ring, 0, k), 'side');
+      const k = ramp(t, 0, this.T_SIDE), kh = ramp(t, 0.2, 1.45);
+      return F(lerpPose(this.startPose, st.pose, k), lerp(this.startHalf, st.half, kh), lerp(this.startCut, st.cut, kh),
+        lerp(this.startXray, 0, ramp(t, 0, 0.8)), null, 0, 0, 0, 0, lerp(ring, 0, k), 'side');
     }
-    if (t < this.T_FOV[1]) { const t0 = this.T_FOV[0]; return F(side, 1, 0, 0, ramp(t, t0 + 0.2, t0 + 1.4), 0, ramp(t, t0, t0 + 1.2), 1, 0, 'fov'); }
+    if (t < this.T_FOV[1]) {
+      const t0 = this.T_FOV[0];
+      return F(st.pose, st.half, st.cut, 0, 0, ramp(t, t0 + 0.2, t0 + 1.4), 0, ramp(t, t0, t0 + 1.2), 1, 0, 'fov');
+    }
     for (const g of this.segs) {
       if (t >= g.t1) continue;
       if (g.kind === 'scan') {
-        const { t0, t1 } = g, s = 0.5 - 0.5 * Math.cos(PI * clamp((t - t0) / (t1 - t0), 0, 1));
+        const { t0, t1 } = g, s = 0.5 - 0.5 * Math.cos(PI * clamp((t - t0) / (t1 - t0), 0, 1)), at = this.at[g.pass.stage];
         const beam = ramp(t, t0, t0 + 0.25) * (1 - ramp(t, t1, t1 + 0.35));
         const dim = g.first ? 1 : ramp(t, t0, t0 + 0.35);   // a later pass: the photo darkens again as it starts
-        return F(this.side[g.pass.axis], 1, 0, s, dim, beam, 1, 1, 0, 'scan', g.pass);
+        return F(at.pose, at.half, at.cut, 0, s, dim, beam, 1, 1, 0, 'scan', g.pass);
       }
-      if (g.kind === 'gap') return F(this.side[g.to.axis], 1, 0, 1, 1 - ramp(t, g.t0, g.t0 + 0.3), 0, 1, 1, 0, 'gap', g.from);
-      // switch: the eye closes on the old plane, turns to the new one and opens on it
+      const A = this.at[g.from.stage], B = this.at[g.to.stage];
+      if (g.kind === 'gap') return F(B.pose, B.half, B.cut, 0, 1, 1 - ramp(t, g.t0, g.t0 + 0.3), 0, 1, 1, 0, 'gap', g.from);
+      // switch: the section closes as the camera turns to the front and the front opens (or back)
       const { t0, t1 } = g, mid = 0.5 * (t0 + t1), on = t < mid ? g.from : g.to;
-      const half = t < mid ? 1 - ramp(t, t0, t0 + 1.0) : ramp(t, t1 - 1.0, t1);
-      const p = lerpPose(this.side[g.from.axis], this.side[g.to.axis], ramp(t, t0 + 0.2, t1 - 0.2));
+      const half = A.half > B.half ? 1 - ramp(t, t0, t0 + 1.2) : ramp(t, t1 - 1.2, t1);
+      const cut = A.cut > B.cut ? lerp(A.cut, B.cut, ramp(t, t0 + 1.0, t1)) : lerp(A.cut, B.cut, ramp(t, t0, t1 - 1.0));
+      const p = lerpPose(A.pose, B.pose, ramp(t, t0 + 0.2, t1 - 0.2));
       const sweep = t < mid ? 1 : ramp(t, t1 - 0.9, t1), alpha = t < mid ? 1 - ramp(t, t0, t0 + 0.6) : ramp(t, t1 - 0.9, t1 - 0.3);
-      return F(p, half, 0, null, 0, 0, sweep, alpha, 0, 'switch', on);
+      return F(p, half, cut, 0, null, 0, 0, sweep, alpha, 0, 'switch', on);
     }
-    const last = this.last;
-    if (t < this.T_DONE) return F(this.side[last.axis], 1, 0, 1, 1 - ramp(t, this.T_DONE - this.DONE, this.T_DONE), 0, 1, 1, 0, 'done', last);
+    const last = this.last, at = this.at[last.stage], end = this.end;
+    if (t < this.T_DONE) return F(at.pose, at.half, at.cut, 0, 1, 1 - ramp(t, this.T_DONE - this.DONE, this.T_DONE), 0, 1, 1, 0, 'done', last);
     const [t0, t1] = this.T_TURN;
     if (t < t1) {
-      return F(lerpPose(this.side[last.axis], end, ramp(t, t0, t1)), lerp(1, this.END_HALF, ramp(t, t0 + 0.3, t1 - 0.6)), ramp(t, t0, t0 + 1.8),
-        null, 0, 0, 1, 1 - ramp(t, t0, t0 + 0.5), ramp(t, t0 + 1.2, t0 + 2.2), 'turn', last);
+      return F(lerpPose(at.pose, end.pose, ramp(t, t0, t1)), lerp(at.half, end.half, ramp(t, t0 + 0.3, t1 - 0.6)), at.cut,
+        end.xray * ramp(t, t0, t0 + 1.8), null, 0, 0, 1, 1 - ramp(t, t0, t0 + 0.5), ramp(t, t0 + 1.2, t0 + 2.2), 'turn', last);
     }
     const ts = t - t1, sp = this.SPIN_RATE * (ts - 1.5 * (1 - Math.exp(-ts / 1.5)));
-    return F({ ...end, yaw: (end.yaw + sp) % 360 }, this.END_HALF, 1, null, 0, 0, 1, 0, lerp(1, ring, ramp(ts, 1.5, 3.0)), 'spin', last);
+    return F({ ...end.pose, yaw: (end.pose.yaw + sp) % 360 }, end.half, end.cut, end.xray, null, 0, 0, 1, 0, lerp(1, ring, ramp(ts, 1.5, 3.0)), 'spin', last);
   },
   apply(f) {
-    Object.assign(E, { half: f.half, xray: f.xray, scan: f.scan, scanDim: f.dim, scanBeam: f.beam, fovSweep: f.sweep, fovAlpha: f.alpha, fovRing: f.fring,
-      secAxis: f.axis, scanSign: f.sign });
+    Object.assign(E, { half: f.half, cut: f.cut, xray: f.xray, scan: f.scan, scanDim: f.dim, scanBeam: f.beam, fovSweep: f.sweep, fovAlpha: f.alpha,
+      fovRing: f.fring, slitAxis: f.axis, scanSign: f.sign });
     Object.assign(E, { yaw: f.pose.yaw, pitch: f.pose.pitch, dist: f.pose.dist, target: f.pose.target.slice() });
     views.side.setScan(f.scan, f.dim, scanDir(f.axis, f.sign));
-    if (this.playing) ui.where(['fov', 'scan', 'gap', 'switch'].includes(f.phase) ? `슬릿 — ${f.name}` + (f.axis === 'h' ? ' · 가로 단면' : ' · 세로 단면') : '');
+    if (this.playing) ui.where(['fov', 'scan', 'gap', 'switch'].includes(f.phase) ? `슬릿 — ${f.name}` + (f.stage === 'section' ? ' · 세로 단면' : ' · 앞에서 본 망막') : '');
     viewChanged();
   },
   tick() {
@@ -1560,6 +1571,137 @@ function showPhoto(P) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// 망막 높낮이 (relief.py): the shape of the retinal surface under the photo — raised vessels, the
+// disc's cup and rim, the foveal pit — and the fine mesh over the photographed field built from it
+// ---------------------------------------------------------------------------------------------
+const RELIEF = { SIDE: 512, VESSEL_H: 0.55, CUP_H: -1.0, CUP_FRAC: 0.45, DISC_R_DEG: 3.8, DISC_RIM_H: 0.22,
+  PIT_H: -0.55, PIT_R_DEG: 3.7, PIT_RIM_H: 0.12, N: 256, MAX: 0.08 };
+function rankFilter(a, w, h, r, max) {   // a square max or min filter of half-size r, edges repeated
+  let src = a;
+  for (const horiz of [true, false]) {
+    const out = new Float32Array(w * h);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      let v = max ? -Infinity : Infinity;
+      for (let k = -r; k <= r; k++) {
+        const xx = horiz ? clamp(x + k, 0, w - 1) : x, yy = horiz ? y : clamp(y + k, 0, h - 1), s = src[yy * w + xx];
+        v = max ? (s > v ? s : v) : (s < v ? s : v);
+      }
+      out[y * w + x] = v;
+    }
+    src = out;
+  }
+  return src;
+}
+function vesselLayer(P, tmaxDeg) {   // relief.vessels: a black top-hat of the green channel, 0…1
+  const key = Math.round(tmaxDeg * 10);
+  if (P.vessel && P.vessel.key === key) return P.vessel;
+  const s = downsample(P.px, RELIEF.SIDE), { w, h, green, step } = s;
+  const cx = P.circle[0] / step, cy = P.circle[1] / step, R = P.circle[2] / step, ppd = R / Math.max(tmaxDeg, 1);
+  const r = clamp(Math.round(ppd * 0.6), 2, 10);
+  const closed = rankFilter(rankFilter(green, w, h, r, true), w, h, r, false);
+  const th = new Float32Array(w * h), inner = [];
+  for (let i = 0; i < w * h; i++) {
+    th[i] = closed[i] - green[i];
+    const x = i % w, y = (i / w) | 0;
+    if ((x - cx) ** 2 + (y - cy) ** 2 <= (0.97 * R) ** 2) inner.push(th[i]);
+  }
+  let v = new Float32Array(w * h);
+  if (inner.length >= 50) {
+    const lo = percentile(inner, 60), hi = percentile(inner, 99.5);
+    for (let i = 0; i < w * h; i++) v[i] = clamp((th[i] - lo) / Math.max(hi - lo, 1e-6), 0, 1);
+    v = blur(v, w, h, Math.max(0.6, r * 0.35));
+  }
+  P.vessel = { key, v, w, h, step };
+  return P.vessel;
+}
+const bowl = (x) => 0.5 * (1 + Math.cos(PI * clamp(x, 0, 1)));
+function heightMap(P, tmaxDeg, disc, fovea) {   // relief.height_map: -1 (the cup's floor) … +1
+  const { v, w, h, step } = vesselLayer(P, tmaxDeg);
+  const cx = P.circle[0] / step, cy = P.circle[1] / step, R = P.circle[2] / step, ppd = R / Math.max(tmaxDeg, 1);
+  const rd = RELIEF.DISC_R_DEG * ppd, rp = RELIEF.PIT_R_DEG * ppd, H = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = y * w + x;
+    let z = RELIEF.VESSEL_H * v[i];
+    if (disc) {
+      const d = Math.hypot(x - disc[0] / step, y - disc[1] / step);
+      z += RELIEF.CUP_H * bowl(d / (RELIEF.CUP_FRAC * rd)) + RELIEF.DISC_RIM_H * Math.exp(-(((d - 0.9 * rd) / (0.28 * rd)) ** 2));
+    }
+    if (fovea) {
+      const d = Math.hypot(x - fovea[0] / step, y - fovea[1] / step);
+      z += RELIEF.PIT_H * bowl(d / rp) + RELIEF.PIT_RIM_H * Math.exp(-(((d - 1.35 * rp) / (0.45 * rp)) ** 2));
+    }
+    const tt = clamp((Math.hypot(x - cx, y - cy) / Math.max(R, 1) - 0.88) / 0.12, 0, 1);
+    H[i] = clamp(z * (1 - tt * tt * (3 - 2 * tt)), -1, 1);
+  }
+  return { H, w, h, step };
+}
+function encode16(H) {   // 16 bits in R (high) and G (low), as the shaders read it
+  const out = new Uint8Array(H.length * 4);
+  for (let i = 0; i < H.length; i++) {
+    const v = Math.round((clamp(H[i], -1, 1) * 0.5 + 0.5) * 65535);
+    out[i * 4] = v >> 8; out[i * 4 + 1] = v & 255; out[i * 4 + 3] = 255;
+  }
+  return out;
+}
+// The relief's heights for the photo shown, as a texture (the shading) and for the sheet (the shape)
+function updateRelief() {
+  const P = photo.current;
+  E.hmap = null;
+  if (P && P.circle) {
+    const hm = heightMap(P, deg(E.thetaMax()), E.marks[0], E.marks[1]);
+    E.hmap = hm;
+    if (E.hmapTex) gl.deleteTexture(E.hmapTex);
+    E.hmapTex = makeTexture(encode16(hm.H), hm.w, hm.h);
+  }
+  E.hmapVer = (E.hmapVer || 0) + 1;
+}
+function sampleH(hm, x, y) {   // bilinear, 0 outside
+  const x0 = Math.floor(x), y0 = Math.floor(y), fx = x - x0, fy = y - y0;
+  let s = 0;
+  for (const [dy, wy] of [[0, 1 - fy], [1, fy]]) for (const [dx, wx] of [[0, 1 - fx], [1, fx]]) {
+    const xi = x0 + dx, yi = y0 + dy;
+    if (xi >= 0 && xi < hm.w && yi >= 0 && yi < hm.h) s += hm.H[yi * hm.w + xi] * wx * wy;
+  }
+  return s;
+}
+function sheetMesh() {   // relief.sheet_mesh: over the image circle, raised by the heights, normals into the eye
+  const hm = E.hmap, P = photo.current, n = RELIEF.N, tmax = E.thetaMax(), M = E.placement.matrix, roll = rad(E.roll);
+  const [cx, cy, R] = P.circle, amount = E.reliefAmount, lutT = [];
+  for (let k = 0; k <= 256; k++) lutT.push(thetaOfRho(k / 256, tmax, E.projection, E.viewpoint, E.radialC));
+  const pos = new Float32Array(n * n * 3), nrm = new Float32Array(n * n * 3), keep = new Uint8Array(n * n), dirs = new Float64Array(n * n * 3);
+  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+    const a = -1.03 + 2.06 * i / (n - 1), b = -1.03 + 2.06 * j / (n - 1), rr = Math.hypot(a, b), k = j * n + i;
+    keep[k] = rr <= 1.03 ? 1 : 0;
+    let th;
+    if (rr <= 1) { const x = rr * 256, l = Math.min(255, Math.floor(x)); th = lerp(lutT[l], lutT[l + 1], x - l); } else th = tmax * rr;
+    const ph = Math.atan2(b, a) - roll, q = [Math.sin(th) * Math.cos(ph), Math.sin(th) * Math.sin(ph), -Math.cos(th)];
+    const d = m3v(M, q), hgt = keep[k] ? sampleH(hm, (cx + a * R) / hm.step, (cy - b * R) / hm.step) : 0;
+    const rad_ = K.R_RET - amount * hgt;
+    for (let c = 0; c < 3; c++) { pos[k * 3 + c] = d[c] * rad_; dirs[k * 3 + c] = d[c]; }
+  }
+  const at = (i, j) => { const k = (j * n + i) * 3; return [pos[k], pos[k + 1], pos[k + 2]]; };
+  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+    const du = sub(at(Math.min(i + 1, n - 1), j), at(Math.max(i - 1, 0), j)), dv = sub(at(i, Math.min(j + 1, n - 1)), at(i, Math.max(j - 1, 0)));
+    let nn = unit(cross(du, dv));
+    const k = (j * n + i) * 3;
+    if (nn[0] * -dirs[k] + nn[1] * -dirs[k + 1] + nn[2] * -dirs[k + 2] < 0) nn = mul(nn, -1);
+    nrm[k] = nn[0]; nrm[k + 1] = nn[1]; nrm[k + 2] = nn[2];
+  }
+  const idx = [];
+  for (let j = 0; j < n - 1; j++) for (let i = 0; i < n - 1; i++) {
+    const k = j * n + i;
+    if (keep[k] && keep[k + 1] && keep[k + n] && keep[k + n + 1]) idx.push(k, k + n, k + 1, k + 1, k + n, k + n + 1);
+  }
+  return { pos, nrm, idx: Uint32Array.from(idx), uv: null, lines: false };
+}
+const reliefSheetOn = () => E.reliefOn && E.reliefAmount > 1e-4 && !!E.hmap && !!E.tex;
+function reliefSheet() {
+  if (!reliefSheetOn()) return null;
+  const M = E.placement.matrix;
+  return dynamic('relief', [E.hmapVer, E.reliefAmount.toFixed(4), E.fov, E.fovType, E.projection, E.roll, M.map((x) => x.toFixed(6)).join()].join('|'), sheetMesh);
+}
+
+// ---------------------------------------------------------------------------------------------
 // the flat photo (inspector preview and 사진 나란히): image circle, disc, fovea, the slit
 // ---------------------------------------------------------------------------------------------
 class PhotoCanvas {
@@ -1632,7 +1774,7 @@ const views = { preview: null, side: null };   // the inspector's photo and 사�
 // ---------------------------------------------------------------------------------------------
 const $ = (id) => document.getElementById(id);
 const ui = {
-  cutValues: { front: 25, section: 0, hsection: 0 },
+  cutValues: { front: 25, section: 0 },
   view: 'front',
   marking: null,
   init() {
@@ -1674,6 +1816,8 @@ const ui = {
     $('xray').addEventListener('change', () => this.onXray($('xray').checked));
     // 효과
     $('relief').addEventListener('change', () => { E.relief = $('relief').checked ? MD.relief : 0; redraw(); });
+    $('surface').addEventListener('change', () => { E.reliefOn = $('surface').checked; $('height').disabled = !E.reliefOn; redraw(); });
+    $('height').addEventListener('input', () => { E.reliefAmount = +$('height').value / 100 * RELIEF.MAX; redraw(); });
     $('spin').addEventListener('change', () => setAutoRotate($('spin').checked ? MD.spin : 0));
     $('fovmarks').addEventListener('change', () => this.applyFovMarks());
     $('sidephoto').addEventListener('change', () => this.onSidePhoto($('sidephoto').checked));
@@ -1856,14 +2000,7 @@ const ui = {
     this.syncView(mode);
     E.cut = 1;
     let goal, half, done = null;
-    if (mode !== 'front') {
-      const axis = mode === 'hsection' ? 'h' : 'v';
-      if (axis !== E.secAxis && E.half > 0.01 && animate) {   // the other plane: close on this one, open on that one
-        vt.go(null, 0, E.xray, 0.4, () => { E.secAxis = axis; this.setView(mode, animate); });
-        return;
-      }
-      E.secAxis = axis; goal = sectionPose(); half = 1 - this.cutValues[mode] / 100;
-    } else { goal = E.half < 0.5 ? null : home(); half = 0; done = () => this.onCut(+$('cut').value); }
+    if (mode === 'section') { goal = sectionPose(); half = 1 - this.cutValues.section / 100; } else { goal = E.half < 0.5 ? null : home(); half = 0; done = () => this.onCut(+$('cut').value); }
     if (!$('mode-out').checked) goal = null;
     vt.go(goal, half, E.xray, animate ? 0.9 : 0, done);
     this.applyFovMarks();
@@ -1887,8 +2024,8 @@ const ui = {
   onSlitDir(dir) {
     show.dir = dir;
     const p = dir === 'all' ? null : SLIT[dir];
-    $('slit-note').textContent = p ? `${p.name} — ${p.axis === 'h' ? '가로 단면을 위에서' : '세로 단면을 옆에서'} 봅니다`
-      : '위↓ 아래↑ (세로 단면) 다음 왼→ 오른← (가로 단면) 차례로';
+    $('slit-note').textContent = p ? `${p.name} — ${p.stage === 'front' ? '앞을 연 안구의 망막 위로' : '세로 단면을 옆에서'} 봅니다`
+      : '위↓ 아래↑ (세로 단면) 다음 왼→ 오른← (앞에서 본 망막) 차례로';
     if (show.playing) { show.stop(); this.toggleScan(); }
   },
   onSimple(on) {   // 단순하게 보기: the coats, the iris and the lens fade to plain shapes; the retina stays as it is
@@ -1914,16 +2051,15 @@ const ui = {
     this.leaveJourney();
     E.cut = 1;
     const first = SLIT[show.passes()[0]];
-    this.cutValues.section = this.cutValues.hsection = 0;
-    this.syncView(first.axis === 'h' ? 'hsection' : 'section');
+    if (first.stage === 'section') { this.cutValues.section = 0; this.syncView('section'); }
+    else { this.cutValues.front = Math.round(FRONT_CUT * 100); this.syncView('front'); }
     setTimeout(() => show.start(), 30);
     this.scanButtons('■ 멈춤');
     this.status('슬릿 스캔 — 안구를 누르거나 돌리면 멈춥니다');
   },
   syncFromEye() {
-    const mode = E.secAxis === 'h' ? 'hsection' : 'section';
-    this.cutValues[mode] = Math.round(100 * (1 - E.half));
-    this.syncView(mode);
+    if (E.half > 0.01) { this.cutValues.section = Math.round(100 * (1 - E.half)); this.syncView('section'); }
+    else { this.cutValues.front = E.cut < 1 ? Math.round(E.cut * 100) : 100; this.syncView('front'); }
     $('xray').checked = E.xray > 0.5;
   },
   onScanFinished() { this.scanButtons('▶ 슬릿 스캔'); this.syncFromEye(); },

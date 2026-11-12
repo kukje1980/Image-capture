@@ -245,29 +245,38 @@ def test_3d_flick_wheel_and_view_glides(app, live, monkeypatch):
 
 
 def test_3d_enters_through_the_pupil_and_back(app, live, monkeypatch):
+    """들어가며 보기: from the whole eye in through the cornea, the pupil and the lens to the retina —
+    nothing goes dark; a touch stops it where it is; back out the same way."""
     from fundusview.ui import motion
 
     e = _eye(app, monkeypatch)
     e.cut = 0.25
+    seen = []
+    e.journeyChanged.connect(seen.append)
     e.enter("inside")
-    assert e.mode == "outside" and e.moving()
-    live(0.4)
+    assert e.mode == "outside" and e.moving() and e.journey_running()
+    live(1.6)
     assert e.mode == "outside" and e.cut > 0.9 and e.dark == 0.0        # the eye closes, seen from the front
-    live(0.45)
-    assert e.mode == "outside" and e.dark > 0.5 and e.dist < 1.6        # diving at the pupil, into the dark
-    live(0.25)
-    assert e.mode == "inside" and e.in_fov < e.FOV0 and e.dark < 1.0    # inside, opening up
-    live(1.0)
-    assert not e.moving()
-    assert (e.mode, e.dark, e.cut, e.in_fov) == ("inside", 0.0, 0.25, pytest.approx(e.FOV0))
-    # back out — and a touch on the way ends it at once, at the goal
+    assert 0.1 < e.journey_j < 0.5 and e.dist < 3.0 and seen == sorted(seen)
+    e.stop_motion()                                                    # a touch: it stops where it is
+    j = e.journey_j
+    assert not e.moving() and e.mode == "outside" and 0.1 < j < 0.5
+    e.journey_scrub(0.62)                                              # (the 위치 slider) in the chamber
+    assert e.mode == "outside" and e.dist < 1.12 and e.out_fov > 40.0 and e.dark == 0.0
+    e.journey_scrub(1.0)
+    assert (e.mode, e.in_fov, e.in_z, e.dark) == ("inside", pytest.approx(e.FOV0), pytest.approx(e.JOURNEY_Z), 0.0)
+    # back out — the same way, and at the start view of the eye it ends
     e.enter("outside")
     live(0.3)
-    assert e.moving()
+    assert e.moving() and e.mode == "outside" and e.journey_j < 1.0
     e.stop_motion()
-    assert not e.moving()
-    assert (e.mode, e.dark, e.cut) == ("outside", 0.0, 0.25)
-    assert (e.yaw, e.pitch, e.dist) == (38.0, 18.0, e.DIST0)
+    motion.set_enabled(False)
+    try:
+        e.enter("outside")                                             # (부드러운 움직임 off: at once)
+        assert not e.moving() and e.mode == "outside" and e.journey_j == 0.0 and not e.journey_on()
+        assert e.cut == pytest.approx(0.25) and e.out_fov == 38.0
+    finally:
+        motion.set_enabled(True)
     # the simple model has no pupil to fly through: a fade through black
     s = _eye(app, monkeypatch, detail="simple")
     s.enter("inside")

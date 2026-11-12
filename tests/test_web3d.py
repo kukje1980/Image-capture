@@ -59,9 +59,9 @@ def test_the_page_is_built_in_one_file(tmp_path):
     for p in photos.values():                                         # found as the program finds them on import
         assert p["src"].startswith("data:image/jpeg;base64,") and len(p["circle"]) == 3 and p["disc"] is not None
     assert photos["cam45_nasal"]["fovea"] is not None and photos["cam30_disc"]["fovea"] is None   # the macula off the photo
-    for control in ('id="autofind"', 'id="simple"', 'id="view-hsection"', 'name="slitdir"', 'id="journey"'):
+    for control in ('id="autofind"', 'id="simple"', 'id="surface"', 'id="height"', 'name="slitdir"', 'id="journey"'):
         assert control in page, control
     assert 'id="autofind" checked' in page                             # finding the macula and disc is the default
-    assert "사진 펼치기" not in page and 'id="unwrap"' not in page
+    assert "사진 펼치기" not in page and 'id="unwrap"' not in page and "가로 단면" not in page
     m = data["model"]
     assert m["consts"]["R_RET"] == pytest.approx(0.9) and len(m["wall_base"]["z"]) == len(m["wall_base"]["r"])

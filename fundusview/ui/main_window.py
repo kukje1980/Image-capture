@@ -45,7 +45,7 @@ from .image_view import TOOL_HINTS, TOOLS, ImageView, from_qimage
 from .montage_dialog import MontageDialog, MontageSource, confirm_sources
 from .keys import IS_MAC, keys
 from .multi_view import MultiView
-from .slit_scan import ScanPhotoView, SlitScanShow, ViewTween
+from .slit_scan import SLIT, ScanPhotoView, SlitScanShow, ViewTween
 from .thumbs import EYE_ROLE, PICK_ROLE, ThumbDelegate, eye_badge_html
 from .toolbars import CHECKABLE, COMMANDS, MENUS, PROCESSING, SliderPopup, icon_for
 from .widgets import Segmented, Switch, card, segment
@@ -143,6 +143,42 @@ def age_on(birth: str | None, on: str | None = None) -> int | None:
     except (TypeError, ValueError):
         return None
     return d.year - b.year - ((d.month, d.day) < (b.month, b.day))
+
+
+class _WhereChip(QLabel):
+    """The name of the place passed (들어가며 보기) or of the slit's way, on a pill over the eye's bottom."""
+
+    def __init__(self, eye: QWidget):
+        super().__init__(eye)
+        self.setObjectName("where3d")
+        self.setStyleSheet("#where3d { background: rgba(28, 28, 30, 215); color: #f2f2f7; border-radius: 13px;"
+                           " padding: 5px 14px; font-weight: 600; }")
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._timer = QTimer(self, singleShot=True, timeout=self.hide)
+        eye.installEventFilter(self)
+        self.hide()
+
+    def say(self, text: str, hold: float = 0.0) -> None:
+        self._timer.stop()
+        if not text:
+            self.hide()
+            return
+        self.setText(text)
+        self.adjustSize()
+        self._place()
+        self.show()
+        self.raise_()
+        if hold > 0.0:
+            self._timer.start(int(hold * 1000))
+
+    def _place(self) -> None:
+        eye = self.parentWidget()
+        self.move(max(8, (eye.width() - self.width()) // 2), max(8, eye.height() - self.height() - 16))
+
+    def eventFilter(self, obj, ev):
+        if ev.type() == QEvent.Type.Resize and self.isVisible():
+            self._place()
+        return False
 
 
 class MainWindow(QMainWindow):
@@ -689,9 +725,27 @@ class MainWindow(QMainWindow):
                                  "(바깥에서 보므로 좌우가 뒤집혀 보입니다)")
         self.c_xray3d.toggled.connect(self._on_xray)
 
+        # -- 망막 입체: the retina's relief (relief.py) and the light on it -----------------------
+        self.c_surface3d = Switch("표면 높낮이")
+        self.c_surface3d.setToolTip("혈관은 솟고, 시신경 유두의 함몰(cup)과 황반의 오목(pit)은 파이도록 사진이 얹힌 "
+                                    "망막 표면을 실제로 올리고 내립니다 — 돌려 보면 높낮이가 보입니다 (자세히 보기)")
+        self.c_surface3d.setChecked(bool(self.settings.surface3d))
+        self.c_surface3d.toggled.connect(self._on_surface)
+        self.s_height3d = QSlider(Qt.Orientation.Horizontal)
+        self.s_height3d.setRange(0, 100)
+        self.s_height3d.setValue(int(self.settings.surface_height3d))
+        self.s_height3d.setMinimumWidth(120)
+        self.s_height3d.setToolTip("높낮이를 얼마나 크게 보일지 (실제보다 과장해서 보여 줍니다)")
+        self.s_height3d.valueChanged.connect(self._on_height)
+        self.c_simple3d = Switch("단순하게 보기")
+        self.c_simple3d.setToolTip("공막·홍채·수정체·시신경을 단순한 모양과 색으로 그려 사진이 얹힌 망막과 그 입체가 "
+                                   "잘 보이게 합니다 (자세히 보기)")
+        self.c_simple3d.setChecked(bool(self.settings.simple3d))
+        self.c_simple3d.toggled.connect(self._on_simple)
+
         # -- effects ---------------------------------------------------------------------------
         self.c_relief3d = Switch("입체 조명")
-        self.c_relief3d.setToolTip("사진의 밝기를 높낮이로 읽어 혈관과 시신경 유두가 도드라져 보이게 비춥니다 "
+        self.c_relief3d.setToolTip("표면의 높낮이에 비스듬한 빛을 비춰 혈관과 유두·황반이 도드라져 보이게 합니다 "
                                    "(안구를 돌리면 빛이 따라 움직입니다)")
         self.c_relief3d.setChecked(bool(self.settings.relief3d))
         self.c_relief3d.toggled.connect(self._on_relief)
@@ -764,14 +818,10 @@ class MainWindow(QMainWindow):
         # 슬릿 스캔: the photo flat next to the eye and the scan presentation
         self.b_scan = QPushButton("▶ 슬릿 스캔")
         self.b_scan.setObjectName("scan3d")
-        self.b_scan.setToolTip("안구를 옆에서 반으로 자른 단면에 화각을 보이고, 슬릿이 사진을 위에서 아래로 훑는 동안 "
-                               "빛이 동공을 지나 같은 망막 위치에 닿는 모습을 보여 준 뒤, 사진을 입힌 3D 안구로 "
-                               "돌려 보여 줍니다 (사진 나란히). 안구를 누르거나 돌리면 멈춥니다.")
+        self.b_scan.setToolTip("슬릿이 고른 방향으로 사진을 훑는 동안 안구에서 같은 망막 위치를 보여 줍니다 — 위아래는 "
+                               "옆에서 본 세로 단면에서 빛이 동공을 지나 망막에 닿는 모습, 좌우는 앞을 연 안구의 망막 "
+                               "위로 (사진 나란히). 안구를 누르거나 돌리면 멈춥니다.")
         self.b_scan.clicked.connect(self._toggle_scan)
-        self.b_unwrap = QPushButton("사진 펼치기")
-        self.b_unwrap.setToolTip("망막에 입힌 사진이 떠올라 평면 사진으로 펴지고, 다시 누르면 망막에 감깁니다 — "
-                                 "평면 사진과 안구 속 위치가 어떻게 이어지는지 보여 줍니다")
-        self.b_unwrap.clicked.connect(self._toggle_unwrap)
         self.b_full3d = QPushButton("크게 보기")
         self.b_full3d.setToolTip("3D 안구와 사진을 화면 전체로 (Esc: 돌아가기 · Space: 슬릿 스캔)")
         self.b_full3d.clicked.connect(self._toggle_full_3d)
@@ -793,7 +843,6 @@ class MainWindow(QMainWindow):
         top.addWidget(self.lbl_zoom3d)
         top.addStretch(1)
         top.addWidget(self.b_scan)
-        top.addWidget(self.b_unwrap)
         top.addWidget(self.b_full3d)
         top.addWidget(self.b_inspector)
         view_row = QWidget()
@@ -810,6 +859,46 @@ class MainWindow(QMainWindow):
             vr.addWidget(b, 1)
         self.eye3d.relief = self.RELIEF if self.settings.relief3d else 0.0
         self.eye3d.glass = self.settings.glass3d / 100.0
+        self.eye3d.relief_on = bool(self.settings.surface3d)
+        self.eye3d.relief_amount = self.settings.surface_height3d / 100.0 * self.HEIGHT_MAX
+        self.eye3d.simple = 1.0 if self.settings.simple3d else 0.0
+        self.s_height3d.setEnabled(self.c_surface3d.isChecked())
+        self.eye3d.journeyChanged.connect(self._on_journey)
+        self._where = _WhereChip(self.eye3d)
+
+        # 들어가며 보기: from the whole eye through the cornea, the pupil and the lens to the retina
+        self.b_journey = QPushButton("▶ 들어가기")
+        self.b_journey.setObjectName("scan3d")
+        self.b_journey.setToolTip("안구 전체에서 각막·앞방·동공·수정체·유리체를 지나 망막까지 들어갑니다 "
+                                  "(다시 누르면 나옵니다 · 자세히 보기)")
+        self.b_journey.clicked.connect(self._play_journey)
+        journey_note = QLabel("각막 → 동공 → 수정체 → 망막")
+        journey_note.setObjectName("caption")
+        journey_row = QWidget()
+        jr = QHBoxLayout(journey_row)
+        jr.setContentsMargins(0, 0, 0, 0)
+        jr.setSpacing(8)
+        jr.addWidget(self.b_journey)
+        jr.addWidget(journey_note, 1)
+        self.s_journey = QSlider(Qt.Orientation.Horizontal)
+        self.s_journey.setRange(0, 100)
+        self.s_journey.setMinimumWidth(120)
+        self.s_journey.setToolTip("왼쪽 끝 = 안구 전체, 오른쪽 끝 = 망막 (끌어서 원하는 곳에서 멈춰 보세요)")
+        self.s_journey.valueChanged.connect(self._scrub_journey)
+
+        # 슬릿 스캔: which way the slit crosses the photo
+        self._slit_buttons = {}
+        for key, label, tip in (("down", "↓", "위에서 아래로 (세로 단면)"), ("up", "↑", "아래에서 위로 (세로 단면)"),
+                                ("right", "→", "왼쪽에서 오른쪽으로 (앞을 연 안구의 망막 위로)"),
+                                ("left", "←", "오른쪽에서 왼쪽으로 (앞을 연 안구의 망막 위로)"),
+                                ("all", "상하좌우", "위↓ 아래↑ 왼→ 오른← 네 방향을 차례로")):
+            b = segment(label, tip)
+            b.clicked.connect(lambda _=False, k=key: self._on_slit_dir(k))
+            self._slit_buttons[key] = b
+        self.seg_slit = Segmented(list(self._slit_buttons.values()))
+        self.lbl_slit = QLabel("")
+        self.lbl_slit.setObjectName("caption")
+        self.lbl_slit.setWordWrap(True)
 
         # -- the settings beside the eye: cards -------------------------------------------------------
         body = QWidget()
@@ -817,11 +906,14 @@ class MainWindow(QMainWindow):
         bl = QVBoxLayout(body)
         bl.setContentsMargins(12, 10, 12, 12)
         bl.setSpacing(12)
+        bl.addWidget(card("망막 입체", self.c_surface3d, setting_row("높이", self.s_height3d), self.c_relief3d))
         bl.addWidget(card("시점", view_row))
+        bl.addWidget(card("들어가며 보기", journey_row, setting_row("위치", self.s_journey)))
         bl.addWidget(card("안구 열기", self.seg_view, setting_row("깊이", self.s_cut), setting_row("공막 투명도", self.s_glass),
                           self.c_xray3d))
-        bl.addWidget(card("효과", self.c_relief3d, self.c_spin3d, self.c_fov3d, self.c_side3d))
-        bl.addWidget(card("표시", self.c_nerve, self.c_muscle, self.c_grid, self.c_adj3d))
+        bl.addWidget(card("슬릿 스캔", self.seg_slit, self.lbl_slit))
+        bl.addWidget(card("효과", self.c_spin3d, self.c_fov3d, self.c_side3d))
+        bl.addWidget(card("표시", self.c_simple3d, self.c_nerve, self.c_muscle, self.c_grid, self.c_adj3d))
         bl.addWidget(card("사진 맞춤", self.c_align3d, setting_row("화각", self.sp_fov),
                           setting_row("화각 기준", self.c_fovtype), setting_row("투영", self.c_proj),
                           setting_row("회전", self.sp_roll), self.b_fit_fov, b_save_map))
@@ -847,6 +939,9 @@ class MainWindow(QMainWindow):
         self._show = SlitScanShow(self.eye3d, self.scan_photo, self)
         self._show.finished.connect(self._on_scan_finished)
         self._show.stopped.connect(self._on_scan_stopped)
+        self._show.passChanged.connect(self._where.say)
+        self._on_slit_dir(self.settings.slit_dir3d if self.settings.slit_dir3d in self._slit_buttons else "down",
+                          save=False)
         self._tween = ViewTween(self.eye3d, self)
         self._full3d: QWidget | None = None
         self._set_3d_detail(self.settings.view3d_detail, save=False)
@@ -886,22 +981,26 @@ class MainWindow(QMainWindow):
             "오른쪽 클릭: 메뉴 (시신경 유두 · 황반 위치 지정, 돋보기 배율, 미니맵)<br><br>"
             "<b>3D 안구</b><br>"
             "위 막대: 간단히 / 자세히 (가벼운 기본 모형 / 실제 해부 구조) · 외부 / 내부 · ▶ 슬릿 스캔 · "
-            "사진 펼치기 · 크게 보기 · 설정 (오른쪽 패널 열고 닫기)<br>"
-            "설정 패널 — <b>시점</b>: 정면 · 처음 시점 · 화면 저장 / <b>안구 열기</b>: 앞쪽 절개 · 세로 단면, 깊이, "
-            "공막 투명도, 망막 투시 / <b>효과</b>: 입체 조명 · 자동 회전 · 화각 표시 · 사진 나란히 / "
-            "<b>표시</b>: 시신경 · 외안근 · 각도 격자 / <b>사진 맞춤</b>: 실제 위치에 맞춤 · 화각 · 투영 · 회전<br>"
+            "크게 보기 · 설정 (오른쪽 패널 열고 닫기)<br>"
+            "설정 패널 — <b>망막 입체</b>: 표면 높낮이 · 높이 · 입체 조명 / <b>시점</b>: 정면 · 처음 시점 · 화면 저장 / "
+            "<b>들어가며 보기</b>: ▶ 들어가기 · 위치 / <b>안구 열기</b>: 앞쪽 절개 · 세로 단면, 깊이, 공막 투명도, "
+            "망막 투시 / <b>슬릿 스캔</b>: 방향 ↓ ↑ → ← · 상하좌우 / <b>효과</b>: 자동 회전 · 화각 표시 · 사진 나란히 / "
+            "<b>표시</b>: 단순하게 보기 · 시신경 · 외안근 · 각도 격자 / <b>사진 맞춤</b>: 실제 위치에 맞춤 · 화각 · "
+            "투영 · 회전<br>"
             "사진 맞춤 → 실제 위치에 맞춤: 사진의 황반을 안구 뒤쪽 한가운데(후극)에, 시신경 유두를 코쪽 제자리에 "
             "오도록 얹습니다 — 잘못 찾았으면 2D 사진에서 오른쪽 클릭으로 황반·유두를 직접 지정<br>"
             "공막 투명도: 공막이 유리처럼 비쳐 보이고, 사진이 있는 망막은 진하게 그대로 남습니다 "
             "(0 = 흰 공막) — 안구를 돌리면 망막이 안구 속 어디에 있는지 보입니다<br>"
-            "▶ 슬릿 스캔: 단면에 화각 → 슬릿이 사진을 위에서 아래로 → 사진을 입힌 3D 안구 (누르면 멈춤) · "
-            "크게 보기: 화면 전체 (Space 재생, Esc 돌아가기)<br>"
+            "▶ 슬릿 스캔: 위아래는 단면에 화각 → 슬릿이 사진을 훑으며 빛이 동공을 지나 망막에, 좌우는 앞을 연 안구의 "
+            "망막 위로 → 사진을 입힌 3D 안구 (누르면 멈춤) · 크게 보기: 화면 전체 (Space 재생, Esc 돌아가기)<br>"
             "드래그: 회전 (돌리다 놓으면 관성으로 더 돕니다) · 휠: 커서가 가리키는 곳으로 확대 · "
             "가운데 버튼 또는 Shift+드래그: 이동<br>"
             "+/−: 확대·축소 · 더블클릭 또는 0: 처음 보기<br>"
-            "사진 펼치기: 망막의 사진이 평면 사진으로 펴졌다가 다시 감김 · 입체 조명: 혈관·유두가 도드라져 보임 · "
+            "망막 입체: 표면 높낮이 — 혈관은 솟고 유두 함몰·황반 오목은 파여 보임, 입체 조명 — 그 높낮이에 비스듬한 빛 · "
+            "단순하게 보기: 공막·홍채·수정체·시신경을 단순하게 그려 망막을 강조 · "
             "자동 회전: 손을 떼고 있으면 천천히 돕니다<br>"
-            "내부를 누르면 동공을 지나 안으로 들어갑니다<br>"
+            "들어가며 보기 · 내부: 안구 전체에서 각막 → 앞방 → 동공 → 수정체 → 유리체 → 망막까지 끊김 없이 들어갑니다 "
+            "(위치 막대로 원하는 곳에서 멈춤)<br>"
             "보기 → 부드러운 움직임: 끄면 확대·회전·전환이 바로 바뀝니다 (원격 접속 등 느린 화면)<br><br>"
             "<b>단축키</b><br>"
             "PageUp / PageDown: 이전 / 다음 사진 · Ctrl+1~4: 2D / 3D / 다중 / 비교 · Ctrl+5: 모두 보기<br>"
@@ -2162,10 +2261,9 @@ class MainWindow(QMainWindow):
     def _set_3d_view(self, mode: str, animate: bool = True) -> None:
         """앞쪽 절개 (front) or 세로 단면 (section), gliding to a fitting camera."""
         self._show.stop()
-        if mode == "section":
-            self._end_unwrap()
         self._sync_view_combo(mode)
         eye = self.eye3d
+        eye.journey_leave()
         # the front stays closed while the section plane moves; the front cut opens at the end
         eye.cut = 1.0
         if mode == "section":
@@ -2225,19 +2323,26 @@ class MainWindow(QMainWindow):
         if self.eye3d.detail != "detailed":   # the presentation shows the realistic eye (not saved as the look)
             self._set_3d_detail("detailed", save=False)
         self._show.show_fov = self.c_fov3d.isChecked()
-        self._end_unwrap()
-        self.eye3d.cut = 1.0                  # it ends in 세로 단면: no front cut
-        self._cut_values["section"] = 0
-        self._sync_view_combo("section")
+        if self._show.first().stage == "section":
+            self.eye3d.cut = 1.0              # 세로 단면: no front cut
+            self._cut_values["section"] = 0
+            self._sync_view_combo("section")
+        else:                                 # right / left: on the eye opened at the front
+            self._cut_values["front"] = 25
+            self._sync_view_combo("front")
         self._show.start()
         self.b_scan.setText("■ 멈춤")
         self.eye3d.setFocus()
         self.lbl_status.setText("슬릿 스캔 — 안구를 누르거나 돌리면 멈춥니다")
 
     def _sync_from_eye(self) -> None:
-        """After the presentation: 세로 단면 at the eye's depth, 망막 투시 as the eye shows it."""
-        self._cut_values["section"] = round(100.0 * (1.0 - self.eye3d.half))
-        self._sync_view_combo("section")
+        """After the presentation: 세로 단면 at the eye's depth (or the front cut), 망막 투시 as the eye shows it."""
+        if self.eye3d.half > 0.01:
+            self._cut_values["section"] = round(100.0 * (1.0 - self.eye3d.half))
+            self._sync_view_combo("section")
+        else:
+            self._cut_values["front"] = round(100.0 * self.eye3d.cut) if self.eye3d.cut < 1.0 else 100
+            self._sync_view_combo("front")
         self.c_xray3d.blockSignals(True)
         self.c_xray3d.setChecked(self.eye3d.xray > 0.5)
         self.c_xray3d.blockSignals(False)
@@ -2337,53 +2442,113 @@ class MainWindow(QMainWindow):
     def _on_3d_mode(self, outside: bool) -> None:
         self._show.stop()
         self._tween._finish()
-        self._end_unwrap()
         self.s_cut.setEnabled(outside)
         self.c_view3d.setEnabled(outside)
         self.seg_view.setEnabled(outside)
-        # 들어가기: in through the pupil / back out (at once when 부드러운 움직임 is off)
+        if not outside and self.c_view3d.currentData() != "front":
+            self._sync_view_combo("front")
+        # 들어가며 보기: in through the cornea, the pupil and the lens / back out (at once when
+        # 부드러운 움직임 is off); the simple model fades through black
         self.eye3d.enter("outside" if outside else "inside")
 
-    # -- 효과: 사진 펼치기 · 입체 조명 · 자동 회전 ---------------------------------------------
-    RELIEF = 0.6            # strength of 입체 조명
-    SPIN = 10.0             # 자동 회전, degrees per second
-    UI_VERSION = 2          # 2: the dark look — 자세히, 유리 공막 and 자동 회전 from the start
+    # -- 들어가며 보기 --------------------------------------------------------------------
+    WHERE = ((0.32, "안구 전체 — 각막 쪽으로"), (1.09, "각막 앞"), (0.83, "앞방 — 각막과 홍채 사이 (방수)"),
+             (0.785, "동공 — 홍채 가운데"), (0.46, "수정체"), (0.0, "유리체 — 앞에 망막이 보입니다"))
 
-    def _toggle_unwrap(self) -> None:
-        """사진 펼치기 ↔ 망막에 감기: the photo between the retina and a flat sheet at the eye's opening."""
+    def _play_journey(self) -> None:
         eye = self.eye3d
-        if self.current is None:
-            self.lbl_status.setText("사진을 먼저 고르세요")
+        if eye.journey_running():
+            eye.stop_motion()                 # stops where it is
             return
         self._show.stop()
         self._tween._finish()
-        eye.stop_motion()
-        if eye.unwrap < 0.5:
-            if not self.r_out.isChecked():        # it happens outside the opened eye
-                self.r_out.setChecked(True)
-                eye.stop_motion()
-            if self.c_view3d.currentData() != "front" or eye.half > 0.0:
-                self._set_3d_view("front", animate=False)
-                self._tween._finish()             # the section is closed now, before the photo lifts off
-            if self.s_cut.value() > 45:           # too closed to see into: open to the usual depth
-                self.s_cut.setValue(25)
-            self._on_cut(self.s_cut.value())
-            eye.glide_to({"yaw": 0.0, "pitch": 0.0, "dist": eye._fit(eye.DIST0, 1.1), "target": (0.0, 0.0, 0.0)},
-                         duration=1.25, extra={"unwrap": 1.0})
-            self.b_unwrap.setText("망막에 감기")
-            self.lbl_status.setText("사진 펼치기 — 망막의 사진이 평면 사진으로 펴졌습니다 (다시 누르면 망막에 감깁니다)")
-        else:
-            eye.glide_to(dict(eye.HOME), duration=1.25, extra={"unwrap": 0.0})
-            self.b_unwrap.setText("사진 펼치기")
-            self.lbl_status.setText("사진을 망막에 감았습니다")
+        if eye.detail != "detailed":          # the way in shows the anatomical eye (not saved as the look)
+            self._set_3d_detail("detailed", save=False)
+        to = 0.0 if eye.journey_j >= 0.999 else 1.0
+        eye.journey_play(to, done=eye.journey_end if to == 0.0 else None)
 
-    def _end_unwrap(self) -> None:
-        """Another view takes over: the photo is back on the retina."""
-        if self.eye3d.unwrap > 0.0:
-            self.eye3d.stop_motion()
-            self.eye3d.unwrap = 0.0
-            self.eye3d.update()
-        self.b_unwrap.setText("사진 펼치기")
+    def _scrub_journey(self, v: int) -> None:
+        eye = self.eye3d
+        self._show.stop()
+        self._tween._finish()
+        if eye.detail != "detailed":
+            self._set_3d_detail("detailed", save=False)
+        eye.journey_scrub(v / 100.0)
+
+    def _on_journey(self, j: float) -> None:
+        """The slider, the button, 외부 | 내부 and the name of the place passed follow the way."""
+        eye = self.eye3d
+        self.s_journey.blockSignals(True)
+        self.s_journey.setValue(round(j * 100))
+        self.s_journey.blockSignals(False)
+        self.b_journey.setText("■ 멈춤" if eye.journey_running() else "◀ 나오기" if j >= 0.999 else "▶ 들어가기")
+        inside = j >= 0.999
+        if self.r_in.isChecked() != inside:
+            for b in (self.r_out, self.r_in):
+                b.blockSignals(True)
+            (self.r_in if inside else self.r_out).setChecked(True)
+            for b in (self.r_out, self.r_in):
+                b.blockSignals(False)
+            self.s_cut.setEnabled(not inside)
+            self.c_view3d.setEnabled(not inside)
+            self.seg_view.setEnabled(not inside)
+        if j <= 0.001:
+            self._where.say("")
+            return
+        if inside:
+            self._where.say("망막 — 황반과 시신경 유두 (망막 시점)", hold=2.5)
+            return
+        z = float(np.linalg.norm(eye._view_basis()[0]))
+        if j < self.WHERE[0][0]:
+            self._where.say(self.WHERE[0][1])
+            return
+        for limit, name in self.WHERE[1:]:
+            if z > limit:
+                self._where.say(name)
+                return
+
+    # -- 슬릿 스캔: the way of the slit ----------------------------------------------------------
+    def _on_slit_dir(self, key: str, save: bool = True) -> None:
+        self._show.direction = key
+        b = self._slit_buttons[key]
+        if not b.isChecked():
+            b.setChecked(True)
+        p = SLIT.get(key)
+        self.lbl_slit.setText(f"{p.name} — " + ("앞을 연 안구의 망막 위로 봅니다" if p.stage == "front"
+                                                 else "세로 단면을 옆에서 봅니다") if p is not None
+                              else "위↓ 아래↑ (세로 단면) 다음 왼→ 오른← (앞에서 본 망막) 차례로")
+        if save and self.settings.slit_dir3d != key:
+            self.settings.slit_dir3d = key
+            self.settings.save()
+        if self._show.playing:                # playing: again, the new way
+            self._show.stop()
+            self._toggle_scan()
+
+    # -- 망막 입체 · 단순하게 보기 ---------------------------------------------------------------
+    HEIGHT_MAX = 0.08       # 높이 100: the height of +1 in eye radii (≈ 1 mm, the relief exaggerated)
+
+    def _on_surface(self, on: bool) -> None:
+        self.settings.surface3d = bool(on)
+        self.eye3d.relief_on = bool(on)
+        self.s_height3d.setEnabled(on)
+        self.eye3d.update()
+
+    def _on_height(self, v: int) -> None:
+        self.settings.surface_height3d = int(v)
+        self.eye3d.relief_amount = v / 100.0 * self.HEIGHT_MAX
+        self.eye3d.update()
+
+    def _on_simple(self, on: bool) -> None:
+        self.settings.simple3d = bool(on)
+        eye, start, goal = self.eye3d, self.eye3d.simple, 1.0 if on else 0.0
+        self._simple_tween = motion.Tween(lambda k: (setattr(eye, "simple", start + (goal - start) * k), eye.update()),
+                                          0.45, motion.ease_in_out)
+        self._simple_tween.start()
+
+    # -- 효과: 입체 조명 · 자동 회전 -----------------------------------------------------------
+    RELIEF = 0.6            # strength of 입체 조명
+    SPIN = 10.0             # 자동 회전, degrees per second
+    UI_VERSION = 2          # 2: the dark look — 자세히, 유리 공막 and 자동 회전 from the start
 
     def _on_relief(self, on: bool) -> None:
         self.settings.relief3d = bool(on)

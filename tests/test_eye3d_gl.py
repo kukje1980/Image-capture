@@ -51,7 +51,7 @@ def eye():
 
 
 PLAIN = dict(half=0.0, xray=0.0, scan=None, scan_dim=1.0, scan_beam=1.0, fov_sweep=0.0, fov_alpha=0.0,
-             fov_ring=0.0, black=False, show_nerve=True, relief=0.0, unwrap=0.0, dark=0.0, glass=0.0)
+             fov_ring=0.0, black=False, show_nerve=True, relief=0.0, simple=0.0, dark=0.0, glass=0.0)
 
 
 def _render(eye, detail="detailed", **state):
@@ -263,8 +263,8 @@ def test_a_turned_photo_is_drawn_where_it_was_taken(eye):
         back = dict(pose=dict(yaw=180.0, pitch=0.0, dist=3.3), glass=0.8)
         a, b, c = show(None, True, **back), show((14.0, 6.0), True, **back), show((14.0, 6.0), False, **back)
         assert np.abs(b - a).mean() < 6.0 and np.abs(c - a).mean() > 2.5 * np.abs(b - a).mean()
-        # from outside, through the glass sclera, the unwrap sheet and the field edge: all of them draw
-        for state in (dict(pose=dict(yaw=180.0, pitch=0.0, dist=3.3), glass=0.8), dict(cut=0.25, unwrap=0.6),
+        # from outside, through the glass sclera, plain (단순하게 보기) and the field edge: all of them draw
+        for state in (dict(pose=dict(yaw=180.0, pitch=0.0, dist=3.3), glass=0.8), dict(cut=0.25, simple=1.0),
                       dict(cut=0.25, fov_ring=1.0, yaw=38.0, pitch=18.0), dict(half=1.0, fov_alpha=1.0, fov_sweep=1.0)):
             for detail in ("simple", "detailed"):
                 show((14.0, 6.0), True)
@@ -312,44 +312,90 @@ def test_relief_lighting_brings_out_the_vessels(eye, detail):
     assert abs(lit.mean() - plain.mean()) < 4                                         # not brighter overall
 
 
-@pytest.mark.parametrize("detail", ["simple", "detailed"])
-def test_unwrap_lays_the_photo_flat_at_the_opening(eye, detail):
-    """사진 펼치기: at 1 the photo is a flat sheet at the eye's opening, pixel for pixel the photo."""
+def test_relief_sheet_raises_the_retina(eye):
+    """망막 높낮이: over the photographed field a fine mesh raised by the retina's relief (vessels up, the
+    disc's cup and the foveal pit down), the wall open beneath it; off, the retina is the plain sphere."""
     import numpy as np
 
     from fundusview.ui import eye_model as em
-    from fundusview.ui.eye3d import SHEET_R
+
+    from fundusview import demo, imaging
 
     v = eye[0]
-    front = dict(cut=0.25, yaw=0.0, pitch=0.0, dist=3.0)
-    _render(eye, detail, **front)
-    on_retina = _frame(eye)
-    _render(eye, detail, unwrap=0.5, **front)
-    half_way = _frame(eye)
-    _render(eye, detail, unwrap=1.0, **front)
-    flat = _frame(eye)
-    assert np.abs(flat - on_retina).mean() > 2 and np.abs(half_way - flat).mean() > 0.5
-    assert np.abs(half_way - on_retina).mean() > 0.5
-    # where the photo's points must be: on the disc of radius r_flat just above the cut plane
-    r_in = (1.0 if detail == "simple" else em.R_RET) - 0.004
-    r_flat = min(SHEET_R, 0.97 * math.sqrt(r_in * r_in - 0.25 * 0.25))
-    h, w = v._rgba.shape[:2]
-    for rho, deg in ((0.2, 100.0), (0.5, 45.0), (0.7, 160.0), (0.6, 270.0), (0.85, 20.0)):
-        a = math.radians(deg)
-        seen = _at(v, (rho * r_flat * math.cos(a), rho * r_flat * math.sin(a), 0.25 + 0.012), r=1)
-        x = int((v._center[0] + math.cos(a) * v._radius[0] * rho) * w)
-        y = int((v._center[1] - math.sin(a) * v._radius[1] * rho) * h)
-        want = v._rgba[y - 3:y + 4, x - 3:x + 4, :3].reshape(-1, 3).mean(axis=0)   # a screen pixel ≈ 2 photo pixels
-        assert np.abs(np.array(seen) - want).max() < 25, (rho, deg, seen, want)
-    assert v._unwrap_on()
-    v.mode = "inside"                           # 내부 · 세로 단면 · 닫힌 안구: the photo is on the retina
-    assert not v._unwrap_on()
-    v.mode, v.cut = "outside", 1.0
-    assert not v._unwrap_on()
+    look = dict(mode="inside", in_yaw=0.0, in_pitch=0.0, in_fov=60.0)
+    rgb = demo.synth_fundus(eye="OD", size=(512, 540))                 # the module's photo, its disc and fovea found
+    circle = imaging.detect_circle(rgb)
+    disc = imaging.detect_disc(rgb, circle, disc_frac=0.06, search=0.5)
+    fovea = imaging.detect_fovea(rgb, v.photo_camera(circle), disc[:2], "OD")
+    v.set_landmarks("OD", disc[:2], fovea[:2] if fovea is not None else None, circle)
+    try:
+        v.relief_on, v.relief_amount = False, 0.05
+        _render(eye, **look)
+        flat = _frame(eye)
+        assert not v.relief_sheet_on()
+        v.relief_on = True
+        _render(eye, **look)
+        raised = _frame(eye)
+        mesh = v._meshes["relief"]
+        assert mesh is not None and v.relief_sheet_on()
+        changed = np.abs(raised - flat).max(axis=2) > 10
+        assert 0.002 < changed.mean() < 0.6                    # the vessels and the disc, not the whole retina
+        assert abs(raised.mean() - flat.mean()) < 6
+        # the heights: the photographed retina is inside the sphere (raised) and behind it (cup, pit)
+        H, step = v._hmap
+        assert H.max() > 0.3 and H.min() < -0.4
+        v.relief_on = False
+        _render(eye, detail="simple", **look)                  # the simple model has no sheet
+        assert not v.relief_sheet_on()
+        assert em.R_RET > 0.0
+    finally:
+        v.relief_on, v.relief_amount = True, 0.036
+        v.set_landmarks("OD", None, None, circle)
+
+
+def test_simple_look_keeps_the_retina(eye):
+    """단순하게 보기: the coats, the iris and the lens look plain; the retina from inside is unchanged."""
+    import numpy as np
+
+    v = eye[0]
+    front = dict(pose=dict(yaw=0.0, pitch=0.0, dist=3.3), glass=0.8)
+    _render(eye, simple=0.0, **front)
+    detailed = _frame(eye)
+    _render(eye, simple=1.0, **front)
+    plain = _frame(eye)
+    assert np.abs(plain - detailed).mean() > 2.0               # the iris and the sclera's vessels are gone
+    look = dict(mode="inside", in_yaw=0.0, in_pitch=0.0, in_fov=60.0)
+    _render(eye, simple=0.0, **look)
+    a = _frame(eye)
+    _render(eye, simple=1.0, **look)
+    b = _frame(eye)
+    assert np.abs(b - a).mean() < 1.5                          # the photographed retina stays as it is
+    v.simple = 0.0
+
+
+def test_walking_in_sees_the_retina_through_the_pupil(eye):
+    """들어가며 보기: at the cornea, in the chamber and in the lens the retina shows in the middle (the
+    pupil is not dark); at the end the inside view."""
+    v, app, errors = eye
+    _render(eye, cut=0.25)
+    try:
+        for j in (0.45, 0.62, 0.72, 0.9):
+            v.journey_scrub(j)
+            v.update()
+            _settle(app, 0.2)
+            v._last_img = v.grabFramebuffer()
+            r, g, b = v._last_img.pixelColor(v.width() // 2, v.height() // 2).getRgb()[:3]
+            assert not errors and r > 60 and r > b, (j, r, g, b)      # the orange retina, not black
+            assert v.mode == "outside"
+        v.journey_scrub(1.0)
+        assert v.mode == "inside" and v.in_z == pytest.approx(v.JOURNEY_Z)
+    finally:
+        v.journey_end()
+        v.set_mode("outside")
 
 
 def test_dark_fades_the_picture_to_black(eye):
-    """들어가기: the dive through the pupil goes through black."""
+    """The simple model's way in goes through black."""
     px = _render(eye, "detailed", cut=0.25, yaw=38.0, pitch=18.0, dist=3.3)
     bright = px(0.5, 0.5)
     px = _render(eye, "detailed", cut=0.25, yaw=38.0, pitch=18.0, dist=3.3, dark=0.5)
