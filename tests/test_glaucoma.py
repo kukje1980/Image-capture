@@ -99,3 +99,33 @@ def test_dialog_stage_and_sliders(qapp):
     dlg._on_eye_drag(30, 0)
     dlg._on_relief_drag(10, 10)
     dlg.close()
+
+
+def test_dialog_3d_view_tab(qapp):
+    from app.ui.fundus.glaucoma3d import Glaucoma3DDialog
+    dlg = Glaucoma3DDialog(fundus(), "OS", "테스트")           # 기본 = 3D 보기, 자동 회전으로 열림
+    assert dlg.tabs.currentIndex() == 0 and dlg.eye_pane.is_spinning()
+    y0 = dlg.eye_pane.yaw
+    dlg.eye_pane._spin()
+    assert dlg.eye_pane.yaw != y0
+    dlg.eye_pane.set_fov(200)
+    assert dlg.glaucoma_pane.fov() == 200                    # 화각은 두 탭이 함께 쓴다
+    dlg.eye_pane.c_view.setCurrentIndex(1)
+    dlg.eye_pane.s_zoom.setValue(200)
+    dlg.eye_pane.reset_view()
+    assert (dlg.eye_pane.yaw, dlg.eye_pane.pitch) == (0.0, 0.0) and not dlg.eye_pane.is_spinning()
+    dlg.eye_pane.set_spinning(True)
+    dlg.tabs.setCurrentIndex(1)
+    assert not dlg.eye_pane.is_spinning()                    # 다른 탭으로 가면 멈춘다
+    assert Glaucoma3DDialog(fundus(), tab="disc").tabs.currentIndex() == 2
+    dlg.close()
+
+
+def test_channel_view_and_zoom():
+    img = fundus()
+    g = G.channel_view(img, "redfree")
+    assert (g[..., 0] == img[..., 1]).all() and (g[..., 0] == g[..., 2]).all()
+    assert (G.channel_view(img, "choroid")[..., 0] == img[..., 2]).all()
+    assert G.channel_view(img, "color") is img
+    big = G.render_eyeball(img, 0, 0, 120, 200, zoom=3.0)
+    assert tuple(big[2, 2]) != (16, 13, 11)                  # 확대하면 화면 모서리까지 안구 안쪽

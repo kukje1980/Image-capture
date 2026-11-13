@@ -209,7 +209,7 @@ def _disc_dir(disc_uv: tuple[float, float], fov_deg: float) -> np.ndarray:
 
 def render_eyeball(tex: np.ndarray, yaw_deg: float = 20.0, pitch_deg: float = -8.0, fov_deg: float = 120.0,
                    size: int = 460, stage: int = 0, disc_uv: tuple[float, float] | None = None,
-                   disc_frac: float = 0.09) -> np.ndarray:
+                   disc_frac: float = 0.09, zoom: float = 1.0) -> np.ndarray:
     """안저 사진(정사각형 tex)을 안구 뒤 반구 안쪽에 입힌 단면 그림.
 
     fov_deg  사진이 덮는 화각 (일반 안저카메라 45~60°, 광각 200°). 화각 밖은 망막 기본색.
@@ -217,7 +217,7 @@ def render_eyeball(tex: np.ndarray, yaw_deg: float = 20.0, pitch_deg: float = -8
     disc_uv  사진에서 유두 중심 위치(0~1). disc_frac = 유두 지름 / 사진 한 변.
     """
     stage = int(np.clip(stage, 0, 3))
-    rad = size * 0.44
+    rad = size * 0.44 * float(np.clip(zoom, 1.0, 4.0))            # zoom > 1 이면 안구 가운데를 크게
     ys, xs = np.mgrid[0:size, 0:size].astype(np.float32)
     x, y = (xs - size / 2) / rad, -(ys - size / 2) / rad
     rr2 = x * x + y * y
@@ -277,7 +277,8 @@ def render_eyeball(tex: np.ndarray, yaw_deg: float = 20.0, pitch_deg: float = -8
     out = np.full((size, size, 3), (16, 13, 11), np.float32)
     out[inside] = img[inside]
     out = out.astype(np.uint8)
-    cv2.circle(out, (size // 2, size // 2), int(rad), (200, 205, 215), 2, cv2.LINE_AA)   # 공막 테두리
+    if rad < size * 0.7:
+        cv2.circle(out, (size // 2, size // 2), int(rad), (200, 205, 215), 2, cv2.LINE_AA)   # 공막 테두리
     return out
 
 
@@ -334,3 +335,12 @@ def field_simulation(stage: int, size: int = 300, scene: np.ndarray | None = Non
     dark = (blur.astype(np.float32) * 0.12 + 14)
     out = sc.astype(np.float32) * keep[..., None] + dark * (1 - keep[..., None])
     return np.clip(out, 0, 255).astype(np.uint8)
+
+
+def channel_view(bgr: np.ndarray, mode: str) -> np.ndarray:
+    """보기 전환 — 'redfree'(감각망막, 녹색 채널) · 'choroid'(맥락막, 적색 채널) 은 흑백으로, 그 밖에는 그대로."""
+    if mode == "redfree":
+        return cv2.cvtColor(bgr[..., 1], cv2.COLOR_GRAY2BGR)
+    if mode == "choroid":
+        return cv2.cvtColor(bgr[..., 2], cv2.COLOR_GRAY2BGR)
+    return bgr
