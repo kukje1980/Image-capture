@@ -5,6 +5,7 @@
   OD 비교  왼쪽 = 이전 검사, 오른쪽 = 현재(가장 최근) 검사.  [ / ] 로 이전 검사를 넘긴다
   OS 비교  위와 같음 (좌안). 비교 단계는 그 안구의 이전 검사가 있을 때만 쓸 수 있다
 검사(세션) = 촬영 날짜. 같은 날 여러 장이면 가장 늦게 찍은 사진이 기본으로 뜬다.
+'현재' 검사 = 환자 목록에서 체크한 검사(기본은 가장 최근). 그보다 앞선 검사들이 '이전' 이 된다.
 기타: 확대·이동 연동, 보기(컬러 / 감각망막 / 맥락막), 확대창, 타임라인(클릭·끌어다 놓기).
 """
 from __future__ import annotations
@@ -17,6 +18,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -35,12 +37,17 @@ _VIEWS = [("color", "컬러"), ("redfree", "감각망막 (적색 제거)"), ("ch
 EMPTY_TEXT = "불러온 안저 사진이 없습니다"
 
 
+def _esc(v) -> str:
+    return str(v).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def _day(cap) -> str:
     return (cap.captured_at or "")[:10]
 
 
 class FundusReview(QWidget):
     importRequested = Signal()             # '안저 불러오기' 눌림
+    backRequested = Signal()               # '← 환자 목록' 눌림
     openInProRequested = Signal(object)    # 활성 뷰포트의 Capture 를 Pro 1화면으로
 
     def __init__(self, db, config=None, parent=None):
@@ -53,6 +60,8 @@ class FundusReview(QWidget):
         self._caps: list = []              # 안저 사진, 최신 먼저
         self._stage = "ou"
         self._prior_idx = 0                # 비교 단계: 0 = 바로 이전 검사, 1 = 그 이전 …
+        self._current_day: str | None = None   # '현재' 검사일 (None = 가장 최근)
+        self._tools: dict = {}             # 도구 버튼 (add_tool): key → (버튼, 콜백)
         self._stale = False
         self._build()
         self._active = self.left
@@ -94,6 +103,17 @@ class FundusReview(QWidget):
         tl.setContentsMargins(8, 6, 8, 6)
         tl.setSpacing(4)
 
+        self.b_back = self._btn("환자 목록", "환자 목록 화면으로", obj="ProGhost", icon="chev-l")
+        self.lbl_who = QLabel()
+        self.lbl_who.setObjectName("FundusWho")
+        self.lbl_who.setTextFormat(Qt.TextFormat.RichText)
+        self.lbl_who.setMinimumWidth(60)             # 창이 좁으면 잘려 보이고, 전체는 툴팁으로
+        self.lbl_who.setMaximumWidth(300)
+        self.lbl_who.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        tl.addWidget(self.b_back)
+        tl.addWidget(self.lbl_who)
+        tl.addWidget(self._sep())
+
         self.b_prev = self._btn("◀ 이전", "이전 배치 (←)")
         self.b_next = self._btn("다음 ▶", "다음 배치 (→)")
         self.c_stage = QComboBox()
@@ -101,21 +121,19 @@ class FundusReview(QWidget):
             self.c_stage.addItem(_STAGE_TEXT[s], s)
         self.c_stage.setToolTip("배치 — * 표시는 이전 검사와 비교하는 단계 (이전 검사가 있어야 선택 가능)")
         self.c_stage.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        lbl_stage = QLabel("배치")
-        lbl_stage.setObjectName("Muted")
+        self.c_stage.setFixedWidth(184)              # 긴 항목(— 이전 검사 없음)은 펼친 목록에서 다 보인다
+        self.c_stage.view().setMinimumWidth(300)
         tl.addWidget(self.b_prev)
-        tl.addWidget(self.b_next)
-        tl.addSpacing(4)
-        tl.addWidget(lbl_stage)
         tl.addWidget(self.c_stage)
+        tl.addWidget(self.b_next)
         tl.addWidget(self._sep())
 
         self.b_fit = self._btn("맞춤", "화면에 맞춤 (더블클릭)", icon="fit")
-        self.b_zin = self._btn("확대", "확대 (마우스 휠)", icon="zin")
-        self.b_zout = self._btn("축소", "축소 (마우스 휠)", icon="zout")
+        self.b_zout = self._btn("", "축소 (마우스 휠)", icon="zout")
+        self.b_zin = self._btn("", "확대 (마우스 휠)", icon="zin")
         self.b_link = self._btn("연동", "두 뷰포트의 확대·이동을 함께 움직임", True, icon="compare")
         self.b_link.setChecked(True)
-        for b in (self.b_fit, self.b_zin, self.b_zout, self.b_link):
+        for b in (self.b_fit, self.b_zout, self.b_zin, self.b_link):
             tl.addWidget(b)
         tl.addWidget(self._sep())
 
@@ -124,14 +142,19 @@ class FundusReview(QWidget):
             self.c_view.addItem(text, key)
         self.c_view.setToolTip("보기 — 감각망막: 녹색 채널(적색 제거) · 맥락막: 적색 채널(녹색 제거)")
         self.c_view.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        lbl_view = QLabel("보기")
-        lbl_view.setObjectName("Muted")
+        self.c_view.setFixedWidth(168)
         self.b_mag = self._btn("확대창", "확대창 켜기/끄기 (뷰포트에서 가운데 버튼 클릭)\n"
                                       "끌어서 이동 · 휠: 배율 · 오른쪽 클릭: 반대쪽 영상", True, icon="lens")
-        tl.addWidget(lbl_view)
         tl.addWidget(self.c_view)
         tl.addWidget(self.b_mag)
         tl.addStretch(1)
+        # ---- 도구 자리 (확장 지점) ----
+        # 활성 뷰포트의 영상을 받아 창·패널을 여는 도구 버튼은 add_tool() 로 여기에 꽂는다
+        # (예정: '3D · 녹내장'). 'Pro에서 열기' 바로 앞에 순서대로 놓인다.
+        self.tool_slot = QHBoxLayout()
+        self.tool_slot.setContentsMargins(0, 0, 0, 0)
+        self.tool_slot.setSpacing(4)
+        tl.addLayout(self.tool_slot)
         self.b_pro = self._btn("Pro에서 열기", "활성 뷰포트의 영상을 Pro 검토 1화면에서 열기 (보정·측정·인쇄)",
                                obj="ProGhost", icon="review")
         self.b_import = self._btn("안저 불러오기", "안저 사진(이미지·DICOM) 파일 불러오기",
@@ -178,6 +201,7 @@ class FundusReview(QWidget):
         self.timeline = FundusTimeline()
         root.addWidget(self.timeline)
 
+        self.b_back.clicked.connect(self.backRequested.emit)
         self.b_prev.clicked.connect(lambda: self.step_stage(-1))
         self.b_next.clicked.connect(lambda: self.step_stage(1))
         self.c_stage.activated.connect(lambda i: self.set_stage(STAGES[i]))
@@ -209,11 +233,15 @@ class FundusReview(QWidget):
             sc.activated.connect(fn)
 
     # ================= 데이터 =================
-    def set_patient(self, patient, reload: bool = True) -> None:
-        """환자 변경. reload=False 면 화면이 보일 때(reload 호출) 영상을 읽는다."""
+    def set_patient(self, patient, reload: bool = True, current_day: str | None = None) -> None:
+        """환자 변경. reload=False 면 화면이 보일 때(reload 호출) 영상을 읽는다.
+
+        current_day: '현재' 로 둘 검사일 (환자 목록에서 체크한 검사). None = 가장 최근 검사.
+        """
         self._patient = patient
         self._stage = "ou"
         self._prior_idx = 0
+        self._current_day = current_day
         if reload:
             self.reload()
         else:
@@ -223,6 +251,36 @@ class FundusReview(QWidget):
 
     def patient(self):
         return self._patient
+
+    def refresh_patient(self, patient) -> None:
+        """같은 환자의 정보(이름·진단명 등)만 바뀜 → 영상은 그대로 두고 표시만 갱신."""
+        if self._patient is not None and patient is not None and self._patient.id == patient.id:
+            self._patient = patient
+            self._render_who()
+
+    def set_current_day(self, day: str | None, reload: bool = True) -> None:
+        """'현재' 검사일을 바꾼다 (None = 가장 최근). 배치는 양안으로 돌아간다."""
+        if day != self._current_day:
+            self._current_day = day
+            self._stage = "ou"
+            self._prior_idx = 0
+        if reload:
+            self.reload()
+        else:
+            self._stale = True
+
+    def current_day(self) -> str:
+        """'현재' 검사일 — 지정한 날(그날까지의 안저 사진 중 가장 최근 검사), 없으면 가장 최근 검사."""
+        days = self.sessions()
+        return days[0] if days else ""
+
+    def _stage_caps(self) -> list:
+        """배치 계산에 쓰는 사진: '현재' 검사일까지의 안저 사진 (그 뒤 검사는 타임라인에만 보인다)."""
+        if self._current_day:
+            upto = [c for c in self._caps if _day(c) <= self._current_day]
+            if upto:
+                return upto
+        return self._caps
 
     def reload(self) -> None:
         """DB 에서 안저 사진 목록을 다시 읽고 현재 배치를 다시 그린다."""
@@ -246,17 +304,17 @@ class FundusReview(QWidget):
         return list(self._caps)
 
     def sessions(self, eye: str | None = None) -> list[str]:
-        """검사일 목록 (최신 먼저). eye 를 주면 그 안구 사진이 있는 날만."""
+        """'현재' 검사까지의 검사일 목록 (최신 먼저). eye 를 주면 그 안구 사진이 있는 날만."""
         days: list[str] = []
-        for c in self._caps:
+        for c in self._stage_caps():
             d = _day(c)
             if (eye is None or c.eye == eye) and d not in days:
                 days.append(d)
         return days
 
     def newest(self, eye: str, day: str | None = None):
-        """그 안구의 가장 최근 사진 (day 를 주면 그 검사일 안에서)."""
-        for c in self._caps:
+        """'현재' 검사까지에서 그 안구의 가장 최근 사진 (day 를 주면 그 검사일 안에서)."""
+        for c in self._stage_caps():
             if c.eye == eye and (day is None or _day(c) == day):
                 return c
         return None
@@ -315,18 +373,20 @@ class FundusReview(QWidget):
             w.setEnabled(has)
         if not has:
             self.magnifier.set_shown(False)
-        self.timeline.set_captures(self._caps)
+        self.timeline.set_captures(self._caps, current_day=self.current_day())
         self.timeline.setVisible(has)
+        self._render_who()
         self._apply_stage()
 
     def _apply_stage(self) -> None:
         """현재 배치의 기본 영상을 두 뷰포트에 올린다."""
-        newest_day = self.sessions()[0] if self._caps else ""
+        newest_day = self.current_day()
         if self._stage == "ou":
             for vp, eye in ((self.left, "OD"), (self.right, "OS")):
                 cap = self.newest(eye)
                 vp.set_placeholder(f"{eye} 영상 없음")
                 self._load(vp, cap, "이전" if cap is not None and _day(cap) != newest_day else "")
+            # (newest_day = '현재' 검사일)
             self.left.set_prior_nav(False)
         else:
             eye = _STAGE_EYE[self._stage]
@@ -353,9 +413,11 @@ class FundusReview(QWidget):
     def _sync_stage_controls(self) -> None:
         model = self.c_stage.model()
         for i, s in enumerate(STAGES):
+            ok = self.stage_enabled(s)
+            self.c_stage.setItemText(i, _STAGE_TEXT[s] + ("" if ok else " — 이전 검사 없음"))
             item = model.item(i)
             if item is not None:
-                item.setEnabled(self.stage_enabled(s))
+                item.setEnabled(ok)
         blk = self.c_stage.blockSignals(True)
         self.c_stage.setCurrentIndex(STAGES.index(self._stage))
         self.c_stage.blockSignals(blk)
@@ -364,12 +426,28 @@ class FundusReview(QWidget):
         has = bool(self._caps)
         self.b_prev.setEnabled(has and i > 0)
         self.b_next.setEnabled(has and i < len(avail) - 1)
-        self.b_pro.setEnabled(self._active.capture() is not None)
+        self._sync_tools()
 
     def _sync_shown(self) -> None:
         self.timeline.set_shown_ids(vp.capture().id for vp in (self.left, self.right)
                                     if vp.capture() is not None)
-        self.b_pro.setEnabled(self._active.capture() is not None)
+        self._sync_tools()
+
+    def _sync_tools(self) -> None:
+        has = self._active.capture() is not None
+        self.b_pro.setEnabled(has)
+        for btn, _cb in self._tools.values():
+            btn.setEnabled(has and self._active.has_image())
+
+    def _render_who(self) -> None:
+        p = self._patient
+        if p is None:
+            self.lbl_who.setText("<span style='color:#8b95a3'>환자 미선택</span>")
+            self.lbl_who.setToolTip("")
+            return
+        sub_text = " · ".join(_esc(x) for x in (p.chart_no, p.diagnosis) if x)
+        self.lbl_who.setText(f"<b>{_esc(p.name)}</b>&nbsp;&nbsp;<span style='color:#8b95a3'>{sub_text}</span>")
+        self.lbl_who.setToolTip(" · ".join(x for x in (p.name, p.chart_no, p.diagnosis) if x))
 
     # ================= 뷰포트 =================
     def viewports(self) -> tuple:
@@ -382,7 +460,7 @@ class FundusReview(QWidget):
         self._active = vp
         for v in (self.left, self.right):
             v.set_active(v is vp)
-        self.b_pro.setEnabled(vp.capture() is not None)
+        self._sync_tools()
 
     def _other(self, vp: FundusViewport) -> FundusViewport:
         return self.right if vp is self.left else self.left
@@ -402,11 +480,11 @@ class FundusReview(QWidget):
             else:
                 vp = self._active
         if self._stage == "ou":
-            newest_day = self.sessions()[0]
-            tag = "이전" if _day(cap) != newest_day else ""
+            ref, same = self.current_day(), ""
         else:
-            eye_days = self.sessions(cap.eye) or self.sessions()
-            tag = "현재" if _day(cap) == eye_days[0] else "이전"
+            ref, same = (self.sessions(cap.eye) or self.sessions())[0], "현재"
+        d = _day(cap)
+        tag = same if d == ref else ("이전" if d < ref else "이후")
         vp.set_capture(cap, tag)
         if vp is self.left:
             self.left.set_prior_nav(self._stage != "ou", *self._prior_nav_state())
@@ -478,6 +556,33 @@ class FundusReview(QWidget):
         blk = self.b_mag.blockSignals(True)
         self.b_mag.setChecked(on)
         self.b_mag.blockSignals(blk)
+
+    # ================= 도구 (확장 지점) =================
+    def add_tool(self, key: str, text: str, tip: str, callback, icon: str | None = None) -> QPushButton:
+        """툴바('Pro에서 열기' 앞)에 도구 버튼을 추가한다.
+
+        누르면 callback(review, capture, image) 를 부른다 — capture·image 는 활성 뷰포트의
+        Capture 와 BGR 영상(numpy). 영상이 없으면 버튼이 꺼진다. 도구 창·패널은 callback 이 띄운다.
+        """
+        b = self._btn(text, tip, icon=icon)
+        b.clicked.connect(lambda _=False, k=key: self.run_tool(k))
+        self.tool_slot.addWidget(b)
+        self._tools[key] = (b, callback)
+        self._sync_tools()
+        return b
+
+    def tool_button(self, key: str) -> QPushButton | None:
+        entry = self._tools.get(key)
+        return entry[0] if entry else None
+
+    def run_tool(self, key: str) -> bool:
+        """활성 뷰포트의 영상으로 도구를 연다. 영상이 없거나 모르는 도구면 False."""
+        entry = self._tools.get(key)
+        vp = self._active
+        if entry is None or vp.capture() is None or vp.image() is None:
+            return False
+        entry[1](self, vp.capture(), vp.image())
+        return True
 
     # ================= 기타 =================
     def _open_in_pro(self) -> None:

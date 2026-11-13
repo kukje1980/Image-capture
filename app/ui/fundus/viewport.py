@@ -86,6 +86,10 @@ class FundusViewport(QWidget):
     def capture(self):
         return self._capture
 
+    def image(self) -> np.ndarray | None:
+        """원본 영상 (BGR) — 도구(분석 등)에 넘길 때 쓴다."""
+        return self._bgr
+
     def has_image(self) -> bool:
         return bool(self._levels)
 

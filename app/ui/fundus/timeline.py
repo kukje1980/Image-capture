@@ -132,29 +132,28 @@ class FundusTimeline(QFrame):
         self.setObjectName("Panel")
         self._thumbs: list[TimelineThumb] = []
         self._days: list[str] = []
+        self._current_day = ""
+        self._accent = palette("dark")["accent"]
         lay = QVBoxLayout(self)
         lay.setContentsMargins(10, 6, 10, 8)
         lay.setSpacing(4)
 
         head = QHBoxLayout()
         head.setSpacing(8)
-        title = QLabel("타임라인")
-        title.setObjectName("ThumbTitle")
-        self._badge = QLabel("0")
-        self._badge.setObjectName("CountBadge")
-        self._hint = QLabel("클릭하거나 뷰포트로 끌어다 놓으세요")
-        self._hint.setObjectName("Muted")
-        self.b_toggle = QPushButton("접기")
+        self.b_toggle = QPushButton("▾ 타임라인")
         self.b_toggle.setObjectName("ProGhost")
         self.b_toggle.setCheckable(True)
         self.b_toggle.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.b_toggle.setToolTip("타임라인 접기 / 펼치기")
         self.b_toggle.toggled.connect(self.set_collapsed)
-        head.addWidget(title)
+        self._badge = QLabel("")
+        self._badge.setObjectName("CountBadge")
+        self._hint = QLabel("사진을 누르거나 화면으로 끌어다 놓으면 그 자리에 뜹니다")
+        self._hint.setObjectName("Muted")
+        head.addWidget(self.b_toggle)
         head.addWidget(self._badge)
         head.addWidget(self._hint)
         head.addStretch(1)
-        head.addWidget(self.b_toggle)
         lay.addLayout(head)
 
         self._scroll = _HScroll()
@@ -169,26 +168,31 @@ class FundusTimeline(QFrame):
         lay.addWidget(self._scroll)
 
     # ---- 공개 API ----
-    def set_captures(self, captures: list) -> None:
-        """captures: 최신 먼저 정렬된 안저 사진 목록."""
+    def set_captures(self, captures: list, current_day: str = "") -> None:
+        """captures: 최신 먼저 정렬된 안저 사진 목록. current_day: '현재' 검사일 (표시용)."""
         while self._row.count():
             w = self._row.takeAt(0).widget()
             if w is not None:
+                w.setParent(None)
                 w.deleteLater()
         self._thumbs = []
         self._days = []
-        self._badge.setText(str(len(captures)))
         groups: dict[str, list] = {}
         for c in captures:
             groups.setdefault((c.captured_at or "")[:10], []).append(c)
+        self._badge.setText(f"검사 {len(groups)}회 · {len(captures)}장")
+        self._current_day = current_day
         for day, items in groups.items():
             self._days.append(day)
             box = QWidget()
             v = QVBoxLayout(box)
             v.setContentsMargins(0, 0, 0, 0)
             v.setSpacing(3)
-            h = QLabel(f"{day_label(day)}   ·   {len(items)}장")
+            cur = bool(current_day) and day == current_day
+            h = QLabel(f"{day_label(day)}   ·   {len(items)}장" + ("   ·   현재" if cur else ""))
             h.setObjectName("DayHeader")
+            if cur:                              # '현재' 검사 표시
+                h.setStyleSheet(f"color: {self._accent}; font-weight: 700;")
             v.addWidget(h)
             line = QHBoxLayout()
             line.setSpacing(5)
@@ -208,6 +212,9 @@ class FundusTimeline(QFrame):
     def days(self) -> list[str]:
         return list(self._days)
 
+    def current_day(self) -> str:
+        return self._current_day
+
     def set_shown_ids(self, ids) -> None:
         """뷰포트에 떠 있는 영상을 표시."""
         ids = set(ids)
@@ -223,4 +230,4 @@ class FundusTimeline(QFrame):
             return
         self._scroll.setVisible(not on)
         self._hint.setVisible(not on)
-        self.b_toggle.setText("펼치기" if on else "접기")
+        self.b_toggle.setText(("▸" if on else "▾") + " 타임라인")

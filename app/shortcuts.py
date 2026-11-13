@@ -19,7 +19,7 @@ ACTIONS: list[tuple[str, str, str, str]] = [
     ("fullscreen", "전체 화면", "F", "all"),
     ("mode", "촬영 ↔ Pro 검토 전환", "F2", "all"),
     ("fundus", "촬영 ↔ 안저 검토 전환", "F3", "all"),
-    ("patients", "환자 검색", "L", "all"),
+    ("patients", "환자 목록 (검색)", "L", "all"),
     ("newPatient", "신규 환자", "N", "all"),
 ]
 # 화면 안에서 이미 쓰는 키 (Pro: ←/→ 이동, Ctrl+Z/Y 실행 취소, Esc 도구 해제 · 안저 검토: ←/→ 배치, [ ] 이전 검사)

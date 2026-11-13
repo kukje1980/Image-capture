@@ -59,6 +59,9 @@ def test_banner_shows_patient_summary(qapp, app_env):
     db.patients.insert(Patient(chart_no="C9", name="홍길동", sex="M", birth_date="1970-01-01",
                                diagnosis="각막염", doctor="이의사"))
     panel = PatientPanel(db)
+    assert panel.lbl_name.text() == "환자를 선택하세요" and not panel.btn_edit.isEnabled()
+    panel.set_patient(db.patients.search("홍길동")[0])
+    assert panel.btn_edit.isEnabled()
     assert panel.lbl_name.text() == "홍길동"
     assert panel.lbl_chart.text() == "#C9"
     meta = panel.lbl_meta.text()

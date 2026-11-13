@@ -31,6 +31,7 @@ from app.ui.control_bar import ControlBar
 from app.ui.fundus.fundus_review import FundusReview
 from app.ui.fundus_import_dialog import FundusImportDialog, pick_files
 from app.ui.image_viewer import ImageViewerDialog
+from app.ui.patient_list import PatientListScreen
 from app.ui.patient_panel import PatientPanel
 from app.ui.pro.pro_workspace import ProWorkspace
 from app.ui.quad_view import QuadView
@@ -46,6 +47,10 @@ from app.ui.video_view import VideoView
 from PySide6.QtWidgets import QApplication
 
 log = logging.getLogger(__name__)
+
+# 화면 번호 (mode_stack). 전환 스위치에는 환자 목록 · 촬영 · Pro 검토 · 안저 검토 순으로 놓인다.
+SCREEN_CAPTURE, SCREEN_PRO, SCREEN_FUNDUS, SCREEN_PATIENTS = 0, 1, 2, 3
+_SCREEN_NAMES = ("기본 모드", "Pro 모드", "안저 검토", "환자 목록")
 
 
 class MainWindow(QMainWindow):
@@ -93,7 +98,7 @@ class MainWindow(QMainWindow):
         self.topbar = self._build_topbar()
         outer.addWidget(self.topbar)
         self.patient_panel = PatientPanel(self.db)
-        outer.addWidget(self.patient_panel)          # 단일/Pro 공통 환자 배너
+        outer.addWidget(self.patient_panel)          # 촬영/Pro 공통 환자 배너 (지금 환자 요약)
 
         body = QWidget()
         body_lay = QVBoxLayout(body)
@@ -127,6 +132,9 @@ class MainWindow(QMainWindow):
         # 안저 검토 화면 (불러온 안저 사진: 양안 · 이전/현재 비교)
         self.fundus = FundusReview(self.db, self.config)
         self.mode_stack.addWidget(self.fundus)       # 2 = 안저 검토
+        # 환자 목록 화면 (첫 화면): 환자 찾기·고르기 + 검사 목록
+        self.patients_screen = PatientListScreen(self.db)
+        self.mode_stack.addWidget(self.patients_screen)   # 3 = 환자 목록
         body_lay.addWidget(self.mode_stack, 1)
         outer.addWidget(body, 1)
         self.setCentralWidget(central)
@@ -136,8 +144,19 @@ class MainWindow(QMainWindow):
         self.pro.patientUpdated.connect(self._on_pro_patient_updated)
         self.fundus.importRequested.connect(self._import_fundus)
         self.fundus.openInProRequested.connect(self._open_in_pro)
+        self.fundus.backRequested.connect(lambda: self._set_screen(SCREEN_PATIENTS))
+        self.fundus.add_tool("3d", "3D 보기", "활성 뷰포트의 안저 사진을 3D 안구로 돌려 보기",
+                             lambda rv, cap, img: self._open_3d(cap, img, "3d"), icon="eye")
+        self.fundus.add_tool("glaucoma", "녹내장", "녹내장 설명(단계별 변화·시야 예시)과 시신경유두 3D · C/D 비율",
+                             lambda rv, cap, img: self._open_3d(cap, img, "glaucoma"), icon="aperture")
 
-        self.patient_panel.patientChanged.connect(self._on_patient_changed)
+        self.patients_screen.patientSelected.connect(self._on_patient_changed)
+        self.patients_screen.openReviewRequested.connect(lambda: self._set_screen(SCREEN_FUNDUS))
+        self.patients_screen.importRequested.connect(self._import_fundus)
+        self.patients_screen.captureRequested.connect(lambda: self._set_screen(SCREEN_CAPTURE))
+        self.patients_screen.patientEdited.connect(self._on_patient_edited)
+        self.patient_panel.listRequested.connect(lambda: self._set_screen(SCREEN_PATIENTS))
+        self.patient_panel.patientEdited.connect(self._on_patient_edited)
         self.control_bar.pauseToggled.connect(self._on_pause)
         self.control_bar.captureClicked.connect(self._on_capture)
         self.control_bar.recordToggled.connect(self._on_record_toggle)
@@ -152,12 +171,13 @@ class MainWindow(QMainWindow):
         self._rec_timer.setInterval(500)
         self._rec_timer.timeout.connect(self._update_rec_hud)
 
-        self._on_patient_changed(self.patient_panel.current_patient())
+        self._on_patient_changed(self.patients_screen.current_patient())
         self._fullscreen = False
         self._install_shortcuts()
+        self._set_screen(SCREEN_PATIENTS)            # 환자 목록에서 시작
 
     def _build_topbar(self) -> QFrame:
-        """브랜드 + 촬영/Pro 검토/안저 검토 전환 스위치 + 안저 불러오기·설정·재연결·테마."""
+        """브랜드 + 환자 목록/촬영/Pro 검토/안저 검토 전환 스위치 + 안저 불러오기·설정·재연결·테마."""
         bar = QFrame()
         bar.setObjectName("TopBar")
         lay = QHBoxLayout(bar)
@@ -199,12 +219,13 @@ class MainWindow(QMainWindow):
         sl = QHBoxLayout(sw)
         sl.setContentsMargins(3, 3, 3, 3)
         sl.setSpacing(2)
+        self.btn_mode_patients = QPushButton(icons.gap("환자 목록"))
         self.btn_mode_capture = QPushButton(icons.gap("촬영"))
         self.btn_mode_pro = QPushButton(icons.gap("Pro 검토"))
         self.btn_mode_fundus = QPushButton(icons.gap("안저 검토"))
         grp = QButtonGroup(self)
-        for b, name in ((self.btn_mode_capture, "camera"), (self.btn_mode_pro, "review"),
-                        (self.btn_mode_fundus, "eye")):
+        for b, name in ((self.btn_mode_patients, "list"), (self.btn_mode_capture, "camera"),
+                        (self.btn_mode_pro, "review"), (self.btn_mode_fundus, "eye")):
             b.setObjectName("ModeBtn")
             b.setCheckable(True)
             b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -217,9 +238,11 @@ class MainWindow(QMainWindow):
         self.btn_mode_capture.setChecked(True)
         self.btn_mode_pro.setToolTip(self.act_pro.toolTip())
         self.btn_mode_fundus.setToolTip("불러온 안저 사진 검토 화면 (양안 · 이전/현재 비교 · 확대창)")
-        self.btn_mode_capture.clicked.connect(lambda: self._set_screen(0))
-        self.btn_mode_pro.clicked.connect(lambda: self._set_screen(1))
-        self.btn_mode_fundus.clicked.connect(lambda: self._set_screen(2))
+        self.btn_mode_patients.setToolTip("환자 목록 — 환자 찾기 · 고르기 · 신규 등록 · 검사 목록")
+        self.btn_mode_patients.clicked.connect(lambda: self._set_screen(SCREEN_PATIENTS))
+        self.btn_mode_capture.clicked.connect(lambda: self._set_screen(SCREEN_CAPTURE))
+        self.btn_mode_pro.clicked.connect(lambda: self._set_screen(SCREEN_PRO))
+        self.btn_mode_fundus.clicked.connect(lambda: self._set_screen(SCREEN_FUNDUS))
         lay.addWidget(sw)
         lay.addStretch(1)
 
@@ -323,7 +346,7 @@ class MainWindow(QMainWindow):
         cb = self.control_bar
         hints = {"capture": cb.btn_capture, "record": cb.btn_record, "pause": cb.btn_pause,
                  "freeze": cb.btn_freeze, "quad": cb.btn_quad, "mode": self.btn_mode_pro,
-                 "fundus": self.btn_mode_fundus}
+                 "fundus": self.btn_mode_fundus, "patients": self.btn_mode_patients}
         for aid, w in hints.items():
             base = w.property("tipBase")
             if base is None:
@@ -368,19 +391,20 @@ class MainWindow(QMainWindow):
         elif aid == "fundus":
             self._set_screen(0 if self.mode_stack.currentIndex() == 2 else 2)
         elif aid == "patients":
-            self.patient_panel.search.setFocus()
-            self.patient_panel.search.selectAll()
-            self.patient_panel.combo.showPopup()
+            self._set_screen(SCREEN_PATIENTS)
+            self.patients_screen.focus_search()
         elif aid == "newPatient":
-            self.patient_panel._new_patient()
+            self._set_screen(SCREEN_PATIENTS)
+            self.patients_screen.new_patient()
 
     def _set_fullscreen(self, on: bool) -> None:
         """영상 전체 화면: 창을 화면 가득 채우고 상단바·환자 배너·썸네일·상태바를 숨김 (Esc 로 해제)."""
         if on == self._fullscreen:
             return
         self._fullscreen = on
-        for w in (self.topbar, self.patient_panel, self.thumbnail_panel, self.statusBar()):
+        for w in (self.topbar, self.thumbnail_panel, self.statusBar()):
             w.setVisible(not on)
+        self._sync_banner()
         if on:
             self._was_maximized = self.isMaximized()
             self.showFullScreen()
@@ -525,6 +549,7 @@ class MainWindow(QMainWindow):
     # ---- 환자 ----
     def _on_patient_changed(self, patient) -> None:
         self._current_patient = patient
+        self.patient_panel.set_patient(patient)
         self.control_bar.set_capture_enabled(patient is not None)
         if self._recording:                  # 녹화 중에는 언제든 멈출 수 있어야 한다
             self.control_bar.btn_record.setEnabled(True)
@@ -536,30 +561,54 @@ class MainWindow(QMainWindow):
         self.fundus.set_patient(patient, reload=self.mode_stack.currentIndex() == 2)
         self.btn_import_fundus.setEnabled(patient is not None)
 
-    # ---- 화면 전환 (0 = 촬영, 1 = Pro 검토, 2 = 안저 검토) ----
+    # ---- 화면 전환 (0 = 촬영, 1 = Pro 검토, 2 = 안저 검토, 3 = 환자 목록) ----
     def _on_pro_toggled(self, on: bool) -> None:
-        self._set_screen(1 if on else 0)
+        self._set_screen(SCREEN_PRO if on else SCREEN_CAPTURE)
+
+    def _sync_banner(self) -> None:
+        """환자 배너는 촬영·Pro 화면에서만 (환자 목록·안저 검토는 화면 안에 환자 정보가 있다)."""
+        idx = self.mode_stack.currentIndex()
+        self.patient_panel.setVisible(not getattr(self, "_fullscreen", False)
+                                      and idx in (SCREEN_CAPTURE, SCREEN_PRO))
 
     def _set_screen(self, idx: int) -> None:
         blk = self.act_pro.blockSignals(True)
-        self.act_pro.setChecked(idx == 1)
+        self.act_pro.setChecked(idx == SCREEN_PRO)
         self.act_pro.blockSignals(blk)
         self.mode_stack.setCurrentIndex(idx)
-        (self.btn_mode_capture, self.btn_mode_pro, self.btn_mode_fundus)[idx].setChecked(True)
+        (self.btn_mode_capture, self.btn_mode_pro, self.btn_mode_fundus,
+         self.btn_mode_patients)[idx].setChecked(True)
+        self._sync_banner()
         if hasattr(self, "_shortcut_objs"):
             self._sync_shortcut_scope()
-        if idx == 1:
+        if idx == SCREEN_PRO:
             self.pro.reload(select_last=False)
             if self._last_frame is not None:
                 self.pro.set_live_frame(self._last_frame)
             self.pro.setFocus()
-        elif idx == 2:
+        elif idx == SCREEN_FUNDUS:
+            # 환자 목록에서 체크한 검사가 '현재' 검사가 된다 (기본 = 가장 최근)
+            self.fundus.set_current_day(self.patients_screen.checked_exam(), reload=False)
             self.fundus.reload()
             self.fundus.setFocus()
+        elif idx == SCREEN_PATIENTS:
+            self.patients_screen.reload()            # 촬영·불러오기로 바뀐 검사 수·최근 검사 반영
+            self.patients_screen.table.setFocus()
         else:
             p = self._current_patient
             self.thumbnail_panel.set_patient(p.id if p else None)
-        self.statusBar().showMessage(("기본 모드", "Pro 모드", "안저 검토")[idx], 3000)
+        self.statusBar().showMessage(_SCREEN_NAMES[idx], 3000)
+
+    def _on_patient_edited(self, patient) -> None:
+        """환자 정보가 수정됨 (배너 · 환자 목록 · Pro 어디서든) → 모든 화면에 반영."""
+        self._current_patient = patient
+        self.patient_panel.set_patient(patient)
+        self.patients_screen.reload()
+        self.pro._patient = patient
+        self.pro._update_info()
+        self.fundus.refresh_patient(patient)
+        self.video_view.set_hud(patient=f"{patient.name}  ·  {patient.chart_no}" if patient.chart_no
+                                else patient.name)
 
     # ---- 안저 불러오기 / 안저 검토 ----
     def _import_fundus(self) -> None:
@@ -581,13 +630,24 @@ class MainWindow(QMainWindow):
         idx = self.mode_stack.currentIndex()
         if idx == 1:
             self.pro.reload(select_last=False)
-        self.fundus.set_patient(p, reload=idx == 2)
+        self.patients_screen.reload()
+        self.fundus.set_patient(p, reload=idx == SCREEN_FUNDUS,
+                                current_day=self.patients_screen.checked_exam())
         msg = f"안저 사진 {len(imported)}장을 불러왔습니다"
         if failed:
             msg += f" (실패 {len(failed)}개)"
             QMessageBox.warning(self, "안저 불러오기", "불러오지 못한 파일:\n"
                                 + "\n".join(f"· {n} — {err}" for n, err in failed[:12]))
         self.statusBar().showMessage(msg, 8000)
+
+    def _open_3d(self, capture, image, tab: str) -> None:
+        """안저 검토의 활성 영상으로 3D 보기 · 녹내장 창을 연다."""
+        from app.ui.fundus.glaucoma3d import Glaucoma3DDialog
+        from app.ui.fundus.viewport import capture_label
+        name = getattr(self._current_patient, "name", "") or ""
+        title = " · ".join(x for x in (name, capture_label(capture)) if x)
+        self._dlg_3d = Glaucoma3DDialog(image, getattr(capture, "eye", None), title, tab, self)
+        self._dlg_3d.open()
 
     def _open_in_pro(self, capture) -> None:
         """안저 검토 화면의 영상을 Pro 검토 1화면에서 연다."""
@@ -601,9 +661,7 @@ class MainWindow(QMainWindow):
         self.thumbnail_panel.set_patient(p.id if p else None)
 
     def _on_pro_patient_updated(self, patient) -> None:
-        self._current_patient = patient
-        self.patient_panel.refresh_current(patient)
-        self.video_view.set_hud(patient=f"{patient.name}  ·  {patient.chart_no}" if patient.chart_no else patient.name)
+        self._on_patient_edited(patient)
 
     # ---- 컨트롤 ----
     def _on_pause(self, checked: bool) -> None:

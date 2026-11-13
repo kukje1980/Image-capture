@@ -489,6 +489,8 @@ def test_main_window_fundus_screen(qapp, app_env, tmp_path, monkeypatch):
         time.sleep(0.02)
     try:
         assert win._current_patient is not None and win.btn_import_fundus.isEnabled()
+        assert win.mode_stack.currentIndex() == 3              # 환자 목록에서 시작
+        win._set_screen(0)
         files = []
         for name, day in (("x_OD.png", 1), ("x_OS.png", 1), ("y_OD.png", 400)):
             p = tmp_path / name

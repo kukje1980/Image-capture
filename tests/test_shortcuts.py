@@ -35,6 +35,8 @@ def win(qapp, app_env):
     w = MainWindow(config, db)
     w.show()
     assert _wait(qapp, lambda: w._last_frame is not None)
+    assert w.mode_stack.currentIndex() == 3                  # 환자 목록에서 시작
+    w._set_screen(0)                                          # 촬영 화면으로
     yield w
     w.close()
 
@@ -64,6 +66,9 @@ def test_keys_drive_actions(qapp, win):
     assert win.pro.current_eye() == "OD"
     QTest.keyClick(win, Qt.Key.Key_F2)
     assert win.mode_stack.currentIndex() == 0
+    QTest.keyClick(win, Qt.Key.Key_L)                         # 환자 목록 (검색)
+    assert win.mode_stack.currentIndex() == 3 and win.btn_mode_patients.isChecked()
+    assert not win._shortcut_objs["capture"].isEnabled()
 
 
 def test_custom_key(qapp, win):

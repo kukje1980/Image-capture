@@ -129,3 +129,12 @@ def test_channel_view_and_zoom():
     assert G.channel_view(img, "color") is img
     big = G.render_eyeball(img, 0, 0, 120, 200, zoom=3.0)
     assert tuple(big[2, 2]) != (16, 13, 11)                  # 확대하면 화면 모서리까지 안구 안쪽
+
+
+def test_review_tool_buttons_registered():
+    """안저 검토 도구줄에 '3D 보기' · '녹내장' 버튼을 붙이는 배선이 있다."""
+    import inspect
+
+    from app.ui.main_window import MainWindow
+    src = inspect.getsource(MainWindow)
+    assert 'add_tool("3d"' in src and 'add_tool("glaucoma"' in src and "Glaucoma3DDialog" in src

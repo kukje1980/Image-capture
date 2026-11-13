@@ -204,6 +204,7 @@ def build_qss(mode: str = "dark") -> str:
     QFrame#ProSide {{ background: {c['panel']}; border: 1px solid {c['rule']}; border-radius: 12px; }}
     QFrame#ProCard {{ background: {c['panel2']}; border: 1px solid {c['rule']}; border-radius: 9px; }}
     QFrame#ProCard QLabel {{ background: transparent; }}
+    QFrame#ProCard QLabel#Avatar {{ background: {c['accent_soft']}; }}
     QLabel#ProInfo {{
         background: {c['panel']}; border: 1px solid {c['rule']}; border-radius: 9px;
         padding: 7px 14px; color: {c['ink_soft']};
@@ -239,6 +240,14 @@ def build_qss(mode: str = "dark") -> str:
     }}
     QToolButton#FundusNav:hover {{ border-color: {c['accent']}; }}
     QToolButton#FundusNav:disabled {{ color: #4a5262; border-color: #232a35; }}
+    QLabel#FundusWho {{ background: transparent; font-size: 13px; padding: 0 6px; }}
+    QTableWidget#PatientTable {{
+        background: transparent; border: 1px solid {c['rule']}; border-radius: 8px; outline: none;
+        selection-background-color: {c['accent_soft']}; selection-color: {c['ink']};
+    }}
+    QTableWidget#PatientTable::item {{ padding: 4px 10px; border-bottom: 1px solid {c['rule']}; }}
+    QTableWidget#PatientTable::item:hover {{ background: {c['panel2']}; }}
+    QTableWidget#PatientTable::item:selected {{ background: {c['accent_soft']}; color: {c['ink']}; }}
     QTableWidget#ImportTable {{
         background: {c['panel']}; border: 1px solid {c['rule']}; border-radius: 8px;
         alternate-background-color: {c['panel2']};

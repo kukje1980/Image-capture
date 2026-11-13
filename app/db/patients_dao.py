@@ -4,7 +4,7 @@ import sqlite3
 import threading
 from typing import List, Optional
 
-from app.models.patient import Patient
+from app.models.patient import Patient, PatientSummary
 
 
 class PatientsDAO:
@@ -65,6 +65,26 @@ class PatientsDAO:
                 "SELECT * FROM patients ORDER BY name LIMIT ? OFFSET ?", (limit, offset)
             ).fetchall()
         return [self._row(r) for r in rows]
+
+    def list_with_stats(self) -> List[PatientSummary]:
+        """환자 목록 화면용: 모든 환자 + 최근 검사일 + 검사 수를 한 번의 질의로.
+
+        검사 = 그 환자의 영상(captures)이 있는 날짜. 최근 검사가 있는 환자부터, 그다음 이름순.
+        """
+        with self._lock:
+            rows = self._c.execute(
+                """SELECT p.*, MAX(substr(c.captured_at, 1, 10)) AS _last_exam,
+                          COUNT(DISTINCT substr(c.captured_at, 1, 10)) AS _exam_count
+                   FROM patients p LEFT JOIN captures c ON c.patient_id = p.id
+                   GROUP BY p.id
+                   ORDER BY (_last_exam IS NULL), _last_exam DESC, p.name, p.id"""
+            ).fetchall()
+        out = []
+        for r in rows:
+            keys = [k for k in r.keys() if not k.startswith("_")]
+            out.append(PatientSummary(Patient(**{k: r[k] for k in keys}),
+                                      r["_last_exam"], int(r["_exam_count"] or 0)))
+        return out
 
     @staticmethod
     def _row(r) -> Optional[Patient]:
