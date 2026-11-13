@@ -34,14 +34,23 @@ class CaptureService:
 
     # ---- 사진 ----
     def save_photo(self, frame: np.ndarray, patient: Patient,
-                   eye: str = "NA", note: str = "") -> Capture:
+                   eye: str = "NA", note: str = "", *,
+                   captured_at: Optional[datetime] = None, modality: str = "slit",
+                   ext: Optional[str] = None) -> Capture:
+        """사진 저장. captured_at·modality·ext 는 외부 영상 불러오기(안저 등)용 —
+        주지 않으면 지금 시각 · 세극등 · 설정의 사진 형식으로 저장한다."""
         if frame is None:
             raise ValueError("저장할 프레임이 없습니다.")
-        ts = datetime.now()
-        ext = (self.config.photo_format or "png").lower()
+        ts = captured_at or datetime.now()
+        ext = (ext or self.config.photo_format or "png").lower()
         primary_dir = self._patient_dir(self.config.media_root, patient, ts)
         paths.ensure_dir(primary_dir)
-        fname = self._filename(ts, eye, ext)
+        tag = "" if modality == "slit" else modality
+        fname = self._filename(ts, eye, ext, tag)
+        n = 1
+        while (primary_dir / fname).exists():      # 같은 촬영 시각의 불러온 영상이 서로 덮어쓰지 않게
+            n += 1
+            fname = self._filename(ts, eye, ext, tag, n)
         primary_path = primary_dir / fname
         self._imwrite(primary_path, frame, ext)
 
@@ -54,7 +63,7 @@ class CaptureService:
             export_path=(str(export_path) if export_path else None),
             thumbnail_path=(str(thumb_path) if thumb_path else None),
             captured_at=ts.strftime("%Y-%m-%d %H:%M:%S"),
-            eye=eye, duration_ms=None, note=note,
+            eye=eye, duration_ms=None, note=note, modality=modality,
         )
         cap.id = self.db.captures.insert(cap)
         log.info("photo saved id=%s path=%s export=%s", cap.id, primary_path, export_path)
@@ -95,9 +104,10 @@ class CaptureService:
         return paths.patient_subdir(Path(root), patient, self.config.subfolder_template, ts)
 
     @staticmethod
-    def _filename(ts: datetime, eye: str, ext: str) -> str:
+    def _filename(ts: datetime, eye: str, ext: str, tag: str = "", seq: int = 1) -> str:
         e = eye or "NA"
-        return f"{ts:%H%M%S}_{ts.microsecond // 1000:03d}_{e}.{ext}"
+        extra = (f"_{tag}" if tag else "") + (f"_{seq}" if seq > 1 else "")
+        return f"{ts:%H%M%S}_{ts.microsecond // 1000:03d}_{e}{extra}.{ext}"
 
     def _write_thumbnail(self, parent_dir: Path, stem: str, frame) -> Optional[Path]:
         try:

@@ -5,7 +5,7 @@
 # Windows 용 build.spec 과 같은 구성에 macOS 번들 정보(카메라 권한 문구·아이콘)를 더한다.
 import os
 
-from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
 
 APP_VERSION = "0.1.0"
 BRAND = os.environ.get("SLITLAMP_BUILD_BRAND", "default").lower()
@@ -22,6 +22,10 @@ hiddenimports = ["imageio_ffmpeg"]
 # 번들 ffmpeg 바이너리 동봉 (mp4 H.264 보장)
 binaries += collect_dynamic_libs("imageio_ffmpeg")
 datas += collect_data_files("imageio_ffmpeg")
+
+# pydicom (안저 DICOM 불러오기) — 픽셀 디코더 플러그인을 동적으로 불러오므로 하위 모듈·데이터를 모두 동봉
+hiddenimports += collect_submodules("pydicom")
+datas += collect_data_files("pydicom")
 
 # DB 스키마 파일 동봉
 datas += [("app/db/schema.sql", "app/db")]

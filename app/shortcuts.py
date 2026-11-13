@@ -18,11 +18,12 @@ ACTIONS: list[tuple[str, str, str, str]] = [
     ("eyeNA", "안구 미지정", "0", "all"),
     ("fullscreen", "전체 화면", "F", "all"),
     ("mode", "촬영 ↔ Pro 검토 전환", "F2", "all"),
+    ("fundus", "촬영 ↔ 안저 검토 전환", "F3", "all"),
     ("patients", "환자 검색", "L", "all"),
     ("newPatient", "신규 환자", "N", "all"),
 ]
-# 화면 안에서 이미 쓰는 키 (Pro: ←/→ 이동, Ctrl+Z/Y 실행 취소, Esc 도구 해제)
-RESERVED = {"Esc", "Escape", "Left", "Right", "Ctrl+Z", "Ctrl+Y", "Ctrl+Shift+Z", "Tab"}
+# 화면 안에서 이미 쓰는 키 (Pro: ←/→ 이동, Ctrl+Z/Y 실행 취소, Esc 도구 해제 · 안저 검토: ←/→ 배치, [ ] 이전 검사)
+RESERVED = {"Esc", "Escape", "Left", "Right", "Ctrl+Z", "Ctrl+Y", "Ctrl+Shift+Z", "Tab", "[", "]"}
 
 
 def defaults() -> dict[str, str]:

@@ -28,6 +28,8 @@ from app.capture.sources import DeviceSource, FileSource, SyntheticSource
 from app.capture.video_recorder import VideoRecorder
 from app.services.capture_service import CaptureService
 from app.ui.control_bar import ControlBar
+from app.ui.fundus.fundus_review import FundusReview
+from app.ui.fundus_import_dialog import FundusImportDialog, pick_files
 from app.ui.image_viewer import ImageViewerDialog
 from app.ui.patient_panel import PatientPanel
 from app.ui.pro.pro_workspace import ProWorkspace
@@ -122,6 +124,9 @@ class MainWindow(QMainWindow):
         self.mode_stack = QStackedWidget()
         self.mode_stack.addWidget(simple)            # 0 = 기본
         self.mode_stack.addWidget(self.pro)          # 1 = Pro
+        # 안저 검토 화면 (불러온 안저 사진: 양안 · 이전/현재 비교)
+        self.fundus = FundusReview(self.db, self.config)
+        self.mode_stack.addWidget(self.fundus)       # 2 = 안저 검토
         body_lay.addWidget(self.mode_stack, 1)
         outer.addWidget(body, 1)
         self.setCentralWidget(central)
@@ -129,6 +134,8 @@ class MainWindow(QMainWindow):
 
         self.pro.savedCapture.connect(self._on_pro_saved)
         self.pro.patientUpdated.connect(self._on_pro_patient_updated)
+        self.fundus.importRequested.connect(self._import_fundus)
+        self.fundus.openInProRequested.connect(self._open_in_pro)
 
         self.patient_panel.patientChanged.connect(self._on_patient_changed)
         self.control_bar.pauseToggled.connect(self._on_pause)
@@ -150,7 +157,7 @@ class MainWindow(QMainWindow):
         self._install_shortcuts()
 
     def _build_topbar(self) -> QFrame:
-        """브랜드 + 촬영/Pro 검토 전환 스위치 + 설정·재연결·테마."""
+        """브랜드 + 촬영/Pro 검토/안저 검토 전환 스위치 + 안저 불러오기·설정·재연결·테마."""
         bar = QFrame()
         bar.setObjectName("TopBar")
         lay = QHBoxLayout(bar)
@@ -194,8 +201,10 @@ class MainWindow(QMainWindow):
         sl.setSpacing(2)
         self.btn_mode_capture = QPushButton(icons.gap("촬영"))
         self.btn_mode_pro = QPushButton(icons.gap("Pro 검토"))
+        self.btn_mode_fundus = QPushButton(icons.gap("안저 검토"))
         grp = QButtonGroup(self)
-        for b, name in ((self.btn_mode_capture, "camera"), (self.btn_mode_pro, "review")):
+        for b, name in ((self.btn_mode_capture, "camera"), (self.btn_mode_pro, "review"),
+                        (self.btn_mode_fundus, "eye")):
             b.setObjectName("ModeBtn")
             b.setCheckable(True)
             b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -207,8 +216,10 @@ class MainWindow(QMainWindow):
             sl.addWidget(b)
         self.btn_mode_capture.setChecked(True)
         self.btn_mode_pro.setToolTip(self.act_pro.toolTip())
-        self.btn_mode_capture.clicked.connect(lambda: self.act_pro.setChecked(False))
-        self.btn_mode_pro.clicked.connect(lambda: self.act_pro.setChecked(True))
+        self.btn_mode_fundus.setToolTip("불러온 안저 사진 검토 화면 (양안 · 이전/현재 비교 · 확대창)")
+        self.btn_mode_capture.clicked.connect(lambda: self._set_screen(0))
+        self.btn_mode_pro.clicked.connect(lambda: self._set_screen(1))
+        self.btn_mode_fundus.clicked.connect(lambda: self._set_screen(2))
         lay.addWidget(sw)
         lay.addStretch(1)
 
@@ -223,6 +234,9 @@ class MainWindow(QMainWindow):
             lay.addWidget(b)
             return b
 
+        self.btn_import_fundus = tool("안저 불러오기", "download",
+                                      "안저 사진(이미지·DICOM) 파일을 선택한 환자의 기록으로 불러오기",
+                                      self._import_fundus)
         tool("카메라 재연결", "videocam", "캡처 장비 다시 연결", self._restart_camera)
         tool("", "keyboard", "단축키 설정 (캡처·녹화·안구 등)", self._open_shortcuts)
         tool("설정", "sliders", "카메라·저장 위치·형식 설정", self._open_settings)
@@ -308,7 +322,8 @@ class MainWindow(QMainWindow):
     def _apply_key_hints(self) -> None:
         cb = self.control_bar
         hints = {"capture": cb.btn_capture, "record": cb.btn_record, "pause": cb.btn_pause,
-                 "freeze": cb.btn_freeze, "quad": cb.btn_quad, "mode": self.btn_mode_pro}
+                 "freeze": cb.btn_freeze, "quad": cb.btn_quad, "mode": self.btn_mode_pro,
+                 "fundus": self.btn_mode_fundus}
         for aid, w in hints.items():
             base = w.property("tipBase")
             if base is None:
@@ -350,6 +365,8 @@ class MainWindow(QMainWindow):
             self._set_fullscreen(not self._fullscreen)
         elif aid == "mode":
             self.act_pro.toggle()
+        elif aid == "fundus":
+            self._set_screen(0 if self.mode_stack.currentIndex() == 2 else 2)
         elif aid == "patients":
             self.patient_panel.search.setFocus()
             self.patient_panel.search.selectAll()
@@ -515,22 +532,69 @@ class MainWindow(QMainWindow):
                                          else (patient.name if patient else "환자 미선택")))
         self.thumbnail_panel.set_patient(patient.id if patient else None)
         self.pro.set_patient(patient)
+        # 안저 검토 화면은 보일 때만 영상을 읽는다 (큰 안저 사진을 미리 읽지 않게)
+        self.fundus.set_patient(patient, reload=self.mode_stack.currentIndex() == 2)
+        self.btn_import_fundus.setEnabled(patient is not None)
 
-    # ---- Pro 모드 ----
+    # ---- 화면 전환 (0 = 촬영, 1 = Pro 검토, 2 = 안저 검토) ----
     def _on_pro_toggled(self, on: bool) -> None:
-        self.mode_stack.setCurrentIndex(1 if on else 0)
-        (self.btn_mode_pro if on else self.btn_mode_capture).setChecked(True)
+        self._set_screen(1 if on else 0)
+
+    def _set_screen(self, idx: int) -> None:
+        blk = self.act_pro.blockSignals(True)
+        self.act_pro.setChecked(idx == 1)
+        self.act_pro.blockSignals(blk)
+        self.mode_stack.setCurrentIndex(idx)
+        (self.btn_mode_capture, self.btn_mode_pro, self.btn_mode_fundus)[idx].setChecked(True)
         if hasattr(self, "_shortcut_objs"):
             self._sync_shortcut_scope()
-        if on:
+        if idx == 1:
             self.pro.reload(select_last=False)
             if self._last_frame is not None:
                 self.pro.set_live_frame(self._last_frame)
             self.pro.setFocus()
+        elif idx == 2:
+            self.fundus.reload()
+            self.fundus.setFocus()
         else:
             p = self._current_patient
             self.thumbnail_panel.set_patient(p.id if p else None)
-        self.statusBar().showMessage("Pro 모드" if on else "기본 모드", 3000)
+        self.statusBar().showMessage(("기본 모드", "Pro 모드", "안저 검토")[idx], 3000)
+
+    # ---- 안저 불러오기 / 안저 검토 ----
+    def _import_fundus(self) -> None:
+        patient = self._current_patient
+        if patient is None:
+            QMessageBox.information(self, "확인", "환자를 먼저 선택하세요.")
+            return
+        files = pick_files(self)
+        if not files:
+            return
+        dlg = FundusImportDialog(self.service, patient, self, files=files)
+        if not dlg.exec():
+            return
+        self._after_fundus_import(dlg.imported, dlg.failed)
+
+    def _after_fundus_import(self, imported: list, failed: list) -> None:
+        p = self._current_patient
+        self.thumbnail_panel.set_patient(p.id if p else None)
+        idx = self.mode_stack.currentIndex()
+        if idx == 1:
+            self.pro.reload(select_last=False)
+        self.fundus.set_patient(p, reload=idx == 2)
+        msg = f"안저 사진 {len(imported)}장을 불러왔습니다"
+        if failed:
+            msg += f" (실패 {len(failed)}개)"
+            QMessageBox.warning(self, "안저 불러오기", "불러오지 못한 파일:\n"
+                                + "\n".join(f"· {n} — {err}" for n, err in failed[:12]))
+        self.statusBar().showMessage(msg, 8000)
+
+    def _open_in_pro(self, capture) -> None:
+        """안저 검토 화면의 영상을 Pro 검토 1화면에서 연다."""
+        self._set_screen(1)
+        idx = next((i for i, c in enumerate(self.pro.captures()) if c.id == capture.id), -1)
+        if idx >= 0:
+            self.pro.open_index(idx)
 
     def _on_pro_saved(self) -> None:
         p = self._current_patient

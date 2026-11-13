@@ -16,3 +16,4 @@ class Capture:
     eye: Optional[str] = None            # 'OD' | 'OS' | 'OU' | 'NA'
     duration_ms: Optional[int] = None    # 동영상만
     note: Optional[str] = None
+    modality: str = "slit"               # 'slit'(세극등) | 'fundus'(불러온 안저 사진)

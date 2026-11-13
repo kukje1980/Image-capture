@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS captures (
     captured_at    TEXT NOT NULL,            -- 'YYYY-MM-DD HH:MM:SS'
     eye            TEXT CHECK (eye IN ('OD','OS','OU','NA') OR eye IS NULL),
     duration_ms    INTEGER,                  -- 동영상만
-    note           TEXT
+    note           TEXT,
+    modality       TEXT NOT NULL DEFAULT 'slit'  -- 'slit'(세극등) | 'fundus'(안저 불러오기)
 );
 
 CREATE INDEX IF NOT EXISTS idx_captures_patient ON captures(patient_id);

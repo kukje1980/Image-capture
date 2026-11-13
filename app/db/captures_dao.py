@@ -17,21 +17,28 @@ class CapturesDAO:
             cur = self._c.execute(
                 """INSERT INTO captures
                    (patient_id, media_type, file_path, export_path, thumbnail_path,
-                    captured_at, eye, duration_ms, note)
-                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                    captured_at, eye, duration_ms, note, modality)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
                 (cap.patient_id, cap.media_type, cap.file_path, cap.export_path,
-                 cap.thumbnail_path, cap.captured_at, cap.eye, cap.duration_ms, cap.note),
+                 cap.thumbnail_path, cap.captured_at, cap.eye, cap.duration_ms, cap.note,
+                 cap.modality or "slit"),
             )
             self._c.commit()
             return cur.lastrowid
 
-    def list_by_patient(self, pid: int, order: str = "desc") -> List[Capture]:
+    def list_by_patient(self, pid: int, order: str = "desc",
+                        modality: Optional[str] = None) -> List[Capture]:
+        """환자의 영상 목록. modality('slit' | 'fundus')를 주면 그 종류만."""
         o = "DESC" if order.lower() == "desc" else "ASC"
+        where, args = "patient_id=?", [pid]
+        if modality:
+            where += " AND modality=?"
+            args.append(modality)
         with self._lock:
             rows = self._c.execute(
-                f"""SELECT * FROM captures WHERE patient_id=?
+                f"""SELECT * FROM captures WHERE {where}
                     ORDER BY captured_at {o}, id {o}""",
-                (pid,),
+                args,
             ).fetchall()
         return [self._row(r) for r in rows]
 

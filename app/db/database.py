@@ -41,6 +41,8 @@ class Database:
             self._conn.executescript(ddl)
             _add_missing_columns(self._conn, "patients",
                                  {"diagnosis": "TEXT", "doctor": "TEXT"})
+            _add_missing_columns(self._conn, "captures",
+                                 {"modality": "TEXT NOT NULL DEFAULT 'slit'"})
             self._conn.commit()
 
     def close(self) -> None:

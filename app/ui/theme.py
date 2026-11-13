@@ -227,6 +227,29 @@ def build_qss(mode: str = "dark") -> str:
         background: #facc15; color: #111827; font-weight: 800; font-size: 11px;
         padding: 1px 8px; border-radius: 6px;
     }}
+    QPushButton#ProPrimary:disabled {{ background: {c['rule']}; color: {c['disabled']}; }}
+    QPushButton#ProBtn:checked:disabled {{ background: {c['rule']}; color: {c['disabled']}; border-color: {c['rule']}; }}
+    /* ===== 안저 검토 / 불러오기 ===== */
+    QLabel#FundusEmpty {{ background: transparent; color: #c7cdd8; font-size: 17px; font-weight: 700; }}
+    QStackedWidget#ProDisplay QLabel#Muted {{ color: #8b95a3; }}
+    QWidget#FundusArea {{ background: #000000; }}
+    QToolButton#FundusNav {{
+        background: rgba(8, 11, 16, 200); color: #e7eaf0; border: 1px solid #3a4352; border-radius: 6px;
+        font-weight: 700; padding: 0;
+    }}
+    QToolButton#FundusNav:hover {{ border-color: {c['accent']}; }}
+    QToolButton#FundusNav:disabled {{ color: #4a5262; border-color: #232a35; }}
+    QTableWidget#ImportTable {{
+        background: {c['panel']}; border: 1px solid {c['rule']}; border-radius: 8px;
+        alternate-background-color: {c['panel2']};
+    }}
+    QTableWidget#ImportTable::item {{ padding: 4px 8px; border-bottom: 1px solid {c['rule']}; }}
+    QTableWidget#ImportTable QLabel, QTableWidget#ImportTable QWidget {{ background: transparent; }}
+    QTableWidget#ImportTable QComboBox {{ background: {c['field']}; }}
+    QHeaderView::section {{
+        background: {c['panel2']}; color: {c['ink_soft']}; border: none; border-bottom: 1px solid {c['rule']};
+        padding: 6px 8px; font-weight: 700; font-size: 12px;
+    }}
     QSlider {{ background: transparent; }}
     QSlider::groove:horizontal {{ height: 4px; background: {c['rule_strong']}; border-radius: 2px; }}
     QSlider::sub-page:horizontal {{ background: {c['accent']}; border-radius: 2px; }}
