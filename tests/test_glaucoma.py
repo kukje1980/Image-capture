@@ -329,9 +329,15 @@ def test_main_window_flow(app, demo_dir, tmp_path, monkeypatch, import_and_wait)
             if rows:
                 by_patient[pt["id"]] = rows
         first, second = next(v for v in by_patient.values() if len(v) >= 2)[:2]
-        w.current = w.db.get_image(first["id"])
-        w.compare = None
 
+        def show(image_id):                                         # as the user does: the patient, then the photo
+            w._select_patient_ref(w.db.get_image(image_id)["patient_ref"])
+            w._show_image(image_id)
+            w.compare = None
+            app.processEvents()
+            assert w.current["id"] == image_id
+
+        show(first["id"])
         dlg, why = w._build_glaucoma()
         assert why == "" and dlg.disc.has_image() and dlg.wide.has_image() and not dlg.stereo.has_image()
         assert dlg.disc.photo.disc_px > 4
@@ -344,18 +350,19 @@ def test_main_window_flow(app, demo_dir, tmp_path, monkeypatch, import_and_wait)
         assert first["id"] in (__import__("json").loads(row["meta_json"])["derived_from"])
         assert dlg.save_to_record() == new_id                       # the same picture is stored once
 
+        show(first["id"])
         pair, why = w._build_glaucoma(second["id"])
         assert why == "" and pair.stereo.has_image() and pair.progress.has_image()
         assert pair.stereo.image_ids() == [first["id"], second["id"]]
         for t in (pair.stereo, pair.progress):
             t._timer.stop()
 
-        w.current = row                                             # an analysis picture is not analysed again
+        show(new_id)                                                # an analysis picture is not analysed again
         again, why = w._build_glaucoma()
         assert again is None and "녹내장 분석" in why
         other = next((v[0] for k, v in by_patient.items() if k != first["patient_ref"]), None)
         if other is not None:
-            w.current = w.db.get_image(first["id"])
+            show(first["id"])
             assert w._build_glaucoma(other["id"]) == (None, "서로 다른 환자의 사진입니다.")
     finally:
         w.close()
