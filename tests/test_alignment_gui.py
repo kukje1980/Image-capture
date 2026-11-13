@@ -64,11 +64,20 @@ def test_photo_is_placed_by_its_fovea_and_disc(app, tmp_path, demo_dir, import_a
         assert angle_between(eye.placement.matrix @ cam.direction(fx, fy), POLE) < 1e-6
         assert eye.placement.offset_deg > 8.0 and "사진 중심은 후극에서" in w.lbl_3d.text()
         assert "황반 위치를 저장" in w.lbl_status.text()
-        # -- the disc moved far from that fovea: the fovea is looked for again beside the new disc
+        # -- the disc moved: a macula marked by hand stays where it was marked (as in the web page) …
         w.view2d.discPicked.emit(od["disc_x"], od["disc_y"])                # (back where it was found)
+        row = w.current
+        assert (row["fovea_x"], row["fovea_y"]) == (fx, fy) and "황반 직접 지정" in w.lbl_found3d.text()
+        # … and 다시 찾기 drops the marks made by hand and finds both again
+        w.b_redetect3d.click()
         row = w.current
         assert row["fovea_x"] is not None and np.hypot(row["fovea_x"] - cx, row["fovea_y"] - cy) < 0.04 * r
         assert eye.placement.by == "fovea" and eye.placement.offset_deg < 3.0
+        # -- a found fovea far from a disc moved by hand is looked for again beside the new disc
+        db.update_image(row["id"], fovea_x=fx, fovea_y=fy)
+        w.view2d.discPicked.emit(od["disc_x"], od["disc_y"])
+        row = w.current
+        assert np.hypot(row["fovea_x"] - cx, row["fovea_y"] - cy) < 0.04 * r
         # -- a photo from an older library (no fovea stored): found when it is shown
         db.update_image(row["id"], fovea_x=None, fovea_y=None)
         w._fovea_tried.clear()

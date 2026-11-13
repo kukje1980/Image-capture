@@ -72,7 +72,8 @@ class Settings:
     # "auto" | "desktop" | "software" — software = bundled Mesa llvmpipe
     # (opengl32sw.dll), for PCs whose GPU driver lacks OpenGL 2.1.
     opengl: str = "auto"
-    # 3D eye: "simple" (간단히, light-weight) or "detailed" (자세히, anatomical)
+    # 3D eye: "detailed" (자세히, anatomical — as the web page) or "simple" (간단히, light-weight, for slow PCs;
+    # 설정 → 일반 → 3D 모형)
     view3d_detail: str = "detailed"
     # Motion and 3D effects (보기 → 부드러운 움직임; 3D 안구: 입체 조명, 자동 회전)
     smooth_motion: bool = True
@@ -84,6 +85,7 @@ class Settings:
     surface_height3d: int = 45      # … 높이 0 … 100
     simple3d: bool = False          # 3D 단순하게 보기 (coats, iris, lens and nerve plain)
     slit_dir3d: str = "down"        # 슬릿 스캔: "down", "up", "right", "left" or "all" (상하좌우)
+    autofind3d: bool = True         # 3D 사진: the macula and disc found automatically are used (off: only marked ones)
     # the look this settings file was last used with: a newer one may adopt new defaults once
     ui_version: int = 0
     # Extra user-defined filename regexes tried before the profile patterns.

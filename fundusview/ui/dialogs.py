@@ -287,6 +287,9 @@ class SettingsDialog(QDialog):
         self.opengl = _combo([("auto", "자동"), ("desktop", "그래픽카드 OpenGL"),
                               ("software", "소프트웨어 렌더링 (호환 모드)")], settings.opengl)
         f2.addRow("3D 렌더링 (재시작 필요)", self.opengl)
+        self.detail3d = _combo([("detailed", "자세히 (실제 해부 구조)"), ("simple", "간단히 (느린 PC용 가벼운 모형)")],
+                               settings.view3d_detail)
+        f2.addRow("3D 모형", self.detail3d)
         tabs.addTab(w2, "일반")
 
         # -- filename rules -------------------------------------------------------
@@ -416,4 +419,5 @@ class SettingsDialog(QDialog):
         s.stable_seconds = self.stable.value()
         s.rescan_seconds = self.rescan.value()
         s.opengl = self.opengl.currentData()
+        s.view3d_detail = self.detail3d.currentData()
         s.custom_filename_patterns = [p for p in self.patterns.toPlainText().splitlines() if p.strip()]

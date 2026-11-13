@@ -114,6 +114,31 @@ def test_browsing_reads_ahead_and_effects_follow_their_controls(app, tmp_path, d
         assert eye.simple == 1.0 and s.simple3d is True
         w.c_simple3d.setChecked(False)
         assert eye.simple == 0.0
+        # 사진 card (as the web page): the photo with its disc and macula, where they came from
+        row = w.current
+        assert w.photo3d._pix is not None and w.photo3d.disc is not None
+        assert "자동으로 찾음" in w.lbl_found3d.text() and w.c_autofind3d.isChecked()
+        assert w.c_device3d.currentData() == "reticam" and w.c_eye3d.currentData() in ("OD", "OS", "auto")
+        disc0 = (row["disc_x"], row["disc_y"])
+        w.b_mark_disc.click()                                 # 유두 지정: a click on the photo marks it
+        assert w.photo3d.picking == "disc" and w.lbl_mark3d.isVisible()
+        p = w.photo3d.to_widget(disc0[0] + 30.0, disc0[1])
+        from PySide6.QtCore import QPointF
+        from PySide6.QtGui import QMouseEvent
+        from PySide6.QtCore import QEvent
+        ev = QMouseEvent(QEvent.Type.MouseButtonPress, QPointF(p), QPointF(p), Qt.MouseButton.LeftButton,
+                         Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+        w.photo3d.mousePressEvent(ev)
+        assert w.photo3d.picking is None and not w.b_mark_disc.isChecked()
+        assert w.current["disc_x"] == pytest.approx(disc0[0] + 30.0, abs=3.0) and "유두 직접 지정" in w.lbl_found3d.text()
+        w.c_autofind3d.setChecked(False)                      # only marked places: the disc stays, the macula goes
+        assert eye._marks[0] is not None and eye._marks[1] is None and s.autofind3d is False
+        w.b_redetect3d.click()                                # 다시 찾기: the hand marks dropped, found again
+        assert w.c_autofind3d.isChecked() and "유두 자동으로 찾음" in w.lbl_found3d.text()
+        assert w.current["disc_x"] == pytest.approx(disc0[0], abs=4.0)
+        w._on_device3d("generic")                             # 장비: its field of view and projection
+        assert w.sp_fov.value() == 45.0 and w.c_proj.currentData() == "perspective"
+        w._on_device3d("reticam")
         # 사진 펼치기 is gone
         assert not hasattr(w, "b_unwrap") and not hasattr(eye, "unwrap")
         # 들어가며 보기: in through the pupil to the retina, and back out (at once with motion off)
