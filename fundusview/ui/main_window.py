@@ -38,6 +38,7 @@ from ..profiles import get_profile
 from ..watcher import ImportService
 from .dialogs import ImageDialog, PatientDialog, SettingsDialog, source_label
 from .disc_pair import DiscPairDialog
+from .glaucoma_dialog import GlaucomaDialog, Photo
 from .eye3d import EyeView
 from .histogram import HistogramDialog
 from . import motion, theme
@@ -315,6 +316,7 @@ class MainWindow(QMainWindow):
         for a in self.menus["save"].actions():
             m.addAction(a)
         m.addAction(A["discpair"])
+        m.addAction(A["glaucoma"])
         m.addAction("몽타주 만들기 (고른 사진)…", lambda: self.open_montage())
         m.addAction(A["print"])
         m.addSeparator()
@@ -464,6 +466,10 @@ class MainWindow(QMainWindow):
         self.btn_montage.setToolTip("고른 사진(2장 이상, 같은 눈)을 자동·수동으로 맞춰 한 장으로 합칩니다 —\n"
                                     "반투명 겹치기 · 기준점 맞추기 · 3D 안구에서 보기")
         self.btn_montage.clicked.connect(lambda: self.open_montage())
+        self.btn_glaucoma = QPushButton("녹내장")
+        self.btn_glaucoma.setToolTip(keys("녹내장 분석 — 보고 있는 사진의 디스크 C/D · 광각 RNFL 분석,\n"
+                                          "두 번째 사진을 Ctrl+클릭(②)하면 스테레오 보기 · 경과 비교"))
+        self.btn_glaucoma.clicked.connect(lambda: self.open_glaucoma())
         cl.addLayout(top)
         self.thumbs = QListWidget()
         self.thumbs.setViewMode(QListWidget.ViewMode.IconMode)
@@ -567,7 +573,7 @@ class MainWindow(QMainWindow):
         side.setContentsMargins(6, 6, 6, 6)
         side.setSpacing(6)
         self.btn_clear_picks.setStyleSheet("padding: 4px 2px;")      # "선택 해제" in full on the narrow column
-        for w in (self.btn_multi, self.btn_montage, self.lbl_picks, self.btn_clear_picks):
+        for w in (self.btn_multi, self.btn_montage, self.btn_glaucoma, self.lbl_picks, self.btn_clear_picks):
             side.addWidget(w)
         side.addStretch(1)
         side.addWidget(self.btn_rows)
@@ -1606,8 +1612,10 @@ class MainWindow(QMainWindow):
         if iid != cur:
             menu.addAction("비교 대상으로 (오른쪽)", lambda: self._set_compare(iid))
             menu.addAction("디스크 2장 (보고 있는 사진과)…", lambda: self._disc_pair(iid))
+            menu.addAction("녹내장 분석 (보고 있는 사진과)…", lambda: self.open_glaucoma(iid))
         elif self.compare is not None:
             menu.addAction("디스크 2장 (② 사진과)…", lambda: self._disc_pair())
+            menu.addAction("녹내장 분석 (② 사진과)…", lambda: self.open_glaucoma())
             menu.addAction("두 번째 사진(②) 선택 해제", lambda: self._pick_second(self.compare["id"]))
         menu.addAction("원본 폴더 열기", lambda: (self._show_image(iid), self._open_folder()))
         menu.addSeparator()
@@ -1728,7 +1736,7 @@ class MainWindow(QMainWindow):
 
     def _find_fovea(self, row, rgb) -> tuple[float, float] | None:
         cam = self._photo_camera(row, stored=True)
-        if cam is None or row["disc_x"] is None or row["modality"] in ("anterior", "disc"):
+        if cam is None or row["disc_x"] is None or row["modality"] in ("anterior", "disc", "glaucoma"):
             return None
         found = imaging.detect_fovea(rgb, cam, (row["disc_x"], row["disc_y"]), row["laterality"])
         return None if found is None else (found[0], found[1])
@@ -1986,6 +1994,8 @@ class MainWindow(QMainWindow):
             self._print_view()
         elif key == "discpair":
             self._disc_pair()
+        elif key == "glaucoma":
+            self.open_glaucoma()
         # -- command toolbar ---------------------------------------------------------
         elif key == "search":
             self.acts["list"].setChecked(True)
@@ -2245,7 +2255,7 @@ class MainWindow(QMainWindow):
             self.view2d.geometry = measure.Geometry(
                 *circle, fov_deg=self.sp_fov.value(), fov_type=self.c_fovtype.currentData(),
                 projection=self.c_proj.currentData(), viewpoint=prof.viewpoint,
-                radial_c=prof.radial_c) if circle and (row["modality"] not in ("montage", "disc")
+                radial_c=prof.radial_c) if circle and (row["modality"] not in ("montage", "disc", "glaucoma")
                                                       or self._montage_definition(row)) else None
         self.lbl_3d.setText(self._placement_text())
         both = row is not None and row["disc_x"] is not None and row["fovea_x"] is not None
@@ -3171,7 +3181,7 @@ class MainWindow(QMainWindow):
         if first["patient_ref"] != second["patient_ref"]:
             return None, "서로 다른 환자의 사진입니다."
         for row in (first, second):
-            if row["modality"] in ("anterior", "disc"):
+            if row["modality"] in ("anterior", "disc", "glaucoma"):
                 return None, f"{MODALITY_LABELS[row['modality']]} 사진에서는 시신경 유두를 자를 수 없습니다."
         sources = []
         for row in (first, second):
@@ -3219,6 +3229,63 @@ class MainWindow(QMainWindow):
         self.lbl_status.setText("디스크 2장을 이 환자 기록에 저장했습니다")
         return new_id
 
+    # -- glaucoma (녹내장 분석 — glaucoma.py, glaucoma_dialog.py) --------------------------------
+    def _glaucoma_photo(self, row, rgb: np.ndarray) -> Photo:
+        src = self._disc_source(row, rgb)
+        fovea = (row["fovea_x"], row["fovea_y"]) if row["fovea_x"] is not None else None
+        return Photo(row["id"], rgb, src.eye, src.disc,
+                     discpair.disc_diameter_px(src.geometry, src.disc, (rgb.shape[1], rgb.shape[0])),
+                     fovea, src.found == "saved", src.when, src.caption)
+
+    def _build_glaucoma(self, second_id: int | None = None):
+        """``(dialog, "")`` for the shown photo — with ``second_id`` (default: the ② photo, if one
+        is picked) as its pair for stereo and progression — or ``(None, why not)``."""
+        if self.current is None:
+            return None, "사진을 고르세요."
+        first = self.db.get_image(self.current["id"])
+        if second_id is None or second_id == first["id"]:
+            second_id = self.compare["id"] if self.compare is not None else None
+        second = self.db.get_image(second_id) if second_id is not None else None
+        rows = [first] + ([second] if second is not None and second["id"] != first["id"] else [])
+        if len(rows) == 2 and first["patient_ref"] != second["patient_ref"]:
+            return None, "서로 다른 환자의 사진입니다."
+        photos = []
+        for row in rows:
+            if row["modality"] in ("anterior", "disc", "glaucoma"):
+                return None, f"{MODALITY_LABELS[row['modality']]} 사진은 분석할 수 없습니다."
+            rgb = self._load(row)
+            if rgb is None:
+                return None, f"영상을 열 수 없습니다: {Path(row['original_path'] or row['file_path']).name}"
+            photos.append(self._glaucoma_photo(row, rgb))
+        p = self.db.get_patient(first["patient_ref"]) if first["patient_ref"] else None
+        bits = [p["name"] or "(이름 없음)", f"ID {p['patient_id']}"] if p is not None else ["미분류"]
+        bits += [ph.caption for ph in photos]
+        stem = "_".join(x for x in (p["patient_id"] if p is not None else "", "녹내장", first["exam_date"] or "") if x)
+        dlg = GlaucomaDialog(photos[0], photos[1] if len(photos) == 2 else None, title_line="  ·  ".join(bits),
+                             file_stem=safe_component(stem, "녹내장"), save_record=self._save_glaucoma, parent=self)
+        return dlg, ""
+
+    def open_glaucoma(self, second_id: int | None = None) -> None:
+        dlg, why = self._build_glaucoma(second_id)
+        if dlg is None:
+            QMessageBox.information(self, "녹내장 분석", why)
+            return
+        dlg.exec()
+
+    def _save_glaucoma(self, rgb: np.ndarray, note: str, eye: str | None, image_ids) -> int:
+        """Store an analysis picture as a new photo of the patient (modality ``glaucoma``)."""
+        rows = [self.db.get_image(i) for i in image_ids]
+        new_id = self.service.importer.add_derived(
+            rows[0], rgb, note, suffix="녹내장", derived_from=[r["id"] for r in rows],
+            laterality=eye if eye in ("OD", "OS") else rows[0]["laterality"], modality="glaucoma",
+            fov_deg=None, fov_type=None, projection=None, circle_cx=None, circle_cy=None, circle_r=None,
+            disc_x=None, disc_y=None, fovea_x=None, fovea_y=None)
+        self.refresh_patients(keep=True)
+        self._fill_dates()
+        self._fill_thumbs(select_id=self.current["id"] if self.current else None)
+        self.lbl_status.setText("녹내장 분석 화면을 이 환자 기록에 저장했습니다")
+        return new_id
+
     # -- montage (몽타주 — montage.py, montage_dialog.py) ----------------------------------------
     @staticmethod
     def _montage_definition(row) -> dict | None:
@@ -3256,7 +3323,7 @@ class MainWindow(QMainWindow):
         if len({r["patient_ref"] for r in rows}) > 1:
             return None, "서로 다른 환자의 사진입니다."
         for r in rows:
-            if r["modality"] in ("anterior", "disc"):
+            if r["modality"] in ("anterior", "disc", "glaucoma"):
                 return None, f"{MODALITY_LABELS[r['modality']]} 사진은 몽타주에 쓸 수 없습니다."
         sources = []
         for r in rows:
