@@ -243,8 +243,12 @@ class ProWorkspace(QWidget):
 
         self.b_comment = self._btn("코멘트", "현재 영상 코멘트 편집", obj="ProGhost", icon="comment")
         self.b_patient = self._btn("환자정보", "진단명·담당의 등 환자 정보 편집", obj="ProGhost", icon="user")
+        self.b_glaucoma = self._btn("녹내장", "녹내장 분석 — 스테레오 보기 · 디스크 C/D · 광각 RNFL · 경과 비교 "
+                                    "(MULTI에서 2장 선택 후)", icon="eye")
         for b in (self.b_comment, self.b_patient):
             tl.addWidget(b)
+        tl.addWidget(self._sep())
+        tl.addWidget(self.b_glaucoma)
         tl.addStretch(1)
         self.b_print = self._btn("인쇄", "현재 화면 영상 보고서 인쇄", obj="ProPrimary", icon="printer",
                                  color=ICON_ON_ACCENT)
@@ -291,6 +295,7 @@ class ProWorkspace(QWidget):
         self.b_edit_save.clicked.connect(self.save_edited)
         self.b_comment.clicked.connect(self.edit_comment)
         self.b_patient.clicked.connect(self.edit_patient)
+        self.b_glaucoma.clicked.connect(lambda: self.open_glaucoma())
         self.b_print.clicked.connect(self.print_current)
         self.b_pdf.clicked.connect(self._pdf_dialog)
         self.multi.openRequested.connect(self.open_index)
@@ -701,6 +706,44 @@ class ProWorkspace(QWidget):
             cv.set_adjust(self._adj)
             cv.set_caption(caption_of(cap, num, len(self._caps)))
         return True
+
+    # ================= 녹내장 분석 =================
+    def glaucoma_sources(self) -> tuple:
+        """(스테레오·경과용 2장 | None, 디스크·광각용 1장 | None) — 비교와 같은 규칙으로 고른다."""
+        sel = self.multi.selection()
+        pair = None
+        if len(sel) == 2:
+            i, j = sorted(sel)
+            pair = (self._caps[i], self._caps[j])
+        elif 0 < self._idx < len(self._caps):
+            pair = (self._caps[self._idx - 1], self._caps[self._idx])
+        cur = self._caps[self._idx] if 0 <= self._idx < len(self._caps) else (pair[1] if pair else None)
+        return pair, cur
+
+    def open_glaucoma(self, show: bool = True):
+        from app.ui.pro.glaucoma_dialog import GlaucomaDialog
+
+        pair, cur = self.glaucoma_sources()
+        imgs = [load_bgr(c.file_path) for c in pair] if pair else []
+        if any(im is None for im in imgs):
+            pair, imgs = None, []
+        cur_img = load_bgr(cur.file_path) if cur else None
+        source = "  ·  ".join([
+            f"스테레오·경과: {pair[0].captured_at} ↔ {pair[1].captured_at}" if pair
+            else "스테레오·경과: 영상 2장을 고르지 않았습니다",
+            f"디스크·광각: {cur.captured_at}" if cur_img is not None else "디스크·광각: 영상 없음"])
+        eye = (cur.eye if cur else None) or (pair[0].eye if pair else None) or "NA"
+        dlg = GlaucomaDialog(self._patient, self.service, tuple(imgs) or None, cur_img, eye, source, self)
+        dlg.saved.connect(self._on_glaucoma_saved)
+        if show:
+            dlg.exec()
+        return dlg
+
+    def _on_glaucoma_saved(self, _cap) -> None:
+        sel = self.multi.selection()                  # 새 영상이 추가돼도 보던 영상과 선택은 그대로
+        self.reload(select_last=False)
+        self.multi.set_selection(sel)
+        self.savedCapture.emit()
 
     # ================= 보정 · 편집 대상 =================
     def _canvases(self) -> list:
