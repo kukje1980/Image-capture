@@ -46,3 +46,21 @@ def test_meibo_mode_wired():
     assert "100 / 3" in PRO_JS and "200 / 3" in PRO_JS
     for cat in ("'0%'", "'<25%'", "'25–50%'", "'51–75%'", "'>75%'"):
         assert cat in PRO_JS
+
+
+def test_glaucoma_module_wired():
+    """녹내장 분석 창: 스크립트가 참조하는 요소가 템플릿에 모두 있고, Pro 툴바에서 열 수 있다."""
+    GLC_JS = (WEB / "static" / "js" / "glaucoma.js").read_text(encoding="utf-8")
+    used = set(re.findall(r"\$\('([a-z0-9-]+)'\)", GLC_JS))
+    used |= set(re.findall(r"(?:seg|slider|onFile)\('([a-z0-9-]+)'", GLC_JS))
+    used |= {i + "-o" for i in re.findall(r"slider\('([a-z0-9-]+)'", GLC_JS)}      # 슬라이더 값 표시
+    used |= {"glc-p-" + t for t in ("stereo", "disc", "wide", "prog")}
+    assert len(used) > 40
+    missing = sorted(used - HTML_IDS)
+    assert not missing, f"템플릿에 없는 id: {missing}"
+    assert HTML.index("/static/js/pro.js") < HTML.index("/static/js/glaucoma.js")   # SlitPro 를 쓰므로 뒤에 로드
+    assert re.findall(r'id="glc-tabs".*?</nav>', HTML, re.S)[0].count("data-tab=") == 4
+    modes = re.findall(r'data-v="(\w+)"', HTML[HTML.index('id="gst-mode"'):HTML.index("</div>", HTML.index('id="gst-mode"'))])
+    assert modes == ["wiggle", "sbs", "cross", "ana", "depth"]
+    assert "데모 영상은 저장하지 않습니다" in GLC_JS                                # 합성 영상이 환자 기록에 섞이지 않게
+    assert "'CDR '" in GLC_JS
