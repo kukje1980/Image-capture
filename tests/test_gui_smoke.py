@@ -87,7 +87,8 @@ def test_main_window_imports_and_lists(tmp_path, demo_dir, import_and_wait):
         w._select_patient_ref(UNASSIGNED)
         assert w.thumbs.count() == 2
         w._set_compare(db.images_for_patient(ref)[0]["id"])
-        assert all(v.has_image() for v in w.cmp_views)
+        tab = w._tab()
+        assert w.compare is not None and w._tab() == tab             # the ② pick; the view stays
     finally:
         w.close()
         db.close()

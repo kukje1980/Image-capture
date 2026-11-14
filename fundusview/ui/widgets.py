@@ -318,3 +318,37 @@ def knob_center(sw: Switch) -> QPointF:
     r = sw.track_rect()
     d = r.height() - 4.0
     return QPointF(r.left() + 2.0 + sw._t * (r.width() - d - 4.0) + d / 2, r.center().y())
+
+
+class ElidedLabel(QLabel):
+    """One line of plain text, cut with … where it does not fit (the whole text in the tool tip)
+    instead of making its row — and the window — wider."""
+    PAD = 16                     # the stylesheet's padding, both sides
+
+    def __init__(self, text: str = "", parent=None):
+        super().__init__(parent)
+        self._full = ""
+        self.setTextFormat(Qt.TextFormat.PlainText)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.setText(text)
+
+    def setText(self, text: str) -> None:
+        self._full = text or ""
+        self.setToolTip(self._full)
+        self._elide()
+
+    def text(self) -> str:
+        return self._full
+
+    def full_width(self) -> int:
+        self.ensurePolished()
+        return self.fontMetrics().horizontalAdvance(self._full) + self.PAD
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._elide()
+
+    def _elide(self) -> None:
+        self.ensurePolished()
+        QLabel.setText(self, self.fontMetrics().elidedText(self._full, Qt.TextElideMode.ElideRight,
+                                                           max(0, self.width() - self.PAD)))

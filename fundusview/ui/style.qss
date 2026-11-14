@@ -171,6 +171,8 @@ QLabel#banner { font-size: 15px; font-weight: 600; color: @TEXT@; padding: 4px 6
 QLabel#imageInfo { color: @TEXT2@; padding: 0 10px; border-left: 1px solid @SEP@; border-right: 1px solid @SEP@; }
 QLabel#measure { background: @CARD@; color: @YELLOW@; padding: 2px 10px; border-radius: 6px; }
 QWidget#thumbSide { background: transparent; }
+QListWidget#thumbStrip { font-size: 11px; }
+QListWidget#thumbStrip::item { padding: 2px; border-radius: 6px; }
 QWidget#leftPane { background: @BG@; border-right: 1px solid @CARD@; }
 
 /* 3D: a slim bar of the main actions over the eye, the settings in cards beside it */

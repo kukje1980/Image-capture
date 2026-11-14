@@ -203,6 +203,14 @@ def test_montage_from_the_main_window(app, tmp_path, montage_drop, import_and_wa
         assert s.montage_fast is True and saved == [True]
         w.edit_montage(new["id"])
         assert seen[-1] is not again and seen[-1].c_fast.isChecked()
+        # the 3D preview shows the montage as stitched: 망막 입체 only when it is on in the main window
+        seen[-1]._make_eye()
+        assert seen[-1].eye is not None and seen[-1].eye.relief == 0.0 and not seen[-1].eye.relief_on
+        s.surface3d = s.relief3d = True
+        w.edit_montage(new["id"])
+        seen[-1]._make_eye()
+        assert seen[-1].eye.relief == pytest.approx(0.6) and seen[-1].eye.relief_on
+        s.surface3d = s.relief3d = False
     finally:
         w.close()
 

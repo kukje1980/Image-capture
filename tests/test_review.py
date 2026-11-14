@@ -289,11 +289,18 @@ def _settle(app, rv, timeout: float = 20.0):
     assert not rv.loading()
 
 
+def _show_review(w):
+    """The 검토 page is no longer shown in the window (v0.3.0); its code stays and is tested here."""
+    w.tabs.setCurrentWidget(w.review)
+
+
 def _open_review(app, w, refs, who="kim"):
     page = w.patient_page
     row = next(r for r in range(page.table.rowCount()) if page.refs()[r] == refs[who])
     page.table.selectRow(row)
     page.table.doubleClicked.emit(page.table.model().index(row, 0))
+    app.processEvents()
+    _show_review(w)
     app.processEvents()
     return w.review
 
@@ -328,6 +335,7 @@ def test_double_click_opens_the_review_of_both_eyes(win):
     h = rv.views[0].height()
     rv.timeline.btn_fold.click()
     app.processEvents()
+    app.processEvents()                                # (the page's layout settles one pass later)
     assert not rv.timeline.scroll.isVisible() and rv.views[0].height() > h and rv.timeline.btn_fold.text() == "▸ 타임라인"
     rv.timeline.btn_fold.click()
     app.processEvents()
@@ -337,13 +345,14 @@ def test_double_click_opens_the_review_of_both_eyes(win):
     rv.set_stage("od")
     w._go("all")
     assert w.strip_w.isVisible() and w.f_date.isVisible() and w.view2d.has_image()
-    w._go("review")
+    _show_review(w)
     assert not w.strip_w.isVisible() and rv.stage == "od"
     # the way back to the patient list, and the patient's review again
     w.act_patients.trigger()
     assert w.page() == "patients" and w.tb_cmd.isHidden()
-    w.patient_page.btn_open.click()
-    assert w.page() == "work" and w._tab() == "review"
+    w.patient_page.btn_open.click()                    # 사진 보기: the workspace opens on 모두 보기 now
+    assert w.page() == "work" and w._tab() == "all"
+    _show_review(w)
     assert rv.views[0].mapTo(w, QPoint(0, 0)).x() < rv.views[1].mapTo(w, QPoint(0, 0)).x()
 
 
@@ -377,6 +386,7 @@ def test_checked_exam_is_the_current_one_and_stages_follow(win):
     w.show_page("patients")
     w.patient_page.exam_rows()[1].check.click()        # 2025-12-01
     w.patient_page.btn_open.click()
+    _show_review(w)
     assert rv.current == "2025-12-01" and rv.timeline.dates[1].property("current")
     assert [b.text() for b in rv.timeline.dates] == ["2026-03-02 · 최근", "2025-12-01 · 현재", "2025-08-20"]
     # OS has no earlier exam than this one: its compare stage is switched off and says why
@@ -632,15 +642,15 @@ def test_magnifier(win):
 def test_hand_off_to_2d_3d_and_glaucoma(win):
     app, w, db, refs, ids = win
     rv = _open_review(app, w, refs)
-    # 2D 보기: the active view's photo becomes the photo on screen, in the 2D tab
+    # 2D 보기: the active view's photo becomes the photo on screen, on 모두 보기 (whose big photo is the 2D view)
     rv.set_active(1)
     rv.btn_2d.click()
-    assert w._tab() == "2d" and w.current["id"] == ids["os3"] and w.view2d.has_image()
+    assert w._tab() == "all" and w.current["id"] == ids["os3"] and w.view2d.has_image()
     assert w.thumbs.currentItem().data(0x0100) == ids["os3"] and w.strip_w.isVisible()
     # the 2D view's adjustments work as ever and do not reach the review
     w._on_action("chan:redfree")
     assert w._channel == "redfree"
-    w._go("review")
+    _show_review(w)
     assert rv.view_mode == "color" and rv.slot_ids() == [ids["od3"], ids["os3"]]
     w._on_action("chan:redfree", False)
     # 3D 안구
@@ -650,7 +660,7 @@ def test_hand_off_to_2d_3d_and_glaucoma(win):
     # 녹내장: the existing window, through the existing entry point; in a compare stage with both photos
     opened = []
     w.open_glaucoma = lambda second=None: opened.append((w.current["id"], second))
-    w._go("review")
+    _show_review(w)
     rv.set_stage("ou")
     rv.set_active(1)
     rv.btn_glaucoma.click()
@@ -667,11 +677,12 @@ def test_hand_off_to_2d_3d_and_glaucoma(win):
     assert dlg is not None and why == "" and dlg.progress.has_image()
     assert dlg.tabs.currentWidget() is dlg.progress       # two exam days: 경과 비교 comes first
     dlg.close()
-    # the patient list's shortcuts: the checked exam's photo in 2D / 3D
+    # the patient list: the checked exam's photo — 사진 보기 (모두 보기) / 3D
     w.show_page("patients")
     w.patient_page.set_exam("2025-12-01")
-    w.patient_page.btn_2d.click()
-    assert w.page() == "work" and w._tab() == "2d" and w.current["id"] == ids["od2"]
+    assert w.patient_page.btn_2d.isHidden() and w.patient_page.btn_open.text() == "사진 보기"
+    w.patient_page.btn_open.click()
+    assert w.page() == "work" and w._tab() == "all" and w.current["id"] == ids["od2"]
     w.show_page("patients")
     w.patient_page.btn_3d.click()
     assert w._tab() == "3d" and w.current["id"] == ids["od2"]
@@ -689,7 +700,7 @@ def test_new_photo_still_opens_its_patient(win):
     assert w.page() == "work" and w._patient_ref == refs["park"] and w.current["id"] == ids["p_od"]
     assert w._tab() == "all" and w.view2d.has_image()
     # on the 검토 tab: a photo that is one of the two under review stays there …
-    w._go("review")
+    _show_review(w)
     w._results.append(res)
     w._flush_results()
     assert w._tab() == "review" and w.review.slot_ids()[0] == ids["p_od"]

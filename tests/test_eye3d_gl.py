@@ -433,9 +433,9 @@ def test_moving_on_a_slow_computer_draws_small_then_sharp(eye):
         v._drag, v._render_ms = None, 0.0
 
 
-def test_overview_shows_the_eye_in_its_pane(tmp_path, demo_dir, import_and_wait):
-    """모두 보기 with OpenGL: the 3D eye sits in its small pane and moves to the 3D tab,
-    to 크게 보기 and back without losing its place."""
+def test_3d_view_and_its_full_screen(tmp_path, demo_dir, import_and_wait):
+    """With OpenGL: the 3D eye is in the 3D view only (모두 보기 shows the photo, its macula and its
+    disc), goes to 크게 보기 and back without losing its place."""
     from PySide6.QtWidgets import QApplication
 
     from fundusview.config import Settings, WatchFolder
@@ -463,20 +463,21 @@ def test_overview_shows_the_eye_in_its_pane(tmp_path, demo_dir, import_and_wait)
         import_and_wait(app, w, [demo_dir])
         w._select_patient_ref(db.find_patient("20260115001")["id"])
         _settle(app, 0.5)
-        assert w._tab() == "all" and w._ov_gl and inside(w.eye3d, w.ov_3d)
+        # 모두 보기 has no 3D pane any more: the eye stays in the 3D view, made when it is first shown
+        assert w._tab() == "all" and not w._ov_gl and inside(w.eye3d, w.page3d)
+        w.view_buttons["3d"].click()
+        _settle(app)
+        assert w._tab() == "3d" and inside(w.eye3d, w.page3d)
         assert w.eye3d._ok and not w._3d_dirty               # the photo is on the eye
-        w._go("3d")
-        _settle(app)
-        assert inside(w.eye3d, w.page3d)
-        w._go("all")
-        _settle(app)
-        assert inside(w.eye3d, w.ov_3d)
-        w._toggle_full_3d()                                   # 크게 보기 from 모두 보기 ...
+        w._toggle_full_3d()                                   # 크게 보기 ...
         _settle(app)
         assert inside(w.eye3d, w._full3d)
-        w._exit_full_3d()                                     # ... comes back to the small pane
+        w._exit_full_3d()                                     # ... comes back to the 3D view
         _settle(app)
-        assert inside(w.eye3d, w.ov_3d) and w.eye3d._ok
+        assert inside(w.eye3d, w.page3d) and w.eye3d._ok
+        w.view_buttons["all"].click()
+        _settle(app)
+        assert w._tab() == "all" and inside(w.eye3d, w.page3d)
     finally:
         w.close()
         db.close()

@@ -508,7 +508,7 @@ const E = {
   half: 0, xray: 0, scan: null, scanDim: 1, scanBeam: 1, fovSweep: 0, fovAlpha: 0, fovRing: 0, black: false,
   slitAxis: 'v', scanSign: -1,  // the slit's way over the photo: along its vertical ('v') or horizontal ('h') axis, from which end
   simple: 0,                    // 단순하게 보기: 0 the detailed look … 1 plain (tweened)
-  reliefOn: true, reliefAmount: 0.45 * 0.08, hmap: null, hmapTex: null, hmapVer: 0,   // 망막 높낮이
+  reliefOn: false, reliefAmount: 0.45 * 0.08, hmap: null, hmapTex: null, hmapVer: 0,   // 망막 높낮이
   relief: 0, glass: 0, dark: 0, autoRotate: 0, outFov: 38,
   yaw: 38, pitch: 18, dist: MD.dist0, target: [0, 0, 0], inYaw: 0, inPitch: 0, inFov: MD.fov0, inZ: 0.35,
   drag: null, dragKind: '', touched: now(), entering: false, enterPlan: [], enterEnd: {}, viewEnds: null,
@@ -2170,7 +2170,8 @@ const ui = {
 };
 
 // ---------------------------------------------------------------------------------------------
-// start: the first demo photo, the program's defaults (자세히, 유리 공막 80, 입체 조명, 자동 회전)
+// start: the first demo photo, the program's defaults (자세히, 유리 공막 80, 자동 회전; 망막 입체 —
+// 표면 높낮이 and 입체 조명 — off: the photo as taken)
 // ---------------------------------------------------------------------------------------------
 async function main() {
   ui.init();
@@ -2183,6 +2184,8 @@ async function main() {
   }
   E.glass = +$('glass').value / 100;
   E.relief = $('relief').checked ? MD.relief : 0;
+  E.reliefOn = $('surface').checked;
+  $('height').disabled = !E.reliefOn;
   E.cut = 0.25;
   E.dist = homeDist();
   ui.syncView('front');

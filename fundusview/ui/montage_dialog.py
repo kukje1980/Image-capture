@@ -584,8 +584,9 @@ class MontageDialog(QDialog):
 
     def __init__(self, sources: list[MontageSource], *, file_stem: str = "몽타주", save_record=None,
                  definition: dict | None = None, auto: bool = True, fast: bool = False, on_fast=None,
-                 parent=None):
+                 relief3d: bool = False, surface3d: bool = False, parent=None):
         super().__init__(parent)
+        self._relief3d, self._surface3d = bool(relief3d), bool(surface3d)   # 망막 입체, as in the main window
         self.setWindowTitle("몽타주 — 여러 장을 한 장으로")
         self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
         self.sources = list(sources)
@@ -1133,7 +1134,8 @@ class MontageDialog(QDialog):
             self._lbl3d.setText(f"3D 안구를 열 수 없습니다: {exc}")
             return
         self.eye.set_detail("detailed")
-        self.eye.relief = 0.6                 # 입체 조명 and 유리 공막, as in the main window
+        self.eye.relief = 0.6 if self._relief3d else 0.0     # 입체 조명 · 표면 높낮이 (off: the montage as
+        self.eye.relief_on = self._surface3d                 # stitched) and 유리 공막, as in the main window
         self.eye.glass = 0.8
         self._lay3d.removeWidget(self._lbl3d)
         self._lbl3d.hide()
