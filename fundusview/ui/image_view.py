@@ -558,6 +558,31 @@ class ImageView(QGraphicsView):
         self.horizontalScrollBar().setValue(other.horizontalScrollBar().value())
         self.verticalScrollBar().setValue(other.verticalScrollBar().value())
 
+    def view_state(self) -> tuple[float, float, float, bool] | None:
+        """Where the view is, independent of the photo's size in pixels: (zoom relative to
+        화면 맞춤, centre x, centre y as fractions of the photo, whole photo shown)."""
+        if not self.has_image():
+            return None
+        pm = self._pix.pixmap()
+        c = self.mapToScene(self.viewport().rect().center())
+        return (self._zoom / self._fit_zoom(), c.x() / max(pm.width(), 1), c.y() / max(pm.height(), 1), self._fit)
+
+    def set_view_state(self, state) -> None:
+        """Take over a ``view_state`` (of this or another view — linked views, a photo swapped in place)."""
+        if state is None or not self.has_image():
+            return
+        rel, cx, cy, fit = state
+        if fit:
+            if not self._fit or abs(self._zoom - self._fit_zoom()) > 1e-9:
+                self.fit()
+            return
+        self.stop_motion()
+        pm = self._pix.pixmap()
+        self._zoom, self._fit = max(0.02, min(40.0, rel * self._fit_zoom())), False
+        self._apply()
+        self.centerOn(QPointF(cx * pm.width(), cy * pm.height()))
+        self.zoomChanged.emit(self._zoom)
+
     def resizeEvent(self, e):
         super().resizeEvent(e)
         if self._fit:

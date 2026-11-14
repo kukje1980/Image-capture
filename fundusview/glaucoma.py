@@ -282,3 +282,109 @@ def diff_map(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     k = np.clip((np.abs(la - lb * gain) - 14) / 30, 0, 1) * valid
     out = la[..., None] * (1 - k[..., None]) + np.float32([255, 40, 150]) * k[..., None]
     return np.clip(out, 0, 255).astype(np.uint8)
+
+
+# ---------------------------------------------------------------------------------------------
+# 환자 설명: what glaucoma does, stage by stage — a model for talking with the patient, not a
+# measurement of this patient (the window says so next to it)
+# ---------------------------------------------------------------------------------------------
+STAGES = ("정상", "초기", "중기", "말기")
+STAGE_CUP = (0.3, 0.5, 0.7, 0.9)            # cup / disc of the schematic disc
+STAGE_FIELD = (1.0, 0.8, 0.5, 0.22)         # radius of the field that is left (1 = all of it)
+STAGE_TEXT = (
+    "정상: 시신경유두의 함몰이 작고, 시야 전체가 고르게 보입니다.",
+    "초기: 함몰이 조금 커지고 신경섬유층이 얇아지기 시작합니다. 시야 한쪽에 활 모양의 흐린 부분이 생기지만 "
+    "본인은 거의 느끼지 못합니다.",
+    "중기: 함몰이 더 커지고 신경섬유층 결손이 넓어집니다. 주변 시야가 뚜렷하게 좁아집니다.",
+    "말기: 함몰이 유두 대부분을 차지합니다. 가운데만 남아 터널 속에서 보는 것처럼 보입니다. "
+    "손상된 시신경은 되돌릴 수 없어 조기 발견과 꾸준한 치료가 중요합니다.",
+)
+NOTE_MODEL = "설명용 모형입니다. 이 환자의 실제 진행 단계를 뜻하지 않습니다."
+
+
+def _stage(stage: int) -> int:
+    return int(np.clip(stage, 0, len(STAGES) - 1))
+
+
+def sample_scene(size: int = 600) -> np.ndarray:
+    """The picture the visual field is shown on (RGB): a plain street — road, buildings, people."""
+    w, h = size, int(size * 0.66)
+    img = np.zeros((h, w, 3), np.uint8)
+    hz = int(h * 0.55)
+    for yy in range(h):                                           # sky down to the horizon
+        t = min(yy / (h * 0.55), 1.0)
+        img[yy] = (150 + 40 * t, 200 - 20 * t, 235 - 60 * t)
+    img[hz:] = (105, 110, 95)                                     # ground
+    rng = np.random.default_rng(7)
+    k = size / 300.0
+    x = 0
+    while x < w:                                                  # buildings with windows
+        bw = int(rng.integers(int(w * 0.07), int(w * 0.14)))
+        bh = int(rng.integers(int(h * 0.15), int(h * 0.42)))
+        c = int(rng.integers(90, 170))
+        cv2.rectangle(img, (x, hz - bh), (x + bw - int(3 * k), hz), (c - 20, c - 10, c), -1)
+        for wy in range(hz - bh + int(6 * k), hz - int(6 * k), int(12 * k)):
+            for wx in range(x + int(5 * k), x + bw - int(8 * k), int(10 * k)):
+                cv2.rectangle(img, (wx, wy), (wx + int(4 * k), wy + int(6 * k)), (240, 225, 190), -1)
+        x += bw
+    road = np.array([[w * 0.42, hz], [w * 0.58, hz], [w * 0.95, h], [w * 0.05, h]], np.int32)
+    cv2.fillPoly(img, [road], (72, 70, 70))
+    for i in range(5):                                            # centre line
+        t0, t1 = i / 5, i / 5 + 0.1
+        y0, y1 = int(hz + (h - hz) * t0), int(hz + (h - hz) * t1)
+        cv2.line(img, (w // 2, y0), (w // 2, y1), (240, 230, 210), max(1, int((1 + 3 * t0) * k)))
+    for px, sc in ((0.2, 1.0), (0.8, 0.8), (0.66, 0.5)):          # people
+        fx, fy, fh = int(w * px), int(hz + (h - hz) * (0.35 + 0.5 * sc)), int(h * 0.2 * sc)
+        cv2.line(img, (fx, fy), (fx, fy - fh), (160, 40, 40), max(2, int(5 * sc * k)))
+        cv2.circle(img, (fx, fy - fh - int(4 * sc * k)), max(2, int(5 * sc * k)), (220, 180, 150), -1)
+    cv2.circle(img, (int(w * 0.85), int(h * 0.14)), int(h * 0.06), (255, 240, 190), -1)   # sun
+    return img
+
+
+def field_simulation(stage: int, size: int = 600, scene: np.ndarray | None = None) -> np.ndarray:
+    """What a patient at ``stage`` (0 정상 … 3 말기) sees, as an example: the field fades from
+    the edge inwards — an arc-shaped dim patch first, only the centre at the end."""
+    stage = _stage(stage)
+    sc = sample_scene(size) if scene is None else scene
+    h, w = sc.shape[:2]
+    ys, xs = np.mgrid[0:h, 0:w].astype(np.float32)
+    nx, ny = (xs - w / 2) / (w / 2), (ys - h / 2) / (h / 2)
+    rad = np.sqrt(nx * nx + ny * ny) / math.sqrt(2)
+    keep = np.ones((h, w), np.float32)
+    if stage > 0:
+        keep = np.clip((STAGE_FIELD[stage] - rad) / 0.16 + 0.5, 0, 1)
+        if stage == 1:                                            # early: an arcuate scotoma above fixation
+            arc = np.exp(-(((np.sqrt(nx * nx + (ny + 0.05) ** 2) - 0.45) / 0.09) ** 2)) * (ny < 0.0) * (nx > -0.75)
+            keep = np.minimum(keep, 1 - 0.85 * arc)
+    blur = cv2.GaussianBlur(sc, (0, 0), 6 * w / 300.0)
+    dark = blur.astype(np.float32) * 0.12 + 14
+    out = sc.astype(np.float32) * keep[..., None] + dark * (1 - keep[..., None])
+    return np.clip(out, 0, 255).astype(np.uint8)
+
+
+def disc_schematic(stage: int, size: int = 396) -> np.ndarray:
+    """A drawn optic disc (RGB, square): the rim and the cup, which grows with the stage."""
+    stage = _stage(stage)
+    img = np.full((size, size, 3), (58, 22, 14), np.uint8)
+    c, r = (size // 2, size // 2), int(size * 0.36)
+    cv2.circle(img, c, int(r * 1.12), (150, 70, 40), -1, cv2.LINE_AA)             # peripapillary ring
+    cv2.circle(img, c, r, (238, 150, 96), -1, cv2.LINE_AA)                        # neuroretinal rim
+    cr = STAGE_CUP[stage]
+    cv2.ellipse(img, c, (int(r * cr * 0.92), int(r * cr)), 0, 0, 360, (255, 238, 205), -1, cv2.LINE_AA)   # cup
+    for ang in (-62, -118, 62, 118):                                              # vessels leave over the rim
+        a = math.radians(ang)
+        p0 = (int(c[0] - r * cr * 0.55), c[1])
+        p1 = (int(c[0] + math.cos(a) * size * 0.56), int(c[1] + math.sin(a) * size * 0.56))
+        cv2.line(img, p0, p1, (132, 26, 22), max(2, size // 130), cv2.LINE_AA)
+    return cv2.GaussianBlur(img, (0, 0), size / 260.0)
+
+
+def explain_picture(stage: int, size: int = 600, scene: np.ndarray | None = None) -> np.ndarray:
+    """The 환자 설명 picture: the schematic disc beside what the patient sees at that stage."""
+    field = field_simulation(stage, size, scene)
+    disc = disc_schematic(stage, field.shape[0])
+    gap = max(6, size // 50)
+    out = np.zeros((field.shape[0], disc.shape[1] + gap + field.shape[1], 3), np.uint8)
+    out[:, :disc.shape[1]] = disc
+    out[:, disc.shape[1] + gap:] = field
+    return out

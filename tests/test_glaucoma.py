@@ -366,3 +366,76 @@ def test_main_window_flow(app, demo_dir, tmp_path, monkeypatch, import_and_wait)
             assert w._build_glaucoma(other["id"]) == (None, "서로 다른 환자의 사진입니다.")
     finally:
         w.close()
+
+
+def test_patient_explanation_model():
+    """환자 설명: the field narrows and the schematic cup grows with the stage."""
+    import numpy as np
+
+    from fundusview import glaucoma as G
+
+    assert G.STAGES == ("정상", "초기", "중기", "말기") and len(G.STAGE_TEXT) == 4
+    assert all(t.startswith(name + ":") for t, name in zip(G.STAGE_TEXT, G.STAGES))
+    scene = G.sample_scene(300)
+    assert scene.shape == (198, 300, 3) and scene.dtype == np.uint8
+    assert scene[10, 10, 2] > scene[10, 10, 0]                         # RGB: the sky is blue
+    fields = [G.field_simulation(k, 300, scene) for k in range(4)]
+    assert np.array_equal(fields[0], scene)                            # 정상: the whole field
+    h, w = scene.shape[:2]
+    lost = [float(np.mean(np.abs(f.astype(int) - scene).sum(axis=2) > 30)) for f in fields]
+    assert lost[0] == 0 and lost[0] < lost[1] < lost[2] < lost[3] and lost[3] > 0.8
+    for f in fields:                                                   # fixation is spared at every stage
+        assert np.array_equal(f[h // 2, w // 2], scene[h // 2, w // 2])
+    assert np.abs(fields[3][5, 5].astype(int) - scene[5, 5]).sum() > 100           # 말기: the corner is gone
+    # 초기: an arc above fixation is dimmed, below it is not
+    up = np.abs(fields[1][int(h * 0.27), w // 2].astype(int) - scene[int(h * 0.27), w // 2]).sum()
+    down = np.abs(fields[1][int(h * 0.73), w // 2].astype(int) - scene[int(h * 0.73), w // 2]).sum()
+    assert up > 60 and down < 10
+    assert np.array_equal(G.field_simulation(9, 300, scene), fields[3])             # out of range: clipped
+    cups = [int((G.disc_schematic(k, 200)[100][:, 1] > 215).sum()) for k in range(4)]       # the pale row of the cup
+    assert cups == sorted(cups) and cups[0] < cups[3] and cups[0] > 0             # the pale cup widens
+    pic = G.explain_picture(2, 300, scene)
+    assert pic.shape[0] == h and pic.shape[1] > w + h
+
+
+def test_patient_explanation_tab(tmp_path):
+    import numpy as np
+    from PySide6.QtWidgets import QApplication
+
+    from fundusview import glaucoma as G
+    from fundusview.demo import synth_fundus
+    from fundusview.ui.glaucoma_dialog import GlaucomaDialog, Photo
+
+    app = QApplication.instance() or QApplication([])
+    rgb = synth_fundus(eye="OD", size=(400, 420))
+    saved = []
+    photo = Photo(1, rgb, "OD", (300.0, 200.0), 60.0, (200.0, 205.0), True, "2026-01-15", "OD 2026-01-15")
+    dlg = GlaucomaDialog(photo, None, save_record=lambda *a: saved.append(a) or 7)
+    try:
+        dlg.show()
+        app.processEvents()
+        names = [dlg.tabs.tabText(i) for i in range(dlg.tabs.count())]
+        assert names == ["디스크 C/D", "광각 분석", "스테레오 보기", "경과 비교", "환자 설명"]
+        assert dlg.tabs.currentWidget() is dlg.disc                  # the analysis still comes first
+        tab = dlg.explain
+        dlg.tabs.setCurrentWidget(tab)
+        app.processEvents()
+        assert [b.text() for b in tab.stages.buttons] == list(G.STAGES)
+        assert tab.stage == 0 and tab.lbl_text.text() == G.STAGE_TEXT[0] and tab.has_image()
+        assert tab.lbl_model.text() == G.NOTE_MODEL and "실제 진행 단계를 뜻하지 않습니다" in G.NOTE_MODEL
+        first = dlg.shown()
+        tab.stages.buttons[3].click()                                # 말기
+        assert tab.stage == 3 and tab.lbl_text.text().startswith("말기:") and "22%" in tab.lbl_cd.text()
+        last = dlg.shown()
+        assert first.shape == last.shape and float(last.mean()) < float(first.mean()) * 0.8
+        assert np.array_equal(last, G.explain_picture(3, 600, tab._scene))
+        tab.set_stage(1)
+        assert tab.stages.key() == "1" and tab.note() == "녹내장 환자 설명 — 초기 (설명용 모형)"
+        # a model is not a finding: it can be copied or saved to a file, never into the patient record
+        assert dlg.save_to_record() is None and saved == [] and "설명용 모형" in dlg.status.text()
+        dlg.copy()
+        assert not QApplication.clipboard().image().isNull()
+        dlg.tabs.setCurrentWidget(dlg.disc)                          # the analysis tabs save as before
+        assert dlg.save_to_record() == 7 and len(saved) == 1
+    finally:
+        dlg.close()

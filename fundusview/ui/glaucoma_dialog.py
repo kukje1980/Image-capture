@@ -841,6 +841,42 @@ class ProgressTab(_PairTab):
 
 
 # -- the window --------------------------------------------------------------------------------------
+class ExplainTab(_Tab):
+    """환자 설명: what glaucoma does at each stage — a schematic disc (the cup grows) beside what the
+    patient sees (the field narrows), with a sentence to say. A model, not this patient's stage."""
+
+    def __init__(self, parent=None):
+        super().__init__("", parent)
+        self.stage = 0
+        self._scene = G.sample_scene(600)
+        self.hint.setText("왼쪽: 시신경 유두 모식도 (가운데 밝은 곳이 함몰) · 오른쪽: 환자가 보는 시야 (예시)")
+        self.stages = _Choice([(str(i), name) for i, name in enumerate(G.STAGES)])
+        self.stages.changed.connect(lambda key: self.set_stage(int(key)))
+        self.side.addWidget(card("진행 단계", self.stages, lines=False))
+        self.lbl_text = QLabel()
+        self.lbl_text.setWordWrap(True)
+        self.lbl_cd = _note()
+        self.side.addWidget(card("설명", self.lbl_text, self.lbl_cd))
+        self.lbl_model = _note(G.NOTE_MODEL)
+        self.lbl_model.setStyleSheet(f"color:{theme.ORANGE}; font-weight:600")
+        self.side.addWidget(card("", self.lbl_model, _note(
+            "이 환자의 사진과 측정은 디스크 C/D · 광각 분석 · 경과 비교 탭에 있습니다."), lines=False))
+        self.side.addStretch(1)
+        self.set_stage(0)
+
+    def set_stage(self, stage: int) -> None:
+        self.stage = max(0, min(len(G.STAGES) - 1, int(stage)))
+        if self.stages.key() != str(self.stage):
+            self.stages.set(str(self.stage))
+        self.view.set_rgb(G.explain_picture(self.stage, 600, self._scene))
+        self.lbl_text.setText(G.STAGE_TEXT[self.stage])
+        self.lbl_cd.setText(f"모식도의 C/D 약 {G.STAGE_CUP[self.stage]:.1f} · 남은 시야(예시) 약 "
+                            f"{round(G.STAGE_FIELD[self.stage] * 100)}%")
+
+    def note(self) -> str:
+        return f"녹내장 환자 설명 — {G.STAGES[self.stage]} (설명용 모형)"
+
+
 class GlaucomaDialog(QDialog):
     """``current`` = the photo on screen (disc, wide field); ``second`` = the ② photo, which with
     ``current`` makes the pair (stereo, progression). ``save_record(rgb, note, eye, image_ids)``
@@ -867,8 +903,9 @@ class GlaucomaDialog(QDialog):
         self.wide = WideTab(current)
         self.stereo = StereoTab(pair)
         self.progress = ProgressTab(pair)
+        self.explain = ExplainTab()
         for tab, text in ((self.disc, "디스크 C/D"), (self.wide, "광각 분석"),
-                          (self.stereo, "스테레오 보기"), (self.progress, "경과 비교")):
+                          (self.stereo, "스테레오 보기"), (self.progress, "경과 비교"), (self.explain, "환자 설명")):
             self.tabs.addTab(tab, text)
         if pair is not None:        # two photos of one day: a stereo pair; of two days: a follow-up
             same_day = current.day and current.day == second.day
@@ -904,6 +941,9 @@ class GlaucomaDialog(QDialog):
 
     def save_to_record(self) -> int | None:
         tab, rgb = self.tabs.currentWidget(), self.shown()
+        if tab is self.explain:        # a model, not a finding of this patient: never into the record
+            self.status.setText("환자 설명 그림은 설명용 모형이라 환자 기록에 넣지 않습니다 (파일로 저장 · 복사는 됩니다)")
+            return None
         if rgb is None or self._save_record is None:
             self.status.setText("저장할 분석 화면이 없습니다")
             return None

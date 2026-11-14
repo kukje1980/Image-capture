@@ -232,9 +232,11 @@ def _burn_text(rgb: np.ndarray, lines: list[str]) -> np.ndarray:
     return np.asarray(img)
 
 
-def write_demo_folder(root: Path | str, *, small: bool = False, montage: bool = False) -> list[Path]:
+def write_demo_folder(root: Path | str, *, small: bool = False, montage: bool = False,
+                      history: bool = False) -> list[Path]:
     """Write the demo drop folder; returns the image paths written. ``montage``: also a 5-field
-    45° series of one eye (Kowa export) to try 몽타주 on."""
+    45° series of one eye (Kowa export) to try 몽타주 on. ``history``: also two earlier exams of
+    one patient (both eyes) to try the 검토 tab's 이전 | 현재 comparison on."""
     root = Path(root)
     size = (544, 574) if small else (1088, 1148)
     out: list[Path] = []
@@ -283,6 +285,16 @@ def write_demo_folder(root: Path | str, *, small: bool = False, montage: bool = 
         stamp = when.replace("-", "_").replace(" ", "_").replace(":", "_")
         p = root / "PatientCapture" / f"{pid}_{name}" / when[:10].replace("-", "_") / "COLOR" / f"{stamp}.120_MCOLOR.jpg"
         save_jpeg(p, rgb, _apollo_comment(when, eye, fa, model, pid, name))
+
+    if history:                                   # the same eyes (same seeds) at two earlier visits
+        for when, eye, seed in (("2025-10-14 09:41:12", "OD", 3), ("2025-10-14 09:42:40", "OS", 4),
+                                ("2025-07-08 15:10:03", "OD", 3), ("2025-07-08 15:11:26", "OS", 4)):
+            rgb = synth_fundus(eye=eye, fov_deg=135.0, fov_type="internal", projection="equidistant",
+                               size=size, seed=seed, tint=(0.80 if when < "2025-08" else 0.76, 0.46, 0.30))
+            stamp = when.replace("-", "_").replace(" ", "_").replace(":", "_")
+            p = (root / "PatientCapture" / "20260115001_김민수" / when[:10].replace("-", "_") / "COLOR"
+                 / f"{stamp}.120_MCOLOR.jpg")
+            save_jpeg(p, rgb, _apollo_comment(when, eye, 90, 3007, "20260115001", "김민수"))
 
     # -- Kowa VK-2 Export Tool (45° camera) ----------------------------------------
     vk = root / "VK2_Export"

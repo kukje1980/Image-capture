@@ -46,11 +46,15 @@ def test_overview_panes_follow_the_photo(tmp_path, demo_dir, import_and_wait):
     try:
         w.resize(1500, 950)
         w.show()
+        # the program starts on the patient list; the workspace behind it opens on 모두 보기 (the tab
+        # after 검토) with the big 2D view in it; the photo list sits under the views
+        assert w.page() == "patients" and not w.tabs.isVisible()
         import_and_wait(app, w, [demo_dir])
         w._select_patient_ref(db.find_patient("20260115001")["id"])
+        w.show_page("work")              # (new photos may have brought the workspace up already)
         app.processEvents()
-        # opens on 모두 보기 with the big 2D view in it; the photo list sits under the views
-        assert w._tab() == "all" and w.tabs.tabText(0) == "모두 보기"
+        assert w.page() == "work" and w.tabs.isVisible()
+        assert w._tab() == "all" and [w.tabs.tabText(i) for i in (0, 1)] == ["검토", "모두 보기"]
         assert _inside(w.view2d, w.page_all) and w.view2d.has_image()
         assert w.thumbs.mapTo(w, QPoint(0, 0)).y() > w.tabs.mapTo(w, QPoint(0, 0)).y() + w.tabs.height() - 5
         # 다중 (2 × 2): the patient's 2 photos; 확대: the same processed photo as the big view
@@ -115,12 +119,13 @@ def test_overview_panes_follow_the_photo(tmp_path, demo_dir, import_and_wait):
         btn = w.ov_3d.findChild(type(w.ov_heads["3d"]), "ovOpen3d")
         btn.click()
         assert w._tab() == "3d"
-        # 보기 menu: tabs by name, Ctrl+1~4 as before and Ctrl+5 for 모두 보기
+        # 보기 menu: tabs by name, Ctrl+1~4 as before, Ctrl+5 for 모두 보기, Ctrl+6 for 검토, Ctrl+0 patient list
         acts = {a.text(): a.shortcut().toString() for a in w.findChildren(type(w.acts["fit"]))
-                if a.text() in ("모두 보기", "2D 보기", "3D 안구", "다중 보기", "비교")}
+                if a.text() in ("모두 보기", "2D 보기", "3D 안구", "다중 보기", "비교", "검토", "환자 목록")
+                and not a.shortcut().isEmpty()}
         assert acts == {"모두 보기": "Ctrl+5", "2D 보기": "Ctrl+1", "3D 안구": "Ctrl+2", "다중 보기": "Ctrl+3",
-                        "비교": "Ctrl+4"}
-        for key in ("2d", "3d", "multi", "cmp", "all"):
+                        "비교": "Ctrl+4", "검토": "Ctrl+6", "환자 목록": "Ctrl+0"}
+        for key in ("2d", "3d", "multi", "cmp", "review", "all"):
             w._go(key)
             app.processEvents()
             assert w._tab() == key
