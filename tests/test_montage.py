@@ -204,3 +204,52 @@ def test_picking_recentring_and_saving(series):
     x, y = mt.disc_on_map(shots[0], (float(u) * shots[0].scale, float(v) * shots[0].scale), geom)
     ex, ey = geom.xy(disc_eye)
     assert (x, y) == (pytest.approx(float(ex), abs=1e-6), pytest.approx(float(ey), abs=1e-6))
+
+
+def _poor(rgb, k, *, blur, noise, contrast, vignette, rot=0.0):
+    """The photo as a poor camera shot: pale vessels, uneven light, blur, noise, a tilted camera."""
+    import cv2
+
+    rng = np.random.default_rng(100 + k)
+    f = rgb.astype(np.float32)
+    h, w = f.shape[:2]
+    if rot:
+        f = cv2.warpAffine(f, cv2.getRotationMatrix2D((w / 2, h / 2), rot * (1 if k % 2 else -1), 1.0), (w, h))
+    mean = cv2.GaussianBlur(f, (0, 0), 25)
+    f = mean + (f - mean) * contrast
+    f = cv2.GaussianBlur(f, (0, 0), blur)
+    yy, xx = np.mgrid[0:h, 0:w]
+    r = np.hypot(xx - w * (0.5 + 0.15 * rng.standard_normal()), yy - h * (0.5 + 0.15 * rng.standard_normal()))
+    f *= (1 - vignette * np.clip(r / (0.6 * max(h, w)), 0, 1) ** 2)[..., None]
+    f += rng.normal(0, noise, f.shape)
+    out = np.clip(f, 0, 255).astype(np.uint8)
+    out[rgb.max(axis=2) < 8] = 0
+    return out
+
+
+def test_auto_align_copes_with_poor_photos(series):
+    """Blurred, noisy, pale and unevenly lit photos are still placed — on the vessels alone, at a
+    coarser size — and at the right gaze, not just somewhere."""
+    photos, truth = series
+    poor = [_poor(p, k, blur=2.0, noise=8.0, contrast=0.5, vignette=0.4) for k, p in enumerate(photos)]
+    shots = shots_of(poor)
+    rep = mt.auto_align(shots, 0)
+    assert rep.placed == [0, 1, 2, 3, 4] and rep.residual_deg < 0.6
+    assert max(rot_err(s.R, r) for s, r in zip(shots, truth)) < 1.0
+    # worse still: what is placed is placed rightly; the rest is left for the hand
+    worse = [_poor(p, k, blur=2.2, noise=12.0, contrast=0.35, vignette=0.6) for k, p in enumerate(photos)]
+    shots = shots_of(worse)
+    rep = mt.auto_align(shots, 0)
+    assert len(rep.placed) >= 2 and rep.unplaced               # some are found, the others reported
+    assert max(rot_err(shots[k].R, truth[k]) for k in rep.placed) < 1.5
+
+
+def test_the_looser_second_try_does_not_join_different_eyes(series):
+    photos, _ = series
+    h = SIDE * 3 // 4
+    top = (SIDE - h) // 2
+    other = [np.ascontiguousarray(p[top:top + h]) for p in demo.montage_fields("OS", size=SIDE, seed=77)]
+    shots = shots_of([photos[0], other[0], other[1]])
+    mt.spread(shots, 0)
+    rep = mt.auto_align(shots, 0)
+    assert rep.placed == [0] and rep.unplaced == [1, 2]            # another retina: nothing in common

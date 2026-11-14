@@ -340,20 +340,47 @@ def _vessel_image(shot: Shot) -> np.ndarray:
     return clahe.apply(np.ascontiguousarray(g))
 
 
+def _coarse_vessels(shot: Shot, scale: float) -> np.ndarray:
+    """The vessels alone at a reduced size: smoothed against noise, the uneven light taken out, dark
+    lines turned into bright ones. Blurred, noisy or pale photos still give points here."""
+    g = cv2.GaussianBlur(np.ascontiguousarray(shot.rgb[..., 1]), (0, 0), 1.0 / scale)
+    g = cv2.resize(g, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+    g = cv2.medianBlur(g, 5)
+    k = max(9, int(round(min(g.shape) * 0.035)) | 1)
+    v = cv2.morphologyEx(g, cv2.MORPH_BLACKHAT, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+    v = cv2.GaussianBlur(v, (0, 0), 1.2)
+    hi = float(np.percentile(v, 99.7)) or 1.0
+    return np.clip(v.astype(np.float32) * (255.0 / hi), 0, 255).astype(np.uint8)
+
+
+COARSE = 0.5        # size of the second, coarser look at the vessels
+
+
 def features(shot: Shot, n: int = 3000) -> Features:
-    """SIFT points on the vessel-enhanced green channel, away from the edge of the field."""
+    """SIFT points away from the edge of the field: on the vessel-enhanced green channel, and a
+    second set on the vessels alone at half size (what is left when a photo is blurred or noisy)."""
     img = _vessel_image(shot)
     h, w = img.shape
     yy, xx = np.mgrid[0:h, 0:w]
     cx, cy, r = shot.circle
     inner = ((xx - cx) ** 2 + (yy - cy) ** 2 <= (0.96 * r) ** 2) & (shot.alpha > 128)
     mask = cv2.erode(inner.astype(np.uint8) * 255, np.ones((9, 9), np.uint8))
-    sift = cv2.SIFT_create(nfeatures=n, contrastThreshold=0.015)
-    kps, desc = sift.detectAndCompute(img, mask)
-    if desc is None or not kps:
+    uvs, descs = [], []
+    kps, desc = cv2.SIFT_create(nfeatures=n, contrastThreshold=0.015).detectAndCompute(img, mask)
+    if desc is not None and kps:
+        uvs.append(np.array([k.pt for k in kps], np.float64))
+        descs.append(desc)
+    coarse = _coarse_vessels(shot, COARSE)
+    cmask = cv2.resize(mask, (coarse.shape[1], coarse.shape[0]), interpolation=cv2.INTER_NEAREST)
+    cmask = cv2.erode(cmask, np.ones((7, 7), np.uint8))
+    kps, desc = cv2.SIFT_create(nfeatures=n // 2, contrastThreshold=0.02).detectAndCompute(coarse, cmask)
+    if desc is not None and kps:
+        uvs.append(np.array([k.pt for k in kps], np.float64) / COARSE)
+        descs.append(desc)
+    if not uvs:
         return Features(np.zeros((0, 3)), np.zeros((0, 128), np.float32), np.zeros((0, 2)))
-    uv = np.array([k.pt for k in kps], np.float64)
-    return Features(shot.dirs(uv), desc, uv)
+    uv = np.concatenate(uvs)
+    return Features(shot.dirs(uv), np.concatenate(descs), uv)
 
 
 def match(fa: Features, fb: Features, ratio: float = 0.8) -> tuple[np.ndarray, np.ndarray]:
@@ -435,13 +462,16 @@ class AlignReport:
 
 
 def _pair(shots, feats, i, j, refine_fov: bool) -> PairResult | None:
-    ia, ib = match(feats[i], feats[j])
-    if len(ia) < MIN_INLIERS:
-        return None
-    r, inl = ransac_rotation(feats[j].dirs[ib], feats[i].dirs[ia])
-    if inl.sum() < MIN_INLIERS:
-        return None
-    return PairResult(i, j, r, ia[inl], ib[inl])
+    # the usual strict matching first; poor photos get a second, looser try whose wrong matches the
+    # rotation consensus has to throw out — so it asks for more agreeing points
+    for ratio, need in ((0.8, MIN_INLIERS), (0.92, 2 * MIN_INLIERS)):
+        ia, ib = match(feats[i], feats[j], ratio)
+        if len(ia) < need:
+            continue
+        r, inl = ransac_rotation(feats[j].dirs[ib], feats[i].dirs[ia], iters=1500 if ratio == 0.8 else 4000)
+        if inl.sum() >= need:
+            return PairResult(i, j, r, ia[inl], ib[inl])
+    return None
 
 
 def _refine_fov(shot: Shot, own_uv: np.ndarray, targets: np.ndarray) -> None:
