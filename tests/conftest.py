@@ -14,6 +14,27 @@ os.environ["FUNDUSVIEW_HOME"] = tempfile.mkdtemp(prefix="fundusview-test-")
 os.environ["FUNDUSVIEW_NO_MOTION"] = "1"
 
 
+@pytest.fixture(autouse=True)
+def _no_blocking_message_boxes(monkeypatch):
+    """A message box waits for a click that never comes on a headless runner, so one shown
+    by mistake hung the whole CI job until its time limit. Here every QMessageBox.warning /
+    information / critical / question is recorded, answers at once (No / Ok), and fails the
+    test with its text. A test that expects a box patches QMessageBox itself (that wins)."""
+    try:
+        from PySide6.QtWidgets import QMessageBox
+    except ImportError:
+        yield
+        return
+    shown = []
+    for name in ("warning", "information", "critical", "question"):
+        def box(*args, _name=name, **kwargs):
+            shown.append(f"{_name}: " + " / ".join(str(a) for a in args[1:3]))
+            return QMessageBox.StandardButton.No if _name == "question" else QMessageBox.StandardButton.Ok
+        monkeypatch.setattr(QMessageBox, name, staticmethod(box))
+    yield
+    assert not shown, "message box shown during the test (it would hang the CI): " + "; ".join(shown)
+
+
 @pytest.fixture(scope="session")
 def demo_dir(tmp_path_factory):
     from fundusview.demo import write_demo_folder

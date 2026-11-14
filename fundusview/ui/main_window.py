@@ -1087,8 +1087,8 @@ class MainWindow(QMainWindow):
             "사진을 더블클릭해 열고 두 번째 사진을 Ctrl+클릭(②, 다시 Ctrl+클릭하면 해제) → 비교 탭<br>"
             "[디스크 2장]: 두 사진의 시신경 유두만 확대해 한 장으로 (OD 왼쪽 · OS 오른쪽, 보험 청구용)<br><br>"
             "<b>사진 가져오기</b><br>"
-            f"자동입니다. 레티캠 등 장비 폴더와 [문서{os.sep}안저사진 가져오기] 폴더를 감시해 "
-            "새 사진의 환자 ID·이름을 읽고 환자별로 정리합니다."
+            f"자동입니다. 레티캠 등 장비 폴더와 가져오기 폴더 [{self.settings.inbox}]를 감시해 "
+            "새 사진의 환자 ID·이름을 읽고 환자별로 정리합니다. 폴더는 설정에서 바꾸거나 더할 수 있습니다."
             + ("<br><br><b>맥</b><br>⌘ = Ctrl · 트랙패드: 두 손가락 스크롤 또는 벌리기/오므리기로 확대·축소, "
                "두 손가락 클릭 = 오른쪽 클릭 · PageUp/PageDown = fn+↑/fn+↓ · 지우기 = delete(⌫)"
                if IS_MAC else "")))
@@ -1168,12 +1168,18 @@ class MainWindow(QMainWindow):
         dlg = SettingsDialog(self.settings, self)
         if dlg.exec():
             old_lib = str(self.settings.library)
+            old_inbox = str(self.settings.inbox)
             before = list(self.settings.watch_folders)
             dlg.apply()
             self._set_3d_detail(self.settings.view3d_detail, save=False)
             autosetup.remember_removed(self.settings, before)
             if dlg.redetect:
                 autosetup.apply(self.settings, autosetup.detect())
+            try:   # a new 가져오기 폴더 is watched at once, the old one no longer
+                inbox = autosetup.change_inbox(self.settings, old_inbox)
+            except OSError as e:
+                inbox = None
+                QMessageBox.warning(self, "가져오기 폴더", f"가져오기 폴더를 만들 수 없습니다: {e}")
             self.settings.save()
             if str(self.settings.library) != old_lib:
                 QMessageBox.information(self, "설정", "라이브러리 폴더 변경은 프로그램을 다시 시작하면 적용됩니다.")
@@ -1182,6 +1188,9 @@ class MainWindow(QMainWindow):
                     self._toggle_watch(True)
                 else:
                     self.act_watch.setChecked(True)
+            if inbox is not None:             # after the restart, whose "폴더 감시 중" would hide it
+                self.lbl_status.setText(f"가져오기 폴더: {inbox.path} — 넣은 사진을 바로 가져옵니다")
+                self.db.log("info", f"가져오기 폴더 변경: {old_inbox} → {inbox.path}")
 
     def _on_status(self, text: str) -> None:
         self.lbl_status.setText(text)

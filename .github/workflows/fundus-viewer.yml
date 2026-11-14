@@ -34,7 +34,9 @@ jobs:
           done
           exit 1
       - run: pip install -r requirements.txt pytest
-      - run: python -m pytest -q tests
+      # -o faulthandler_timeout: a test running over 3 minutes prints every thread's stack
+      - run: python -m pytest -q -o faulthandler_timeout=180 tests
+        timeout-minutes: 15
         env:
           QT_QPA_PLATFORM: offscreen
       # the offscreen platform has no OpenGL: render the 3D eye once more on Mesa (llvmpipe),
@@ -53,7 +55,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt pyinstaller pytest
-      - run: python -m pytest -q tests
+      - run: python -m pytest -q -o faulthandler_timeout=180 tests
+        timeout-minutes: 15
         env:
           QT_QPA_PLATFORM: offscreen
       - run: pyinstaller fundus_viewer.spec --noconfirm
@@ -81,7 +84,7 @@ jobs:
   publish:
     if: >-
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-      && github.ref == 'refs/heads/main'
+      && github.ref_name == github.event.repository.default_branch
     needs: [build-windows]
     runs-on: ubuntu-latest
     permissions:

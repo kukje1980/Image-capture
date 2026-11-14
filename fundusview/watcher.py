@@ -295,13 +295,20 @@ class ImportService:
     def stop_watching(self) -> None:
         self._watching.clear()
         self._watching = threading.Event()  # old loops see their own (cleared) event and exit
-        for obs in self._observers:
-            try:
-                obs.stop()
-                obs.join(timeout=3)
-            except Exception:
-                pass
-        self._observers = []
+        observers, self._observers = self._observers, []
+        if observers:
+            # watchdog's stop() waits for its reader thread without a timeout. On Windows an
+            # observer stopped right after it started can miss the cancel and sit in
+            # ReadDirectoryChangesW until something changes in that folder, so never wait for
+            # it here (the GUI thread restarts watching from the settings dialog).
+            def stop_all():
+                for obs in observers:
+                    try:
+                        obs.stop()
+                        obs.join(timeout=3)
+                    except Exception:
+                        pass
+            threading.Thread(target=stop_all, name="fundus-watch-stop", daemon=True).start()
         self._poll_folders = []
         self._timers = []
 
