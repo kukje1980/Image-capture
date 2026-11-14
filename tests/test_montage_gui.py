@@ -222,9 +222,13 @@ def test_fast_save_draws_a_smaller_picture_and_is_remembered(app):
         assert small.fov_deg == big.fov_deg
     finally:
         dlg.close()
+        dlg.deleteLater()
+        app.processEvents()
     again = md.MontageDialog(_sources(2, side=400), auto=False, fast=True)
     try:
         assert again.c_fast.isChecked()
     finally:
         again.close()
+        again.deleteLater()
+        app.processEvents()
 
