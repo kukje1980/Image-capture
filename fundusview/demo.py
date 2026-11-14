@@ -103,12 +103,14 @@ def _retina_map(eye: str = "OD", seed: int = 1, tint=(0.80, 0.40, 0.22)) -> Imag
 def synth_fundus(*, eye: str = "OD", fov_deg: float = 135.0, fov_type: str = "internal",
                  projection: str = "equidistant", size=(1088, 1148), seed: int = 1,
                  tint=(0.80, 0.40, 0.22), circle: tuple[float, float, float] | None = None,
-                 radial_c: float = proj.DEFAULT_RADIAL_C) -> np.ndarray:
+                 radial_c: float = proj.DEFAULT_RADIAL_C, gaze: tuple[float, ...] | None = None) -> np.ndarray:
     """RGB image of a synthetic retina seen through the given camera geometry.
 
     By default the image circle fills the frame width (APOLLO-like 2176×2296
     aspect, the extra rows at the bottom stay black like the device's text
-    strip); ``circle`` = (cx, cy, r) places it explicitly.
+    strip); ``circle`` = (cx, cy, r) places it explicitly. ``gaze`` =
+    (right, up[, roll]) degrees points the camera away from the fovea, as the
+    fields of a montage series (``montage_fields``).
     """
     w, h = size
     rmap = np.asarray(_retina_map(eye, seed, tint), dtype=np.uint8)
@@ -133,6 +135,11 @@ def synth_fundus(*, eye: str = "OD", fov_deg: float = 135.0, fov_type: str = "in
         a_max = math.atan(proj.g(tmax, "perspective"))
         a = np.arctan(rho * math.tan(a_max))
         theta = a + np.arcsin(np.clip(proj.DEFAULT_VIEWPOINT * np.sin(a), -1, 1))
+    if gaze is not None:                       # camera frame → eye: turn the directions
+        st = np.sin(theta)
+        d = np.stack([st * np.cos(phi), st * np.sin(phi), -np.cos(theta)], axis=-1) @ gaze_rotation(*gaze).T
+        theta = np.arctan2(np.hypot(d[..., 0], d[..., 1]), -d[..., 2])
+        phi = np.arctan2(d[..., 1], d[..., 0])
     tdeg = np.degrees(theta)
     mx = np.clip(n / 2 + tdeg * np.cos(phi) * MAP_PX_PER_DEG, 0, n - 1).astype(np.int32)
     my = np.clip(n / 2 - tdeg * np.sin(phi) * MAP_PX_PER_DEG, 0, n - 1).astype(np.int32)
@@ -141,6 +148,36 @@ def synth_fundus(*, eye: str = "OD", fov_deg: float = 135.0, fov_type: str = "in
     out = out * vignette
     out[~inside] = 0
     return out.clip(0, 255).astype(np.uint8)
+
+
+def gaze_rotation(right: float, up: float, roll: float = 0.0) -> np.ndarray:
+    """Rotation of a camera turned ``right`` / ``up`` (degrees) from the fovea, then rolled about its axis
+    (camera frame → eye; the eye looks along −z, +x is to the right on the photo)."""
+    def about(axis, deg):
+        k = np.asarray(axis, np.float64) / np.linalg.norm(axis)
+        kx = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
+        a = math.radians(deg)
+        return np.eye(3) + math.sin(a) * kx + (1 - math.cos(a)) * (kx @ kx)
+
+    r = about([1.0, 0.0, 0.0], up) @ about([0.0, 1.0, 0.0], -right)
+    return about(r @ np.array([0.0, 0.0, -1.0]), -roll) @ r
+
+
+# a 5-field series of a 45° camera: centre, right, left, up, down (degrees right, up, roll)
+MONTAGE_GAZES = ((0.0, 0.0, 0.0), (27.0, 1.0, 2.0), (-26.0, -1.0, -2.0), (1.0, 24.0, 1.0), (-1.0, -24.0, 0.0))
+
+
+def montage_fields(eye: str = "OD", *, size: int = 900, seed: int = 31, fov_deg: float = 45.0,
+                   gazes=MONTAGE_GAZES, brightness=(1.0, 0.85, 1.12, 0.93, 1.06)) -> list[np.ndarray]:
+    """Photos of one retina with the gaze turned between them (a montage series) — the flash
+    differs a little from photo to photo, as on a real camera."""
+    out = []
+    for k, g in enumerate(gazes):
+        rgb = synth_fundus(eye=eye, fov_deg=fov_deg, fov_type="external", projection="perspective",
+                           size=(size, size), seed=seed, gaze=g)
+        b = brightness[k % len(brightness)]
+        out.append(np.clip(rgb.astype(np.float32) * b, 0, 255).astype(np.uint8))
+    return out
 
 
 def _apollo_comment(when: str, eye: str, field_angle: int, dev_model: int, pid: str, name: str) -> str:
@@ -195,8 +232,9 @@ def _burn_text(rgb: np.ndarray, lines: list[str]) -> np.ndarray:
     return np.asarray(img)
 
 
-def write_demo_folder(root: Path | str, *, small: bool = False) -> list[Path]:
-    """Write the demo drop folder; returns the image paths written."""
+def write_demo_folder(root: Path | str, *, small: bool = False, montage: bool = False) -> list[Path]:
+    """Write the demo drop folder; returns the image paths written. ``montage``: also a 5-field
+    45° series of one eye (Kowa export) to try 몽타주 on."""
     root = Path(root)
     size = (544, 574) if small else (1088, 1148)
     out: list[Path] = []
@@ -272,6 +310,14 @@ def write_demo_folder(root: Path | str, *, small: bool = False) -> list[Path]:
         '  <nsFUNDUS:ImageLaterality>L</nsFUNDUS:ImageLaterality>\n'
         '  <nsCommon:AcquisitionDate>2026-01-10</nsCommon:AcquisitionDate>\n'
         '  <nsCommon:AcquisitionTime>09:45:00</nsCommon:AcquisitionTime>\n</Data>\n', encoding="utf-8")
+
+    if montage:                                   # 5 fields of one eye, a few seconds apart
+        side = size[0]
+        for k, rgb in enumerate(montage_fields("OD", size=side)):
+            h = side * 3 // 4
+            top = (side - h) // 2
+            save_jpeg(vk / f"D0001240_20260214_1015{10 + 7 * k:02d}_R_FUNDUS (COLOR)_{k + 1}.jpg",
+                      np.ascontiguousarray(rgb[top:top + h]))
 
     # -- DICOM (VK-2 DICOM export style, OP 8-bit) -------------------------------------
     try:

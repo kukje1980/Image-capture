@@ -1,7 +1,6 @@
 """VK-2 style viewer tools: drag zoom, measurements, processing stack, multi view."""
 import math
 import os
-import time
 
 import numpy as np
 import pytest
@@ -163,7 +162,7 @@ def test_levels():
     assert out[0, 0, 0] == 128
 
 
-def test_main_window_tools(app, tmp_path, demo_dir):
+def test_main_window_tools(app, tmp_path, demo_dir, import_and_wait):
     from fundusview.config import Settings, WatchFolder
     from fundusview.db import Database
     from fundusview.ui.main_window import MainWindow
@@ -174,15 +173,7 @@ def test_main_window_tools(app, tmp_path, demo_dir):
     w = MainWindow(s, db)
     try:
         w.show()
-        w.service.import_paths([str(demo_dir / "RetiCam")])
-        deadline = time.time() + 20
-        while db.find_patient("PID20260310-0A1B2C3D") is None and time.time() < deadline:
-            app.processEvents()
-            time.sleep(0.02)
-        time.sleep(0.5)
-        for _ in range(60):
-            app.processEvents()
-            time.sleep(0.01)
+        import_and_wait(app, w, [demo_dir / "RetiCam"])
         w._select_patient_ref(db.find_patient("PID20260310-0A1B2C3D")["id"])
         assert w.thumbs.count() == 3
         w.f_mod.setCurrentIndex(w.f_mod.findData("color"))   # the two single shots (no montage)
@@ -212,7 +203,9 @@ def test_main_window_tools(app, tmp_path, demo_dir):
         w.pop_gamma.hide()
         w._on_action("adj_reset")
         assert w.s_gamma.value() == 100 and not w.acts["adj:gamma"].isChecked()
-        assert w.view2d._captions[0] == "1/2" and w.view2d._captions[2].endswith("PID20260310-0A1B2C3D")
+        # on the photo: its number and the eye — no patient name, ID or date
+        assert w.view2d._captions[0] == "1/2" and w.view2d._captions[1] in ("OD (R)", "OS (L)")
+        assert w.view2d._captions[2:] == ("", "")
         w._on_action("tools")                    # TOOLS hides / shows the processing toolbar
         assert w.tb_proc.isHidden() and not w.acts["tools"].isChecked()
         w._on_action("tools")
@@ -221,12 +214,12 @@ def test_main_window_tools(app, tmp_path, demo_dir):
         assert w.current["id"] != first
         w._on_action("prev")
         assert w.current["id"] == first
-        w.tabs.setCurrentIndex(2)            # multi view
+        w._go("multi")                       # multi view
         w.multi.set_count(4)
         app.processEvents()
         assert sum(1 for c in w.multi.cells if c.image_id is not None and c.isVisible()) == 2
         assert all(c.view.tool == "zoom" for c in w.multi.cells)
-        w.tabs.setCurrentIndex(0)
+        w._go("2d")
         w._on_action("op:sharpen")
         new_id = w.service.importer.add_derived(w.current, w.view2d._rgb, "편집 영상 (테스트)")
         assert db.get_image(new_id)["patient_ref"] == w.current["patient_ref"]

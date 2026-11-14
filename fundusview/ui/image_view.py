@@ -32,12 +32,14 @@ from PySide6.QtGui import (
     QAction, QBrush, QColor, QCursor, QFont, QImage, QPainter, QPainterPath, QPen, QPixmap, QPolygonF, QTransform,
 )
 from PySide6.QtWidgets import (
-    QGraphicsEllipseItem, QGraphicsItem, QGraphicsLineItem, QGraphicsPathItem, QGraphicsPixmapItem,
+    QGraphicsEllipseItem, QGraphicsItem, QGraphicsLineItem, QGraphicsOpacityEffect, QGraphicsPathItem,
+    QGraphicsPixmapItem,
     QGraphicsPolygonItem, QGraphicsScene, QGraphicsSimpleTextItem, QGraphicsView, QInputDialog, QLabel, QMenu,
     QWidget,
 )
 
 from .. import measure
+from . import motion
 
 TOOLS = {
     "pan": "이동", "zoom": "확대/축소", "loupe": "돋보기", "length": "길이 측정", "angle": "각도 측정",
@@ -57,7 +59,7 @@ TOOL_HINTS = {
     "profile": "누르고 있는 동안 그 가로줄의 밝기 그래프",
 }
 YELLOW, CYAN = QColor(255, 214, 64), QColor(110, 215, 255)
-CAPTION = QColor(0, 255, 0)   # VK-2 text colour
+CAPTION = QColor(242, 242, 247, 225)   # the labels on the photo (photo number, eye): quiet, not the VK-2 green
 
 
 def to_qimage(rgb: np.ndarray) -> QImage:
@@ -67,12 +69,19 @@ def to_qimage(rgb: np.ndarray) -> QImage:
     return img.copy()  # own the buffer
 
 
+def to_pixmap(rgb: np.ndarray) -> QPixmap:
+    """A pixmap of the array (converted straight from the array's memory: no intermediate copy)."""
+    rgb = np.ascontiguousarray(rgb[..., :3], dtype=np.uint8)
+    h, w = rgb.shape[:2]
+    return QPixmap.fromImage(QImage(rgb.data, w, h, 3 * w, QImage.Format.Format_RGB888))
+
+
 def from_qimage(img: QImage) -> np.ndarray:
     """``uint8`` RGB array of a QImage (any format)."""
     img = img.convertToFormat(QImage.Format.Format_RGB888)
     w, h, bpl = img.width(), img.height(), img.bytesPerLine()
     arr = np.frombuffer(img.constBits(), np.uint8, count=bpl * h).reshape(h, bpl)[:, :w * 3]
-    return np.ascontiguousarray(arr.reshape(h, w, 3))
+    return np.array(arr.reshape(h, w, 3))      # a copy: the image's memory goes away with it
 
 
 class _Navigator(QWidget):
@@ -147,6 +156,7 @@ class _Navigator(QWidget):
 
 class ImageView(QGraphicsView):
     discPicked = Signal(float, float)
+    foveaPicked = Signal(float, float)
     zoomChanged = Signal(float)
     measured = Signal(str)       # result of a measurement
     hovered = Signal(str)        # pixel / retinal position under the cursor
@@ -177,11 +187,17 @@ class ImageView(QGraphicsView):
         self._disc.setVisible(False)
         self._disc.setZValue(5)
         self.scene().addItem(self._disc)
+        self._fovea = QGraphicsEllipseItem()
+        self._fovea.setPen(QPen(QColor(100, 210, 255, 230), 0))
+        self._fovea.setVisible(False)
+        self._fovea.setZValue(5)
+        self.scene().addItem(self._fovea)
         self.show_overlays = False
         self.show_captions = False
         self._captions = ("", "", "", "")
         self._circle_px = None
         self._disc_px = None
+        self._fovea_px = None
         self._rgb: np.ndarray | None = None
         self.geometry: measure.Geometry | None = None
         # view state
@@ -204,6 +220,18 @@ class ImageView(QGraphicsView):
         self.loupe_mag, self.loupe_size = 3.0, 260
         self.show_navigator = True
         self._nav = _Navigator(self)
+        # motion: the wheel's zoom glides, a flicked photo keeps sliding, 맞춤 / 100 % ease in
+        self._wheel_at = QPoint()
+        self._wheel_scene = QPointF()
+        self._wheel = motion.Chase(self._wheel_part, half_life=0.05)
+        self._vel = motion.Velocity()
+        self._fling = motion.Decay(self._fling_move, tau=0.33)
+        self._fling_rest = [0.0, 0.0]
+        self._glide = motion.Tween(self._glide_to, 0.28)
+        self._glide_ends: tuple | None = None
+        self.crossfade = False                      # another photo fades in over the last one
+        self._fade_lab: QLabel | None = None
+        self._fade = motion.Tween(self._fade_to, 0.16, done=self._fade_done)
         self._restore_cursor()
 
     # =====================================================================
@@ -212,8 +240,45 @@ class ImageView(QGraphicsView):
     def has_image(self) -> bool:
         return not self._pix.pixmap().isNull()
 
+    def stop_motion(self) -> None:
+        """End every running glide where it is (a new photo, a new gesture)."""
+        self._wheel.stop()
+        self._fling.stop()
+        self._glide.stop()
+
+    def _start_crossfade(self) -> None:
+        """Keep the picture on screen as a fading layer over the new photo."""
+        if self._fade_lab is None:
+            lab = QLabel(self.viewport())
+            lab.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            eff = QGraphicsOpacityEffect(lab)
+            lab.setGraphicsEffect(eff)
+            self._fade_lab = lab
+        lab = self._fade_lab
+        self._fade.stop()
+        lab.hide()
+        lab.setPixmap(self.viewport().grab())
+        lab.setGeometry(self.viewport().rect())
+        lab.graphicsEffect().setOpacity(1.0)
+        lab.show()
+        lab.raise_()
+        self._fade.start()
+
+    def _fade_to(self, k: float) -> None:
+        if self._fade_lab is not None:
+            self._fade_lab.graphicsEffect().setOpacity(max(0.0, 1.0 - k))
+
+    def _fade_done(self) -> None:
+        if self._fade_lab is not None:
+            self._fade_lab.hide()
+            self._fade_lab.setPixmap(QPixmap())
+
     def set_rgb(self, rgb: np.ndarray | None, *, keep_view: bool = False) -> None:
+        if (not keep_view and self.crossfade and rgb is not None and motion.enabled() and self.isVisible()
+                and self.has_image()):
+            self._start_crossfade()
         if not keep_view:
+            self.stop_motion()
             self.clear_annotations()
             self._rot, self._fh, self._fv = 0, False, False
         self._rgb = rgb
@@ -221,16 +286,17 @@ class ImageView(QGraphicsView):
             self._pix.setPixmap(QPixmap())
             self._circle.setVisible(False)
             self._disc.setVisible(False)
+            self._fovea.setVisible(False)
             self._update_navigator()
             return
-        self._pix.setPixmap(QPixmap.fromImage(to_qimage(rgb)))
+        self._pix.setPixmap(to_pixmap(rgb))
         self.scene().setSceneRect(QRectF(self._pix.pixmap().rect()))
         if not keep_view:
             self.fit()
         self._update_navigator()
 
-    def set_overlays(self, circle, disc) -> None:
-        self._circle_px, self._disc_px = circle, disc
+    def set_overlays(self, circle, disc, fovea=None) -> None:
+        self._circle_px, self._disc_px, self._fovea_px = circle, disc, fovea
         self._update_overlays()
 
     def _update_overlays(self) -> None:
@@ -241,14 +307,19 @@ class ImageView(QGraphicsView):
             x, y = self._disc_px[:2]
             r = (self._circle_px[2] if self._circle_px else 500) * 0.06
             self._disc.setRect(x - r, y - r, 2 * r, 2 * r)
+        if self._fovea_px:
+            x, y = self._fovea_px[:2]
+            r = (self._circle_px[2] if self._circle_px else 500) * 0.025
+            self._fovea.setRect(x - r, y - r, 2 * r, 2 * r)
         self._circle.setVisible(self.show_overlays and bool(self._circle_px))
         self._disc.setVisible(self.show_overlays and bool(self._disc_px))
+        self._fovea.setVisible(self.show_overlays and bool(self._fovea_px))
 
     def toggle_overlays(self, on: bool) -> None:
         self.show_overlays = on
         self._update_overlays()
 
-    # -- VK-2 style on-screen captions (green text in the corners) ------------
+    # -- small labels in the corners of the photo (photo number, eye) ----------
     def set_captions(self, top_left: str = "", top_right: str = "", bottom_left: str = "",
                      bottom_right: str = "") -> None:
         self._captions = (top_left, top_right, bottom_left, bottom_right)
@@ -265,8 +336,8 @@ class ImageView(QGraphicsView):
             return
         p = QPainter(self.viewport())
         f = QFont(self.font())
-        f.setPixelSize(max(13, min(22, self.viewport().height() // 32)))
-        f.setBold(True)
+        f.setPixelSize(max(12, min(18, self.viewport().height() // 40)))
+        f.setWeight(QFont.Weight.DemiBold)
         p.setFont(f)
         r = self.viewport().rect().adjusted(10, 6, -10, -6)
         flags = (Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
@@ -276,7 +347,7 @@ class ImageView(QGraphicsView):
         for text, flag in zip(self._captions, flags):
             if not text:
                 continue
-            p.setPen(QColor(0, 0, 0, 200))       # shadow keeps it legible on bright retina
+            p.setPen(QColor(0, 0, 0, 170))       # shadow keeps it legible on bright retina
             p.drawText(r.translated(1, 1), int(flag), text)
             p.setPen(CAPTION)
             p.drawText(r, int(flag), text)
@@ -337,13 +408,19 @@ class ImageView(QGraphicsView):
         super().scrollContentsBy(dx, dy)
         self._update_navigator()
 
-    def zoom_to_rect(self, rect: QRectF) -> None:
-        """Zoom so ``rect`` (image pixels) fills the view, centred on it."""
+    def zoom_to_rect(self, rect: QRectF, animate: bool = True) -> None:
+        """Zoom so ``rect`` (image pixels) fills the view, centred on it (gliding there unless
+        ``animate`` is off)."""
         if not self.has_image() or rect.width() <= 0 or rect.height() <= 0:
             return
         br = self._orient().mapRect(rect)
         vw, vh = max(self.viewport().width(), 1), max(self.viewport().height(), 1)
-        self._zoom, self._fit = max(0.02, min(40.0, min(vw / br.width(), vh / br.height()) * 0.97)), False
+        z = max(0.02, min(40.0, min(vw / br.width(), vh / br.height()) * 0.97))
+        if animate and motion.enabled() and self.isVisible():
+            self._glide_view(z, rect.center(), fit=False)
+            return
+        self.stop_motion()
+        self._zoom, self._fit = z, False
         self._apply()
         self.centerOn(rect.center())
         self.zoomChanged.emit(self._zoom)
@@ -352,31 +429,98 @@ class ImageView(QGraphicsView):
     def zoom(self) -> float:
         return self._zoom
 
-    def fit(self) -> None:
-        if not self.has_image():
-            return
+    def _fit_zoom(self) -> float:
         br = self._orient().mapRect(QRectF(self._pix.pixmap().rect()))
         vw, vh = max(self.viewport().width(), 1), max(self.viewport().height(), 1)
-        self._zoom = max(1e-3, min(vw / br.width(), vh / br.height()) * 0.98)
+        return max(1e-3, min(vw / br.width(), vh / br.height()) * 0.98)
+
+    def fit(self, animate: bool = False) -> None:
+        """Show the whole photo. ``animate``: glide there (a double click, the 맞춤 command)."""
+        if not self.has_image():
+            return
+        if animate and motion.enabled() and self.isVisible():
+            self._glide_view(self._fit_zoom(), QRectF(self._pix.pixmap().rect()).center(), fit=True)
+            return
+        self.stop_motion()
+        self._zoom = self._fit_zoom()
         self._apply()
         self.centerOn(self._pix)
         self._fit = True
         self.zoomChanged.emit(self._zoom)
 
-    def zoom_to(self, factor: float, vpos: QPoint | None = None) -> None:
-        self._zoom_at(factor, vpos if vpos is not None else self.viewport().rect().center())
+    def zoom_to(self, factor: float, vpos: QPoint | None = None, animate: bool = False) -> None:
+        vpos = vpos if vpos is not None else self.viewport().rect().center()
+        if animate and motion.enabled() and self.isVisible() and self.has_image():
+            factor = max(0.02, min(40.0, factor))
+            # the point under ``vpos`` stays there: the centre the view ends on follows from it
+            c0 = self.mapToScene(self.viewport().rect().center())
+            sp = self.mapToScene(vpos)
+            centre = sp + (c0 - sp) * (self._zoom / factor)
+            self._glide_view(factor, centre, fit=False)
+            return
+        self._zoom_at(factor, vpos)
 
-    def _zoom_at(self, z: float, vpos: QPoint) -> None:
+    # -- motion ---------------------------------------------------------------------
+    def _glide_view(self, zoom: float, centre: QPointF, *, fit: bool) -> None:
+        """Ease the view to ``zoom`` with ``centre`` (scene) in the middle."""
+        self.stop_motion()
+        c0 = self.mapToScene(self.viewport().rect().center())
+        self._glide_ends = (self._zoom, c0, float(zoom), QPointF(centre), fit)
+        self._fit = False
+        self._glide.start(0.30)
+
+    def _glide_to(self, k: float) -> None:
+        if self._glide_ends is None or not self.has_image():
+            return
+        z0, c0, z1, c1, fit = self._glide_ends
+        # zoom changes evenly on the scale the eye sees (ratios), the centre with it
+        self._zoom = z0 * (z1 / z0) ** k if z0 > 0 and z1 > 0 else z1
+        f = (self._zoom - z0) / (z1 - z0) if abs(z1 - z0) > 1e-12 else k
+        self._apply()
+        self.centerOn(c0 + (c1 - c0) * f)
+        if k >= 1.0:
+            self._zoom = z1
+            self._apply()
+            self.centerOn(c1)
+            self._fit = fit
+        self.zoomChanged.emit(self._zoom)
+
+    def _wheel_part(self, steps: float) -> None:
+        """A share of the wheel's notches: zoom about the photo point that was under the cursor."""
+        z = max(0.02, min(40.0, self._zoom * 1.15 ** steps))
+        self._zoom_about(z, self._wheel_scene, self._wheel_at)
+
+    def _zoom_about(self, z: float, sp: QPointF, vpos: QPoint) -> None:
+        """Zoom to ``z`` keeping scene point ``sp`` under viewport position ``vpos``."""
         if not self.has_image():
             return
-        z = max(0.02, min(40.0, z))
-        sp = self.mapToScene(vpos)
         self._zoom, self._fit = z, False
         self._apply()
         d = self.mapFromScene(sp) - vpos
         self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() + d.x())
         self.verticalScrollBar().setValue(self.verticalScrollBar().value() + d.y())
         self.zoomChanged.emit(z)
+
+    def _fling_move(self, dx: float, dy: float) -> None:
+        """The photo keeps sliding after a flick (whole pixels; the rest is carried over)."""
+        self._fling_rest[0] += dx
+        self._fling_rest[1] += dy
+        ix, iy = int(self._fling_rest[0]), int(self._fling_rest[1])
+        self._fling_rest[0] -= ix
+        self._fling_rest[1] -= iy
+        h, v = self.horizontalScrollBar(), self.verticalScrollBar()
+        hx, vy = h.value(), v.value()
+        h.setValue(hx - ix)
+        v.setValue(vy - iy)
+        if (ix or iy) and h.value() == hx and v.value() == vy:
+            self._fling.stop()                         # the edge of the photo: nothing left to slide
+
+    def _zoom_at(self, z: float, vpos: QPoint) -> None:
+        if not self.has_image():
+            return
+        self._glide.stop()
+        self._fling.stop()
+        self._zoom_about(max(0.02, min(40.0, z)), self.mapToScene(vpos), vpos)
 
     def pinch(self, value: float, vpos: QPoint) -> None:
         """One trackpad pinch step (macOS): ``value`` is the relative change
@@ -584,11 +728,18 @@ class ImageView(QGraphicsView):
             self.loupe_mag = max(1.5, min(10.0, self.loupe_mag * (1.15 ** steps)))
             self._show_loupe(e.position().toPoint())
             return
-        self._zoom_at(self._zoom * (1.15 ** steps), e.position().toPoint())
+        self._glide.stop()
+        self._fling.stop()
+        self._wheel_at = e.position().toPoint()
+        self._wheel_scene = self.mapToScene(self._wheel_at)
+        self._wheel.add(steps)                        # the view glides after the notches
 
     def mousePressEvent(self, e):
         pos = e.position().toPoint()
         btn = e.button()
+        self.stop_motion()                            # a touch stops whatever was gliding
+        self._vel.reset()
+        self._vel.add(pos.x(), pos.y())
         if btn == Qt.MouseButton.RightButton:
             self._drag = {"kind": "rzoom", "start": pos, "z0": self._zoom, "moved": False}
             return
@@ -647,6 +798,7 @@ class ImageView(QGraphicsView):
         elif kind == "pan":
             delta = pos - d["last"]
             d["last"] = pos
+            self._vel.add(pos.x(), pos.y())
             self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - delta.x())
             self.verticalScrollBar().setValue(self.verticalScrollBar().value() - delta.y())
         elif kind == "loupe":
@@ -663,6 +815,8 @@ class ImageView(QGraphicsView):
         pos = e.position().toPoint()
         if d and d["kind"] == "pan":
             self._restore_cursor()
+            self._fling_rest = [0.0, 0.0]
+            self._fling.start(*self._vel.get())       # let go while moving: it slides on and settles
         if d is None:
             return super().mouseReleaseEvent(e)
         kind = d["kind"]
@@ -685,7 +839,7 @@ class ImageView(QGraphicsView):
             return
         if self.tool in ("angle", "cd_area", "length", "arrow", "cd_length", "text"):
             return
-        self.fit()
+        self.fit(animate=True)
         self.activated.emit()
 
     def keyPressEvent(self, e):
@@ -700,11 +854,14 @@ class ImageView(QGraphicsView):
             at = self.viewport().mapFromGlobal(QCursor.pos())
             if not self.viewport().rect().contains(at):
                 at = self.viewport().rect().center()
-            self._zoom_at(self._zoom * (1.25 if k in (Qt.Key.Key_Plus, Qt.Key.Key_Equal) else 0.8), at)
+            self._glide.stop()
+            self._fling.stop()
+            self._wheel_at, self._wheel_scene = at, self.mapToScene(at)
+            self._wheel.add((1 if k in (Qt.Key.Key_Plus, Qt.Key.Key_Equal) else -1) * math.log(1.25) / math.log(1.15))
         elif k == Qt.Key.Key_0:
-            self.fit()
+            self.fit(animate=True)
         elif k == Qt.Key.Key_1:
-            self.zoom_to(1.0)
+            self.zoom_to(1.0, animate=True)
         else:
             super().keyPressEvent(e)
 
@@ -830,6 +987,9 @@ class ImageView(QGraphicsView):
         menu = QMenu(self)
         act = QAction("여기를 시신경 유두로 지정 (3D 시신경 위치)", menu)
         act.triggered.connect(lambda: self.discPicked.emit(sp.x(), sp.y()))
+        menu.addAction(act)
+        act = QAction("여기를 황반(중심와)으로 지정 (3D에서 안구 뒤쪽 한가운데)", menu)
+        act.triggered.connect(lambda: self.foveaPicked.emit(sp.x(), sp.y()))
         menu.addAction(act)
         menu.addSeparator()
         for label, fn in (("화면에 맞춤", self.fit), ("100% 크기", lambda: self.zoom_to(1.0)),

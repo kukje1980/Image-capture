@@ -1,6 +1,12 @@
-"""Main window, laid out like the Kowa VK-2 capture screen: patients · thumbnails ·
-2D / 3D / multi / compare views, the Command toolbar on the right edge and the
-Image Processing toolbar along the bottom (see toolbars.py)."""
+"""Main window, laid out like the Kowa VK-2 capture screen: patients · views
+(모두 보기 / 2D / 3D / multi / compare) with the photo strip (thumbnails) under them,
+the Command toolbar on the right edge and the Image Processing toolbar along the
+bottom (see toolbars.py).
+
+모두 보기 (the first, default tab) shows the big 2D view with three small panes on the
+right — 다중 보기 (2 × 2), 확대 화면 (where you click on the big photo, shown by a frame on
+it) and the 3D eye. The 2D view and the 3D eye are moved between that tab and their own
+tabs (like 크게 보기 does for the 3D eye), so the tools and the 3D state stay the same."""
 from __future__ import annotations
 
 import json
@@ -13,15 +19,16 @@ from pathlib import Path
 import numpy as np
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QActionGroup, QBrush, QColor, QCursor, QDesktopServices, QFont, QIcon, QImage, \
-    QKeySequence, QPainter, QPixmap
+    QKeySequence, QPainter, QPen, QPixmap, QShortcut
 from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox, QDockWidget, QDoubleSpinBox, QFileDialog,
-    QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMenu,
-    QMessageBox, QPushButton, QRadioButton, QSlider, QSplitter, QStatusBar, QTableWidget, QTableWidgetItem,
-    QTabWidget, QToolBar, QToolButton, QVBoxLayout, QWidget,
+    QAbstractItemView, QApplication, QCheckBox, QComboBox, QDockWidget, QDoubleSpinBox, QFileDialog,
+    QFrame, QGraphicsRectItem, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget,
+    QListWidgetItem, QMainWindow, QMenu,
+    QMessageBox, QPushButton, QScrollArea, QSizePolicy, QSlider, QSplitter, QStatusBar, QTableWidget,
+    QTableWidgetItem, QTabWidget, QToolBar, QToolButton, QVBoxLayout, QWidget,
 )
 
-from .. import APP_TITLE, __version__, autosetup, discpair, imaging, measure
+from .. import APP_TITLE, __version__, autosetup, discpair, imaging, measure, placement
 from .. import projection as proj
 from ..config import Settings
 from ..db import Database
@@ -31,17 +38,97 @@ from ..profiles import get_profile
 from ..watcher import ImportService
 from .dialogs import ImageDialog, PatientDialog, SettingsDialog, source_label
 from .disc_pair import DiscPairDialog
+from .glaucoma_dialog import GlaucomaDialog, Photo
 from .eye3d import EyeView
 from .histogram import HistogramDialog
+from . import motion, theme
 from .image_view import TOOL_HINTS, TOOLS, ImageView, from_qimage
+from .montage_dialog import MontageDialog, MontageSource, confirm_sources
 from .keys import IS_MAC, keys
 from .multi_view import MultiView
+from .landmarks_view import LandmarkPhoto
+from .slit_scan import SLIT, ScanPhotoView, SlitScanShow, ViewTween
+from .thumbs import EYE_ROLE, PICK_ROLE, ThumbDelegate, eye_badge_html
 from .toolbars import CHECKABLE, COMMANDS, MENUS, PROCESSING, SliderPopup, icon_for
+from .widgets import Segmented, Switch, card, segment
+from .widgets import row as setting_row
 
 UNASSIGNED = -1
 SEX_LABEL = {"M": "남", "F": "여", "O": "기타"}
 THUMB_TEXT = Qt.ItemDataRole.UserRole + 1    # thumbnail caption without the ② mark
 SECOND_PICK = QColor(168, 104, 28)           # background of the second picked photo (②)
+MAX_PICKS = 16                               # photos picked for the multi view (4×4)
+MULTI_SIZES = (1, 2, 4, 6, 9, 16)
+# tabs by name (모두 보기 first); menu shortcuts keep Ctrl+1~4 for 2D / 3D / 다중 / 비교
+TABS = (("all", "모두 보기", "Ctrl+5"), ("2d", "2D 보기", "Ctrl+1"), ("3d", "3D 안구", "Ctrl+2"),
+        ("multi", "다중 보기", "Ctrl+3"), ("cmp", "비교", "Ctrl+4"))
+OV_ZOOM = 4.0                                # 확대 화면: 사진 전체 폭의 1/4 을 칸에 (×4)
+
+
+def gl_available() -> bool:
+    """Can this PC make an OpenGL context? (offscreen tests and broken drivers cannot —
+    then 모두 보기 shows a button for the 3D tab instead of starting OpenGL at startup)."""
+    if os.getenv("FUNDUSVIEW_NO_GL_PANE") == "1" or QApplication.platformName() in ("offscreen", "minimal"):
+        return False
+    try:
+        from PySide6.QtGui import QOffscreenSurface, QOpenGLContext
+        ctx = QOpenGLContext()
+        if not ctx.create():
+            return False
+        surf = QOffscreenSurface()
+        surf.setFormat(ctx.format())
+        surf.create()
+        ok = surf.isValid() and ctx.makeCurrent(surf)
+        if ok:
+            ctx.doneCurrent()
+        return bool(ok)
+    except Exception:
+        return False
+
+
+class _FullScreen3D(QWidget):
+    """Top-level window that holds the 3D eye (and the photo) on the whole screen."""
+    closed = Signal()
+
+    def __init__(self):
+        super().__init__(None, Qt.WindowType.Window)
+        self.setStyleSheet("background: #000;")
+
+    def closeEvent(self, e) -> None:
+        self.closed.emit()
+        super().closeEvent(e)
+
+
+class Preloader(QObject):
+    """Decodes photos ahead of time on a worker thread — the next and the previous photo of the
+    strip — so stepping through an exam never waits for a file (a 24-megapixel JPEG takes 0.3 s)."""
+    loaded = Signal(int, object)          # image id, RGB array (None: could not be read)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        from concurrent.futures import ThreadPoolExecutor
+
+        self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="fundus-preload")
+        self._busy: set[int] = set()
+        self.loaded.connect(lambda image_id, _: self._busy.discard(image_id))
+
+    def request(self, image_id: int, path: str) -> None:
+        if image_id not in self._busy:
+            self._busy.add(image_id)
+            self._pool.submit(self._run, image_id, path)
+
+    def _run(self, image_id: int, path: str) -> None:
+        try:
+            rgb = imaging.load_rgb(path)
+        except Exception:                  # shown (with the reason) when the photo is opened
+            rgb = None
+        try:
+            self.loaded.emit(image_id, rgb)
+        except RuntimeError:               # the window is gone
+            pass
+
+    def shutdown(self) -> None:
+        self._pool.shutdown(wait=False, cancel_futures=True)
 
 
 class Bridge(QObject):
@@ -60,11 +147,53 @@ def age_on(birth: str | None, on: str | None = None) -> int | None:
     return d.year - b.year - ((d.month, d.day) < (b.month, b.day))
 
 
+class _WhereChip(QLabel):
+    """The name of the place passed (들어가며 보기) or of the slit's way, on a pill over the eye's bottom."""
+
+    def __init__(self, eye: QWidget):
+        super().__init__(eye)
+        self.setObjectName("where3d")
+        self.setStyleSheet("#where3d { background: rgba(28, 28, 30, 215); color: #f2f2f7; border-radius: 13px;"
+                           " padding: 5px 14px; font-weight: 600; }")
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._timer = QTimer(self, singleShot=True, timeout=self.hide)
+        eye.installEventFilter(self)
+        self.hide()
+
+    def say(self, text: str, hold: float = 0.0) -> None:
+        self._timer.stop()
+        if not text:
+            self.hide()
+            return
+        self.setText(text)
+        self.adjustSize()
+        self._place()
+        self.show()
+        self.raise_()
+        if hold > 0.0:
+            self._timer.start(int(hold * 1000))
+
+    def _place(self) -> None:
+        eye = self.parentWidget()
+        self.move(max(8, (eye.width() - self.width()) // 2), max(8, eye.height() - self.height() - 16))
+
+    def eventFilter(self, obj, ev):
+        if ev.type() == QEvent.Type.Resize and self.isVisible():
+            self._place()
+        return False
+
+
 class MainWindow(QMainWindow):
     def __init__(self, settings: Settings, db: Database):
         super().__init__()
         self.settings = settings
         self.db = db
+        if not settings.smooth_motion:        # 보기 → 부드러운 움직임 (off: everything changes at once)
+            motion.set_enabled(False)
+        if settings.ui_version < self.UI_VERSION:     # a new look: its 3D defaults, once
+            settings.ui_version = self.UI_VERSION
+            settings.view3d_detail, settings.auto_rotate3d, settings.glass3d = "detailed", True, 80
+            settings.surface3d, settings.autofind3d = True, True
         self.bridge = Bridge()
         self.service = ImportService(db, settings, on_result=self.bridge.result.emit,
                                      on_status=self.bridge.status.emit)
@@ -75,12 +204,20 @@ class MainWindow(QMainWindow):
         self.compare = None
         self._patient_ref: int | None = None  # UNASSIGNED / patient id / None
         self._cache: OrderedDict[int, np.ndarray] = OrderedDict()
+        self._fovea_tried: set[int] = set()     # photos whose fovea was looked for in this session
+        self._preloader = Preloader(self)
+        self._preloader.loaded.connect(self._on_preloaded)
+        self._preload_timer = QTimer(self, singleShot=True, timeout=self._preload_neighbours)
         self._proc_cache: OrderedDict[tuple, np.ndarray] = OrderedDict()
         self._ops: list[str] = []            # processing stack (VK-2 image processing toolbar)
         self._levels: tuple[int, int] = (0, 255)
         self._channel, self._auto, self._invert = "rgb", False, False
         self._history: list[dict] = []       # undo snapshots
         self._multi_lock = False
+        self._picks: list[int] = []          # photos picked for the multi view (plain click), in order
+        self._montage_dlg = None             # the open 몽타주 editor (tests reach it here)
+        self._pick_pre: tuple | None = None  # (image id, picks before the click) — a double click undoes it
+        self._per_photo: dict[int, dict] = {}  # processing of each picked photo {"state", "history"}
         self._3d_dirty = True
         self.setWindowTitle(f"{APP_TITLE}  v{__version__}")
         self.resize(1600, 960)
@@ -100,7 +237,7 @@ class MainWindow(QMainWindow):
         if icon:
             a.setIcon(icon_for(icon))
             a.setIconVisibleInMenu(False)
-        vk_txt = f"<br><span style='color:#889'>VK-2: {vk}</span>" if vk and vk != "—" else ""
+        vk_txt = f"<br><span style='color:{theme.TEXT3}'>VK-2: {vk}</span>" if vk and vk != "—" else ""
         a.setToolTip(f"<b>{label}</b><br>{tip}{vk_txt}" if tip else label)
         a.setStatusTip(tip)
         a.setCheckable(checkable)
@@ -137,7 +274,7 @@ class MainWindow(QMainWindow):
                 else:
                     m.addAction(self._act(*item))
             self.menus[key] = m
-        self.acts["captions"] = self._act("captions", "화면 글자 표시", "사진 위에 환자·날짜를 녹색 글자로 (VK-2 방식)",
+        self.acts["captions"] = self._act("captions", "화면 글자 표시", "사진 위 구석에 사진 번호와 눈(OD/OS)을 작게 표시",
                                           checkable=True)
         self.acts["captions"].setChecked(True)
         self.acts["overlay"] = self._act("overlay", "원·시신경 표시", "검출한 영상 원과 시신경 유두 위치 표시",
@@ -179,6 +316,8 @@ class MainWindow(QMainWindow):
         for a in self.menus["save"].actions():
             m.addAction(a)
         m.addAction(A["discpair"])
+        m.addAction(A["glaucoma"])
+        m.addAction("몽타주 만들기 (고른 사진)…", lambda: self.open_montage())
         m.addAction(A["print"])
         m.addSeparator()
         m.addAction("원본 폴더 열기", self._open_folder)
@@ -186,9 +325,9 @@ class MainWindow(QMainWindow):
         m.addAction(A["exit"])
 
         m = mb.addMenu("보기(&V)")
-        for i, label in enumerate(("2D 보기", "3D 안구", "다중 보기", "비교")):
-            a = m.addAction(label, lambda i=i: self.tabs.setCurrentIndex(i))
-            a.setShortcut(QKeySequence(f"Ctrl+{i + 1}"))
+        for key, label, shortcut in TABS:
+            a = m.addAction(label, lambda k=key: self._go(k))
+            a.setShortcut(QKeySequence(shortcut))
         sub = m.addMenu("다중 보기 장수")
         for a in self.menus["multi"].actions():
             sub.addAction(a)
@@ -202,6 +341,12 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         m.addAction(A["captions"])
         m.addAction(A["overlay"])
+        m.addSeparator()
+        self.act_smooth = m.addAction("부드러운 움직임")
+        self.act_smooth.setCheckable(True)
+        self.act_smooth.setChecked(bool(self.settings.smooth_motion))
+        self.act_smooth.setToolTip("확대·회전·화면 전환이 미끄러지듯 이어집니다 (원격 접속 등 느린 화면에서는 끄세요)")
+        self.act_smooth.toggled.connect(self._on_smooth)
         m.addSeparator()
         for a in self.menus["fit"].actions():
             m.addAction(a)
@@ -271,6 +416,10 @@ class MainWindow(QMainWindow):
         self.patients.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.patients.customContextMenuRequested.connect(self._patient_menu)
         self.patients.doubleClicked.connect(lambda _: self._edit_patient())
+        self.patients.setShowGrid(False)
+        self.patients.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.patients.verticalHeader().setDefaultSectionSize(32)
+        self._patients_wheel = motion.SmoothWheel(self.patients, step=64.0)
         ll.addWidget(self.patients)
 
         # -- centre: patient line + thumbnails + views ------------------------------
@@ -297,6 +446,30 @@ class MainWindow(QMainWindow):
         for w, tip in ((self.f_date, "검사일"), (self.f_eye, "눈"), (self.f_mod, "촬영 종류")):
             w.setToolTip(tip)
             top.addWidget(w)
+        # thumbnail rows · multi view of the picked photos (VK-2: pick photos, then MULTI)
+        self.btn_rows = QToolButton()
+        self.btn_rows.setAutoRaise(True)
+        self.btn_rows.clicked.connect(lambda: self._set_thumb_rows(self._thumb_rows % 3 + 1, save=True))
+        self.lbl_picks = QLabel("")
+        self.lbl_picks.setStyleSheet(f"color:{theme.YELLOW}; font-weight:600")
+        self.btn_clear_picks = QToolButton()
+        self.btn_clear_picks.setText("선택 해제")
+        self.btn_clear_picks.setAutoRaise(True)
+        self.btn_clear_picks.setToolTip("멀티로 고른 사진을 모두 해제")
+        self.btn_clear_picks.clicked.connect(self.clear_picks)
+        self.btn_multi = QPushButton("멀티")
+        self.btn_multi.setObjectName("multiButton")
+        self.btn_multi.setToolTip("고른 사진을 다중 보기에 모아 보고, 칸을 눌러 그 사진만 보정합니다\n"
+                                  "(사진 클릭 = 고르기 · 다시 클릭 = 빼기 · 더블클릭 = 2D로 크게)")
+        self.btn_multi.clicked.connect(self.open_picks)
+        self.btn_montage = QPushButton("몽타주")
+        self.btn_montage.setToolTip("고른 사진(2장 이상, 같은 눈)을 자동·수동으로 맞춰 한 장으로 합칩니다 —\n"
+                                    "반투명 겹치기 · 기준점 맞추기 · 3D 안구에서 보기")
+        self.btn_montage.clicked.connect(lambda: self.open_montage())
+        self.btn_glaucoma = QPushButton("녹내장")
+        self.btn_glaucoma.setToolTip(keys("녹내장 분석 — 보고 있는 사진의 디스크 C/D · 광각 RNFL 분석,\n"
+                                          "두 번째 사진을 Ctrl+클릭(②)하면 스테레오 보기 · 경과 비교"))
+        self.btn_glaucoma.clicked.connect(lambda: self.open_glaucoma())
         cl.addLayout(top)
         self.thumbs = QListWidget()
         self.thumbs.setViewMode(QListWidget.ViewMode.IconMode)
@@ -307,26 +480,45 @@ class MainWindow(QMainWindow):
         self.thumbs.setFixedHeight(182)
         self.thumbs.setMovement(QListWidget.Movement.Static)
         self.thumbs.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.thumbs.setToolTip(keys("Ctrl+클릭: 두 번째 사진(②) 선택/해제 — 비교 · 디스크 2장 · "
+        self.thumbs.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self.thumbs.setItemDelegate(ThumbDelegate(self.thumbs))
+        self.thumbs.setToolTip(keys("클릭: 멀티로 고르기(번호) · 다시 클릭: 빼기 · 더블클릭: 2D로 크게 보기\n"
+                               "Ctrl+클릭: 두 번째 사진(②) 선택/해제 — 비교 · 디스크 2장 · "
                                "오른쪽 클릭: 환자 지정·다시 분석"))
         self.thumbs.viewport().installEventFilter(self)
+        self.thumbs.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.thumbs.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self._thumb_wheel = motion.SmoothWheel(self.thumbs)      # the wheel glides through the photos
         self.thumbs.currentItemChanged.connect(lambda cur, _: cur and self._show_image(cur.data(Qt.ItemDataRole.UserRole)))
         self.thumbs.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.thumbs.customContextMenuRequested.connect(self._thumb_menu)
-        cl.addWidget(self.thumbs)
+        self._thumb_rows = 0
+        self._set_thumb_rows(getattr(self.settings, "thumb_rows", 2) or 2)
+        self._sync_picks_ui()
         self.tabs = QTabWidget()
+        self.tabs.setObjectName("views")
         self.tabs.setDocumentMode(True)
         self.view2d = ImageView()
+        self.view2d.crossfade = True            # the next photo fades in over the last
         self.view2d.toggle_captions(True)
         self.view2d.discPicked.connect(self._on_disc_picked)
+        self.view2d.foveaPicked.connect(self._on_fovea_picked)
         self.view2d.measured.connect(self._on_measured)
         self.view2d.hovered.connect(lambda t: self.lbl_hover.setText(t))
         self.view2d.clicked.connect(self._stop_slideshow)
-        self.tabs.addTab(self.view2d, "2D 보기")
-        self.tabs.addTab(self._build_3d(), "3D 안구")
+        # the 2D page holds view2d — 모두 보기 borrows it (see _place_overview)
+        self.page2d = QWidget()
+        self._lay2d = QVBoxLayout(self.page2d)
+        self._lay2d.setContentsMargins(0, 0, 0, 0)
+        self._lay2d.addWidget(self.view2d)
+        self.page3d = self._build_3d()
+        self.page_all = self._build_overview()
+        self.tabs.addTab(self.page_all, "모두 보기")
+        self.tabs.addTab(self.page2d, "2D 보기")
+        self.tabs.addTab(self.page3d, "3D 안구")
         self.multi = MultiView()
         self.multi.selected.connect(self._select_from_multi)
-        self.multi.opened.connect(lambda iid: (self._select_from_multi(iid), self.tabs.setCurrentIndex(0)))
+        self.multi.opened.connect(lambda iid: (self._select_from_multi(iid), self._go("2d")))
         self.multi.layoutChanged.connect(lambda _: self._fill_multi())
         self.tabs.addTab(self.multi, "다중 보기")
         cmp_w = QWidget()
@@ -362,8 +554,37 @@ class MainWindow(QMainWindow):
             src.zoomChanged.connect(lambda f, s=src, d=dst: self.cmp_sync.isChecked()
                                     and abs(d.zoom - f) > 1e-9 and d.sync_from(s))
         self.tabs.addTab(cmp_w, "비교")
+        self._pages = {"all": self.page_all, "2d": self.page2d, "3d": self.page3d, "multi": self.multi,
+                       "cmp": cmp_w}
+        self._ov_on = False
+        from PySide6.QtWidgets import QStackedWidget
+
+        self._tab_fade = motion.Crossfade(self.tabs.findChild(QStackedWidget) or self.tabs)
+        self.tabs.tabBar().tabBarClicked.connect(
+            lambda i: i != self.tabs.currentIndex() and self._tab_fade.snap())
         self.tabs.currentChanged.connect(self._on_tab)
         cl.addWidget(self.tabs, 1)
+        # 사진 목록은 화면 아래쪽, 멀티로 고르기 버튼은 그 왼쪽에 세로로
+        self.lbl_picks.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_picks.setWordWrap(True)
+        strip = QHBoxLayout()
+        strip.setSpacing(4)
+        side = QVBoxLayout()
+        side.setContentsMargins(6, 6, 6, 6)
+        side.setSpacing(6)
+        self.btn_clear_picks.setStyleSheet("padding: 4px 2px;")      # "선택 해제" in full on the narrow column
+        for w in (self.btn_multi, self.btn_montage, self.btn_glaucoma, self.lbl_picks, self.btn_clear_picks):
+            side.addWidget(w)
+        side.addStretch(1)
+        side.addWidget(self.btn_rows)
+        side_w = QWidget()
+        side_w.setObjectName("thumbSide")
+        side_w.setLayout(side)
+        side_w.setFixedWidth(92)
+        strip.addWidget(side_w)
+        strip.addWidget(self.thumbs, 1)
+        cl.addLayout(strip)
+        self._place_overview(True)       # 처음은 모두 보기
 
         self.split = QSplitter(Qt.Orientation.Horizontal)
         self.split.addWidget(self.left)
@@ -417,7 +638,7 @@ class MainWindow(QMainWindow):
         self.lbl_measure.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.lbl_measure.hide()
         self.lbl_hover = QLabel("")
-        self.lbl_hover.setStyleSheet("color:#556")
+        self.lbl_hover.setStyleSheet(f"color:{theme.TEXT3}")
         sb.addWidget(self.lbl_watch)
         sb.addWidget(self.lbl_info)
         sb.addWidget(self.lbl_status, 1)
@@ -444,41 +665,117 @@ class MainWindow(QMainWindow):
         self._result_timer = QTimer(self, singleShot=True, timeout=self._flush_results)
 
     def _build_3d(self) -> QWidget:
-        """3D tab: a compact control bar over the eye model (formerly the right panel)."""
+        """3D tab: the eye, a slim bar with the main choices and actions above it, and the settings in
+        grouped cards beside it (each control under the heading it belongs to)."""
         w = QWidget()
-        lay = QVBoxLayout(w)
+        outer = QHBoxLayout(w)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        main = QWidget()
+        lay = QVBoxLayout(main)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
         bar = QWidget()
         bar.setObjectName("bar3d")
-        g = QGridLayout(bar)
-        g.setContentsMargins(8, 4, 8, 4)
-        g.setHorizontalSpacing(6)
-        g.setVerticalSpacing(2)
-        # 간단히 (the light original) / 자세히 (anatomical model), remembered in the settings
-        self.b_simple = QPushButton("간단히")
-        self.b_detailed = QPushButton("자세히")
-        self.b_simple.setToolTip("가볍고 빠른 기본 안구 모형 — 사진을 보는 데 집중")
-        self.b_detailed.setToolTip("실제 해부 구조: 공막 혈관, 굴절하는 각막·홍채, 안구벽 단면, 섬모체·수정체, 외안근")
-        self._detail_group = QButtonGroup(self)
-        for b in (self.b_simple, self.b_detailed):
-            b.setCheckable(True)
-            b.setObjectName("detail3d")
-            self._detail_group.addButton(b)
-        self.b_simple.clicked.connect(lambda: self._set_3d_detail("simple"))
-        self.b_detailed.clicked.connect(lambda: self._set_3d_detail("detailed"))
-        self.r_out = QRadioButton("외부 (안구 모형)")
-        self.r_in = QRadioButton("내부 (망막 시점)")
+        top = QHBoxLayout(bar)
+        top.setContentsMargins(10, 6, 10, 6)
+        top.setSpacing(8)
+
+        # -- the viewpoint (the look, 자세히 / 간단히, is in 설정 → 일반 → 3D 모형) -----------------------
+        self.r_out = segment("외부", "안구 모형을 바깥에서 봅니다")
+        self.r_in = segment("내부", "동공을 지나 안으로 들어가 망막을 바라봅니다 (망막 시점)")
+        self.seg_mode = Segmented([self.r_out, self.r_in], on_card=False)
         self.r_out.setChecked(True)
-        grp = QButtonGroup(self)
-        grp.addButton(self.r_out)
-        grp.addButton(self.r_in)
         self.r_out.toggled.connect(self._on_3d_mode)
+
+        # -- how the eye is opened (outside): the front cut, or cut along the photo's vertical
+        # meridian and seen from the side; the slider sets the depth of either (right end = closed)
+        self.c_view3d = QComboBox(w)            # the choice itself (the two segments show and set it)
+        self.c_view3d.hide()
+        tips = {"front": "앞부분을 잘라 안쪽 망막을 봅니다 (깊이 슬라이더: 자르는 깊이)",
+                "section": "사진의 세로 자오선을 따라 안구를 잘라 옆에서 봅니다 — 공막·맥락막·망막 층, "
+                           "홍채·수정체·각막 단면과 화각 (깊이 슬라이더 왼쪽 끝 = 정확히 반)"}
+        self._view_buttons = {}
+        for label, key in (("앞쪽 절개", "front"), ("세로 단면", "section")):
+            self.c_view3d.addItem(label, key)
+            self.c_view3d.setItemData(self.c_view3d.count() - 1, tips[key], Qt.ItemDataRole.ToolTipRole)
+            b = segment(label, tips[key])
+            b.clicked.connect(lambda _=False, k=key: self.c_view3d.setCurrentIndex(self.c_view3d.findData(k)))
+            self._view_buttons[key] = b
+        self.seg_view = Segmented(list(self._view_buttons.values()))
+        self._view_buttons["front"].setChecked(True)
+        self.c_view3d.currentIndexChanged.connect(lambda _: (self._sync_view_buttons(),
+                                                             self._set_3d_view(self.c_view3d.currentData())))
+        self._cut_values = {"front": 25, "section": 0}
         self.s_cut = QSlider(Qt.Orientation.Horizontal)
         self.s_cut.setRange(-30, 100)
         self.s_cut.setValue(25)
-        self.s_cut.setFixedWidth(120)
+        self.s_cut.setMinimumWidth(120)
+        self.s_cut.setToolTip("자르는 깊이 (오른쪽 끝 = 닫힌 안구)")
         self.s_cut.valueChanged.connect(self._on_cut)
+        self.s_glass = QSlider(Qt.Orientation.Horizontal)
+        self.s_glass.setRange(0, 100)
+        self.s_glass.setValue(int(self.settings.glass3d))
+        self.s_glass.setMinimumWidth(120)
+        self.s_glass.setToolTip("공막을 유리처럼 비쳐 보이게 합니다 — 사진이 있는 망막은 진하게 남아, 안구를 돌리면 "
+                                "안쪽 망막이 입체로 보입니다 (왼쪽 끝 = 불투명한 흰 공막)")
+        self.s_glass.valueChanged.connect(self._on_glass)
+        self.c_xray3d = Switch("망막 투시")
+        self.c_xray3d.setToolTip("공막·맥락막 바깥 면에 망막의 사진을 그대로 비춰 봅니다 "
+                                 "(바깥에서 보므로 좌우가 뒤집혀 보입니다)")
+        self.c_xray3d.toggled.connect(self._on_xray)
+
+        # -- 망막 입체: the retina's relief (relief.py) and the light on it -----------------------
+        self.c_surface3d = Switch("표면 높낮이")
+        self.c_surface3d.setToolTip("혈관은 솟고, 시신경 유두의 함몰(cup)과 황반의 오목(pit)은 파이도록 사진이 얹힌 "
+                                    "망막 표면을 실제로 올리고 내립니다 — 돌려 보면 높낮이가 보입니다 (자세히 보기)")
+        self.c_surface3d.setChecked(bool(self.settings.surface3d))
+        self.c_surface3d.toggled.connect(self._on_surface)
+        self.s_height3d = QSlider(Qt.Orientation.Horizontal)
+        self.s_height3d.setRange(0, 100)
+        self.s_height3d.setValue(int(self.settings.surface_height3d))
+        self.s_height3d.setMinimumWidth(120)
+        self.s_height3d.setToolTip("높낮이를 얼마나 크게 보일지 (실제보다 과장해서 보여 줍니다)")
+        self.s_height3d.valueChanged.connect(self._on_height)
+        self.c_simple3d = Switch("단순하게 보기")
+        self.c_simple3d.setToolTip("공막·홍채·수정체·시신경을 단순한 모양과 색으로 그려 사진이 얹힌 망막과 그 입체가 "
+                                   "잘 보이게 합니다 (자세히 보기)")
+        self.c_simple3d.setChecked(bool(self.settings.simple3d))
+        self.c_simple3d.toggled.connect(self._on_simple)
+
+        # -- effects ---------------------------------------------------------------------------
+        self.c_relief3d = Switch("입체 조명")
+        self.c_relief3d.setToolTip("표면의 높낮이에 비스듬한 빛을 비춰 혈관과 유두·황반이 도드라져 보이게 합니다 "
+                                   "(안구를 돌리면 빛이 따라 움직입니다)")
+        self.c_relief3d.setChecked(bool(self.settings.relief3d))
+        self.c_relief3d.toggled.connect(self._on_relief)
+        self.c_spin3d = Switch("자동 회전")
+        self.c_spin3d.setToolTip("손을 떼고 있으면 안구가 천천히 돕니다 (만지면 멈췄다가 다시 돕니다)")
+        self.c_spin3d.setChecked(bool(self.settings.auto_rotate3d))
+        self.c_spin3d.toggled.connect(self._on_spin)
+        self.c_fov3d = Switch("화각 표시")
+        self.c_fov3d.setToolTip("세로 단면에는 안구 중심에서 잰 화각(선·각도), 다른 보기에는 망막 위 촬영 범위의 경계")
+        self.c_fov3d.toggled.connect(self._on_fov_marks)
+        self.c_side3d = Switch("사진 나란히")
+        self.c_side3d.setToolTip("3D 안구 오른쪽에 사진을 평면으로 함께 보여 줍니다 (검은 바탕)")
+        self.c_side3d.toggled.connect(self._on_side_photo)
+
+        # -- what is shown -----------------------------------------------------------------------
+        self.c_nerve = Switch("시신경")
+        self.c_nerve.setChecked(True)
+        self.c_nerve.toggled.connect(lambda on: (setattr(self.eye3d, "show_nerve", on), self.eye3d.update()))
+        self.c_muscle = Switch("외안근")
+        self.c_muscle.setToolTip("네 곧은근과 두 빗근의 부착부(절단면)를 함께 표시")
+        self.c_muscle.toggled.connect(lambda on: (setattr(self.eye3d, "show_muscles", on), self.eye3d.update()))
+        self.c_grid = Switch("각도 격자")
+        self.c_grid.setToolTip("후극에서 10°마다 링 (30°마다 진하게)")
+        self.c_grid.toggled.connect(lambda on: (setattr(self.eye3d, "show_grid", on), self.eye3d.update()))
+        self.c_adj3d = Switch("영상 처리 적용")
+        self.c_adj3d.setToolTip("2D에서 조정한 밝기·대비·필터를 3D의 사진에도 적용 (끄면 찍은 그대로)")
+        self.c_adj3d.setChecked(False)
+        self.c_adj3d.toggled.connect(lambda _: self._mark_3d_dirty())
+
+        # -- how the photo lies on the retina ------------------------------------------------------
         self.sp_fov = QDoubleSpinBox()
         self.sp_fov.setRange(10, 240)
         self.sp_fov.setDecimals(1)
@@ -496,26 +793,38 @@ class MainWindow(QMainWindow):
         self.sp_roll.setRange(-180, 180)
         self.sp_roll.setSuffix("°")
         self.sp_roll.valueChanged.connect(self._on_mapping)
-        row1 = QHBoxLayout()
-        for item in (self.b_simple, self.b_detailed, QLabel("  "), self.r_out, self.r_in, QLabel("  앞쪽 절개"),
-                     self.s_cut, QLabel("  화각"), self.sp_fov,
-                     self.c_fovtype, QLabel("  투영"), self.c_proj, QLabel("  회전"), self.sp_roll):
-            row1.addWidget(item)
-        row1.addStretch()
-        self.c_nerve = QCheckBox("시신경")
-        self.c_nerve.setChecked(True)
-        self.c_nerve.toggled.connect(lambda on: (setattr(self.eye3d, "show_nerve", on), self.eye3d.update()))
-        self.c_muscle = QCheckBox("외안근")
-        self.c_muscle.setToolTip("네 곧은근과 두 빗근의 부착부(절단면)를 함께 표시")
-        self.c_muscle.toggled.connect(lambda on: (setattr(self.eye3d, "show_muscles", on), self.eye3d.update()))
-        self.c_grid = QCheckBox("각도 격자(10°)")
-        self.c_grid.toggled.connect(lambda on: (setattr(self.eye3d, "show_grid", on), self.eye3d.update()))
-        self.c_adj3d = QCheckBox("영상 처리 적용")
-        self.c_adj3d.setChecked(True)
-        self.c_adj3d.toggled.connect(lambda _: self._mark_3d_dirty())
-        row2 = QHBoxLayout()
-        for c in (self.c_nerve, self.c_muscle, self.c_grid, self.c_adj3d):
-            row2.addWidget(c)
+        for wdg in (self.sp_fov, self.c_fovtype, self.c_proj, self.sp_roll):
+            wdg.setFixedWidth(148)
+        b_save_map = QPushButton("화각·투영 저장")
+        b_save_map.setObjectName("plain")
+        b_save_map.setToolTip("이 사진의 화각·투영을 저장해 다음에도 이대로 엽니다")
+        b_save_map.clicked.connect(self._save_mapping)
+        self.c_align3d = Switch("실제 위치에 맞춤")
+        self.c_align3d.setToolTip("사진의 황반을 안구 뒤쪽 한가운데(후극)에, 시신경 유두를 코쪽 제자리에 오도록 사진을 얹습니다 —\n"
+                                  "사진 중심이 황반이 아니어도(유두 중심 · 주변부 촬영) 망막의 실제 위치에 놓입니다.\n"
+                                  "황반·유두를 잘못 찾았으면 2D 사진에서 오른쪽 클릭으로 직접 지정하세요. 끄면 사진 중심을 후극에 둡니다.")
+        self.c_align3d.setChecked(self.settings.align3d)
+        self.c_align3d.toggled.connect(self._on_align)
+        self.b_fit_fov = QPushButton("황반–유두 거리로 크기 맞춤")
+        self.b_fit_fov.setObjectName("plain")
+        self.b_fit_fov.setToolTip("화각을 모르는 사진: 황반과 시신경 유두 사이가 보통 거리(약 4.5 mm)가 되도록 화각을 정합니다\n"
+                                  "(이 거리는 사람마다 조금 다르므로 대략 맞춰집니다 — 장비의 화각을 알면 그 값을 쓰세요)")
+        self.b_fit_fov.clicked.connect(self._fit_fov)
+        self.lbl_3d = QLabel("")
+        self.lbl_3d.setObjectName("caption")
+        self.lbl_3d.setWordWrap(True)
+
+        # -- the bar: the main choices on the left, the actions on the right --------------------------
+        # 슬릿 스캔: the photo flat next to the eye and the scan presentation
+        self.b_scan = QPushButton("▶ 슬릿 스캔")
+        self.b_scan.setObjectName("scan3d")
+        self.b_scan.setToolTip("슬릿이 고른 방향으로 사진을 훑는 동안 안구에서 같은 망막 위치를 보여 줍니다 — 위아래는 "
+                               "옆에서 본 세로 단면에서 빛이 동공을 지나 망막에 닿는 모습, 좌우는 앞을 연 안구의 망막 "
+                               "위로 (사진 나란히). 안구를 누르거나 돌리면 멈춥니다.")
+        self.b_scan.clicked.connect(self._toggle_scan)
+        self.b_full3d = QPushButton("크게 보기")
+        self.b_full3d.setToolTip("3D 안구와 사진을 화면 전체로 (Esc: 돌아가기 · Space: 슬릿 스캔)")
+        self.b_full3d.clicked.connect(self._toggle_full_3d)
         self.eye3d = EyeView()
         self.eye3d.setToolTip("드래그: 회전 · 휠: 커서 쪽으로 확대 · 오른쪽 드래그: 확대 · "
                               "가운데/Shift+드래그: 이동 · +/−: 확대·축소 · 더블클릭·0: 처음 보기")
@@ -523,23 +832,209 @@ class MainWindow(QMainWindow):
         self.lbl_zoom3d.setObjectName("hint3d")
         self.lbl_zoom3d.setToolTip("처음 보기 대비 확대 배율 · 더블클릭 또는 0: 처음 보기")
         self.eye3d.zoomChanged.connect(lambda m: self.lbl_zoom3d.setText(f"배율 ×{m:.1f}"))
-        self.eye3d.glError.connect(lambda m: QMessageBox.warning(
-            self, "3D", m + "\n\n설정 > 일반 > 3D 렌더링을 '소프트웨어 렌더링'으로 바꾸고 다시 시작해 보세요."))
-        for label, fn in (("정면 보기", self.eye3d.front_view), ("시점 초기화", self.eye3d.reset_view),
-                          ("화각·투영 저장", self._save_mapping), ("화면 저장…", self._save_3d)):
+        self.eye3d.glError.connect(self._on_gl_error)
+        self.b_inspector = QPushButton("설정")
+        self.b_inspector.setObjectName("toggle")
+        self.b_inspector.setCheckable(True)
+        self.b_inspector.setChecked(True)
+        self.b_inspector.setToolTip("오른쪽 설정 패널 보이기 / 숨기기")
+        top.addWidget(self.seg_mode)
+        top.addWidget(self.lbl_zoom3d)
+        top.addStretch(1)
+        top.addWidget(self.b_scan)
+        top.addWidget(self.b_full3d)
+        top.addWidget(self.b_inspector)
+        view_row = QWidget()
+        vr = QHBoxLayout(view_row)
+        vr.setContentsMargins(0, 0, 0, 0)
+        vr.setSpacing(6)
+        for label, tip, fn in (("정면", "정면에서 보기", lambda: self.eye3d.front_view(animate=True)),
+                               ("처음 시점", "처음 시점으로 (더블클릭 · 0)",
+                                lambda: self.eye3d.reset_view(animate=True)),
+                               ("화면 저장…", "지금 보이는 3D 화면을 그림으로 저장", self._save_3d)):
             b = QPushButton(label)
+            b.setToolTip(tip)
             b.clicked.connect(fn)
-            row2.addWidget(b)
-        self.lbl_3d = QLabel("")
-        self.lbl_3d.setObjectName("hint3d")
-        row2.addWidget(self.lbl_zoom3d)
-        row2.addWidget(self.lbl_3d, 1)
+            vr.addWidget(b, 1)
+        self.eye3d.relief = self.RELIEF if self.settings.relief3d else 0.0
+        self.eye3d.glass = self.settings.glass3d / 100.0
+        self.eye3d.relief_on = bool(self.settings.surface3d)
+        self.eye3d.relief_amount = self.settings.surface_height3d / 100.0 * self.HEIGHT_MAX
+        self.eye3d.simple = 1.0 if self.settings.simple3d else 0.0
+        self.s_height3d.setEnabled(self.c_surface3d.isChecked())
+        self.eye3d.journeyChanged.connect(self._on_journey)
+        self._where = _WhereChip(self.eye3d)
+
+        # 들어가며 보기: from the whole eye through the cornea, the pupil and the lens to the retina
+        self.b_journey = QPushButton("▶ 들어가기")
+        self.b_journey.setObjectName("scan3d")
+        self.b_journey.setToolTip("안구 전체에서 각막·앞방·동공·수정체·유리체를 지나 망막까지 들어갑니다 "
+                                  "(다시 누르면 나옵니다 · 자세히 보기)")
+        self.b_journey.clicked.connect(self._play_journey)
+        journey_note = QLabel("각막 → 동공 → 수정체 → 망막")
+        journey_note.setObjectName("caption")
+        journey_row = QWidget()
+        jr = QHBoxLayout(journey_row)
+        jr.setContentsMargins(0, 0, 0, 0)
+        jr.setSpacing(8)
+        jr.addWidget(self.b_journey)
+        jr.addWidget(journey_note, 1)
+        self.s_journey = QSlider(Qt.Orientation.Horizontal)
+        self.s_journey.setRange(0, 100)
+        self.s_journey.setMinimumWidth(120)
+        self.s_journey.setToolTip("왼쪽 끝 = 안구 전체, 오른쪽 끝 = 망막 (끌어서 원하는 곳에서 멈춰 보세요)")
+        self.s_journey.valueChanged.connect(self._scrub_journey)
+
+        # 슬릿 스캔: which way the slit crosses the photo
+        self._slit_buttons = {}
+        for key, label, tip in (("down", "↓", "위에서 아래로 (세로 단면)"), ("up", "↑", "아래에서 위로 (세로 단면)"),
+                                ("right", "→", "왼쪽에서 오른쪽으로 (앞을 연 안구의 망막 위로)"),
+                                ("left", "←", "오른쪽에서 왼쪽으로 (앞을 연 안구의 망막 위로)"),
+                                ("all", "상하좌우", "위↓ 아래↑ 왼→ 오른← 네 방향을 차례로")):
+            b = segment(label, tip)
+            b.clicked.connect(lambda _=False, k=key: self._on_slit_dir(k))
+            self._slit_buttons[key] = b
+        self.seg_slit = Segmented(list(self._slit_buttons.values()))
+        self.lbl_slit = QLabel("")
+        self.lbl_slit.setObjectName("caption")
+        self.lbl_slit.setWordWrap(True)
+
+        # 슬릿 스캔: the button in its card too (as the bar's)
+        self.b_scan2 = QPushButton("▶ 슬릿 스캔")
+        self.b_scan2.setObjectName("scan3d")
+        self.b_scan2.setToolTip(self.b_scan.toolTip())
+        self.b_scan2.clicked.connect(self._toggle_scan)
+
+        # 사진: the photo on the eye — its device and eye, the disc and the macula found automatically
+        # (or marked here), as in the web page
+        self.lbl_photo3d = QLabel("")
+        self.lbl_photo3d.setObjectName("caption")
+        self.lbl_photo3d.setWordWrap(True)
+        self.c_device3d = QComboBox()
+        for key, label in (("generic", "일반 안저카메라 (45°)"), ("reticam", "RetiCam 3100 Plus (176°)"),
+                           ("apollo", "APOLLO (135° · 165°)"), ("kowa_vk2", "Kowa VK-2 (45°)")):
+            self.c_device3d.addItem(label, key)
+        self.c_device3d.setToolTip("장비를 고르면 그 장비의 화각·투영으로 사진을 안구에 얹습니다 (사진 맞춤에서 고칠 수 있음)")
+        self.c_device3d.activated.connect(lambda _: self._on_device3d(self.c_device3d.currentData()))
+        self.c_eye3d = QComboBox()
+        for key, label in (("auto", "자동 (유두 위치로)"), ("OD", "OD · 우안"), ("OS", "OS · 좌안")):
+            self.c_eye3d.addItem(label, key)
+        self.c_eye3d.setToolTip("이 사진의 눈 — 자동: 시신경 유두와 황반의 위치로 정합니다")
+        self.c_eye3d.activated.connect(lambda _: self._on_eye3d(self.c_eye3d.currentData()))
+        for wdg in (self.c_device3d, self.c_eye3d):
+            wdg.setFixedWidth(170)
+        self.c_autofind3d = Switch("황반·유두 자동으로 찾기")
+        self.c_autofind3d.setToolTip("사진의 시신경 유두와 황반을 자동으로 찾아 안구의 제자리에 맞춥니다 (사진을 가져올 때 "
+                                     "찾아 둔 것) — 끄면 직접 지정한 것만 씁니다")
+        self.c_autofind3d.setChecked(bool(self.settings.autofind3d))
+        self.c_autofind3d.toggled.connect(self._on_autofind3d)
+        self.photo3d = LandmarkPhoto()
+        self.photo3d.setToolTip("사진 — 유두(노란 원)와 황반(하늘색 원)")
+        self.photo3d.picked.connect(self._on_photo3d_picked)
+        self.lbl_found3d = QLabel("")
+        self.lbl_found3d.setObjectName("caption")
+        self.lbl_found3d.setTextFormat(Qt.TextFormat.RichText)
+        self.b_mark_fovea = QPushButton("황반 지정")
+        self.b_mark_fovea.setToolTip("자동으로 찾은 위치가 틀렸을 때: 사진에서 황반(중심와)을 눌러 정합니다")
+        self.b_mark_disc = QPushButton("유두 지정")
+        self.b_mark_disc.setToolTip("자동으로 찾은 위치가 틀렸을 때: 사진에서 시신경 유두를 눌러 정합니다")
+        for b, what in ((self.b_mark_fovea, "fovea"), (self.b_mark_disc, "disc")):
+            b.setObjectName("toggle")              # grey, blue while on (as the page's small buttons)
+            b.setCheckable(True)
+            b.clicked.connect(lambda on, w=what: self._set_marking3d(w if on else None))
+        self.b_redetect3d = QPushButton("다시 찾기")
+        self.b_redetect3d.setToolTip("직접 정한 위치를 지우고 자동으로 다시 찾습니다")
+        self.b_redetect3d.clicked.connect(self._redetect3d)
+        fix_row = QWidget()
+        fr = QHBoxLayout(fix_row)
+        fr.setContentsMargins(0, 0, 0, 0)
+        fr.setSpacing(6)
+        fix_note = QLabel("고치기")
+        fix_note.setObjectName("caption")
+        fr.addWidget(fix_note)
+        fr.addStretch(1)
+        for b in (self.b_mark_fovea, self.b_mark_disc, self.b_redetect3d):
+            fr.addWidget(b)
+        self.lbl_mark3d = QLabel("")
+        self.lbl_mark3d.setObjectName("caption")
+        self.lbl_mark3d.setWordWrap(True)
+        self.lbl_mark3d.setStyleSheet("color: #64d2ff;")
+        self.lbl_mark3d.hide()
+        self._marking3d: str | None = None
+
+        # 조작: how to handle the eye (as the page's card)
+        keys_label = QLabel("<b>드래그</b> 회전 (놓으면 관성으로 더 돕니다) · <b>휠</b> 커서 쪽으로 확대 · "
+                            "<b>오른쪽 드래그</b> 확대<br><b>Shift+드래그</b> 또는 <b>가운데 버튼</b> 이동 · "
+                            "<b>더블클릭</b> 처음 보기 · <b>←↑→↓ + − 0</b><br><b>트랙패드</b> 두 손가락 벌리기·오므리기 확대")
+        keys_label.setObjectName("caption")
+        keys_label.setWordWrap(True)
+        keys_label.setTextFormat(Qt.TextFormat.RichText)
+
+        # -- the settings beside the eye: cards, in the web page's order -----------------------------
+        body = QWidget()
+        body.setObjectName("inspectorBody")
+        bl = QVBoxLayout(body)
+        bl.setContentsMargins(12, 10, 12, 12)
+        bl.setSpacing(12)
+        bl.addWidget(card("사진", self.lbl_photo3d, setting_row("장비", self.c_device3d), setting_row("눈", self.c_eye3d),
+                          self.c_autofind3d, self.photo3d, self.lbl_found3d, fix_row, self.lbl_mark3d))
+        bl.addWidget(card("망막 입체", self.c_surface3d, setting_row("높이", self.s_height3d), self.c_relief3d))
+        bl.addWidget(card("시점", view_row))
+        bl.addWidget(card("들어가며 보기", journey_row, setting_row("위치", self.s_journey)))
+        bl.addWidget(card("안구 열기", self.seg_view, setting_row("깊이", self.s_cut), setting_row("공막 투명도", self.s_glass),
+                          self.c_xray3d))
+        bl.addWidget(card("슬릿 스캔", self.seg_slit, self.lbl_slit, self.b_scan2))
+        bl.addWidget(card("효과", self.c_spin3d, self.c_fov3d, self.c_side3d))
+        bl.addWidget(card("표시", self.c_simple3d, self.c_nerve, self.c_muscle, self.c_grid, self.c_adj3d))
+        bl.addWidget(card("사진 맞춤", self.c_align3d, setting_row("화각", self.sp_fov),
+                          setting_row("화각 기준", self.c_fovtype), setting_row("투영", self.c_proj),
+                          setting_row("회전", self.sp_roll), self.b_fit_fov, b_save_map))
+        bl.addWidget(self.lbl_3d)
+        bl.addWidget(card("조작", keys_label))
+        bl.addStretch(1)
+        self.inspector = QScrollArea()
+        self.inspector.setObjectName("inspectorScroll")
+        self.inspector.setWidgetResizable(True)
+        self.inspector.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.inspector.setFrameShape(QFrame.Shape.NoFrame)
+        self.inspector.setWidget(body)
+        self.inspector.setFixedWidth(320)
+        self.b_inspector.toggled.connect(self.inspector.setVisible)
+        self._inspector_wheel = motion.SmoothWheel(self.inspector, step=72.0)
+
+        self.scan_photo = ScanPhotoView()
+        self.scan_photo.hide()
+        self.split3d = QSplitter(Qt.Orientation.Horizontal)
+        self.split3d.setChildrenCollapsible(False)
+        self.split3d.addWidget(self.eye3d)
+        self.split3d.addWidget(self.scan_photo)
+        self.split3d.setStyleSheet("QSplitter::handle { background: #000; }")
+        self._show = SlitScanShow(self.eye3d, self.scan_photo, self)
+        self._show.finished.connect(self._on_scan_finished)
+        self._show.stopped.connect(self._on_scan_stopped)
+        self._show.passChanged.connect(self._where.say)
+        self._on_slit_dir(self.settings.slit_dir3d if self.settings.slit_dir3d in self._slit_buttons else "down",
+                          save=False)
+        self._tween = ViewTween(self.eye3d, self)
+        self._full3d: QWidget | None = None
         self._set_3d_detail(self.settings.view3d_detail, save=False)
-        g.addLayout(row1, 0, 0)
-        g.addLayout(row2, 1, 0)
         lay.addWidget(bar)
-        lay.addWidget(self.eye3d, 1)
+        self._lay3d = lay
+        lay.addWidget(self.split3d, 1)
+        outer.addWidget(main, 1)
+        outer.addWidget(self.inspector)
         return w
+
+    def _sync_view_buttons(self) -> None:
+        """The 앞쪽 절개 / 세로 단면 segments show what the (hidden) selector holds."""
+        b = self._view_buttons.get(self.c_view3d.currentData())
+        if b is not None and not b.isChecked():
+            b.setChecked(True)
+
+    def _on_glass(self, v: int) -> None:
+        self.settings.glass3d = int(v)
+        self.eye3d.glass = v / 100.0
+        self.eye3d.update()
 
     def _reset_toolbars(self) -> None:
         for tb, area in ((self.tb_cmd, Qt.ToolBarArea.RightToolBarArea),
@@ -556,17 +1051,40 @@ class MainWindow(QMainWindow):
             "확대하면 오른쪽 위 미니맵에 전체 사진과 보이는 곳이 나옵니다 — 눌러서 이동<br>"
             "화면 맞춤 ▾ 또는 아래쪽 [배율]: 400·800%, 후극부·위/아래/코/귀쪽 주변부로 바로 확대<br>"
             "가운데 버튼 드래그(이동 도구는 왼쪽 드래그): 이동 · 더블클릭: 화면 맞춤<br>"
-            "오른쪽 클릭: 메뉴 (시신경 위치 지정, 돋보기 배율, 미니맵)<br><br>"
+            "오른쪽 클릭: 메뉴 (시신경 유두 · 황반 위치 지정, 돋보기 배율, 미니맵)<br><br>"
             "<b>3D 안구</b><br>"
-            "간단히 / 자세히: 가벼운 기본 모형 / 실제 해부 구조<br>"
-            "드래그: 회전 · 휠: 커서가 가리키는 곳으로 확대 · 가운데 버튼 또는 Shift+드래그: 이동<br>"
-            "+/−: 확대·축소 · 더블클릭 또는 0: 처음 보기<br><br>"
+            "위 막대: 간단히 / 자세히 (가벼운 기본 모형 / 실제 해부 구조) · 외부 / 내부 · ▶ 슬릿 스캔 · "
+            "크게 보기 · 설정 (오른쪽 패널 열고 닫기)<br>"
+            "설정 패널 — <b>망막 입체</b>: 표면 높낮이 · 높이 · 입체 조명 / <b>시점</b>: 정면 · 처음 시점 · 화면 저장 / "
+            "<b>들어가며 보기</b>: ▶ 들어가기 · 위치 / <b>안구 열기</b>: 앞쪽 절개 · 세로 단면, 깊이, 공막 투명도, "
+            "망막 투시 / <b>슬릿 스캔</b>: 방향 ↓ ↑ → ← · 상하좌우 / <b>효과</b>: 자동 회전 · 화각 표시 · 사진 나란히 / "
+            "<b>표시</b>: 단순하게 보기 · 시신경 · 외안근 · 각도 격자 / <b>사진 맞춤</b>: 실제 위치에 맞춤 · 화각 · "
+            "투영 · 회전<br>"
+            "사진 맞춤 → 실제 위치에 맞춤: 사진의 황반을 안구 뒤쪽 한가운데(후극)에, 시신경 유두를 코쪽 제자리에 "
+            "오도록 얹습니다 — 잘못 찾았으면 2D 사진에서 오른쪽 클릭으로 황반·유두를 직접 지정<br>"
+            "공막 투명도: 공막이 유리처럼 비쳐 보이고, 사진이 있는 망막은 진하게 그대로 남습니다 "
+            "(0 = 흰 공막) — 안구를 돌리면 망막이 안구 속 어디에 있는지 보입니다<br>"
+            "▶ 슬릿 스캔: 위아래는 단면에 화각 → 슬릿이 사진을 훑으며 빛이 동공을 지나 망막에, 좌우는 앞을 연 안구의 "
+            "망막 위로 → 사진을 입힌 3D 안구 (누르면 멈춤) · 크게 보기: 화면 전체 (Space 재생, Esc 돌아가기)<br>"
+            "드래그: 회전 (돌리다 놓으면 관성으로 더 돕니다) · 휠: 커서가 가리키는 곳으로 확대 · "
+            "가운데 버튼 또는 Shift+드래그: 이동<br>"
+            "+/−: 확대·축소 · 더블클릭 또는 0: 처음 보기<br>"
+            "망막 입체: 표면 높낮이 — 혈관은 솟고 유두 함몰·황반 오목은 파여 보임, 입체 조명 — 그 높낮이에 비스듬한 빛 · "
+            "단순하게 보기: 공막·홍채·수정체·시신경을 단순하게 그려 망막을 강조 · "
+            "자동 회전: 손을 떼고 있으면 천천히 돕니다<br>"
+            "들어가며 보기 · 내부: 안구 전체에서 각막 → 앞방 → 동공 → 수정체 → 유리체 → 망막까지 끊김 없이 들어갑니다 "
+            "(위치 막대로 원하는 곳에서 멈춤)<br>"
+            "보기 → 부드러운 움직임: 끄면 확대·회전·전환이 바로 바뀝니다 (원격 접속 등 느린 화면)<br><br>"
             "<b>단축키</b><br>"
-            "PageUp / PageDown: 이전 / 다음 사진 · Ctrl+1~4: 2D / 3D / 다중 / 비교<br>"
+            "PageUp / PageDown: 이전 / 다음 사진 · Ctrl+1~4: 2D / 3D / 다중 / 비교 · Ctrl+5: 모두 보기<br>"
             "Ctrl+Z: 처리 실행 취소 · Delete: 마지막 측정 지우기 · Ctrl+C: 화면 복사<br>"
             "Ctrl+F: 환자 검색 · Ctrl+P: 인쇄<br><br>"
+            "<b>사진 목록 · 멀티</b><br>"
+            "최신 사진부터, 사진마다 왼쪽 위에 눈(OD 파랑 · OS 주황) · ▤ 버튼: 1·2·3줄<br>"
+            "클릭: 멀티로 고르기(번호, 다시 클릭하면 빼기) · 더블클릭: 2D로 크게 보기<br>"
+            "[멀티]: 고른 사진을 다중 보기에 — 칸을 누르면 그 사진만 보정 (밝기·대비·감마·Red-free·선명하게 …)<br><br>"
             "<b>두 사진 고르기 · 디스크 2장</b><br>"
-            "사진을 클릭하고 두 번째 사진을 Ctrl+클릭(②, 다시 Ctrl+클릭하면 해제) → 비교 탭<br>"
+            "사진을 더블클릭해 열고 두 번째 사진을 Ctrl+클릭(②, 다시 Ctrl+클릭하면 해제) → 비교 탭<br>"
             "[디스크 2장]: 두 사진의 시신경 유두만 확대해 한 장으로 (OD 왼쪽 · OS 오른쪽, 보험 청구용)<br><br>"
             "<b>사진 가져오기</b><br>"
             f"자동입니다. 레티캠 등 장비 폴더와 [문서{os.sep}안저사진 가져오기] 폴더를 감시해 "
@@ -610,14 +1128,14 @@ class MainWindow(QMainWindow):
             folders = [f.path for f in self.settings.watch_folders if f.enabled]
             self.lbl_watch.setText(f"● 자동 가져오기 ({len(folders)}개 폴더)")
             self.lbl_watch.setToolTip("감시 중인 폴더:\n" + "\n".join(folders))
-            self.lbl_watch.setStyleSheet("color:#1d7a46; font-weight:600")
+            self.lbl_watch.setStyleSheet(f"color:{theme.GREEN}; font-weight:600")
             if errors:
                 QMessageBox.warning(self, "폴더 감시", "\n".join(errors))
         else:
             self.service.stop_watching()
             self.lbl_watch.setText("자동 가져오기 꺼짐")
             self.lbl_watch.setToolTip("파일 > 폴더 감시 로 다시 켭니다")
-            self.lbl_watch.setStyleSheet("color:#a33")
+            self.lbl_watch.setStyleSheet(f"color:{theme.TEXT3}")
 
     def _scan_now(self) -> None:
         import threading
@@ -652,6 +1170,7 @@ class MainWindow(QMainWindow):
             old_lib = str(self.settings.library)
             before = list(self.settings.watch_folders)
             dlg.apply()
+            self._set_3d_detail(self.settings.view3d_detail, save=False)
             autosetup.remember_removed(self.settings, before)
             if dlg.redetect:
                 autosetup.apply(self.settings, autosetup.detect())
@@ -721,7 +1240,7 @@ class MainWindow(QMainWindow):
                 it = QTableWidgetItem(text)
                 it.setData(Qt.ItemDataRole.UserRole, ref)
                 if ref == UNASSIGNED:
-                    it.setForeground(Qt.GlobalColor.darkRed)
+                    it.setForeground(QColor(theme.ORANGE))
                 self.patients.setItem(i, j, it)
         self.patients.resizeColumnToContents(0)
         self.patients.blockSignals(False)
@@ -755,6 +1274,7 @@ class MainWindow(QMainWindow):
         ref = self._row_ref(rows[0].row())
         if ref != self._patient_ref:
             self.compare = None          # the second pick belongs to the previous patient
+            self._picks, self._per_photo, self._pick_pre = [], {}, None   # so do the multi picks
         self._patient_ref = ref
         if ref == UNASSIGNED:
             self.banner.setText("미분류 영상 — 사진을 선택하고 오른쪽 [정보 수정] 버튼으로 환자를 지정하세요")
@@ -840,6 +1360,7 @@ class MainWindow(QMainWindow):
             it = QListWidgetItem(QIcon(QPixmap(r["thumb_path"] or "")), text)
             it.setData(Qt.ItemDataRole.UserRole, r["id"])
             it.setData(THUMB_TEXT, text)
+            it.setData(EYE_ROLE, r["laterality"] or "")
             it.setToolTip(f"{r['exam_date'] or ''} {r['exam_time'] or ''}\n{r['device'] or ''}\n"
                           f"{Path(r['original_path'] or r['file_path']).name}")
             self.thumbs.addItem(it)
@@ -854,8 +1375,164 @@ class MainWindow(QMainWindow):
         else:
             self._show_image(None)
         self._mark_pair()
+        self._fit_thumb_height()
+        known = {r["id"] for r in self._images()}          # removed photos leave the picks
+        if any(i not in known for i in self._picks):
+            self._picks = [i for i in self._picks if i in known]
+            self._per_photo = {k: v for k, v in self._per_photo.items() if k in known}
+        self._mark_picks()
+
+    # -- multi picks (VK-2: click the photos, then MULTI) ------------------------------------
+    def picks(self) -> list[int]:
+        return list(self._picks)
+
+    def _set_thumb_rows(self, n: int, save: bool = False) -> None:
+        """Rows of thumbnails above the views: 1 = one scrolling line (old strip), 2–3 = wrapped."""
+        n = n if n in (1, 2, 3) else 2
+        self._thumb_rows = n
+        self.thumbs.setWrapping(n > 1)
+        self.thumbs.setFlow(QListWidget.Flow.LeftToRight)
+        self.thumbs.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded if n == 1
+                                                 else Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._fit_thumb_height()
+        self.btn_rows.setText(f"▤ {n}줄")
+        self.btn_rows.setToolTip(f"사진 목록을 {n}줄로 보기 — 누르면 {n % 3 + 1}줄 (1 → 2 → 3)")
+        cur = self.thumbs.currentItem()
+        if cur is not None:
+            self.thumbs.scrollToItem(cur)
+        if save:
+            self.settings.thumb_rows = n
+            try:
+                self.settings.save()
+            except OSError:
+                pass
+
+    def _fit_thumb_height(self) -> None:
+        """As many rows as the photos need, at most the chosen number (few photos: no empty band)."""
+        n = self._thumb_rows
+        if n == 1:
+            self.thumbs.setFixedHeight(182)
+            return
+        per_row = max(1, self.thumbs.viewport().width() // self.thumbs.gridSize().width())
+        need = max(1, -(-self.thumbs.count() // per_row))
+        self.thumbs.setFixedHeight(min(n, need) * self.thumbs.gridSize().height() + 12)
+
+    def _toggle_pick(self, image_id: int) -> bool:
+        if image_id in self._picks:
+            self._picks.remove(image_id)
+        elif len(self._picks) >= MAX_PICKS:
+            self.lbl_status.setText(f"멀티는 한 번에 {MAX_PICKS}장까지 고를 수 있습니다")
+            return False
+        else:
+            self._picks.append(image_id)
+        self._mark_picks()
+        if self._picks:
+            self.lbl_status.setText(f"{len(self._picks)}장 골랐습니다 — [멀티]를 누르면 한 화면에 모아 보고 보정합니다")
+        self._refill_multis()
+        return True
+
+    def clear_picks(self) -> None:
+        self._picks, self._per_photo, self._pick_pre = [], {}, None
+        self._mark_picks()
+        self._refill_multis()
+
+    def _refill_multis(self) -> None:
+        """The picks changed: refill the multi view that is on screen (다중 보기 or 모두 보기's grid)."""
+        if self._tab() == "multi":
+            self._fill_multi()
+        elif self._tab() == "all" and getattr(self, "_ov_on", False):
+            self._fill_multi(self.ov_multi)
+
+    def open_picks(self) -> None:
+        """[멀티]: the picked photos in the multi view, one cell each, the first one selected."""
+        if not self._picks:
+            self.lbl_status.setText("사진을 클릭해 고른 뒤 [멀티]를 누르세요 (다시 클릭하면 빠집니다)")
+            return
+        n = len(self._picks)
+        self.multi.set_count(next((k for k in MULTI_SIZES if k >= n), MULTI_SIZES[-1]))
+        if self.current is None or self.current["id"] not in self._picks:
+            self._select_from_multi(self._picks[0])
+        if self._tab() == "multi":
+            self._fill_multi()
+        else:
+            self._go("multi")                 # -> _on_tab -> _fill_multi
+        self.lbl_status.setText(f"고른 사진 {n}장 — 칸을 누르면 그 사진만 보정됩니다 (밝기·대비·Red-free·선명하게 …)")
+
+    def _mark_picks(self) -> None:
+        for i in range(self.thumbs.count()):
+            it = self.thumbs.item(i)
+            iid = it.data(Qt.ItemDataRole.UserRole)
+            it.setData(PICK_ROLE, self._picks.index(iid) + 1 if iid in self._picks else 0)
+        self._sync_picks_ui()
+
+    def _sync_picks_ui(self) -> None:
+        n = len(self._picks)
+        self.btn_multi.setText(f"멀티 {n}" if n else "멀티")
+        self.lbl_picks.setText(f"{n}장 선택" if n else "")
+        self.btn_clear_picks.setVisible(n > 0)
+        self.btn_montage.setEnabled(n >= 2)
+
+    @staticmethod
+    def _adjusted_with(rgb: np.ndarray, st: dict) -> np.ndarray:
+        """``imaging.adjust`` with a saved processing state (see ``_snapshot``)."""
+        return imaging.adjust(rgb, brightness=st.get("bright", 0) / 200.0, contrast=st.get("contrast", 100) / 100.0,
+                              gamma=st.get("gamma", 100) / 100.0, channel=st.get("channel", "rgb"),
+                              invert=st.get("invert", False), auto=st.get("auto", False),
+                              levels=tuple(st.get("levels", (0, 255))))
+
+    def _photo_state(self, image_id: int) -> dict:
+        """Processing of a picked photo: live for the one on screen, saved for the others."""
+        if self.current is not None and self.current["id"] == image_id:
+            return self._snapshot()
+        return self._per_photo.get(image_id, {}).get("state", {})
+
+    def _load_state(self, st: dict, history: list | None = None) -> None:
+        """Put a saved processing state on the toolbar without redrawing (the caller shows the photo)."""
+        sliders = (self.s_bright, self.s_contrast, self.s_gamma)
+        for w in sliders:
+            w.blockSignals(True)
+        self._ops = list(st.get("ops", []))
+        self._levels = tuple(st.get("levels", (0, 255)))
+        self.s_bright.setValue(st.get("bright", 0))
+        self.s_contrast.setValue(st.get("contrast", 100))
+        self.s_gamma.setValue(st.get("gamma", 100))
+        self._channel = st.get("channel", "rgb")
+        self._auto = st.get("auto", False)
+        self._invert = st.get("invert", False)
+        self._history = list(history or [])
+        for w in sliders:
+            w.blockSignals(False)
+        for pop in (self.pop_gamma, self.pop_contrast, self.pop_bright):
+            pop._show(pop.slider.value())
 
     def eventFilter(self, obj, e):
+        try:
+            self.thumbs.viewport()
+        except RuntimeError:                  # closing down: the photo list is already gone
+            return False
+        if obj is self.thumbs.viewport() and e.type() == QEvent.Type.Resize and e.size().width() != e.oldSize().width():
+            QTimer.singleShot(0, self._fit_thumb_height)       # wider strip: more photos per row
+        # 모두 보기: the 확대 화면 keeps its place and scale when its pane changes size
+        if (getattr(self, "_ov_on", False) and e.type() == QEvent.Type.Resize and self._ov_center is not None
+                and obj is self.ov_zoom.viewport()):
+            # the centre is read when the timer fires: a newer photo may be on screen by then
+            QTimer.singleShot(0, lambda: self._ov_on and self._ov_center is not None
+                              and self._ov_zoom_to(*self._ov_center))
+            return False
+        # 모두 보기: a click (not a drag) on the big photo shows that place in the 확대 화면
+        if getattr(self, "_ov_on", False) and obj is self.view2d.viewport() and e.type() in (
+                QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease):
+            if e.button() == Qt.MouseButton.LeftButton:
+                pos = e.position().toPoint()
+                if e.type() == QEvent.Type.MouseButtonPress:
+                    self._ov_press = pos
+                elif self._ov_press is not None and (pos - self._ov_press).manhattanLength() <= 4:
+                    sp = self.view2d.mapToScene(pos)
+                    if (self.view2d.tool in ("zoom", "pan") and self.view2d.has_image()   # not while measuring
+                            and QRectF(self.view2d._pix.pixmap().rect()).contains(sp)):
+                        self._ov_zoom_to(sp.x(), sp.y())
+                    self._ov_press = None
+            return False
         # Ctrl+click on a thumbnail picks the second photo (②) and leaves the shown one alone
         if (e.type() in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease,
                          QEvent.Type.MouseButtonDblClick)
@@ -865,6 +1542,30 @@ class MainWindow(QMainWindow):
             item = self.thumbs.itemAt(e.position().toPoint())
             if e.type() == QEvent.Type.MouseButtonPress and item is not None:
                 self._pick_second(item.data(Qt.ItemDataRole.UserRole))
+            return True
+        # plain click = pick for the multi view (numbered), double click = open in 2D
+        if (e.type() in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease,
+                         QEvent.Type.MouseButtonDblClick)
+                and obj is self.thumbs.viewport()
+                and e.button() == Qt.MouseButton.LeftButton
+                and not e.modifiers() & (Qt.KeyboardModifier.ShiftModifier | Qt.KeyboardModifier.AltModifier)):
+            item = self.thumbs.itemAt(e.position().toPoint())
+            if item is None:
+                return super().eventFilter(obj, e)
+            iid = item.data(Qt.ItemDataRole.UserRole)
+            if e.type() == QEvent.Type.MouseButtonPress:
+                self._stop_slideshow()
+                self._pick_pre = (iid, list(self._picks))
+                self._toggle_pick(iid)
+            elif e.type() == QEvent.Type.MouseButtonDblClick:
+                pre = self._pick_pre
+                if pre is not None and pre[0] == iid and pre[1] != self._picks:
+                    self._picks = list(pre[1])           # the first click of the double click
+                    self._mark_picks()
+                    self._refill_multis()
+                self._pick_pre = None
+                self.thumbs.setCurrentItem(item)       # -> _show_image
+                self._go("2d")
             return True
         return super().eventFilter(obj, e)
 
@@ -876,7 +1577,7 @@ class MainWindow(QMainWindow):
             self.compare = None
             self._mark_pair()
             self.lbl_status.setText("두 번째 사진 선택을 해제했습니다")
-            if self.tabs.currentIndex() == 3:
+            if self._tab() == "cmp":
                 self._fill_compare()
             return
         self._set_compare(image_id)
@@ -897,13 +1598,24 @@ class MainWindow(QMainWindow):
             return
         iid = item.data(Qt.ItemDataRole.UserRole)
         menu = QMenu(self)
+        menu.addAction("멀티에서 빼기" if iid in self._picks else "멀티로 고르기", lambda: self._toggle_pick(iid))
+        if self._picks:
+            menu.addAction(f"멀티로 보기 ({len(self._picks)}장)", self.open_picks)
+        if len(self._picks) >= 2:
+            menu.addAction(f"몽타주 만들기 ({len(self._picks)}장)…", lambda: self.open_montage())
+        row = self.db.get_image(iid)
+        if row is not None and self._montage_definition(row):
+            menu.addAction("몽타주 다시 편집…", lambda: self.edit_montage(iid))
+        menu.addSeparator()
         menu.addAction("환자 지정/정보 수정…", lambda: (self._show_image(iid), self._edit_image()))
         cur = self.current["id"] if self.current else None
         if iid != cur:
             menu.addAction("비교 대상으로 (오른쪽)", lambda: self._set_compare(iid))
             menu.addAction("디스크 2장 (보고 있는 사진과)…", lambda: self._disc_pair(iid))
+            menu.addAction("녹내장 분석 (보고 있는 사진과)…", lambda: self.open_glaucoma(iid))
         elif self.compare is not None:
             menu.addAction("디스크 2장 (② 사진과)…", lambda: self._disc_pair())
+            menu.addAction("녹내장 분석 (② 사진과)…", lambda: self.open_glaucoma())
             menu.addAction("두 번째 사진(②) 선택 해제", lambda: self._pick_second(self.compare["id"]))
         menu.addAction("원본 폴더 열기", lambda: (self._show_image(iid), self._open_folder()))
         menu.addSeparator()
@@ -914,14 +1626,19 @@ class MainWindow(QMainWindow):
     # =====================================================================
     # image display
     # =====================================================================
-    def _load(self, row) -> np.ndarray | None:
-        if row["id"] in self._cache:
-            self._cache.move_to_end(row["id"])
-            return self._cache[row["id"]]
+    @staticmethod
+    def _image_path(row) -> str | None:
         path = row["display_path"] or row["file_path"]
         if not path or not os.path.exists(path):
             alt = row["original_path"]
             path = alt if alt and os.path.exists(alt) else None
+        return path
+
+    def _load(self, row) -> np.ndarray | None:
+        if row["id"] in self._cache:
+            self._cache.move_to_end(row["id"])
+            return self._cache[row["id"]]
+        path = self._image_path(row)
         if path is None:
             return None
         try:
@@ -929,10 +1646,35 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self.lbl_status.setText(f"영상을 열 수 없음: {exc}")
             return None
-        self._cache[row["id"]] = rgb
+        self._cache_put(row["id"], rgb)
+        return rgb
+
+    def _cache_put(self, image_id: int, rgb: np.ndarray) -> None:
+        self._cache[image_id] = rgb
         while len(self._cache) > 6:
             self._cache.popitem(last=False)
-        return rgb
+
+    def _preload_neighbours(self) -> None:
+        """Read the next and the previous photo of the strip in the background."""
+        i = self.thumbs.currentRow()
+        if i < 0 or self.current is None:
+            return
+        for j in (i + 1, i - 1):
+            item = self.thumbs.item(j) if 0 <= j < self.thumbs.count() else None
+            iid = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+            if iid is None or iid in self._cache:
+                continue
+            row = self.db.get_image(iid)
+            path = self._image_path(row) if row is not None else None
+            if path is not None:
+                self._preloader.request(iid, path)
+
+    def _on_preloaded(self, image_id: int, rgb) -> None:
+        if rgb is None or image_id in self._cache:
+            return
+        self._cache_put(image_id, rgb)
+        if self.current is not None and self.current["id"] in self._cache:
+            self._cache.move_to_end(self.current["id"])     # the photo on screen stays the newest
 
     def _show_image(self, image_id: int | None) -> None:
         row = self.db.get_image(image_id) if image_id is not None else None
@@ -951,20 +1693,65 @@ class MainWindow(QMainWindow):
         if self._load(row) is None:
             self.view2d.set_rgb(None)
             self.view2d.set_captions()
-            self.lbl_info.setText("<span style='color:#b33'>파일을 찾을 수 없음</span>")
+            self.lbl_info.setText("<span style='color:#ff6961'>파일을 찾을 수 없음</span>")
             return
         # processing steps (sharpen, enhance ...) belong to the photo on screen
         self._ops, self._levels, self._history = [], (0, 255), []
+        if row["id"] in self._picks:          # a picked photo keeps its own processing (multi view)
+            saved = self._per_photo.get(row["id"], {})
+            self._load_state(saved.get("state", {}), saved.get("history"))
         self.view2d.set_rgb(self._display_rgb(row))
         self._sync_palette()
-        circle = (row["circle_cx"], row["circle_cy"], row["circle_r"]) if row["circle_r"] else None
-        disc = (row["disc_x"], row["disc_y"]) if row["disc_x"] is not None else None
-        self.view2d.set_overlays(circle, disc)
+        row = self.current = self._ensure_fovea(row)
+        self.view2d.set_overlays(*self._marks_of(row))
         self._fill_info(row)
         self._load_mapping(row)
         self._mark_3d_dirty()
-        if self.tabs.currentIndex() == 2 and not self._multi_lock:
+        if self._tab() == "multi" and not self._multi_lock:
             self._fill_multi()
+        if self._tab() == "all":
+            self._fill_overview(multi=not self._multi_lock)
+        self._preload_timer.start(180)        # once the browsing pauses: read the neighbours ahead
+
+    @staticmethod
+    def _marks_of(row) -> tuple:
+        """Image circle, optic disc and fovea of a photo (pixels; None where not known)."""
+        circle = (row["circle_cx"], row["circle_cy"], row["circle_r"]) if row["circle_r"] else None
+        disc = (row["disc_x"], row["disc_y"]) if row["disc_x"] is not None else None
+        fovea = (row["fovea_x"], row["fovea_y"]) if row["fovea_x"] is not None else None
+        return circle, disc, fovea
+
+    def _photo_camera(self, row, *, stored: bool = False) -> placement.Camera | None:
+        """How the photo maps to directions: as set in 사진 맞춤 for the photo on screen, else as stored."""
+        if not row["circle_r"]:
+            return None
+        prof = get_profile(row["profile"])
+        if stored or self.current is None or row["id"] != self.current["id"]:
+            fov, ftype, projection = (row["fov_deg"] or prof.fov_deg, row["fov_type"] or prof.fov_type,
+                                      row["projection"] or prof.projection)
+        else:
+            fov, ftype, projection = self.sp_fov.value(), self.c_fovtype.currentData(), self.c_proj.currentData()
+        return placement.Camera(row["circle_cx"], row["circle_cy"], row["circle_r"], fov, ftype, projection,
+                                prof.viewpoint, prof.radial_c)
+
+    def _find_fovea(self, row, rgb) -> tuple[float, float] | None:
+        cam = self._photo_camera(row, stored=True)
+        if cam is None or row["disc_x"] is None or row["modality"] in ("anterior", "disc", "glaucoma"):
+            return None
+        found = imaging.detect_fovea(rgb, cam, (row["disc_x"], row["disc_y"]), row["laterality"])
+        return None if found is None else (found[0], found[1])
+
+    def _ensure_fovea(self, row):
+        """A photo imported before the fovea was looked for: find it once, when the photo is first shown."""
+        if row["fovea_x"] is not None or row["disc_x"] is None or row["id"] in self._fovea_tried:
+            return row
+        self._fovea_tried.add(row["id"])
+        rgb = self._load(row)
+        fovea = self._find_fovea(row, rgb) if rgb is not None else None
+        if fovea is None:
+            return row
+        self.db.update_image(row["id"], fovea_x=fovea[0], fovea_y=fovea[1])
+        return self.db.get_image(row["id"])
 
     def _fill_info(self, row) -> None:
         meta = json.loads(row["meta_json"] or "{}")
@@ -972,27 +1759,26 @@ class MainWindow(QMainWindow):
 
         def with_src(text, *fields):
             s = next((source_label(src.get(f)) for f in fields if src.get(f)), "")
-            return f"{text}  <span style='color:#99a'>({s})</span>" if s and text and text != "-" else (text or "-")
+            return f"{text}  <span style='color:#8e8e93'>({s})</span>" if s and text and text != "-" else (text or "-")
 
         p = self.db.get_patient(row["patient_ref"]) if row["patient_ref"] else None
         if p:
             who = with_src(f"{p['patient_id']} {p['name'] or ''}", "patient_id")
         else:
             guess = " ".join(x for x in (meta.get("patient_id"), meta.get("name")) if x)
-            who = "<span style='color:#b33'>미분류</span>" + (f" — 추출값: {guess}" if guess else "")
+            who = "<span style='color:#ff6961'>미분류</span>" + (f" — 추출값: {guess}" if guess else "")
         eye = {"OD": "OD (우안)", "OS": "OS (좌안)", "OU": "OU"}.get(row["laterality"] or "", "")
         mod = MODALITY_LABELS.get(row["modality"] or "", row["modality"] or "")
         device = row["device"] or get_profile(row["profile"]).name
         ftype = "안구 중심각" if row["fov_type"] == "internal" else "외부각"
         fov = f"{row['fov_deg']:g}°" if row["fov_deg"] else ""
         name = Path(row["original_path"] or row["file_path"]).name
-        # VK-2: green text on the photo — counter, eye, name / ID, date / time
+        # on the photo: only its number and the eye (the patient and the date are in the line above
+        # the tabs and in the photo list — no patient data on the picture)
         n, i = self.thumbs.count(), self.thumbs.currentRow()
         self.view2d.set_captions(
             f"{i + 1}/{n}" if n and i >= 0 else "",
-            {"OD": "OD (R)", "OS": "OS (L)", "OU": "OU"}.get(row["laterality"] or "", ""),
-            f"{p['name'] or ''}\n{p['patient_id']}" if p else "미분류",
-            f"{row['exam_date'] or ''}\n{row['exam_time'] or ''}".strip())
+            {"OD": "OD (R)", "OS": "OS (L)", "OU": "OU"}.get(row["laterality"] or "", ""))
         # status bar "Image Info"; the tooltip says where every value came from
         self.lbl_info.setText("  ·  ".join(x for x in (eye or "눈 미상", mod, device, fov,
                                                         f"{row['width']}×{row['height']}") if x))
@@ -1048,10 +1834,20 @@ class MainWindow(QMainWindow):
             self.view2d.set_rgb(rgb, keep_view=True)
             if self.c_adj3d.isChecked():
                 self._mark_3d_dirty()
-        if self.tabs.currentIndex() == 2:
-            self._fill_multi()
-        if self.tabs.currentIndex() == 3:
+        cid = self.current["id"]
+        if cid in self._picks:                # this photo's own processing, kept for the multi view
+            self._per_photo[cid] = {"state": self._snapshot(), "history": list(self._history)}
+        if self._tab() == "multi":
+            if cid in self._picks:            # only this cell changes (keeps every cell's zoom)
+                small = self._multi_small(self.current, self._snapshot())
+                if small is None or not self.multi.update_cell(cid, small):
+                    self._fill_multi()
+            else:
+                self._fill_multi()
+        if self._tab() == "cmp":
             self._fill_compare()
+        if self._tab() == "all":
+            self._fill_overview()
 
     # -- undo / original (VK-2 [UNDO] / [ORIGINAL]) --------------------------------------
     def _snapshot(self) -> dict:
@@ -1133,8 +1929,8 @@ class MainWindow(QMainWindow):
         when called from a menu entry or code."""
         v = self.view2d
         if key.startswith(("tool:", "region:")) or key in self.TWO_D:
-            if self.tabs.currentIndex() != 0:   # 2D tools: go to the 2D view first
-                self.tabs.setCurrentIndex(0)
+            if self._tab() not in ("2d", "all"):   # 2D tools: go to a view with the big 2D photo first
+                self._go("2d")
         if key.startswith("tool:"):
             tool = key[5:]
             v.set_tool(tool)
@@ -1170,9 +1966,9 @@ class MainWindow(QMainWindow):
         elif key == "histogram":
             self._histogram()
         elif key == "fit":
-            v.fit()
+            v.fit(animate=True)
         elif key in ("actual", "zoom2", "zoom4", "zoom8"):
-            v.zoom_to({"actual": 1.0, "zoom2": 2.0, "zoom4": 4.0, "zoom8": 8.0}[key])
+            v.zoom_to({"actual": 1.0, "zoom2": 2.0, "zoom4": 4.0, "zoom8": 8.0}[key], animate=True)
         elif key.startswith("region:"):
             self._zoom_region(key[7:])
         elif key in ("rot_cw", "rot_ccw"):
@@ -1198,6 +1994,8 @@ class MainWindow(QMainWindow):
             self._print_view()
         elif key == "discpair":
             self._disc_pair()
+        elif key == "glaucoma":
+            self.open_glaucoma()
         # -- command toolbar ---------------------------------------------------------
         elif key == "search":
             self.acts["list"].setChecked(True)
@@ -1207,11 +2005,11 @@ class MainWindow(QMainWindow):
         elif key == "list":
             self.left.setVisible(self.left.isHidden() if checked is None else checked)
         elif key in ("multi", "view3d"):
-            tab = 2 if key == "multi" else 1
-            self.tabs.setCurrentIndex(0 if self.tabs.currentIndex() == tab else tab)
+            tab = "multi" if key == "multi" else "3d"
+            self._go("2d" if self._tab() == tab else tab)
         elif key.startswith("multi:"):
             self.multi.set_count(int(key[6:]))
-            self.tabs.setCurrentIndex(2)
+            self._go("multi")
         elif key == "tools":
             self.tb_proc.setVisible(self.tb_proc.isHidden() if checked is None else checked)
         elif key == "edit":
@@ -1297,7 +2095,12 @@ class MainWindow(QMainWindow):
     def _rendered(self) -> QImage | None:
         if self.current is None or not self.view2d.has_image():
             return None
-        return self.view2d.render_image()
+        roi = self._ov_roi.isVisible()          # the 확대 화면 frame is for the screen only
+        self._ov_roi.setVisible(False)
+        try:
+            return self.view2d.render_image()
+        finally:
+            self._ov_roi.setVisible(roi)
 
     def _copy_view(self) -> None:
         img = self._rendered()
@@ -1360,14 +2163,46 @@ class MainWindow(QMainWindow):
         self.lbl_status.setText("인쇄를 보냈습니다")
 
     # -- multi view (VK-2 multiple images) ------------------------------------------------------
-    def _fill_multi(self) -> None:
+    def _multi_label(self, row, rank: int = 0) -> str:
+        mod = MODALITY_LABELS.get(row["modality"] or "", "")
+        num = f"<b style='color:#ffd60a'>{rank}</b>&nbsp; " if rank else ""
+        return (f"{num}{eye_badge_html(row['laterality'])}&nbsp; "
+                f"{row['exam_date'] or ''} {row['exam_time'] or ''}&nbsp; {mod}")
+
+    def _multi_small(self, row, st: dict, n: int | None = None) -> np.ndarray | None:
+        """Down-scaled photo for a multi cell with the processing state ``st``."""
+        rgb = self._load(row)
+        if rgb is None:
+            return None
+        n = self.multi.count if n is None else n
+        small = imaging.downscale(rgb, 1400 if n <= 4 else 900)
+        ops = st.get("ops", [])
+        return self._adjusted_with(imaging.apply_ops(small, ops) if ops else small, st)
+
+    def _fill_multi(self, target: MultiView | None = None) -> None:
+        """Fill the 다중 보기 tab, or ``target`` (모두 보기's 2 × 2 grid): the picked photos with
+        their own processing, else consecutive photos from the shown one."""
+        mv = target or self.multi
+        if self._picks:                       # the photos picked in the strip, each with its own processing
+            n = mv.count
+            items = []
+            for k, iid in enumerate(self._picks[:n]):
+                row = self.db.get_image(iid)
+                small = self._multi_small(row, self._photo_state(iid), n) if row else None
+                if small is not None:
+                    items.append((iid, self._multi_label(row, k + 1), small))
+            more = f" (화면에 {n}장 — 화면 분할을 늘리세요)" if len(self._picks) > n else ""
+            mv.set_mode_text(f"고른 사진 {len(self._picks)}장{more}")
+            mv.populate(items, self.current["id"] if self.current else None)
+            return
+        mv.set_mode_text("")
         ids = [self.thumbs.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.thumbs.count())]
         if not ids:
-            self.multi.populate([], None)
+            mv.populate([], None)
             return
         cur = self.current["id"] if self.current else ids[0]
         start = ids.index(cur) if cur in ids else 0
-        n = self.multi.count
+        n = mv.count
         start = max(0, min(start, len(ids) - n)) if len(ids) > n else 0
         items = []
         for iid in ids[start:start + n]:
@@ -1377,10 +2212,8 @@ class MainWindow(QMainWindow):
                 continue
             small = imaging.downscale(rgb, 1400 if n <= 4 else 900)
             small = self._adjusted(imaging.apply_ops(small, self._ops) if self._ops else small)
-            mod = MODALITY_LABELS.get(row["modality"] or "", "")
-            items.append((iid, f"{row['exam_date'] or ''} {row['exam_time'] or ''}  {row['laterality'] or ''}  {mod}",
-                          small))
-        self.multi.populate(items, cur)
+            items.append((iid, self._multi_label(row), small))
+        mv.populate(items, cur)
 
     def _select_from_multi(self, image_id: int) -> None:
         self._multi_lock = True
@@ -1389,8 +2222,11 @@ class MainWindow(QMainWindow):
                 if self.thumbs.item(i).data(Qt.ItemDataRole.UserRole) == image_id:
                     self.thumbs.setCurrentRow(i)
                     break
+            else:                              # a picked photo hidden by the strip filters
+                self._show_image(image_id)
         finally:
             self._multi_lock = False
+        self.multi.mark_selected(self.current["id"] if self.current else None)
 
     # -- 3D ----------------------------------------------------------------------
     def _load_mapping(self, row) -> None:
@@ -1412,19 +2248,58 @@ class MainWindow(QMainWindow):
                                projection=self.c_proj.currentData(), viewpoint=prof.viewpoint,
                                roll_deg=self.sp_roll.value(), radial_c=prof.radial_c)
         if row is not None:
-            circle = (row["circle_cx"], row["circle_cy"], row["circle_r"]) if row["circle_r"] else None
-            disc = (row["disc_x"], row["disc_y"]) if row["disc_x"] is not None else None
-            self.eye3d.set_disc(row["laterality"], disc, circle)
+            circle, disc, fovea = self._marks_of(row)
+            d3, f3 = self._marks_for_3d(row)
+            self.eye3d.set_landmarks(row["laterality"], d3, f3, circle, align=self.c_align3d.isChecked())
             # the 2D measurements use the same eye geometry as the 3D view
             self.view2d.geometry = measure.Geometry(
                 *circle, fov_deg=self.sp_fov.value(), fov_type=self.c_fovtype.currentData(),
                 projection=self.c_proj.currentData(), viewpoint=prof.viewpoint,
-                radial_c=prof.radial_c) if circle and row["modality"] not in ("montage", "disc") else None
+                radial_c=prof.radial_c) if circle and (row["modality"] not in ("montage", "disc", "glaucoma")
+                                                      or self._montage_definition(row)) else None
+        self.lbl_3d.setText(self._placement_text())
+        both = row is not None and row["disc_x"] is not None and row["fovea_x"] is not None
+        self.b_fit_fov.setEnabled(bool(both))
+        self._refresh_photo3d()
+
+    def _placement_text(self) -> str:
+        """What the 3D view did with the photo: how much retina it covers and where it was put."""
         tmax = math.degrees(self.eye3d.theta_max)
-        self.lbl_3d.setText(f"망막 범위: 후극에서 {tmax:.0f}° (안구 중심각 {2 * tmax:.0f}°)")
+        pl = self.eye3d.placement
+        lines = [f"망막 범위: 사진 중심에서 {tmax:.0f}° (안구 중심각 {2 * tmax:.0f}°)"]
+        where = {"fovea": "황반을 안구 뒤쪽 한가운데(후극)에 맞춤",
+                 "disc": "황반이 사진에 없어 시신경 유두를 코쪽 제자리에 맞춤",
+                 "centre": "황반·시신경 유두를 찾지 못해 사진 중심을 후극에 둠",
+                 "off": "사진 중심을 후극에 둠 (실제 위치에 맞춤 꺼짐)"}[pl.by]
+        if pl.by in ("fovea", "disc") and pl.offset_deg >= 0.5:
+            where += f" — 사진 중심은 후극에서 {pl.offset_deg:.0f}°"
+        lines.append(where)
+        if pl.distance_deg is not None:
+            off = abs(pl.distance_deg / placement.DISC_FOVEA_DEG - 1.0)
+            lines.append(f"황반–유두 {pl.distance_deg:.1f}° · {pl.distance_mm:.1f} mm (보통 약 4.5 mm)"
+                         + (" — 화각이 실제와 다를 수 있습니다" if off > 0.2 else ""))
+        return "\n".join(lines)
 
     def _on_mapping(self, *_):
         self._push_mapping()
+
+    def _on_align(self, on: bool) -> None:
+        self.settings.align3d = bool(on)
+        self.settings.save()
+        self._push_mapping()
+
+    def _fit_fov(self) -> None:
+        """황반–유두 거리로 크기 맞춤: the field of view that puts the two 4.5 mm apart."""
+        row = self.current
+        cam = self._photo_camera(row) if row is not None else None
+        if cam is None or row["disc_x"] is None or row["fovea_x"] is None:
+            return
+        fov = placement.fit_fov(cam, (row["fovea_x"], row["fovea_y"]), (row["disc_x"], row["disc_y"]))
+        if fov is None:
+            self.lbl_status.setText("황반–유두 거리로 화각을 정할 수 없습니다")
+            return
+        self.sp_fov.setValue(round(fov, 1))        # → _on_mapping
+        self.lbl_status.setText(f"화각을 {fov:.1f}°로 맞췄습니다 (황반–유두 4.5 mm 기준) — [화각·투영 저장]으로 저장")
 
     def _save_mapping(self) -> None:
         if self.current is None:
@@ -1436,8 +2311,176 @@ class MainWindow(QMainWindow):
         self.lbl_status.setText("이 영상의 화각·투영을 저장했습니다")
 
     def _on_cut(self, v: int) -> None:
-        self.eye3d.cut = v / 100.0 if v < 100 else 1.0
+        if self._show.active():               # the user takes over from the presentation
+            self._show.stop()
+            self.s_cut.blockSignals(True)
+            self.s_cut.setValue(v)
+            self.s_cut.blockSignals(False)
+        mode = self.c_view3d.currentData()
+        self._cut_values[mode] = v
+        if mode == "section":                 # 0: through the axis (half) … 100: closed
+            self._tween._finish()
+            self.eye3d.half = 1.0 - v / 100.0
+        else:
+            self.eye3d.cut = v / 100.0 if v < 100 else 1.0
         self.eye3d.update()
+
+    # -- 세로 단면 · 망막 투시 · 슬릿 스캔 -------------------------------------------------
+    def _sync_view_combo(self, mode: str) -> None:
+        """Show ``mode`` in the selector and its depth on the slider (no signals)."""
+        for w in (self.c_view3d, self.s_cut):
+            w.blockSignals(True)
+        self.c_view3d.setCurrentIndex(max(0, self.c_view3d.findData(mode)))
+        self.s_cut.setRange(*((0, 100) if mode == "section" else (-30, 100)))
+        self.s_cut.setValue(self._cut_values[mode])
+        for w in (self.c_view3d, self.s_cut):
+            w.blockSignals(False)
+        self._sync_view_buttons()
+        self.s_cut.setEnabled(self.r_out.isChecked())
+
+    def _set_3d_view(self, mode: str, animate: bool = True) -> None:
+        """앞쪽 절개 (front) or 세로 단면 (section), gliding to a fitting camera."""
+        self._show.stop()
+        self._sync_view_combo(mode)
+        eye = self.eye3d
+        eye.journey_leave()
+        # the front stays closed while the section plane moves; the front cut opens at the end
+        eye.cut = 1.0
+        if mode == "section":
+            goal, half, done = eye.section_pose(), 1.0 - self._cut_values["section"] / 100.0, None
+        else:
+            goal = None if eye.half < 0.5 else {
+                "yaw": 38.0, "pitch": 18.0, "dist": eye.DIST0, "target": (0.0, 0.0, 0.0)}
+            half, done = 0.0, lambda: self._on_cut(self.s_cut.value())
+        if not self.r_out.isChecked():       # 내부: applies when going back outside
+            goal = None
+        self._tween.go(goal, half, eye.xray, duration=0.9 if animate else 0.0, done=done)
+        self._apply_fov_marks()
+
+    def _on_xray(self, on: bool) -> None:
+        if self._show.active():               # stopping syncs the box to the eye: keep the user's choice
+            self._show.stop()
+            self.c_xray3d.blockSignals(True)
+            self.c_xray3d.setChecked(on)
+            self.c_xray3d.blockSignals(False)
+        self._tween.go(None, self.eye3d.half, 1.0 if on else 0.0, duration=0.6)
+
+    def _apply_fov_marks(self, *_) -> None:
+        on = self.c_fov3d.isChecked()
+        self._show.show_fov = on
+        if self._show.playing:                # the presentation draws its own
+            return
+        eye = self.eye3d
+        eye.fov_sweep = eye.fov_alpha = eye.fov_ring = 1.0 if on else 0.0
+        eye.update()
+
+    def _on_fov_marks(self, on: bool) -> None:
+        self._apply_fov_marks()
+
+    def _on_side_photo(self, on: bool) -> None:
+        self.scan_photo.setVisible(on)
+        self.eye3d.black = on or self._full3d is not None
+        if on:
+            total = max(2, self.split3d.width())
+            self.split3d.setSizes([total // 2, total - total // 2])
+        self.eye3d.update()
+
+    def _toggle_scan(self) -> None:
+        if self._show.playing:
+            self._show.stop()
+            return
+        self._show.xray_after = self.c_xray3d.isChecked()
+        if self.current is None:
+            self.lbl_status.setText("사진을 먼저 고르세요")
+            return
+        if self._tab() != "3d":
+            self._go("3d")
+        if not self.r_out.isChecked():
+            self.r_out.setChecked(True)
+        if not self.c_side3d.isChecked():
+            self.c_side3d.setChecked(True)
+        self._tween._finish()
+        if self.eye3d.detail != "detailed":   # the presentation shows the realistic eye (not saved as the look)
+            self._set_3d_detail("detailed", save=False)
+        self._show.show_fov = self.c_fov3d.isChecked()
+        if self._show.first().stage == "section":
+            self.eye3d.cut = 1.0              # 세로 단면: no front cut
+            self._cut_values["section"] = 0
+            self._sync_view_combo("section")
+        else:                                 # right / left: on the eye opened at the front
+            self._cut_values["front"] = 25
+            self._sync_view_combo("front")
+        self._show.start()
+        self._scan_buttons("■ 멈춤")
+        self.eye3d.setFocus()
+        self.lbl_status.setText("슬릿 스캔 — 안구를 누르거나 돌리면 멈춥니다")
+
+    def _sync_from_eye(self) -> None:
+        """After the presentation: 세로 단면 at the eye's depth (or the front cut), 망막 투시 as the eye shows it."""
+        if self.eye3d.half > 0.01:
+            self._cut_values["section"] = round(100.0 * (1.0 - self.eye3d.half))
+            self._sync_view_combo("section")
+        else:
+            self._cut_values["front"] = round(100.0 * self.eye3d.cut) if self.eye3d.cut < 1.0 else 100
+            self._sync_view_combo("front")
+        self.c_xray3d.blockSignals(True)
+        self.c_xray3d.setChecked(self.eye3d.xray > 0.5)
+        self.c_xray3d.blockSignals(False)
+
+    def _scan_buttons(self, text: str) -> None:
+        self.b_scan.setText(text)
+        self.b_scan2.setText(text)
+
+    def _on_scan_finished(self) -> None:
+        """The presentation is over; the eye keeps turning until the user takes over."""
+        self._scan_buttons("▶ 슬릿 스캔")
+        self._sync_from_eye()
+
+    def _on_scan_stopped(self) -> None:
+        self._scan_buttons("▶ 슬릿 스캔")
+        self._sync_from_eye()
+        self._apply_fov_marks()
+
+    def _toggle_full_3d(self) -> None:
+        """The 3D eye (and the photo) on the whole screen, e.g. to explain a photo to a patient."""
+        if self._full3d is not None:
+            self._exit_full_3d()
+            return
+        win = _FullScreen3D()
+        win.setWindowTitle("3D 안구")
+        win.closed.connect(self._exit_full_3d)
+        lay = QVBoxLayout(win)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(self.split3d)           # re-parented: the 3D view makes its GL context again
+        for key, fn in (("Esc", self._exit_full_3d), ("F11", self._exit_full_3d), ("Space", self._toggle_scan)):
+            QShortcut(QKeySequence(key), win, activated=fn)
+        self._full3d = win
+        self._full3d_note = QLabel("3D 안구를 화면 전체로 보고 있습니다 — Esc 또는 [돌아가기]")
+        self._full3d_note.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._full3d_note.setObjectName("hint3d")
+        self._lay3d.addWidget(self._full3d_note, 1)
+        self.scan_photo.hint = "Space: 슬릿 스캔 · Esc: 돌아가기"
+        self.eye3d.black = True
+        self.b_full3d.setText("돌아가기")
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is not None:
+            win.setGeometry(screen.geometry())
+        win.showFullScreen()
+        self.eye3d.setFocus()
+
+    def _exit_full_3d(self) -> None:
+        win, self._full3d = self._full3d, None
+        if win is None:
+            return
+        self._full3d_note.deleteLater()
+        (self._ov_3d_lay if self._ov_on and self._ov_gl else self._lay3d).addWidget(self.split3d, 1)
+        self.split3d.show()
+        win.closed.disconnect(self._exit_full_3d)
+        win.hide()
+        win.deleteLater()
+        self.scan_photo.hint = ""
+        self.eye3d.black = self.c_side3d.isChecked()
+        self.b_full3d.setText("크게 보기")
 
     # -- 2D zoom ---------------------------------------------------------------------
     def _show_zoom(self, z: float) -> None:
@@ -1470,8 +2513,7 @@ class MainWindow(QMainWindow):
         self.lbl_status.setText(f"{self.REGIONS[name]} 확대 — 0: 전체 보기 · 미니맵을 눌러 이동")
 
     def _set_3d_detail(self, detail: str, save: bool = True) -> None:
-        detail = detail if detail in EyeView.DETAILS else "simple"
-        (self.b_detailed if detail == "detailed" else self.b_simple).setChecked(True)
+        detail = detail if detail in EyeView.DETAILS else "detailed"
         self.eye3d.set_detail(detail)
         self.c_muscle.setEnabled(detail == "detailed")     # the simple model has no muscles
         self.c_muscle.setToolTip("네 곧은근과 두 빗근의 부착부(절단면)를 함께 표시"
@@ -1481,31 +2523,360 @@ class MainWindow(QMainWindow):
             self.settings.save()
 
     def _on_3d_mode(self, outside: bool) -> None:
+        self._show.stop()
+        self._tween._finish()
         self.s_cut.setEnabled(outside)
-        self.eye3d.set_mode("outside" if outside else "inside")
+        self.c_view3d.setEnabled(outside)
+        self.seg_view.setEnabled(outside)
+        if not outside and self.c_view3d.currentData() != "front":
+            self._sync_view_combo("front")
+        # 들어가며 보기: in through the cornea, the pupil and the lens / back out (at once when
+        # 부드러운 움직임 is off); the simple model fades through black
+        self.eye3d.enter("outside" if outside else "inside")
+
+    # -- 들어가며 보기 --------------------------------------------------------------------
+    WHERE = ((0.32, "안구 전체 — 각막 쪽으로"), (1.09, "각막 앞"), (0.83, "앞방 — 각막과 홍채 사이 (방수)"),
+             (0.785, "동공 — 홍채 가운데"), (0.46, "수정체"), (0.0, "유리체 — 앞에 망막이 보입니다"))
+
+    def _play_journey(self) -> None:
+        eye = self.eye3d
+        if eye.journey_running():
+            eye.stop_motion()                 # stops where it is
+            return
+        self._show.stop()
+        self._tween._finish()
+        if eye.detail != "detailed":          # the way in shows the anatomical eye (not saved as the look)
+            self._set_3d_detail("detailed", save=False)
+        to = 0.0 if eye.journey_j >= 0.999 else 1.0
+        eye.journey_play(to, done=eye.journey_end if to == 0.0 else None)
+
+    def _scrub_journey(self, v: int) -> None:
+        eye = self.eye3d
+        self._show.stop()
+        self._tween._finish()
+        if eye.detail != "detailed":
+            self._set_3d_detail("detailed", save=False)
+        eye.journey_scrub(v / 100.0)
+
+    def _on_journey(self, j: float) -> None:
+        """The slider, the button, 외부 | 내부 and the name of the place passed follow the way."""
+        eye = self.eye3d
+        self.s_journey.blockSignals(True)
+        self.s_journey.setValue(round(j * 100))
+        self.s_journey.blockSignals(False)
+        self.b_journey.setText("■ 멈춤" if eye.journey_running() else "◀ 나오기" if j >= 0.999 else "▶ 들어가기")
+        inside = j >= 0.999
+        if self.r_in.isChecked() != inside:
+            for b in (self.r_out, self.r_in):
+                b.blockSignals(True)
+            (self.r_in if inside else self.r_out).setChecked(True)
+            for b in (self.r_out, self.r_in):
+                b.blockSignals(False)
+            self.s_cut.setEnabled(not inside)
+            self.c_view3d.setEnabled(not inside)
+            self.seg_view.setEnabled(not inside)
+        if j <= 0.001:
+            self._where.say("")
+            return
+        if inside:
+            self._where.say("망막 — 황반과 시신경 유두 (망막 시점)", hold=2.5)
+            return
+        z = float(np.linalg.norm(eye._view_basis()[0]))
+        if j < self.WHERE[0][0]:
+            self._where.say(self.WHERE[0][1])
+            return
+        for limit, name in self.WHERE[1:]:
+            if z > limit:
+                self._where.say(name)
+                return
+
+    # -- 슬릿 스캔: the way of the slit ----------------------------------------------------------
+    def _on_slit_dir(self, key: str, save: bool = True) -> None:
+        self._show.direction = key
+        b = self._slit_buttons[key]
+        if not b.isChecked():
+            b.setChecked(True)
+        p = SLIT.get(key)
+        self.lbl_slit.setText(f"{p.name} — " + ("앞을 연 안구의 망막 위로 봅니다" if p.stage == "front"
+                                                 else "세로 단면을 옆에서 봅니다") if p is not None
+                              else "위↓ 아래↑ (세로 단면) 다음 왼→ 오른← (앞에서 본 망막) 차례로")
+        if save and self.settings.slit_dir3d != key:
+            self.settings.slit_dir3d = key
+            self.settings.save()
+        if self._show.playing:                # playing: again, the new way
+            self._show.stop()
+            self._toggle_scan()
+
+    # -- 사진: the device, the eye, the disc and the macula (as the web page's 사진 card) -----------------------
+    DEVICE_LABELS = {"generic": "45°", "reticam": "RetiCam 176°", "apollo": "APOLLO", "kowa_vk2": "VK-2 45°",
+                     "kowa_vk2_id": "VK-2 45°"}
+
+    @staticmethod
+    def _by_hand(row, field: str) -> bool:
+        """The disc or the macula was marked by hand (2D right-click or 황반 지정 · 유두 지정)."""
+        try:
+            return json.loads(row["meta_json"] or "{}").get("sources", {}).get(field) == "manual"
+        except (ValueError, TypeError):
+            return False
+
+    def _set_landmark_source(self, image_id: int, field: str, source: str | None) -> None:
+        row = self.db.get_image(image_id)
+        if row is None:
+            return
+        meta = json.loads(row["meta_json"] or "{}")
+        sources = meta.setdefault("sources", {})
+        if source:
+            sources[field] = source
+        else:
+            sources.pop(field, None)
+        self.db.update_image(image_id, meta_json=meta)
+
+    def _marks_for_3d(self, row) -> tuple:
+        """The disc and the macula the 3D eye uses: as found or marked (자동으로 찾기 off: only marked)."""
+        _, disc, fovea = self._marks_of(row)
+        if not self.c_autofind3d.isChecked():
+            disc = disc if self._by_hand(row, "disc") else None
+            fovea = fovea if self._by_hand(row, "fovea") else None
+        return disc, fovea
+
+    def _refresh_photo3d(self) -> None:
+        """The 사진 card: the photo's name, device and eye, the marks on it and where they came from."""
+        row = self.current
+        if row is None:
+            self.lbl_photo3d.setText("")
+            self.lbl_found3d.setText("")
+            self.photo3d.set_photo(None)
+            return
+        circle, _, _ = self._marks_of(row)
+        disc, fovea = self._marks_for_3d(row)
+        self.photo3d.set_marks(circle, disc, fovea)
+        eye = {"OD": "우안", "OS": "좌안"}.get(row["laterality"] or "", "")
+        name = " · ".join(x for x in ((row["exam_date"] or "")[:10], self.DEVICE_LABELS.get(row["profile"], ""), eye) if x)
+        self.lbl_photo3d.setText(name)
+        for w in (self.c_device3d, self.c_eye3d):
+            w.blockSignals(True)
+        i = self.c_device3d.findData("kowa_vk2" if row["profile"] == "kowa_vk2_id" else row["profile"])
+        self.c_device3d.setCurrentIndex(i if i >= 0 else 0)
+        try:
+            src = json.loads(row["meta_json"] or "{}").get("sources", {}).get("laterality")
+        except (ValueError, TypeError):
+            src = None
+        self.c_eye3d.setCurrentIndex(self.c_eye3d.findData(
+            row["laterality"] if row["laterality"] in ("OD", "OS") and src not in ("disc-estimate", "fovea-estimate")
+            else "auto"))
+        for w in (self.c_device3d, self.c_eye3d):
+            w.blockSignals(False)
+
+        def part(name, has, hand):
+            color, how = (("#64d2ff", "직접 지정") if hand else ("#30d158", "자동으로 찾음")) if has else ("#636366", "없음")
+            return f"<span style='color:{color}'>{name} {how}</span>"
+        self.lbl_found3d.setText(part("유두", disc is not None, self._by_hand(row, "disc")) + " · "
+                                 + part("황반", fovea is not None, self._by_hand(row, "fovea")))
+
+    def _found_text(self) -> str:
+        row = self.current
+        disc, fovea = self._marks_for_3d(row) if row is not None else (None, None)
+        return ("유두와 황반을 자동으로 찾아 제자리에 맞췄습니다" if disc and fovea else
+                "유두를 찾았습니다 (황반은 사진에 없거나 찾지 못했습니다 — 유두를 코쪽 제자리에 맞춤)" if disc else
+                "유두와 황반을 찾지 못했습니다 — 사진에서 직접 지정할 수 있습니다")
+
+    def _on_autofind3d(self, on: bool) -> None:
+        self.settings.autofind3d = bool(on)
+        self._push_mapping()
+        self.lbl_status.setText(self._found_text() if on else
+                                "자동으로 찾기를 껐습니다 — 황반·유두를 직접 지정하거나 사진 중심을 후극에 둡니다")
+
+    def _set_marking3d(self, what: str | None) -> None:
+        self._marking3d = what
+        self.b_mark_fovea.setChecked(what == "fovea")
+        self.b_mark_disc.setChecked(what == "disc")
+        self.photo3d.set_picking(what)
+        self.lbl_mark3d.setText({"fovea": "위 사진에서 황반(중심와, 어두운 가운데)을 누르세요",
+                                 "disc": "위 사진에서 시신경 유두(밝은 원판)의 가운데를 누르세요"}.get(what, ""))
+        self.lbl_mark3d.setVisible(bool(what))
+
+    def _on_photo3d_picked(self, x: float, y: float) -> None:
+        what = self._marking3d
+        self._set_marking3d(None)
+        if what == "fovea":
+            self._on_fovea_picked(x, y)
+            self.lbl_status.setText("황반 위치를 정했습니다 — 3D에서 안구 뒤쪽 한가운데에 맞췄습니다")
+        elif what == "disc":
+            self._on_disc_picked(x, y)
+
+    def _redetect3d(self) -> None:
+        """다시 찾기: the marks made by hand are dropped and the disc and the macula found again."""
+        row = self.current
+        rgb = self._load(row) if row is not None else None
+        if rgb is None:
+            return
+        self._set_marking3d(None)
+        iid = row["id"]
+        for field in ("disc", "fovea"):
+            self._set_landmark_source(iid, field, None)
+        row = self.db.get_image(iid)
+        circle = (row["circle_cx"], row["circle_cy"], row["circle_r"]) if row["circle_r"] else imaging.detect_circle(rgb)
+        prof = get_profile(row["profile"])
+        cam = self._photo_camera(row)
+        tmax = math.degrees(cam.tmax) if cam is not None else 45.0
+        disc = imaging.detect_disc(rgb, circle, disc_frac=min(0.25, 3.8 / max(tmax, 5.0)), search=prof.disc_search)
+        fovea = None
+        if disc is not None and cam is not None:
+            try:
+                src = json.loads(row["meta_json"] or "{}").get("sources", {}).get("laterality")
+            except (ValueError, TypeError):
+                src = None
+            guessed = row["laterality"] not in ("OD", "OS") or src in ("disc-estimate", "fovea-estimate")
+            found = imaging.detect_fovea(rgb, cam, disc[:2], None if guessed else row["laterality"], with_side=True)
+            if found is not None:
+                fovea = found[:2]
+                if guessed and found[3] != row["laterality"]:
+                    self._set_laterality(iid, found[3], "fovea-estimate")
+        self.db.update_image(iid, disc_x=disc[0] if disc else None, disc_y=disc[1] if disc else None,
+                             fovea_x=fovea[0] if fovea else None, fovea_y=fovea[1] if fovea else None)
+        self._fovea_tried.add(iid)
+        if not self.c_autofind3d.isChecked():
+            self.c_autofind3d.setChecked(True)             # (→ _push_mapping)
+        self.current = self.db.get_image(iid)
+        self.view2d.set_overlays(*self._marks_of(self.current))
+        self._push_mapping()
+        self.lbl_status.setText("직접 정한 위치를 지우고 다시 찾았습니다 — " + self._found_text())
+
+    def _set_laterality(self, image_id: int, eye: str, source: str) -> None:
+        row = self.db.get_image(image_id)
+        meta = json.loads(row["meta_json"] or "{}")
+        meta.setdefault("sources", {})["laterality"] = source
+        self.db.update_image(image_id, laterality=eye, meta_json=meta)
+
+    def _on_eye3d(self, choice: str) -> None:
+        """눈: OD / OS as stated, or 자동 — from the side of the disc the macula is found on."""
+        row = self.current
+        if row is None:
+            return
+        iid = row["id"]
+        rgb = self._load(row)
+        cam = self._photo_camera(row)
+        disc = (row["disc_x"], row["disc_y"]) if row["disc_x"] is not None else None
+        found = None
+        if rgb is not None and cam is not None and disc is not None and not self._by_hand(row, "fovea"):
+            found = imaging.detect_fovea(rgb, cam, disc, None if choice == "auto" else choice, with_side=True)
+        if choice == "auto":
+            eye = found[3] if found is not None else imaging.laterality_from_disc(
+                (disc[0], disc[1], 9.0) if disc else None, (row["circle_cx"], row["circle_cy"], row["circle_r"]))
+            self._set_laterality(iid, eye, "fovea-estimate" if found is not None else "disc-estimate")
+        else:
+            self._set_laterality(iid, choice, "manual")
+        if found is not None:
+            self.db.update_image(iid, fovea_x=found[0], fovea_y=found[1])
+        self.current = self.db.get_image(iid)
+        self._fill_info(self.current)
+        self.view2d.set_overlays(*self._marks_of(self.current))
+        self._push_mapping()
+        self._fill_thumbs(select_id=iid)
+
+    def _on_device3d(self, key: str) -> None:
+        """장비: the device's field of view and projection for this photo (사진 맞춤 shows and keeps them)."""
+        prof = get_profile(key)
+        for w in (self.sp_fov, self.c_fovtype, self.c_proj):
+            w.blockSignals(True)
+        self.sp_fov.setValue(prof.fov_deg)
+        self.c_fovtype.setCurrentIndex(max(0, self.c_fovtype.findData(prof.fov_type)))
+        self.c_proj.setCurrentIndex(max(0, self.c_proj.findData(prof.projection)))
+        for w in (self.sp_fov, self.c_fovtype, self.c_proj):
+            w.blockSignals(False)
+        self._push_mapping()
+        self.lbl_status.setText(f"{self.c_device3d.currentText()}의 화각·투영으로 얹었습니다 — [화각·투영 저장]으로 저장")
+
+    # -- 망막 입체 · 단순하게 보기 ---------------------------------------------------------------
+    HEIGHT_MAX = 0.08       # 높이 100: the height of +1 in eye radii (≈ 1 mm, the relief exaggerated)
+
+    def _on_surface(self, on: bool) -> None:
+        self.settings.surface3d = bool(on)
+        self.eye3d.relief_on = bool(on)
+        self.s_height3d.setEnabled(on)
+        self.eye3d.update()
+
+    def _on_height(self, v: int) -> None:
+        self.settings.surface_height3d = int(v)
+        self.eye3d.relief_amount = v / 100.0 * self.HEIGHT_MAX
+        self.eye3d.update()
+
+    def _on_simple(self, on: bool) -> None:
+        self.settings.simple3d = bool(on)
+        eye, start, goal = self.eye3d, self.eye3d.simple, 1.0 if on else 0.0
+        self._simple_tween = motion.Tween(lambda k: (setattr(eye, "simple", start + (goal - start) * k), eye.update()),
+                                          0.45, motion.ease_in_out)
+        self._simple_tween.start()
+
+    # -- 효과: 입체 조명 · 자동 회전 -----------------------------------------------------------
+    RELIEF = 0.6            # strength of 입체 조명
+    SPIN = 10.0             # 자동 회전, degrees per second
+    UI_VERSION = 3          # 2: the dark look — 자세히, 유리 공막 and 자동 회전 from the start; 3: the 3D tab
+                            # as the web page (자세히, 표면 높낮이, 황반·유두 자동으로 찾기)
+
+    def _on_relief(self, on: bool) -> None:
+        self.settings.relief3d = bool(on)
+        self.eye3d.relief = self.RELIEF if on else 0.0
+        self.eye3d.update()
+
+    def _on_spin(self, on: bool) -> None:
+        self.settings.auto_rotate3d = bool(on)
+        self._apply_spin()
+
+    def _on_smooth(self, on: bool) -> None:
+        self.settings.smooth_motion = bool(on)
+        motion.set_enabled(on)
+        self._apply_spin()
+        self.lbl_status.setText("부드러운 움직임을 켰습니다" if on else
+                                "부드러운 움직임을 껐습니다 — 확대·회전·전환이 바로 바뀝니다")
 
     def _mark_3d_dirty(self) -> None:
         self._3d_dirty = True
-        if self.tabs.currentIndex() == 1:
+        if self._tab() == "3d":
             self._update_3d()
+        elif self._tab() == "all" and self._ov_gl:
+            self._ov3d_timer.start(150)
 
     def _update_3d(self) -> None:
         self._3d_dirty = False
+        self._show.stop()                     # another photo: the presentation was about the last one
         row = self.current
         if row is None:
             self.eye3d.set_image(None)
+            self.scan_photo.set_image(None)
             return
         rgb = self._load(row)
         if rgb is None:
             return
         circle = (row["circle_cx"], row["circle_cy"], row["circle_r"]) if row["circle_r"] else imaging.detect_circle(rgb)
         tex = self._display_rgb(row) if self.c_adj3d.isChecked() else rgb
-        self.eye3d.set_image(tex, imaging.fundus_alpha(rgb, circle), circle)
+        alpha = imaging.fundus_alpha(rgb, circle)
+        self.eye3d.set_image(tex, alpha, circle)
+        self.scan_photo.set_image(tex, alpha, circle)
+        self.photo3d.set_photo(tex, alpha)
+        self._refresh_photo3d()
+
+    def grab_3d(self) -> QImage:
+        """The 3D view as on the screen: with 사진 나란히 the eye and the photo side by side.
+        (The eye comes from its framebuffer — QWidget.grab would lose the drawn field of view.)"""
+        eye = self.eye3d.grabFramebuffer()
+        if not self.scan_photo.isVisible():
+            return eye
+        dpr = eye.devicePixelRatio()
+        out = QImage(round(self.split3d.width() * dpr), round(self.split3d.height() * dpr),
+                     QImage.Format.Format_RGB32)
+        out.setDevicePixelRatio(dpr)
+        out.fill(QColor(0, 0, 0))
+        p = QPainter(out)
+        p.drawImage(self.eye3d.geometry().topLeft(), eye)
+        p.drawPixmap(self.scan_photo.geometry().topLeft(), self.scan_photo.grab())
+        p.end()
+        return out
 
     def _save_3d(self) -> None:
-        if self.tabs.currentIndex() != 1:
-            self.tabs.setCurrentIndex(1)
-        img = self.eye3d.grabFramebuffer()
+        if self._tab() != "3d":
+            self._go("3d")
+        img = self.grab_3d()
         path, _ = QFileDialog.getSaveFileName(self, "3D 화면 저장", "eye3d.png", "PNG (*.png)")
         if path:
             img.save(path)
@@ -1513,25 +2884,242 @@ class MainWindow(QMainWindow):
     def _on_disc_picked(self, x: float, y: float) -> None:
         if self.current is None:
             return
+        self._set_landmark_source(self.current["id"], "disc", "manual")
         self._set_disc(self.current["id"], x, y)
         self.lbl_status.setText("시신경 유두 위치를 저장했습니다 (3D 시신경에 반영)")
 
     def _set_disc(self, image_id: int, x: float, y: float) -> None:
         """Store a photo's optic disc position (2D right-click menu, disc pair clicks)."""
         self.db.update_image(image_id, disc_x=x, disc_y=y)
+        row = self.db.get_image(image_id)
+        cam = self._photo_camera(row, stored=True)
+        if cam is not None and row["fovea_x"] is not None and not self._by_hand(row, "fovea"):
+            # a fovea that was looked for beside the old disc: keep it only if it still fits the new one
+            a, b = cam.direction(row["fovea_x"], row["fovea_y"]), cam.direction(x, y)
+            if a is None or b is None or not (12.0 <= placement.angle_between(a, b) <= 32.0):
+                self.db.update_image(image_id, fovea_x=None, fovea_y=None)
+                row = self.db.get_image(image_id)
+        if row["fovea_x"] is None:
+            rgb = self._load(row)
+            fovea = self._find_fovea(row, rgb) if rgb is not None else None
+            if fovea is not None:
+                self.db.update_image(image_id, fovea_x=fovea[0], fovea_y=fovea[1])
+                row = self.db.get_image(image_id)
         if self.current is not None and self.current["id"] == image_id:
-            self.current = self.db.get_image(image_id)
-            self.view2d.set_overlays((self.current["circle_cx"], self.current["circle_cy"],
-                                      self.current["circle_r"]), (x, y))
+            self.current = row
+            self.view2d.set_overlays(*self._marks_of(row))
             self._push_mapping()
 
+    def _on_fovea_picked(self, x: float, y: float) -> None:
+        if self.current is None:
+            return
+        self._set_landmark_source(self.current["id"], "fovea", "manual")
+        self.db.update_image(self.current["id"], fovea_x=x, fovea_y=y)
+        self.current = self.db.get_image(self.current["id"])
+        self.view2d.set_overlays(*self._marks_of(self.current))
+        self._push_mapping()
+        self.lbl_status.setText("황반 위치를 저장했습니다 (3D에서 안구 뒤쪽 한가운데에 맞춤)")
+
+    # -- tabs by name -----------------------------------------------------------------
+    def _tab(self) -> str:
+        w = self.tabs.currentWidget()
+        return next((k for k, page in getattr(self, "_pages", {}).items() if page is w), "")
+
+    def _go(self, key: str) -> None:
+        if self.tabs.currentWidget() is not self._pages[key]:
+            self._tab_fade.snap()             # the page on screen fades into the next
+        self.tabs.setCurrentWidget(self._pages[key])
+
     def _on_tab(self, i: int) -> None:
-        if i == 1 and self._3d_dirty:
+        key = self._tab()
+        self._place_overview(key == "all")
+        if key != "3d":
+            self._show.stop()
+            self._tween._finish()
+        if self._3d_dirty and (key == "3d" or (key == "all" and self._ov_gl)):
             self._update_3d()
-        if i == 2:
+        if key == "3d" and self._gl_msg:
+            msg, self._gl_msg = self._gl_msg, ""
+            QMessageBox.warning(self, "3D", msg)
+        if key == "multi":
             self._fill_multi()
-        if i == 3:
+        if key == "cmp":
             self._fill_compare()
+        if key == "all":
+            self._fill_overview()
+        self._apply_spin()
+        self._tab_fade.play()
+
+    def _apply_spin(self) -> None:
+        """자동 회전 turns the eye in the 3D tab only (not the small pane of 모두 보기)."""
+        on = self.c_spin3d.isChecked() and self._tab() == "3d"
+        self.eye3d.set_auto_rotate(self.SPIN if on else 0.0)
+
+    # -- 모두 보기: 큰 2D + 다중 · 확대 · 3D -------------------------------------------------
+    def _build_overview(self) -> QWidget:
+        w = QWidget()
+        self.ov_big = QWidget()                          # view2d goes here while 모두 보기 is shown
+        self._ov_big_lay = QVBoxLayout(self.ov_big)
+        self._ov_big_lay.setContentsMargins(0, 0, 0, 0)
+        side = QSplitter(Qt.Orientation.Vertical)       # three equal panes, heights can be dragged
+        side.setObjectName("ovSide")
+        side.setChildrenCollapsible(False)
+        side.setHandleWidth(4)
+        self.ov_multi = MultiView(compact=True)          # 4 photos (2 × 2)
+        self.ov_multi.selected.connect(self._select_from_multi)
+        self.ov_multi.opened.connect(lambda iid: (self._select_from_multi(iid), self._go("2d")))
+        self.ov_zoom = ImageView()
+        self.ov_zoom.set_navigator(False)
+        self.ov_zoom.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)   # a small pane:
+        self.ov_zoom.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)     # move by dragging
+        self.ov_zoom.setToolTip("확대 화면 — 왼쪽 큰 사진을 누르면 그 곳이 여기에 · 위/아래 드래그·휠: 배율 · "
+                                "가운데 버튼 드래그: 이동 · 더블클릭: 2D 보기로")
+        self.ov_zoom.activated.connect(lambda: self._go("2d"))
+        self.ov_zoom.zoomChanged.connect(lambda _: self._ov_sync_roi())
+        self.ov_zoom.horizontalScrollBar().valueChanged.connect(lambda _: self._ov_sync_roi())
+        self.ov_zoom.verticalScrollBar().valueChanged.connect(lambda _: self._ov_sync_roi())
+        self.ov_3d = QWidget()
+        self._ov_3d_lay = QVBoxLayout(self.ov_3d)
+        self._ov_3d_lay.setContentsMargins(0, 0, 0, 0)
+        self._ov_gl = gl_available()
+        self._gl_msg = ""
+        if not self._ov_gl:                              # no OpenGL here: a way to the 3D tab instead
+            self._ov_3d_button()
+        self._ov3d_timer = QTimer(self)                  # browsing photos: rebuild the 3D texture once
+        self._ov3d_timer.setSingleShot(True)
+        self._ov3d_timer.timeout.connect(lambda: self._3d_dirty and self._tab() == "all" and self._update_3d())
+        self.ov_heads = {}
+        for key, title, body in (("multi", "다중 보기", self.ov_multi), ("zoom", "확대 화면", self.ov_zoom),
+                                 ("3d", "3D 안구", self.ov_3d)):
+            pane = QFrame()
+            pane.setObjectName("ovPane")
+            v = QVBoxLayout(pane)
+            v.setContentsMargins(0, 0, 0, 0)
+            v.setSpacing(0)
+            head = QPushButton(f"{title}   ⤢")
+            head.setObjectName("ovHead")
+            head.setToolTip(f"{title}을 크게 보기" if key != "zoom" else "2D 보기에서 크게 (확대·측정 도구)")
+            head.clicked.connect(lambda _=False, k=key: self._go("2d" if k == "zoom" else k))
+            v.addWidget(head)
+            v.addWidget(body, 1)
+            body.setMinimumHeight(60)
+            body.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored)   # equal heights
+            side.addWidget(pane)
+            side.setStretchFactor(side.count() - 1, 1)
+            self.ov_heads[key] = head
+        self.ov_split = QSplitter(Qt.Orientation.Horizontal)
+        self.ov_split.setChildrenCollapsible(False)
+        self.ov_split.addWidget(self.ov_big)
+        self.ov_split.addWidget(side)
+        self.ov_split.setStretchFactor(0, 3)
+        self.ov_split.setStretchFactor(1, 1)
+        self.ov_split.setSizes([900, 340])
+        side.setSizes([300, 300, 300])
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(self.ov_split)
+        # where the 확대 화면 looks: a frame on the big photo; a click on the big photo moves it there
+        self._ov_roi = QGraphicsRectItem()
+        self._ov_roi.setPen(QPen(QColor(80, 220, 255), 0, Qt.PenStyle.DashLine))
+        self._ov_roi.setZValue(30)
+        self._ov_roi.setVisible(False)
+        self.view2d.scene().addItem(self._ov_roi)
+        self.view2d.viewport().installEventFilter(self)
+        self.ov_zoom.viewport().installEventFilter(self)
+        self._ov_img: int | None = None
+        self._ov_center: tuple[float, float] | None = None
+        self._ov_press = None
+        self._ov_busy = False
+        return w
+
+    def _ov_3d_button(self) -> None:
+        b = QPushButton("3D 안구 보기 →")
+        b.setObjectName("ovOpen3d")
+        b.setToolTip("이 PC 에서는 3D 를 작은 화면에 함께 띄우지 않습니다 — 3D 안구 탭에서 봅니다")
+        b.clicked.connect(lambda: self._go("3d"))
+        self._ov_3d_lay.addWidget(b)
+
+    def _on_gl_error(self, msg: str) -> None:
+        msg += "\n\n설정 > 일반 > 3D 렌더링을 '소프트웨어 렌더링'으로 바꾸고 다시 시작해 보세요."
+        if self._ov_gl and not self.eye3d._ok and self.split3d.parent() is self.ov_3d:
+            # OpenGL failed in the small 3D pane: no pop-up at every start — the pane becomes a
+            # button, and the message is shown when the 3D tab is opened
+            self._ov_gl = False
+            self._lay3d.addWidget(self.split3d, 1)
+            self._ov_3d_button()
+            self._gl_msg = msg
+            return
+        QMessageBox.warning(self, "3D", msg)
+
+    def _place_overview(self, on: bool) -> None:
+        """Move the 2D view (and the 3D eye) into 모두 보기 or back to their own tabs."""
+        if on == self._ov_on:
+            return
+        self._ov_on = on
+        if on:
+            self._ov_big_lay.addWidget(self.view2d)
+            if self._ov_gl and self._full3d is None:
+                self._ov_3d_lay.addWidget(self.split3d, 1)
+        else:
+            self._lay2d.addWidget(self.view2d)
+            if self._full3d is None and self.split3d.parent() is self.ov_3d:
+                self._lay3d.addWidget(self.split3d, 1)
+        self.view2d.show()
+        self.split3d.show()
+        self._ov_roi.setVisible(on and self.ov_zoom.has_image())
+
+    def _fill_overview(self, multi: bool = True) -> None:
+        """모두 보기의 작은 화면들: 다중(4장) · 확대(큰 화면과 같은 처리를 한 사진) — 3D 는 _update_3d."""
+        if not self._ov_on:
+            return
+        row = self.current
+        rgb = self.view2d._rgb if row is not None else None     # what the big view shows now
+        center = self._ov_center if row is not None and self._ov_img == row["id"] else None  # same photo: same place
+        self._ov_busy = True                                    # set_rgb fits the view: not a pan
+        try:
+            self.ov_zoom.set_rgb(rgb)
+        finally:
+            self._ov_busy = False
+        if rgb is None:
+            self._ov_img, self._ov_center = None, None
+            self._ov_roi.setVisible(False)
+        else:
+            self._ov_img = row["id"]
+            if center is None:                     # 처음엔 시신경 유두 (모르면 사진 가운데)
+                h, w = rgb.shape[:2]
+                center = (row["disc_x"], row["disc_y"]) if row["disc_x"] is not None else (w / 2, h / 2)
+            self._ov_zoom_to(*center)
+        if multi:
+            self._fill_multi(self.ov_multi)
+
+    def _ov_zoom_to(self, x: float, y: float) -> None:
+        """확대 화면을 사진의 (x, y) 가운데로, 사진 긴 변의 1/OV_ZOOM 을 칸 폭에."""
+        self._ov_center = (x, y)
+        if not self.ov_zoom.has_image():
+            return
+        pm = self.ov_zoom._pix.pixmap()
+        vw, vh = max(self.ov_zoom.viewport().width(), 1), max(self.ov_zoom.viewport().height(), 1)
+        w = max(pm.width(), pm.height()) / OV_ZOOM
+        h = w * vh / vw
+        self._ov_busy = True                       # the scroll bars move: keep the asked-for centre
+        try:
+            self.ov_zoom.zoom_to_rect(QRectF(x - w / 2, y - h / 2, w, h), animate=False)
+        finally:
+            self._ov_busy = False
+        self._ov_sync_roi()
+
+    def _ov_sync_roi(self) -> None:
+        """큰 사진 위의 틀 = 확대 화면에 지금 보이는 곳 (확대 화면을 끌어 옮기면 틀도 따라감)."""
+        if not (self._ov_on and self.ov_zoom.has_image()):
+            self._ov_roi.setVisible(False)
+            return
+        vis = self.ov_zoom.mapToScene(self.ov_zoom.viewport().rect()).boundingRect()
+        r = vis.intersected(QRectF(self.ov_zoom._pix.pixmap().rect()))
+        self._ov_roi.setRect(r)
+        self._ov_roi.setVisible(not r.isEmpty())
+        if not self._ov_busy:
+            c = vis.center()
+            self._ov_center = (c.x(), c.y())
 
     # -- compare -------------------------------------------------------------------
     def _set_compare(self, image_id: int) -> None:
@@ -1541,7 +3129,7 @@ class MainWindow(QMainWindow):
         self._mark_pair()
         self.lbl_status.setText(keys("두 사진을 골랐습니다 (② = 두 번째) — [디스크 2장]으로 시신경 유두 2장 만들기 · "
                                      "Ctrl+클릭으로 해제"))
-        self.tabs.setCurrentIndex(3)
+        self._go("cmp")
         self._fill_compare()
 
     def _fill_compare(self) -> None:
@@ -1593,7 +3181,7 @@ class MainWindow(QMainWindow):
         if first["patient_ref"] != second["patient_ref"]:
             return None, "서로 다른 환자의 사진입니다."
         for row in (first, second):
-            if row["modality"] in ("anterior", "disc"):
+            if row["modality"] in ("anterior", "disc", "glaucoma"):
                 return None, f"{MODALITY_LABELS[row['modality']]} 사진에서는 시신경 유두를 자를 수 없습니다."
         sources = []
         for row in (first, second):
@@ -1641,6 +3229,169 @@ class MainWindow(QMainWindow):
         self.lbl_status.setText("디스크 2장을 이 환자 기록에 저장했습니다")
         return new_id
 
+    # -- glaucoma (녹내장 분석 — glaucoma.py, glaucoma_dialog.py) --------------------------------
+    def _glaucoma_photo(self, row, rgb: np.ndarray) -> Photo:
+        src = self._disc_source(row, rgb)
+        fovea = (row["fovea_x"], row["fovea_y"]) if row["fovea_x"] is not None else None
+        return Photo(row["id"], rgb, src.eye, src.disc,
+                     discpair.disc_diameter_px(src.geometry, src.disc, (rgb.shape[1], rgb.shape[0])),
+                     fovea, src.found == "saved", src.when, src.caption)
+
+    def _build_glaucoma(self, second_id: int | None = None):
+        """``(dialog, "")`` for the shown photo — with ``second_id`` (default: the ② photo, if one
+        is picked) as its pair for stereo and progression — or ``(None, why not)``."""
+        if self.current is None:
+            return None, "사진을 고르세요."
+        first = self.db.get_image(self.current["id"])
+        if second_id is None or second_id == first["id"]:
+            second_id = self.compare["id"] if self.compare is not None else None
+        second = self.db.get_image(second_id) if second_id is not None else None
+        rows = [first] + ([second] if second is not None and second["id"] != first["id"] else [])
+        if len(rows) == 2 and first["patient_ref"] != second["patient_ref"]:
+            return None, "서로 다른 환자의 사진입니다."
+        photos = []
+        for row in rows:
+            if row["modality"] in ("anterior", "disc", "glaucoma"):
+                return None, f"{MODALITY_LABELS[row['modality']]} 사진은 분석할 수 없습니다."
+            rgb = self._load(row)
+            if rgb is None:
+                return None, f"영상을 열 수 없습니다: {Path(row['original_path'] or row['file_path']).name}"
+            photos.append(self._glaucoma_photo(row, rgb))
+        p = self.db.get_patient(first["patient_ref"]) if first["patient_ref"] else None
+        bits = [p["name"] or "(이름 없음)", f"ID {p['patient_id']}"] if p is not None else ["미분류"]
+        bits += [ph.caption for ph in photos]
+        stem = "_".join(x for x in (p["patient_id"] if p is not None else "", "녹내장", first["exam_date"] or "") if x)
+        dlg = GlaucomaDialog(photos[0], photos[1] if len(photos) == 2 else None, title_line="  ·  ".join(bits),
+                             file_stem=safe_component(stem, "녹내장"), save_record=self._save_glaucoma, parent=self)
+        return dlg, ""
+
+    def open_glaucoma(self, second_id: int | None = None) -> None:
+        dlg, why = self._build_glaucoma(second_id)
+        if dlg is None:
+            QMessageBox.information(self, "녹내장 분석", why)
+            return
+        dlg.exec()
+
+    def _save_glaucoma(self, rgb: np.ndarray, note: str, eye: str | None, image_ids) -> int:
+        """Store an analysis picture as a new photo of the patient (modality ``glaucoma``)."""
+        rows = [self.db.get_image(i) for i in image_ids]
+        new_id = self.service.importer.add_derived(
+            rows[0], rgb, note, suffix="녹내장", derived_from=[r["id"] for r in rows],
+            laterality=eye if eye in ("OD", "OS") else rows[0]["laterality"], modality="glaucoma",
+            fov_deg=None, fov_type=None, projection=None, circle_cx=None, circle_cy=None, circle_r=None,
+            disc_x=None, disc_y=None, fovea_x=None, fovea_y=None)
+        self.refresh_patients(keep=True)
+        self._fill_dates()
+        self._fill_thumbs(select_id=self.current["id"] if self.current else None)
+        self.lbl_status.setText("녹내장 분석 화면을 이 환자 기록에 저장했습니다")
+        return new_id
+
+    # -- montage (몽타주 — montage.py, montage_dialog.py) ----------------------------------------
+    @staticmethod
+    def _montage_definition(row) -> dict | None:
+        """The arrangement of a montage made here (None for photos and for a device's montage)."""
+        if row["modality"] != "montage":
+            return None
+        try:
+            d = json.loads(row["meta_json"] or "{}").get("montage")
+        except (ValueError, AttributeError):
+            return None
+        return d if isinstance(d, dict) and d.get("shots") else None
+
+    def _montage_source(self, row, rgb: np.ndarray) -> MontageSource:
+        prof = get_profile(row["profile"])
+        circle = ((row["circle_cx"], row["circle_cy"], row["circle_r"]) if row["circle_r"]
+                  else imaging.detect_circle(rgb))
+        label = row["exam_time"] or row["exam_date"] or Path(row["original_path"] or row["file_path"]).stem
+        if row["exam_date"] and row["exam_time"]:
+            label = f"{row['exam_date'][5:]} {row['exam_time'][:8]}"
+        return MontageSource(
+            row["id"], rgb, imaging.fundus_alpha(rgb, circle), circle,
+            fov_deg=row["fov_deg"] or prof.fov_deg, fov_type=row["fov_type"] or prof.fov_type,
+            projection=row["projection"] or prof.projection, viewpoint=prof.viewpoint, radial_c=prof.radial_c,
+            label=label, disc=(row["disc_x"], row["disc_y"]) if row["disc_x"] is not None else None,
+            laterality=row["laterality"] if row["laterality"] in ("OD", "OS") else None)
+
+    def _montage_sources(self, ids: list[int]):
+        """``(sources, "")`` for the photos ``ids``, or ``(None, why not)``."""
+        if len(ids) < 2:
+            return None, ("사진을 두 장 이상 고르세요.\n\n아래 사진 목록에서 같은 눈의 사진을 차례로 클릭해 번호를 "
+                          "붙인 뒤 [몽타주]를 누르세요.")
+        rows = [self.db.get_image(i) for i in ids]
+        if any(r is None for r in rows):
+            return None, "몽타주에 쓰인 사진 가운데 목록에서 지워진 것이 있습니다."
+        if len({r["patient_ref"] for r in rows}) > 1:
+            return None, "서로 다른 환자의 사진입니다."
+        for r in rows:
+            if r["modality"] in ("anterior", "disc", "glaucoma"):
+                return None, f"{MODALITY_LABELS[r['modality']]} 사진은 몽타주에 쓸 수 없습니다."
+        sources = []
+        for r in rows:
+            rgb = self._load(r)
+            if rgb is None:
+                return None, f"영상을 열 수 없습니다: {Path(r['original_path'] or r['file_path']).name}"
+            sources.append(self._montage_source(r, rgb))
+        return sources, ""
+
+    def _montage_stem(self, row) -> str:
+        p = self.db.get_patient(row["patient_ref"]) if row["patient_ref"] is not None else None
+        bits = [p["patient_id"], p["name"] or ""] if p is not None else []
+        bits += ["몽타주", row["laterality"] or "", row["exam_date"] or ""]
+        return safe_component("_".join(x for x in bits if x), "몽타주")
+
+    def open_montage(self, ids: list[int] | None = None, definition: dict | None = None) -> None:
+        """몽타주 편집기 for the picked photos (or ``ids``; ``definition`` = a saved arrangement)."""
+        if ids is None:
+            ids = list(self._picks)
+        sources, why = self._montage_sources(ids)
+        if sources is None:
+            QMessageBox.information(self, "몽타주", why)
+            return
+        if not confirm_sources(self, sources):
+            return
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            dlg = MontageDialog(sources, file_stem=self._montage_stem(self.db.get_image(ids[0])),
+                                save_record=self._save_montage, definition=definition, parent=self)
+        finally:
+            QApplication.restoreOverrideCursor()
+        self._montage_dlg = dlg
+        try:
+            dlg.exec()
+        finally:
+            self._montage_dlg = None
+            dlg.deleteLater()
+
+    def edit_montage(self, image_id: int) -> None:
+        row = self.db.get_image(image_id)
+        d = self._montage_definition(row) if row is not None else None
+        if d is None:
+            return
+        self.open_montage([s.get("image_id") for s in d["shots"]], definition=d)
+
+    def _save_montage(self, res) -> int:
+        """Store a montage (``montage_dialog.MontageResult``) as a new photo of the patient: modality
+        몽타주, its eye geometry (equidistant, internal field of view) for the 3D view and measurements,
+        and the arrangement for 다시 편집."""
+        ids = [i for i in res.image_ids if i is not None]
+        rows = [self.db.get_image(i) for i in ids]
+        ref_id = res.definition["shots"][res.definition.get("ref", 0)].get("image_id")
+        base = next((r for r in rows if r["id"] == ref_id), rows[0])
+        meta = json.loads(base["meta_json"] or "{}")
+        meta.update(derived_from=ids, montage=res.definition)
+        cx, cy, r = res.geom.circle()
+        new_id = self.service.importer.add_derived(
+            base, res.rgb, f"몽타주 {len(ids)}장 (안구 중심각 {res.fov_deg:g}°)", suffix="몽타주", derived_from=ids,
+            laterality=res.laterality or base["laterality"], modality="montage", fov_deg=res.fov_deg,
+            fov_type="internal", projection="equidistant", circle_cx=cx, circle_cy=cy, circle_r=r,
+            disc_x=res.disc[0] if res.disc else None, disc_y=res.disc[1] if res.disc else None, meta_json=meta)
+        self.refresh_patients(keep=True)
+        self._fill_dates()
+        self._fill_thumbs(select_id=self.current["id"] if self.current else None)
+        self.lbl_status.setText(f"몽타주({len(ids)}장)를 이 환자 기록에 저장했습니다 — 썸네일을 더블클릭하면 2D, "
+                                "3D 안구 탭에서 안구 위에 볼 수 있습니다")
+        return new_id
+
     # -- edit / misc -------------------------------------------------------------------
     def _edit_image(self) -> None:
         if self.current is None:
@@ -1674,7 +3425,9 @@ class MainWindow(QMainWindow):
                                            prof.viewpoint))
         disc = imaging.detect_disc(rgb, circle, disc_frac=min(0.25, 3.8 / max(tmax, 5)), search=prof.disc_search)
         self.db.update_image(image_id, circle_cx=circle[0], circle_cy=circle[1], circle_r=circle[2],
-                             disc_x=disc[0] if disc else None, disc_y=disc[1] if disc else None)
+                             disc_x=disc[0] if disc else None, disc_y=disc[1] if disc else None,
+                             fovea_x=None, fovea_y=None)
+        self._fovea_tried.discard(image_id)     # looked for again when shown
         self._show_image(image_id)
 
     def _remove_image(self, image_id: int) -> None:
@@ -1696,7 +3449,7 @@ class MainWindow(QMainWindow):
             for j, v in enumerate((r["at"].replace("T", " "), r["level"], r["message"], r["path"] or "")):
                 it = QTableWidgetItem(v)
                 if r["level"] == "error":
-                    it.setForeground(Qt.GlobalColor.red)
+                    it.setForeground(QColor(theme.RED))
                 self.log.setItem(i, j, it)
         self.log.resizeColumnToContents(0)
 
@@ -1706,9 +3459,13 @@ class MainWindow(QMainWindow):
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(it.text()).parent)))
 
     def closeEvent(self, e):
+        self._show.stop()
+        self._exit_full_3d()
         try:
             self.settings.save()
         except OSError:
             pass
+        self._preload_timer.stop()
+        self._preloader.shutdown()
         self.service.shutdown()
         super().closeEvent(e)

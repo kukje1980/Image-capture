@@ -72,11 +72,27 @@ class Settings:
     # "auto" | "desktop" | "software" — software = bundled Mesa llvmpipe
     # (opengl32sw.dll), for PCs whose GPU driver lacks OpenGL 2.1.
     opengl: str = "auto"
-    # 3D eye: "simple" (간단히, light-weight) or "detailed" (자세히, anatomical)
-    view3d_detail: str = "simple"
+    # 3D eye: "detailed" (자세히, anatomical — as the web page) or "simple" (간단히, light-weight, for slow PCs;
+    # 설정 → 일반 → 3D 모형)
+    view3d_detail: str = "detailed"
+    # Motion and 3D effects (보기 → 부드러운 움직임; 3D 안구: 입체 조명, 자동 회전)
+    smooth_motion: bool = True
+    relief3d: bool = True
+    auto_rotate3d: bool = True
+    glass3d: int = 80               # 공막 투명도 0 … 100 (0 = the opaque white sclera)
+    align3d: bool = True            # 3D: the photo's fovea / disc at their place on the eye (placement.py)
+    surface3d: bool = True          # 3D 망막 입체: 표면 높낮이 (the retina raised by its relief, relief.py)
+    surface_height3d: int = 45      # … 높이 0 … 100
+    simple3d: bool = False          # 3D 단순하게 보기 (coats, iris, lens and nerve plain)
+    slit_dir3d: str = "down"        # 슬릿 스캔: "down", "up", "right", "left" or "all" (상하좌우)
+    autofind3d: bool = True         # 3D 사진: the macula and disc found automatically are used (off: only marked ones)
+    # the look this settings file was last used with: a newer one may adopt new defaults once
+    ui_version: int = 0
     # Extra user-defined filename regexes tried before the profile patterns.
     custom_filename_patterns: list[str] = field(default_factory=list)
     last_patient: str = ""
+    # Thumbnail strip: rows of photos above the views (1–3, newest first)
+    thumb_rows: int = 2
     # Automatic import (autosetup.py): an always-watched inbox folder and
     # detection of the capture software's folders at every start.
     inbox_dir: str = ""
