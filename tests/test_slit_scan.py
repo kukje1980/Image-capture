@@ -129,6 +129,45 @@ def test_stop_leaves_a_clean_section_view(app):
     assert v.half == pytest.approx(show.END_HALF) and v.xray == 1.0
 
 
+def test_slit_in_four_directions(app):
+    """Down and up on 세로 단면 from the side; right and left on the eye opened at the front; 상하좌우 all
+    four in turn, the section closing while the front opens between them."""
+    from fundusview.ui.slit_scan import FRONT_CUT, SlitScanShow
+
+    v = _eye(app)
+    show = SlitScanShow(v)
+    show.direction = "right"
+    show.start()
+    show._timer.stop()
+    mid = show.frame(sum(show.T_SCAN) / 2)
+    assert mid.phase == "scan" and mid.half == 0.0 and mid.cut == pytest.approx(FRONT_CUT)
+    assert (mid.pose["yaw"], mid.pose["pitch"]) == (0.0, 0.0) and mid.slit.axis == "h"
+    show._apply(mid)
+    assert v.scan_dir() == pytest.approx((1.0, 0.0)) and v.slit_axis == "h"
+    end = show.frame(show.total)
+    assert end.half == 0.0 and end.cut == pytest.approx(FRONT_CUT)       # it ends on the opened eye
+    show.direction = "up"
+    show.start()
+    show._timer.stop()
+    f = show.frame(sum(show.T_SCAN) / 2)
+    assert f.half == 1.0 and f.cut == 1.0 and f.slit.sign == 1.0
+    show._apply(f)
+    assert v.scan_dir() == pytest.approx((0.0, -1.0))
+    th_lo, side_lo = v.scan_theta(0.1)                                    # up: it starts at the bottom
+    assert side_lo == -1.0
+    show.direction = "all"
+    show.start()
+    show._timer.stop()
+    kinds = [g[0] for g in show._segs]
+    assert kinds == ["scan", "gap", "scan", "switch", "scan", "gap", "scan"]
+    sw = next(g for g in show._segs if g[0] == "switch")
+    closing = show.frame(sw[1] + 0.9)
+    assert 0.0 < closing.half < 1.0 and closing.scan is None
+    opened = show.frame(sw[2] - 0.01)
+    assert opened.half == pytest.approx(0.0, abs=1e-3) and opened.cut == pytest.approx(FRONT_CUT, abs=0.01)
+    show.stop()
+
+
 def test_photo_panel_slit_and_privacy(app):
     from PySide6.QtGui import QColor
 
@@ -162,5 +201,12 @@ def test_photo_panel_slit_and_privacy(app):
     assert below < bright[1] * 0.5                      # not yet scanned: dark
     slit = img.pixelColor(int(rect.center().x()), int(p.slit_y(0.5)))
     assert slit.red() > 200 and slit.red() > slit.blue() + 60            # the glowing slit
+    p.set_scan(0.5, 1.0, (1.0, 0.0))                   # left to right: the right half not scanned yet
+    img = p.grab().toImage()
+
+    def lum_x(f):
+        c = img.pixelColor(int(rect.left() + rect.width() * f), int(rect.center().y()))
+        return c.red() + c.green() + c.blue()
+    assert lum_x(0.7) < lum_x(0.3) * 0.5
     p.set_image(None)
     assert not p.has_image() and isinstance(p.grab().toImage().pixelColor(5, 5), QColor)

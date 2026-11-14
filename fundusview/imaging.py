@@ -5,6 +5,7 @@
   mask, robust to burned-in text/logos outside the circle and to circles
   clipped at the top/bottom of the frame
 * :func:`detect_disc`   — brightest-blob estimate of the optic disc
+* :func:`detect_fovea`  — the dark macula where the disc says it should be
 * :func:`fundus_alpha`  — soft-edged mask used as the 3D texture's alpha
 * :func:`adjust`        — display adjustments (brightness/contrast/gamma,
   red-free / single channel, invert, auto-stretch) via 256-entry LUTs
@@ -16,6 +17,11 @@ from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageFilter, ImageOps
+
+try:                         # OpenCV (also used by 몽타주): the heavy per-pixel steps in C
+    import cv2
+except ImportError:          # pragma: no cover - listed in requirements.txt
+    cv2 = None
 
 Image.MAX_IMAGE_PIXELS = 400_000_000  # montages are large; files are local and trusted
 
@@ -147,8 +153,9 @@ def detect_disc(rgb: np.ndarray, circle: tuple[float, float, float], *, disc_fra
     contrast (standard deviation over a disc-sized window) inside ``search``
     × radius. ``disc_frac`` is the expected disc radius as a fraction of the
     image-circle radius (≈ 3.8° / half internal FOV). Confidence is the peak's
-    z-score; detections closer than 8 % of the radius to the centre are
-    rejected (a fovea-centred photo never has its disc there).
+    z-score. A detection closer than 8 % of the radius to the centre is kept
+    only when the place is bright as well (a disc-centred photo); the centre
+    of a fovea-centred photo — the dark macula with its reflex — is not a disc.
     """
     small, step = _downsample(rgb, 384)
     cx, cy, r = (v / step for v in circle)
@@ -167,8 +174,12 @@ def detect_disc(rgb: np.ndarray, circle: tuple[float, float, float], *, disc_fra
     z[~inside] = -1e9
     iy, ix = np.unravel_index(np.argmax(z), z.shape)
     conf = float(z[iy, ix])
-    if conf < 3.0 or d2[iy, ix] < (0.08 * r) ** 2:
+    if conf < 3.0:
         return None
+    if d2[iy, ix] < (0.08 * r) ** 2:
+        means = mean[inside]
+        if (mean[iy, ix] - np.median(means)) / (means.std() + 1e-6) < 1.0:
+            return None
     return ((ix + 0.5) * step, (iy + 0.5) * step, conf)
 
 
@@ -182,8 +193,92 @@ def laterality_from_disc(disc, circle: tuple[float, float, float]) -> str | None
     return "OD" if dx > 0 else "OS"
 
 
+def _blur(a: np.ndarray, sigma: float) -> np.ndarray:
+    if cv2 is not None:
+        return cv2.GaussianBlur(np.ascontiguousarray(a, np.float32), (0, 0), max(0.3, sigma)).astype(np.float64)
+    return gaussian_blur(a, max(0.3, sigma))
+
+
+def detect_fovea(rgb: np.ndarray, cam, disc, laterality: str | None = None, *,
+                 window_deg: float = 7.0, with_side: bool = False):
+    """The fovea ``(x, y, confidence)`` or ``None``.
+
+    The macula is a dark, vessel-free patch about 4.5 mm temporal of the disc and a little below
+    it. ``cam`` (:class:`placement.Camera`) says where that is in this photo; within
+    ``window_deg`` of it the fovea is the centre of the darkest macula-sized patch (the green
+    channel against its surroundings — the foveal reflex and thin vessels are blurred away).
+    ``None`` without a disc, when the macula is outside the photo, or when nothing dark enough is
+    there (then the disc alone places the photo).
+
+    An eye not known (``laterality`` None) is looked at on both sides of the disc, the side the
+    disc's place suggests first; the macula found tells the eye (``with_side``: the result is
+    ``(x, y, confidence, "OD" | "OS")``).
+    """
+    from . import placement
+
+    if disc is None or cam is None or not cam.r:
+        return None
+    if laterality in ("OD", "OS"):
+        sides = [laterality]
+    else:                                            # an unknown eye: both sides, the likelier first
+        sides = ["OS", "OD"] if placement.side_of(disc, cam, None) == "OS" else ["OD", "OS"]
+    small, step = _downsample(rgb, 384)
+    h, w = small.shape[:2]
+    green = small[..., 1].astype(np.float64) if small.ndim == 3 else small.astype(np.float64)
+    yy, xx = np.mgrid[0:h, 0:w]
+    dirs, inside = cam.directions((xx + 0.5) * step, (yy + 0.5) * step)
+    mask = (inside & (luminance(small.astype(np.float64)) > 8.0)).astype(np.float64)
+    best = None
+    for side in sides:
+        guess = placement.expected_fovea(cam, disc, side)
+        if guess is None:
+            continue
+        q0 = cam.direction(*guess)
+        gx, gy = guess[0] / step, guess[1] / step
+        q1 = cam.direction(min(guess[0] + step, cam.cx + cam.r), guess[1])
+        deg_px = max(placement.angle_between(q0, q1), 1e-3) if q1 is not None else math.degrees(cam.tmax) / (cam.r / step)
+        s_small, s_big = 1.5 / deg_px, 6.0 / deg_px
+        g = green
+        if cv2 is not None:                          # the foveal reflex and other small bright spots: opened away
+            k = max(3, int(round(2.0 / deg_px)) | 1)
+            g = cv2.morphologyEx(np.ascontiguousarray(green, np.float32), cv2.MORPH_OPEN,
+                                 cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))).astype(np.float64)
+        cover = np.maximum(_blur(mask, s_big), 1e-6)
+        dark = _blur(g * mask, s_big) / cover - _blur(g * mask, s_small) / np.maximum(_blur(mask, s_small), 1e-6)
+        valid = (mask > 0) & (cover > 0.85)
+        if valid.sum() < 50:
+            continue
+        dist = np.degrees(np.arccos(np.clip(dirs @ q0, -1.0, 1.0)))
+        win = valid & (dist <= window_deg)
+        if not win.any():
+            continue
+        spread = float(dark[valid].std()) + 0.25
+        score = np.where(win, dark / spread * (0.55 + 0.45 * np.exp(-(dist / (0.7 * window_deg)) ** 2)), -1e9)
+        iy, ix = np.unravel_index(int(np.argmax(score)), score.shape)
+        peak = float(dark[iy, ix])
+        around = float(_blur(g * mask, s_big)[iy, ix] / cover[iy, ix])
+        if peak < max(1.0, 0.012 * around):          # not darker than its surroundings: no macula to see
+            continue
+        conf = peak / spread
+        # the centre of the dark patch, not its single darkest pixel
+        near = win & (np.hypot(xx - ix, yy - iy) <= 4.0 / deg_px)
+        wgt = np.where(near, np.maximum(dark - 0.5 * peak, 0.0), 0.0)
+        if peak > 0 and wgt.sum() > 0:
+            fx, fy = float((wgt * xx).sum() / wgt.sum()), float((wgt * yy).sum() / wgt.sum())
+        else:
+            fx, fy = float(ix), float(iy)
+        cand = ((fx + 0.5) * step, (fy + 0.5) * step, conf, side, math.hypot(fx - gx, fy - gy))
+        if best is None or cand[2] > best[2]:
+            best = cand
+    if best is None or best[2] < 1.2:
+        return None
+    return best[:4] if with_side else best[:3]
+
+
 def fundus_alpha(rgb: np.ndarray, circle: tuple[float, float, float] | None = None) -> np.ndarray:
     """``uint8`` alpha: 255 on illuminated retina, 0 on the black surround."""
+    if cv2 is not None and rgb.dtype == np.uint8 and rgb.ndim == 3:
+        return _fundus_alpha_cv(rgb, circle)       # 24-megapixel photo: 0.1 s instead of 1.5 s
     lum = luminance(rgb.astype(np.float32))
     thr = max(8.0, 0.05 * float(np.percentile(lum, 99)))
     mask = (lum > thr).astype(np.uint8) * 255
@@ -195,6 +290,29 @@ def fundus_alpha(rgb: np.ndarray, circle: tuple[float, float, float] | None = No
     img = Image.fromarray(mask).filter(ImageFilter.MinFilter(3))
     img = img.filter(ImageFilter.GaussianBlur(max(1.0, min(mask.shape) / 600)))
     return np.asarray(img)
+
+
+def _fundus_alpha_cv(rgb: np.ndarray, circle) -> np.ndarray:
+    """``fundus_alpha`` with OpenCV: the same steps on bytes instead of floats."""
+    lum = cv2.cvtColor(np.ascontiguousarray(rgb[..., :3]), cv2.COLOR_RGB2GRAY)
+    cdf = np.cumsum(cv2.calcHist([lum], [0], None, [256], [0, 256]).ravel())
+    p99 = int(np.searchsorted(cdf, 0.99 * cdf[-1]))
+    thr = max(8.0, 0.05 * p99)
+    _, mask = cv2.threshold(lum, int(math.floor(thr)), 255, cv2.THRESH_BINARY)   # lum > thr
+    if circle is not None:
+        cx, cy, r = circle
+        disc = np.zeros_like(mask)
+        cv2.circle(disc, (int(round(cx)), int(round(cy))), int(r * 1.01), 255, -1)
+        mask = cv2.bitwise_and(mask, disc)
+    mask = cv2.erode(mask, np.ones((3, 3), np.uint8))
+    sigma = max(1.0, min(mask.shape) / 600)
+    k = int(sigma // 2)                               # a wide soft edge: blurred on a smaller copy
+    if k < 2:
+        return cv2.GaussianBlur(mask, (0, 0), sigma)
+    h, w = mask.shape
+    small = cv2.resize(mask, (max(1, w // k), max(1, h // k)), interpolation=cv2.INTER_AREA)
+    small = cv2.GaussianBlur(small, (0, 0), sigma / k)
+    return cv2.resize(small, (w, h), interpolation=cv2.INTER_LINEAR)
 
 
 def thumbnail(rgb: np.ndarray, size: int = 320) -> Image.Image:
@@ -227,12 +345,16 @@ def adjust(rgb: np.ndarray, *, brightness: float = 0.0, contrast: float = 1.0, g
     if channel == "rgb":
         src = rgb
     elif channel == "redfree":  # green channel, shown as green-tinted grey
-        g = rgb[..., 1]
-        tint = (g * 0.85).astype(np.uint8)
-        src = np.stack([tint, g, tint], axis=-1)
+        g = np.ascontiguousarray(rgb[..., 1])
+        if cv2 is not None and g.dtype == np.uint8:
+            tint = cv2.LUT(g, (np.arange(256) * 0.85).astype(np.uint8))
+            src = cv2.merge([tint, g, tint])
+        else:
+            tint = (g * 0.85).astype(np.uint8)
+            src = np.stack([tint, g, tint], axis=-1)
     else:
-        g = rgb[..., {"red": 0, "green": 1, "blue": 2}[channel]]
-        src = np.stack([g, g, g], axis=-1)
+        g = np.ascontiguousarray(rgb[..., {"red": 0, "green": 1, "blue": 2}[channel]])
+        src = cv2.merge([g, g, g]) if cv2 is not None and g.dtype == np.uint8 else np.stack([g, g, g], axis=-1)
     identity = brightness == 0 and contrast == 1 and gamma == 1 and not invert and not auto \
         and tuple(levels) == (0, 255)
     if identity:
@@ -248,6 +370,8 @@ def adjust(rgb: np.ndarray, *, brightness: float = 0.0, contrast: float = 1.0, g
     lut = _lut(brightness, contrast, gamma, lo, hi)
     if invert:
         lut = 255 - lut
+    if cv2 is not None and src.dtype == np.uint8:      # table look-up in C: ~8× faster on a large photo
+        return cv2.LUT(np.ascontiguousarray(src), lut)
     return lut[src]
 
 
@@ -301,6 +425,18 @@ def histogram(rgb: np.ndarray) -> np.ndarray:
     sample = rgb[::2, ::2].reshape(-1, 3)
     sample = sample[luminance(sample.astype(np.float32)) > 10]
     return np.stack([np.bincount(sample[:, c], minlength=256)[:256] for c in range(3)])
+
+
+def shrink(a: np.ndarray, factor: float, like: np.ndarray | None = None) -> np.ndarray:
+    """``a`` (uint8, grey or RGB) reduced by ``factor`` < 1 with area averaging — or to the size of ``like``."""
+    h, w = a.shape[:2]
+    if like is not None:
+        size = (like.shape[1], like.shape[0])
+    else:
+        size = (max(1, round(w * factor)), max(1, round(h * factor)))
+    if cv2 is not None:
+        return cv2.resize(a, size, interpolation=cv2.INTER_AREA)
+    return np.asarray(Image.fromarray(a).resize(size, Image.Resampling.BOX))
 
 
 def downscale(rgb: np.ndarray, max_side: int) -> np.ndarray:

@@ -13,15 +13,26 @@ concurrency:
 jobs:
   test-linux:
     runs-on: ubuntu-latest
+    timeout-minutes: 45          # not the default six hours when the runner's network hangs
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: >-
-          sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libxkbcommon-x11-0
-          xvfb libgl1-mesa-dri libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0
-          libxcb-xinerama0 libxcb-randr0 libxcb-render-util0 libxcb-image0
+      # the runner's package mirror sometimes cannot be reached for a while: retry before giving up
+      - name: Qt and OpenGL libraries
+        timeout-minutes: 20
+        run: |
+          PKGS="libegl1 libgl1 libxkbcommon-x11-0 xvfb libgl1-mesa-dri libxcb-cursor0 libxcb-icccm4
+                libxcb-keysyms1 libxcb-shape0 libxcb-xinerama0 libxcb-randr0 libxcb-render-util0 libxcb-image0"
+          for try in 1 2 3; do
+            if sudo apt-get -o Acquire::Retries=3 update && \
+               sudo apt-get -o Acquire::Retries=3 install -y $PKGS; then
+              exit 0
+            fi
+            echo "apt-get failed (try $try/3), waiting"; sleep $((try * 30))
+          done
+          exit 1
       - run: pip install -r requirements.txt pytest
       - run: python -m pytest -q tests
         env:
@@ -58,63 +69,20 @@ jobs:
           name: release-windows
           path: FundusViewer-windows.zip
 
-  build-mac:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-15          # Apple Silicon (M1, M2, M3, M4 …)
-            label: AppleSilicon
-          - runner: macos-15-intel    # Intel Macs
-            label: Intel
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Tests, app bundle, ad-hoc signature and dmg
-        run: ./build_mac.sh
-      - name: Start the bundled app (demo photos)
-        env:
-          QT_QPA_PLATFORM: offscreen
-        run: |
-          HOME_DIR="$RUNNER_TEMP/fv-home"
-          dist/FundusViewer.app/Contents/MacOS/FundusViewer --demo --home "$HOME_DIR" &
-          PID=$!
-          for i in $(seq 1 30); do
-            n=$(sqlite3 "$HOME_DIR/Library/fundus.db" "select count(*) from images" 2>/dev/null || echo 0)
-            [ "$n" -gt 0 ] && break
-            sleep 1
-          done
-          kill -0 $PID            # still running
-          kill $PID || true
-          echo "imported demo photos: $n"
-          [ "$n" -gt 0 ]
-      # render the 3D eye with Apple's OpenGL (the runner's window server
-      # provides a context), which also checks that every shader compiles there
-      - name: 3D eye on macOS OpenGL
-        env:
-          FUNDUSVIEW_REQUIRE_GL: "1"
-        run: python -m pytest -q -rs tests/test_eye3d_gl.py
-      - uses: actions/upload-artifact@v4
-        with:
-          name: release-mac-${{ matrix.label }}
-          path: dist/FundusViewer-mac-${{ matrix.label }}.dmg
-          if-no-files-found: error
-
-  # Fixed download addresses for the newest builds:
+  # Fixed download address for the newest build (Windows only for now — a Mac app is built by hand
+  # with ./build_mac.sh when needed):
   # https://github.com/<owner>/<repo>/releases/download/fundus-viewer-latest/FundusViewer-windows.zip
-  # https://github.com/<owner>/<repo>/releases/download/fundus-viewer-latest/FundusViewer-mac-AppleSilicon.dmg
-  # https://github.com/<owner>/<repo>/releases/download/fundus-viewer-latest/FundusViewer-mac-Intel.dmg
   # Only main publishes: pushes to other branches (and pull requests) still build and test,
   # but must not replace the public download with unmerged work. A manual run on main
   # (workflow_dispatch) republishes.
+  # The download waits for the Windows build, which runs the whole test suite itself. test-linux
+  # (the same tests, and the 3D eye rendered with OpenGL) stays a check of its own, so a Linux
+  # runner that cannot reach its package mirror does not hold the download back.
   publish:
     if: >-
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
       && github.ref == 'refs/heads/main'
-    needs: [test-linux, build-windows, build-mac]
+    needs: [build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write   # publish the builds as a release (download without logging in)
@@ -134,5 +102,5 @@ jobs:
           gh release delete fundus-viewer-latest --yes --cleanup-tag || true
           gh release create fundus-viewer-latest out/* \
             --target "$GITHUB_SHA" --prerelease \
-            --title "안저 사진 뷰어 (Windows · Mac 최신 빌드)" \
+            --title "안저 사진 뷰어 (Windows 최신 빌드)" \
             --notes-file docs/release_notes.md

@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import discpair
+from . import theme
 from .image_view import from_qimage, to_qimage
 
 TITLE = "시신경 유두 사진 (Optic Disc Photographs)"
@@ -89,7 +90,7 @@ class _Preview(QLabel):
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setMinimumSize(860, 560)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.setStyleSheet("background:#3a4148")
+        self.setStyleSheet("background:#0c0c0d; border-radius: 10px")
         self.setCursor(Qt.CursorShape.CrossCursor)
         self._img: QImage | None = None
 
@@ -149,9 +150,9 @@ class DiscPairDialog(QDialog):
         self.preview = _Preview()
         self.preview.clickedAt.connect(self._on_click)
         self.hint = QLabel("유두 중심이 맞지 않으면 사진에서 유두 중심을 클릭하세요 — 그곳을 중심으로 다시 자릅니다")
-        self.hint.setStyleSheet("color:#667")
+        self.hint.setStyleSheet(f"color:{theme.TEXT3}")
         self.warn = QLabel("")
-        self.warn.setStyleSheet("color:#b4561a; font-weight:600")
+        self.warn.setStyleSheet(f"color:{theme.ORANGE}; font-weight:600")
         self.warn.setWordWrap(True)
         self.field = QComboBox()
         for key, label, factor in discpair.FIELDS:
@@ -172,7 +173,7 @@ class DiscPairDialog(QDialog):
         opts.addStretch()
         opts.addWidget(b_swap)
         self.status = QLabel("")
-        self.status.setStyleSheet("color:#1d7a46")
+        self.status.setStyleSheet(f"color:{theme.GREEN}")
         btns = QHBoxLayout()
         btns.addWidget(self.status, 1)
         self.b_record = QPushButton("환자 기록에 저장")

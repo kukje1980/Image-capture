@@ -48,6 +48,8 @@ CREATE TABLE IF NOT EXISTS images (
     circle_r      REAL,
     disc_x        REAL,            -- optic disc estimate (pixels), may be NULL
     disc_y        REAL,
+    fovea_x       REAL,            -- fovea (pixels), found or marked; NULL: not known
+    fovea_y       REAL,
     meta_json     TEXT,
     note          TEXT,
     imported_at   TEXT NOT NULL
@@ -75,8 +77,11 @@ IMAGE_COLUMNS = (
     "patient_ref", "exam_date", "exam_time", "laterality", "modality", "device",
     "profile", "fov_deg", "fov_type", "projection", "file_path", "display_path", "thumb_path",
     "original_path", "sha256", "width", "height", "circle_cx", "circle_cy",
-    "circle_r", "disc_x", "disc_y", "meta_json", "note",
+    "circle_r", "disc_x", "disc_y", "fovea_x", "fovea_y", "meta_json", "note",
 )
+
+# columns added after the first release: (table, column, type) — libraries made before get them on opening
+ADDED_COLUMNS = (("images", "fovea_x", "REAL"), ("images", "fovea_y", "REAL"))
 
 
 def _now() -> str:
@@ -94,6 +99,10 @@ class Database:
             self._con.execute("PRAGMA journal_mode=WAL")
             self._con.execute("PRAGMA foreign_keys=ON")
             self._con.executescript(SCHEMA)
+            for table, column, kind in ADDED_COLUMNS:
+                have = {r["name"] for r in self._con.execute(f"PRAGMA table_info({table})")}
+                if column not in have:
+                    self._con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
             self._con.commit()
 
     def close(self) -> None:

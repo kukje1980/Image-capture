@@ -1,0 +1,177 @@
+<!--head-->
+<title>3D 안구 미리보기</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>/*@CSS@*/</style>
+<!--/head-->
+<header class="bar">
+  <div class="brand">
+    <span class="brand-name">3D 안구 미리보기</span>
+    <span class="brand-sub">안저 사진 뷰어 · 3D 기능 시제품</span>
+  </div>
+  <div class="seg seg-bar" role="radiogroup" aria-label="보는 곳">
+    <input type="radio" name="mode" id="mode-out" checked><label for="mode-out" title="안구 모형을 바깥에서 봅니다">외부</label>
+    <input type="radio" name="mode" id="mode-in"><label for="mode-in" title="동공을 지나 안으로 들어가 망막을 바라봅니다 (망막 시점)">내부</label>
+  </div>
+  <span class="zoom" id="zoom" title="처음 보기 대비 확대 배율 · 더블클릭 또는 0: 처음 보기">배율 ×1.0</span>
+  <span class="grow"></span>
+  <button class="btn primary" id="scan" title="안구를 옆에서 반으로 자른 단면에 화각을 보이고, 슬릿이 사진을 위에서 아래로 훑는 동안 빛이 동공을 지나 같은 망막 위치에 닿는 모습을 보여 줍니다">▶ 슬릿 스캔</button>
+  <button class="btn" id="full" title="3D 안구를 화면 전체로 (Esc: 돌아가기 · Space: 슬릿 스캔)">크게 보기</button>
+  <button class="btn toggle" id="panel" aria-pressed="true" title="오른쪽 설정 패널 보이기 / 숨기기">설정</button>
+</header>
+
+<main class="main">
+  <section class="stage" id="stage" aria-label="3D 안구">
+    <div class="side-photo"><canvas id="side-photo" aria-label="평면 사진"></canvas></div>
+    <div class="viewport">
+      <canvas id="eye" tabindex="0" aria-label="3D 안구 — 드래그: 회전, 휠: 확대, 더블클릭: 처음 보기"></canvas>
+      <canvas id="eye-overlay" aria-hidden="true"></canvas>
+      <p class="where" id="where" aria-live="polite" hidden></p>
+      <p class="gl-error" id="gl-error"></p>
+    </div>
+  </section>
+
+  <aside class="inspector" aria-label="설정">
+    <div class="group">
+      <h2 class="group-title">사진</h2>
+      <div class="card">
+        <div class="row"><label class="row-label" for="photo-select">데모 사진</label>
+          <select id="photo-select"></select></div>
+        <div class="row">
+          <label class="btn plain file" for="photo-file">내 사진 열기…</label>
+          <input type="file" id="photo-file" accept="image/*">
+          <span class="row-note">끌어다 놓아도 됩니다</span>
+        </div>
+        <div class="row"><label class="row-label" for="device">장비</label>
+          <select id="device">
+            <option value="camera45">일반 안저카메라 (45°)</option>
+            <option value="reticam">RetiCam 3100 Plus (176°)</option>
+            <option value="apollo">APOLLO (135° · 165°)</option>
+          </select></div>
+        <div class="row"><label class="row-label" for="lat">눈</label>
+          <select id="lat">
+            <option value="auto">자동 (유두 위치로)</option>
+            <option value="OD">OD · 우안</option>
+            <option value="OS">OS · 좌안</option>
+          </select></div>
+        <label class="row switch" title="사진을 열면 시신경 유두와 황반을 자동으로 찾아 안구의 제자리에 맞춥니다 (프로그램이 사진을 가져올 때와 같은 방법)"><span>황반·유두 자동으로 찾기</span><input type="checkbox" role="switch" id="autofind" checked></label>
+        <canvas id="photo" class="photo-preview" aria-label="사진 — 유두(노란 원)와 황반(하늘색 원)"></canvas>
+        <p class="photo-name" id="photo-name"></p>
+        <p class="found" id="found" aria-live="polite"></p>
+        <div class="row buttons">
+          <span class="row-note">고치기</span>
+          <button class="btn plain toggle small" id="mark-fovea" aria-pressed="false" title="자동으로 찾은 위치가 틀렸을 때: 사진에서 황반(중심와)을 눌러 정합니다">황반 지정</button>
+          <button class="btn plain toggle small" id="mark-disc" aria-pressed="false" title="자동으로 찾은 위치가 틀렸을 때: 사진에서 시신경 유두를 눌러 정합니다">유두 지정</button>
+          <button class="btn plain small" id="redetect" title="직접 정한 위치를 지우고 자동으로 다시 찾습니다">다시 찾기</button>
+        </div>
+        <p class="hint" id="mark-hint" aria-live="polite"></p>
+      </div>
+    </div>
+
+    <div class="group">
+      <h2 class="group-title">망막 입체</h2>
+      <div class="card">
+        <label class="row switch" title="혈관은 솟고, 시신경 유두의 함몰(cup)과 황반의 오목(pit)은 파이도록 사진이 얹힌 망막 표면을 실제로 올리고 내립니다 — 돌려 보면 높낮이가 보입니다"><span>표면 높낮이</span><input type="checkbox" role="switch" id="surface" checked></label>
+        <div class="row"><label class="row-label" for="height">높이</label><input type="range" id="height" min="0" max="100" value="45" title="높낮이를 얼마나 크게 보일지 (실제보다 과장해서 보여 줍니다)"></div>
+        <label class="row switch" title="표면의 높낮이에 비스듬한 빛을 비춰 혈관과 유두·황반이 도드라져 보이게 합니다"><span>입체 조명</span><input type="checkbox" role="switch" id="relief" checked></label>
+      </div>
+    </div>
+
+    <div class="group">
+      <h2 class="group-title">시점</h2>
+      <div class="card"><div class="row buttons">
+        <button class="btn plain" id="front">정면</button>
+        <button class="btn plain" id="home">처음 시점</button>
+      </div></div>
+    </div>
+
+    <div class="group">
+      <h2 class="group-title">들어가며 보기</h2>
+      <div class="card">
+        <div class="row">
+          <button class="btn primary" id="journey-play" title="안구 전체에서 각막·앞방·동공·수정체·유리체를 지나 망막까지 들어갑니다 (다시 누르면 나옵니다)">▶ 들어가기</button>
+          <span class="row-note">각막 → 동공 → 수정체 → 망막</span>
+        </div>
+        <div class="row"><label class="row-label" for="journey">위치</label>
+          <input type="range" id="journey" min="0" max="100" value="0" title="왼쪽 끝 = 안구 전체, 오른쪽 끝 = 망막 (끌어서 원하는 곳에서 멈춰 보세요)"></div>
+      </div>
+    </div>
+
+    <div class="group">
+      <h2 class="group-title">안구 열기</h2>
+      <div class="card">
+        <div class="seg" role="radiogroup" aria-label="여는 방식">
+          <input type="radio" name="view" id="view-front" value="front" checked><label for="view-front" title="앞부분을 잘라 안쪽 망막을 봅니다">앞쪽 절개</label>
+          <input type="radio" name="view" id="view-section" value="section"><label for="view-section" title="사진의 세로 자오선을 따라 안구를 잘라 옆에서 봅니다 — 층 구조와 화각 (깊이 왼쪽 끝 = 정확히 반)">세로 단면</label>
+        </div>
+        <div class="row"><label class="row-label" for="cut">깊이</label><input type="range" id="cut" min="-30" max="100" value="25" title="자르는 깊이 (오른쪽 끝 = 닫힌 안구)"></div>
+        <div class="row"><label class="row-label" for="glass">공막 투명도</label><input type="range" id="glass" min="0" max="100" value="80" title="공막을 유리처럼 비쳐 보이게 합니다 — 사진이 있는 망막은 진하게 남습니다 (왼쪽 끝 = 흰 공막)"></div>
+        <label class="row switch"><span>망막 투시</span><input type="checkbox" role="switch" id="xray"></label>
+      </div>
+    </div>
+
+    <div class="group">
+      <h2 class="group-title">슬릿 스캔</h2>
+      <div class="card">
+        <div class="seg slit" role="radiogroup" aria-label="슬릿이 사진을 지나가는 방향">
+          <input type="radio" name="slitdir" id="slit-down" value="down" checked><label for="slit-down" title="위에서 아래로 (세로 단면)" aria-label="위에서 아래로">↓</label>
+          <input type="radio" name="slitdir" id="slit-up" value="up"><label for="slit-up" title="아래에서 위로 (세로 단면)" aria-label="아래에서 위로">↑</label>
+          <input type="radio" name="slitdir" id="slit-right" value="right"><label for="slit-right" title="왼쪽에서 오른쪽으로 (앞을 연 안구의 망막 위로)" aria-label="왼쪽에서 오른쪽으로">→</label>
+          <input type="radio" name="slitdir" id="slit-left" value="left"><label for="slit-left" title="오른쪽에서 왼쪽으로 (앞을 연 안구의 망막 위로)" aria-label="오른쪽에서 왼쪽으로">←</label>
+          <input type="radio" name="slitdir" id="slit-all" value="all"><label for="slit-all" title="위↓ 아래↑ 왼→ 오른← 네 방향을 차례로">상하좌우</label>
+        </div>
+        <p class="slit-note" id="slit-note">위에서 아래로 — 세로 단면을 옆에서 봅니다</p>
+        <button class="btn primary wide" id="scan2" title="고른 방향으로 슬릿이 사진을 훑는 동안 빛이 동공을 지나 같은 망막 위치에 닿는 모습을 보여 줍니다">▶ 슬릿 스캔</button>
+      </div>
+    </div>
+
+    <div class="group">
+      <h2 class="group-title">효과</h2>
+      <div class="card">
+        <label class="row switch" title="손을 떼고 있으면 안구가 천천히 돕니다 (만지면 멈췄다가 다시 돕니다)"><span>자동 회전</span><input type="checkbox" role="switch" id="spin" checked></label>
+        <label class="row switch" title="세로 단면에는 안구 중심에서 잰 화각, 다른 보기에는 망막 위 촬영 범위의 경계"><span>화각 표시</span><input type="checkbox" role="switch" id="fovmarks"></label>
+        <label class="row switch" title="3D 안구 옆에 사진을 평면으로 함께 보여 줍니다"><span>사진 나란히</span><input type="checkbox" role="switch" id="sidephoto"></label>
+      </div>
+    </div>
+
+    <div class="group">
+      <h2 class="group-title">표시</h2>
+      <div class="card">
+        <label class="row switch" title="공막·홍채·수정체·시신경을 단순한 모양과 색으로 그려 사진이 얹힌 망막과 그 입체가 잘 보이게 합니다"><span>단순하게 보기 <span class="row-note">망막 강조</span></span><input type="checkbox" role="switch" id="simple"></label>
+        <label class="row switch"><span>시신경</span><input type="checkbox" role="switch" id="nerve" checked></label>
+        <label class="row switch" title="네 곧은근과 두 빗근의 부착부(절단면)"><span>외안근</span><input type="checkbox" role="switch" id="muscles"></label>
+        <label class="row switch" title="황반(후극)에서 10°마다 링, 30°마다 진하게"><span>각도 격자</span><input type="checkbox" role="switch" id="grid"></label>
+      </div>
+    </div>
+
+    <div class="group">
+      <h2 class="group-title">사진 맞춤</h2>
+      <div class="card">
+        <label class="row switch" title="사진의 황반을 안구 뒤쪽 한가운데(후극)에, 시신경 유두를 코쪽 제자리에 오도록 사진을 얹습니다"><span>실제 위치에 맞춤</span><input type="checkbox" role="switch" id="align" checked></label>
+        <div class="row"><label class="row-label" for="fov">화각</label><span class="unit"><input type="number" id="fov" min="5" max="300" step="0.5" value="135">°</span></div>
+        <div class="row"><label class="row-label" for="fovtype">화각 기준</label>
+          <select id="fovtype"><option value="internal">안구 중심각</option><option value="external">외부각(동공)</option></select></div>
+        <div class="row"><label class="row-label" for="projection">투영</label><select id="projection"></select></div>
+        <div class="row"><label class="row-label" for="roll">회전</label><span class="unit"><input type="number" id="roll" min="-180" max="180" step="1" value="0">°</span></div>
+        <button class="btn plain wide" id="fitfov" title="화각을 모르는 사진: 황반과 시신경 유두 사이가 보통 거리(약 4.5 mm)가 되도록 화각을 정합니다">황반–유두 거리로 크기 맞춤</button>
+      </div>
+      <p class="caption" id="caption" aria-live="polite"></p>
+    </div>
+
+    <div class="group">
+      <h2 class="group-title">조작</h2>
+      <div class="card keys">
+        <p><b>드래그</b> 회전 (놓으면 관성으로 더 돕니다) · <b>휠</b> 커서 쪽으로 확대 · <b>오른쪽 드래그</b> 확대</p>
+        <p><b>Shift+드래그</b> 또는 <b>가운데 버튼</b> 이동 · <b>더블클릭</b> 처음 보기 · <b>←↑→↓ + − 0</b></p>
+        <p><b>터치</b> 한 손가락 회전 · 두 손가락 벌리기·오므리기 확대, 끌기 이동</p>
+      </div>
+    </div>
+  </aside>
+</main>
+
+<footer class="status">
+  <span id="status" aria-live="polite">데모 사진을 불러오는 중…</span>
+  <span class="privacy">내 사진은 이 브라우저 안에서만 쓰이고 어디에도 올라가지 않습니다</span>
+</footer>
+
+<script type="application/json" id="eye-data">@DATA@</script>
+<script>/*@JS@*/</script>

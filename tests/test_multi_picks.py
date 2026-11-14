@@ -93,15 +93,15 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
         assert w.picks() == [ids[0], ids[1]]
 
         # double click = open in 2D, the picks stay as they were
-        w.tabs.setCurrentIndex(3)
+        w._go("cmp")
         _click(w, w.thumbs.item(2), double=True)
-        assert w.current["id"] == ids[2] and w.tabs.currentIndex() == 0
+        assert w.current["id"] == ids[2] and w._tab() == "2d"
         assert w.picks() == [ids[0], ids[1]]
 
         # [멀티]: the picked photos, in pick order, the first one selected
         w.btn_multi.click()
         app.processEvents()
-        assert w.tabs.currentIndex() == 2 and w.multi.count == 2
+        assert w._tab() == "multi" and w.multi.count == 2
         cells = [c for c in w.multi.cells if c.isVisible()]
         assert [c.image_id for c in cells] == [ids[0], ids[1]]
         assert w.current["id"] == ids[0] and "고른 사진 2장" in w.multi.mode_label.text()
