@@ -27,7 +27,7 @@ from PySide6.QtGui import QAction, QActionGroup, QBrush, QColor, QCursor, QDeskt
     QKeySequence, QPainter, QPen, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDockWidget, QDoubleSpinBox, QFileDialog,
-    QFrame, QGraphicsRectItem, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget,
+    QFrame, QGraphicsRectItem, QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QMainWindow, QMenu,
     QMessageBox, QPushButton, QScrollArea, QSizePolicy, QSlider, QSplitter, QStackedWidget, QStatusBar, QTableWidget,
     QTableWidgetItem, QTabWidget, QToolBar, QToolButton, QVBoxLayout, QWidget,
@@ -57,19 +57,23 @@ from .landmarks_view import LandmarkPhoto
 from .slit_scan import SLIT, ScanPhotoView, SlitScanShow, ViewTween
 from .thumbs import EYE_ROLE, PICK_ROLE, ThumbDelegate, eye_badge_html
 from .toolbars import CHECKABLE, COMMANDS, MENUS, PROCESSING, SliderPopup, icon_for
-from .widgets import Segmented, Switch, card, segment
+from .widgets import ElidedLabel, Segmented, Switch, card, segment
 from .widgets import row as setting_row
 
 THUMB_TEXT = Qt.ItemDataRole.UserRole + 1    # thumbnail caption without the ② mark
 SECOND_PICK = QColor(168, 104, 28)           # background of the second picked photo (②)
 MAX_PICKS = 16                               # photos picked for the multi view (4×4)
 MULTI_SIZES = (1, 2, 4, 6, 9, 16)
-# tabs by name, in the order of the tab bar; menu shortcuts keep Ctrl+1~4 for 2D / 3D / 다중 / 비교
-TABS = (("review", "검토", "Ctrl+6"), ("all", "모두 보기", "Ctrl+5"), ("2d", "2D 보기", "Ctrl+1"),
-        ("3d", "3D 안구", "Ctrl+2"), ("multi", "다중 보기", "Ctrl+3"), ("cmp", "비교", "Ctrl+4"))
+# the views of the workspace, switched in the line under the photos (보기 menu: Ctrl+1~3)
+TABS = (("all", "모두 보기", "Ctrl+1"), ("multi", "다중 보기", "Ctrl+2"), ("3d", "3D", "Ctrl+3"))
+# views no longer shown (검토 · 2D 보기 · 비교): whatever led there stays on 모두 보기, whose big
+# photo is the 2D view with all its tools
+GONE_VIEWS = {"review": "all", "2d": "all", "cmp": "all"}
 PATIENT_LIST_KEY = "Ctrl+0"                  # back to the start screen
 # commands that work on the patient list as well (the others belong to the workspace)
 PAGE_NEUTRAL = ("search", "import", "import_files", "import_dir", "scan", "settings", "exit")
+THUMB_ICON = (64, 64)                        # 사진 목록(아래): the photo …
+THUMB_GRID = (96, 104)                       # … and its cell, two short lines of caption under it
 OV_ZOOM = 4.0                                # 확대 화면: 사진 전체 폭의 1/4 을 칸에 (×4)
 
 
@@ -180,6 +184,15 @@ class _WhereChip(QLabel):
         if ev.type() == QEvent.Type.Resize and self.isVisible():
             self._place()
         return False
+
+
+class _WidthHint(QWidget):
+    """A row whose width is set from outside (``want``): the menu bar sizes its corner by the hint."""
+    want = 0
+
+    def sizeHint(self) -> QSize:
+        hint = super().sizeHint()
+        return QSize(self.want or hint.width(), hint.height())
 
 
 class MainWindow(QMainWindow):
@@ -439,15 +452,24 @@ class MainWindow(QMainWindow):
         cl = QVBoxLayout(centre)
         cl.setContentsMargins(4, 6, 4, 0)
         cl.setSpacing(4)
-        top = QHBoxLayout()
+        # the patient line: ‹ 환자 목록, the patient and the photo filters — in the right end of the menu
+        # bar (see _build_menus), so the photos get its whole row
+        self._centre_lay = cl
+        self._line_in_menubar = False
+        self.top_w = _WidthHint()
+        self.top_w.setObjectName("patientLine")
+        top = QHBoxLayout(self.top_w)
+        top.setContentsMargins(10, 0, 6, 0)
+        top.setSpacing(6)
         self.btn_patients = QPushButton("‹ 환자 목록")
         self.btn_patients.setObjectName("back")
         self.btn_patients.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_patients.setToolTip(keys(f"환자 목록(처음 화면)으로 돌아갑니다 ({PATIENT_LIST_KEY})"))
         self.btn_patients.clicked.connect(lambda: self.show_page("patients"))
         top.addWidget(self.btn_patients)
-        self.banner = QLabel("환자를 선택하세요")
+        self.banner = ElidedLabel("환자를 선택하세요")
         self.banner.setObjectName("banner")
+        self.banner.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         top.addWidget(self.banner, 1)
         self.f_date = QComboBox()
         self.f_date.setMinimumWidth(110)
@@ -488,14 +510,14 @@ class MainWindow(QMainWindow):
         self.btn_glaucoma.setToolTip(keys("녹내장 분석 — 보고 있는 사진의 디스크 C/D · 광각 RNFL 분석,\n"
                                           "두 번째 사진을 Ctrl+클릭(②)하면 스테레오 보기 · 경과 비교"))
         self.btn_glaucoma.clicked.connect(lambda: self.open_glaucoma())
-        cl.addLayout(top)
         self.thumbs = QListWidget()
         self.thumbs.setViewMode(QListWidget.ViewMode.IconMode)
         self.thumbs.setFlow(QListWidget.Flow.LeftToRight)
         self.thumbs.setWrapping(False)
-        self.thumbs.setIconSize(QSize(120, 120))
-        self.thumbs.setGridSize(QSize(140, 164))
-        self.thumbs.setFixedHeight(182)
+        self.thumbs.setObjectName("thumbStrip")
+        self.thumbs.setIconSize(QSize(*THUMB_ICON))          # small: the height saved goes to the photos
+        self.thumbs.setGridSize(QSize(*THUMB_GRID))
+        self.thumbs.setFixedHeight(THUMB_GRID[1] + 10)
         self.thumbs.setMovement(QListWidget.Movement.Static)
         self.thumbs.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.thumbs.setResizeMode(QListWidget.ResizeMode.Adjust)
@@ -516,6 +538,7 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.tabs.setObjectName("views")
         self.tabs.setDocumentMode(True)
+        self.tabs.tabBar().hide()                # the views are switched in the line under the photos
         self.view2d = ImageView()
         self.view2d.crossfade = True            # the next photo fades in over the last
         self.view2d.toggle_captions(True)
@@ -586,23 +609,41 @@ class MainWindow(QMainWindow):
             lambda i: i != self.tabs.currentIndex() and self._tab_fade.snap())
         self.tabs.currentChanged.connect(self._on_tab)
         cl.addWidget(self.tabs, 1)
-        # 사진 목록은 화면 아래쪽, 멀티로 고르기 버튼은 그 왼쪽에 세로로
+        # 화면 아래 한 줄: 보기 전환(모두 보기 · 다중 보기 · 3D), 멀티 · 몽타주 · 녹내장, 그리고 사진 목록
         self.lbl_picks.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_picks.setWordWrap(True)
+        self.view_buttons = {}
+        for key, label, shortcut in TABS:
+            vb = QPushButton(label)
+            vb.setToolTip(keys(f"{label} ({shortcut})"))
+            vb.clicked.connect(lambda _=False, k=key: self._go(k))
+            self.view_buttons[key] = vb
+        self.view_buttons["all"].setChecked(True)
+        self.seg_views = Segmented(list(self.view_buttons.values()), on_card=False)
+        self.seg_views.setFixedWidth(258)
+        self.view_buttons["all"].setChecked(True)
         strip = QHBoxLayout()
         strip.setSpacing(4)
-        side = QVBoxLayout()
-        side.setContentsMargins(6, 6, 6, 6)
-        side.setSpacing(6)
-        self.btn_clear_picks.setStyleSheet("padding: 4px 2px;")      # "선택 해제" in full on the narrow column
-        for w in (self.btn_multi, self.btn_montage, self.btn_glaucoma, self.lbl_picks, self.btn_clear_picks):
-            side.addWidget(w)
-        side.addStretch(1)
-        side.addWidget(self.btn_rows)
+        side = QGridLayout()
+        side.setContentsMargins(8, 4, 6, 4)
+        side.setHorizontalSpacing(6)
+        side.setVerticalSpacing(4)
+        side.addWidget(self.seg_views, 0, 0, 1, 3)
+        for c, w in enumerate((self.btn_multi, self.btn_montage, self.btn_glaucoma)):
+            w.setStyleSheet("padding: 4px 6px;")
+            side.addWidget(w, 1, c)
+        self.btn_clear_picks.setStyleSheet("padding: 2px 4px;")
+        picks = QHBoxLayout()
+        picks.setSpacing(6)
+        picks.addWidget(self.btn_rows)
+        picks.addStretch(1)
+        picks.addWidget(self.lbl_picks)
+        picks.addWidget(self.btn_clear_picks)
+        side.addLayout(picks, 2, 0, 1, 3)
+        side.setRowStretch(3, 1)
         side_w = QWidget()
         side_w.setObjectName("thumbSide")
         side_w.setLayout(side)
-        side_w.setFixedWidth(92)
+        side_w.setFixedWidth(274)
         strip.addWidget(side_w)
         strip.addWidget(self.thumbs, 1)
         strip.setContentsMargins(0, 0, 0, 0)
@@ -630,7 +671,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.stack)
 
         # -- VK-2 toolbars ---------------------------------------------------------------
-        self.tb_cmd = self._toolbar("cmdbar", "명령 툴바", Qt.ToolBarArea.RightToolBarArea, COMMANDS, 26)
+        self.tb_cmd = self._toolbar("cmdbar", "명령 툴바", Qt.ToolBarArea.LeftToolBarArea, COMMANDS, 26)
         self.tb_proc = self._toolbar("procbar", "영상 처리 툴바", Qt.ToolBarArea.BottomToolBarArea, PROCESSING, 28)
         self.tb_proc.visibilityChanged.connect(lambda v: self.acts["tools"].setChecked(v))
         self.acts["tools"].setChecked(True)
@@ -645,6 +686,13 @@ class MainWindow(QMainWindow):
             p.slider.valueChanged.connect(self._schedule_adjust)
             p.pressed.connect(self._push_history)
         self._build_menus()
+        mb = self.menuBar()
+        self._line_in_menubar = not mb.isNativeMenuBar()
+        if self._line_in_menubar:
+            mb.setCornerWidget(self.top_w, Qt.Corner.TopRightCorner)
+            mb.installEventFilter(self)
+        else:                                    # the system's menu bar (Mac): a row of its own
+            self._centre_lay.insertWidget(0, self.top_w)
         self.act_thumbs.toggled.connect(self.thumbs.setVisible)
         self.acts["captions"].toggled.connect(self.view2d.toggle_captions)
         self.acts["overlay"].toggled.connect(self.view2d.toggle_overlays)
@@ -1079,7 +1127,7 @@ class MainWindow(QMainWindow):
 
     def _reset_toolbars(self) -> None:
         self._bars_shown = (True, True)
-        for tb, area in ((self.tb_cmd, Qt.ToolBarArea.RightToolBarArea),
+        for tb, area in ((self.tb_cmd, Qt.ToolBarArea.LeftToolBarArea),
                          (self.tb_proc, Qt.ToolBarArea.BottomToolBarArea)):
             self.addToolBar(area, tb)
             tb.setVisible(self.page() == "work")
@@ -1118,29 +1166,24 @@ class MainWindow(QMainWindow):
             "(위치 막대로 원하는 곳에서 멈춤)<br>"
             "보기 → 부드러운 움직임: 끄면 확대·회전·전환이 바로 바뀝니다 (원격 접속 등 느린 화면)<br><br>"
             "<b>단축키</b><br>"
-            "PageUp / PageDown: 이전 / 다음 사진 · Ctrl+1~4: 2D / 3D / 다중 / 비교 · Ctrl+5: 모두 보기 · "
-            "Ctrl+6: 검토 · Ctrl+0: 환자 목록<br>"
+            "PageUp / PageDown: 이전 / 다음 사진 · Ctrl+1: 모두 보기 · Ctrl+2: 다중 보기 · Ctrl+3: 3D · "
+            "Ctrl+0: 환자 목록<br>"
             "Ctrl+Z: 처리 실행 취소 · Delete: 마지막 측정 지우기 · Ctrl+C: 화면 복사<br>"
             "Ctrl+F: 환자 검색 · Ctrl+P: 인쇄<br><br>"
             "<b>환자 목록 (처음 화면)</b><br>"
-            "환자를 누르면 오른쪽에 검사 목록 · 두 번 누르거나 Enter: 검토 화면 · 검사 목록에서 체크한 검사가 "
-            "검토 화면의 현재 검사 (더 이른 검사는 이전 검사)<br>"
-            "작업 화면 왼쪽 위 [‹ 환자 목록] 또는 Ctrl+0 으로 돌아옵니다<br><br>"
-            "<b>검토 탭</b><br>"
-            "배치(목록): 양안 (OD | OS) · OD 비교 · OS 비교 — 비교 배치에서 [ / ]: 더 이전 / 더 최근 검사<br>"
-            "타임라인의 사진을 누르면 고르기(번호) — 고른 사진만큼 화면이 나뉨 (1·2·4·8·16·32장, 사진 수 단추로도) · "
-            "◀ ▶ 또는 ← / →: 다음 사진들 · 더블클릭: 한 장만 크게 / 다시 더블클릭: 돌아가기<br>"
-            "휠: 커서 위치 확대·축소 · 드래그: 이동 · [맞춤]: 화면 맞춤 · 연동: 모든 화면을 함께 · "
-            "화면을 누르면 그 화면이 선택됨(파란 테두리)<br>"
-            "확대창: 가운데 버튼 클릭으로 켜고 끔 · 드래그로 옮기기 · 휠 1.5×–6× · 오른쪽 클릭: 다음 화면의 같은 곳<br>"
-            "타임라인: 화면으로 끌어다 놓으면 그 칸에 · 날짜를 누르면 그 검사가 현재 검사 · 모두 / OD / OS<br>"
-            "2D 보기 · 3D 안구 · 녹내장: 선택한 화면의 사진을 그 기능으로<br><br>"
+            "환자를 누르면 오른쪽에 검사 목록 · 두 번 누르거나 Enter: 체크한 검사의 사진을 엽니다<br>"
+            "작업 화면 위쪽 오른쪽의 [‹ 환자 목록] 또는 Ctrl+0 으로 돌아옵니다<br><br>"
+            "<b>모두 보기</b><br>"
+            "큰 사진 + 오른쪽에 황반과 시신경 유두를 확대해 보여 줍니다 (큰 사진 위 점선 틀이 그 자리)<br>"
+            "칸 제목이나 칸을 더블클릭하면 큰 사진을 그 쪽으로 확대 · 큰 사진 더블클릭: 전체<br>"
+            "잘못 찾았으면 큰 사진에서 오른쪽 클릭 → 황반 / 시신경 유두로 지정<br>"
+            "화면 아래 줄의 [모두 보기 | 다중 보기 | 3D] 로 보기를 바꿉니다<br><br>"
             "<b>사진 목록 · 멀티</b><br>"
             "최신 사진부터, 사진마다 왼쪽 위에 눈(OD 파랑 · OS 주황) · ▤ 버튼: 1·2·3줄<br>"
-            "클릭: 멀티로 고르기(번호, 다시 클릭하면 빼기) · 더블클릭: 2D로 크게 보기<br>"
+            "클릭: 멀티로 고르기(번호, 다시 클릭하면 빼기) · 더블클릭: 그 사진을 크게<br>"
             "[멀티]: 고른 사진을 다중 보기에 — 칸을 누르면 그 사진만 보정 (밝기·대비·감마·Red-free·선명하게 …)<br><br>"
             "<b>두 사진 고르기 · 디스크 2장</b><br>"
-            "사진을 더블클릭해 열고 두 번째 사진을 Ctrl+클릭(②, 다시 Ctrl+클릭하면 해제) → 비교 탭<br>"
+            "두 번째 사진을 Ctrl+클릭(②, 다시 Ctrl+클릭하면 해제) → [디스크 2장] · [녹내장](스테레오 · 경과 비교)<br>"
             "[디스크 2장]: 두 사진의 시신경 유두만 확대해 한 장으로 (OD 왼쪽 · OS 오른쪽, 보험 청구용)<br><br>"
             "<b>사진 가져오기</b><br>"
             f"자동입니다. 레티캠 등 장비 폴더와 가져오기 폴더 [{self.settings.inbox}]를 감시해 "
@@ -1363,17 +1406,16 @@ class MainWindow(QMainWindow):
         if ref != self._patient_ref:
             self._select_patient_ref(ref)
 
-    def open_patient(self, ref, where: str = "review") -> None:
-        """Open the workspace for a patient of the patient list — on the 검토 tab, or with the
-        checked exam's photo in 2D 보기 / 3D 안구 (``where``: a tab key)."""
+    def open_patient(self, ref, where: str = "all") -> None:
+        """Open the workspace for a patient of the patient list, with the checked exam's photo —
+        on 모두 보기, or in 3D (``where``: a view key)."""
         self._pick_patient(ref)
         if self._patient_ref != ref or not self._images():
             self.lbl_status.setText("이 환자는 아직 사진이 없습니다 — [사진 가져오기]로 사진을 넣으세요")
             return
-        if where in ("2d", "3d"):
-            row = self.patient_page.shortcut_photo()
-            if row is not None:
-                self._select_from_multi(row["id"])
+        row = self.patient_page.shortcut_photo()      # the checked exam's photo
+        if row is not None:
+            self._select_from_multi(row["id"])
         self._go(where)
 
     def _on_exam_checked(self, exam_date: str) -> None:
@@ -1448,19 +1490,21 @@ class MainWindow(QMainWindow):
         self._patient_ref = ref
         self.patient_page.set_current(ref)     # the patient list shows the same patient
         if ref == UNASSIGNED:
-            self.banner.setText("미분류 영상 — 사진을 선택하고 오른쪽 [정보 수정] 버튼으로 환자를 지정하세요")
+            self.banner.setText("미분류 영상 — [정보 수정]으로 환자를 지정하세요")
+            self._fit_banner()
         else:
             p = self.db.get_patient(ref)
             if p is None:
                 return
             self.settings.last_patient = p["patient_id"]
             age = age_on(p["birth_date"])
-            bits = [f"<b style='font-size:16px'>{p['name'] or '(이름 없음)'}</b>", p["patient_id"]]
+            bits = [p["name"] or "(이름 없음)", p["patient_id"]]
             if p["birth_date"]:
                 bits.append(f"{p['birth_date']}" + (f" ({age}세)" if age is not None else ""))
             if p["sex"]:
                 bits.append(SEX_LABEL.get(p["sex"], p["sex"]))
             self.banner.setText("  ·  ".join(bits))
+            self._fit_banner()
         self._fill_dates()
         self._fill_thumbs()
 
@@ -1531,9 +1575,10 @@ class MainWindow(QMainWindow):
                     continue
             mod_label = MODALITY_LABELS.get(r["modality"] or "", r["modality"] or "")
             fov = f"{r['fov_deg']:g}°" if r["fov_deg"] else ""
-            text = f"{r['exam_date'] or '날짜 없음'}  {r['laterality'] or ''}\n{mod_label} {fov}".strip()
+            text = f"{r['exam_date'] or '날짜 없음'}\n{mod_label} {fov}".strip()
             it = QListWidgetItem(QIcon(QPixmap(r["thumb_path"] or "")), text)
             it.setData(Qt.ItemDataRole.UserRole, r["id"])
+            it.setSizeHint(QSize(THUMB_GRID[0] - 4, THUMB_GRID[1] - 2))    # the whole cell: both caption lines
             it.setData(THUMB_TEXT, text)
             it.setData(EYE_ROLE, r["laterality"] or "")
             it.setToolTip(f"{r['exam_date'] or ''} {r['exam_time'] or ''}\n{r['device'] or ''}\n"
@@ -1586,7 +1631,7 @@ class MainWindow(QMainWindow):
         """As many rows as the photos need, at most the chosen number (few photos: no empty band)."""
         n = self._thumb_rows
         if n == 1:
-            self.thumbs.setFixedHeight(182)
+            self.thumbs.setFixedHeight(THUMB_GRID[1] + 10)
             return
         per_row = max(1, self.thumbs.viewport().width() // self.thumbs.gridSize().width())
         need = max(1, -(-self.thumbs.count() // per_row))
@@ -1680,33 +1725,37 @@ class MainWindow(QMainWindow):
         for pop in (self.pop_gamma, self.pop_contrast, self.pop_bright):
             pop._show(pop.slider.value())
 
+    def _fit_banner(self) -> None:
+        """The patient line in the menu bar: as wide as its text when there is room, else cut with …."""
+        if not hasattr(self, "top_w") or not self._line_in_menubar:
+            return
+        mb = self.menuBar()
+        acts = [a for a in mb.actions() if a.isVisible()]
+        menus = mb.actionGeometry(acts[-1]).right() if acts else 0
+        fixed = self.btn_patients.sizeHint().width() + sum(
+            w.sizeHint().width() + 6 for w in (self.f_date, self.f_eye, self.f_mod) if not w.isHidden())
+        room = mb.width() - menus - 40
+        w = max(fixed + 80, min(fixed + self.banner.full_width() + 30, room))
+        if self.top_w.want != w:
+            self.top_w.want = w              # the menu bar lays its corner out by the size hint
+            self.top_w.updateGeometry()
+            mb.updateGeometry()
+            mb.resize(mb.width() + 1, mb.height())    # lay the corner out again now
+            mb.resize(mb.width() - 1, mb.height())
+
     def eventFilter(self, obj, e):
         try:
             self.thumbs.viewport()
         except RuntimeError:                  # closing down: the photo list is already gone
             return False
+        if obj is self.menuBar() and e.type() == QEvent.Type.Resize:
+            self._fit_banner()
         if obj is self.thumbs.viewport() and e.type() == QEvent.Type.Resize and e.size().width() != e.oldSize().width():
             QTimer.singleShot(0, self._fit_thumb_height)       # wider strip: more photos per row
-        # 모두 보기: the 확대 화면 keeps its place and scale when its pane changes size
-        if (getattr(self, "_ov_on", False) and e.type() == QEvent.Type.Resize and self._ov_center is not None
-                and obj is self.ov_zoom.viewport()):
-            # the centre is read when the timer fires: a newer photo may be on screen by then
-            QTimer.singleShot(0, lambda: self._ov_on and self._ov_center is not None
-                              and self._ov_zoom_to(*self._ov_center))
-            return False
-        # 모두 보기: a click (not a drag) on the big photo shows that place in the 확대 화면
-        if getattr(self, "_ov_on", False) and obj is self.view2d.viewport() and e.type() in (
-                QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease):
-            if e.button() == Qt.MouseButton.LeftButton:
-                pos = e.position().toPoint()
-                if e.type() == QEvent.Type.MouseButtonPress:
-                    self._ov_press = pos
-                elif self._ov_press is not None and (pos - self._ov_press).manhattanLength() <= 4:
-                    sp = self.view2d.mapToScene(pos)
-                    if (self.view2d.tool in ("zoom", "pan") and self.view2d.has_image()   # not while measuring
-                            and QRectF(self.view2d._pix.pixmap().rect()).contains(sp)):
-                        self._ov_zoom_to(sp.x(), sp.y())
-                    self._ov_press = None
+        # 모두 보기: the two enlarged panes keep their places when they change size
+        if (getattr(self, "_ov_on", False) and e.type() == QEvent.Type.Resize
+                and obj in (self.ov_zoom.viewport(), self.ov_macula.viewport())):
+            QTimer.singleShot(0, self._ov_apply)
             return False
         # Ctrl+click on a thumbnail picks the second photo (②) and leaves the shown one alone
         if (e.type() in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease,
@@ -2186,7 +2235,7 @@ class MainWindow(QMainWindow):
             self.left.setVisible(self.left.isHidden() if checked is None else checked)
         elif key in ("multi", "view3d"):
             tab = "multi" if key == "multi" else "3d"
-            self._go("2d" if self._tab() == tab else tab)
+            self._go("all" if self._tab() == tab else tab)
         elif key.startswith("multi:"):
             self.multi.set_count(int(key[6:]))
             self._go("multi")
@@ -2275,12 +2324,14 @@ class MainWindow(QMainWindow):
     def _rendered(self) -> QImage | None:
         if self.current is None or not self.view2d.has_image():
             return None
-        roi = self._ov_roi.isVisible()          # the 확대 화면 frame is for the screen only
-        self._ov_roi.setVisible(False)
+        roi = self._ov_roi.isVisible()          # the 확대 화면 frames are for the screen only
+        for item in self._ov_rois.values():
+            item.setVisible(False)
         try:
             return self.view2d.render_image()
         finally:
             self._ov_roi.setVisible(roi)
+            self._ov_sync_roi()
 
     def _copy_view(self) -> None:
         img = self._rendered()
@@ -3107,6 +3158,7 @@ class MainWindow(QMainWindow):
         return next((k for k, page in getattr(self, "_pages", {}).items() if page is w), "")
 
     def _go(self, key: str) -> None:
+        key = GONE_VIEWS.get(key, key)
         self.show_page("work")
         if self.tabs.currentWidget() is not self._pages[key]:
             self._tab_fade.snap()             # the page on screen fades into the next
@@ -3114,10 +3166,14 @@ class MainWindow(QMainWindow):
 
     def _on_tab(self, i: int) -> None:
         key = self._tab()
+        vb = getattr(self, "view_buttons", {}).get(key)
+        if vb is not None and not vb.isChecked():
+            vb.setChecked(True)
         # 검토 has its own timeline: the photo strip and its filters are for the other tabs
         self.strip_w.setVisible(key != "review")
         for w in (self.f_date, self.f_eye, self.f_mod):
             w.setVisible(key != "review")
+        self._fit_banner()
         if key == "review":
             self._fill_review()
             self.review.views[self.review.active].setFocus()
@@ -3150,45 +3206,45 @@ class MainWindow(QMainWindow):
         self.ov_big = QWidget()                          # view2d goes here while 모두 보기 is shown
         self._ov_big_lay = QVBoxLayout(self.ov_big)
         self._ov_big_lay.setContentsMargins(0, 0, 0, 0)
-        side = QSplitter(Qt.Orientation.Vertical)       # three equal panes, heights can be dragged
+        side = QSplitter(Qt.Orientation.Vertical)       # two equal panes, heights can be dragged
         side.setObjectName("ovSide")
         side.setChildrenCollapsible(False)
         side.setHandleWidth(4)
-        self.ov_multi = MultiView(compact=True)          # 4 photos (2 × 2)
-        self.ov_multi.selected.connect(self._select_from_multi)
-        self.ov_multi.opened.connect(lambda iid: (self._select_from_multi(iid), self._go("2d")))
-        self.ov_zoom = ImageView()
-        self.ov_zoom.set_navigator(False)
-        self.ov_zoom.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)   # a small pane:
-        self.ov_zoom.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)     # move by dragging
-        self.ov_zoom.setToolTip("확대 화면 — 왼쪽 큰 사진을 누르면 그 곳이 여기에 · 위/아래 드래그·휠: 배율 · "
-                                "가운데 버튼 드래그: 이동 · 더블클릭: 2D 보기로")
-        self.ov_zoom.activated.connect(lambda: self._go("2d"))
-        self.ov_zoom.zoomChanged.connect(lambda _: self._ov_sync_roi())
-        self.ov_zoom.horizontalScrollBar().valueChanged.connect(lambda _: self._ov_sync_roi())
-        self.ov_zoom.verticalScrollBar().valueChanged.connect(lambda _: self._ov_sync_roi())
-        self.ov_3d = QWidget()
+        self.ov_multi = MultiView(compact=True)          # (no longer shown beside the photo)
+        self.ov_multi.hide()
+        # the two places looked at first, enlarged: the macula and the optic disc of the big photo
+        self.ov_macula = ImageView()
+        self.ov_zoom = ImageView()                       # the disc
+        for v, what in ((self.ov_macula, "황반"), (self.ov_zoom, "시신경 유두")):
+            v.set_navigator(False)
+            v.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)   # a small pane:
+            v.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)     # move by dragging
+            v.setToolTip(f"{what} 확대 — 위/아래 드래그·휠: 배율 · 가운데 버튼 드래그: 이동 · "
+                         f"더블클릭: 큰 사진을 {what} 쪽으로 확대\n"
+                         "잘못 찾았으면 큰 사진에서 오른쪽 클릭 → 황반 / 시신경 유두로 지정")
+            v.zoomChanged.connect(lambda _: self._ov_sync_roi())
+            v.horizontalScrollBar().valueChanged.connect(lambda _: self._ov_sync_roi())
+            v.verticalScrollBar().valueChanged.connect(lambda _: self._ov_sync_roi())
+        self.ov_3d = QWidget()                           # (the 3D eye stays in its own tab)
         self._ov_3d_lay = QVBoxLayout(self.ov_3d)
         self._ov_3d_lay.setContentsMargins(0, 0, 0, 0)
-        self._ov_gl = gl_available()
+        self._ov_gl = False
         self._gl_msg = ""
-        if not self._ov_gl:                              # no OpenGL here: a way to the 3D tab instead
-            self._ov_3d_button()
-        self._ov3d_timer = QTimer(self)                  # browsing photos: rebuild the 3D texture once
+        self._ov3d_timer = QTimer(self)
         self._ov3d_timer.setSingleShot(True)
-        self._ov3d_timer.timeout.connect(lambda: self._3d_dirty and self._tab() == "all" and self._update_3d())
         self.ov_heads = {}
-        for key, title, body in (("multi", "다중 보기", self.ov_multi), ("zoom", "확대 화면", self.ov_zoom),
-                                 ("3d", "3D 안구", self.ov_3d)):
+        self._ov_titles = {"macula": "황반", "zoom": "시신경 유두"}
+        for key, body in (("macula", self.ov_macula), ("zoom", self.ov_zoom)):
             pane = QFrame()
             pane.setObjectName("ovPane")
             v = QVBoxLayout(pane)
             v.setContentsMargins(0, 0, 0, 0)
             v.setSpacing(0)
-            head = QPushButton(f"{title}   ⤢")
+            head = QPushButton(f"{self._ov_titles[key]}   ⤢")
             head.setObjectName("ovHead")
-            head.setToolTip(f"{title}을 크게 보기" if key != "zoom" else "2D 보기에서 크게 (확대·측정 도구)")
-            head.clicked.connect(lambda _=False, k=key: self._go("2d" if k == "zoom" else k))
+            head.setToolTip(f"큰 사진을 {self._ov_titles[key]} 쪽으로 확대 (큰 사진을 더블클릭하면 전체)")
+            head.clicked.connect(lambda _=False, k=key: self._ov_focus(k))
+            body.activated.connect(lambda k=key: self._ov_focus(k))
             v.addWidget(head)
             v.addWidget(body, 1)
             body.setMinimumHeight(60)
@@ -3203,20 +3259,26 @@ class MainWindow(QMainWindow):
         self.ov_split.setStretchFactor(0, 3)
         self.ov_split.setStretchFactor(1, 1)
         self.ov_split.setSizes([900, 340])
-        side.setSizes([300, 300, 300])
+        side.setSizes([300, 300])
         lay = QVBoxLayout(w)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self.ov_split)
-        # where the 확대 화면 looks: a frame on the big photo; a click on the big photo moves it there
-        self._ov_roi = QGraphicsRectItem()
-        self._ov_roi.setPen(QPen(QColor(80, 220, 255), 0, Qt.PenStyle.DashLine))
-        self._ov_roi.setZValue(30)
-        self._ov_roi.setVisible(False)
-        self.view2d.scene().addItem(self._ov_roi)
+        # where the two panes look: frames on the big photo (macula light blue, disc yellow — as the marks)
+        self._ov_rois = {}
+        for key, color in (("macula", QColor(80, 220, 255)), ("zoom", QColor(255, 214, 10))):
+            roi = QGraphicsRectItem()
+            roi.setPen(QPen(color, 0, Qt.PenStyle.DashLine))
+            roi.setZValue(30)
+            roi.setVisible(False)
+            self.view2d.scene().addItem(roi)
+            self._ov_rois[key] = roi
+        self._ov_roi = self._ov_rois["zoom"]
         self.view2d.viewport().installEventFilter(self)
-        self.ov_zoom.viewport().installEventFilter(self)
+        for v in (self.ov_macula, self.ov_zoom):
+            v.viewport().installEventFilter(self)
         self._ov_img: int | None = None
-        self._ov_center: tuple[float, float] | None = None
+        self._ov_targets: dict = {}              # pane -> ((x, y), width) of the place it shows
+        self._ov_center = None
         self._ov_press = None
         self._ov_busy = False
         return w
@@ -3255,60 +3317,79 @@ class MainWindow(QMainWindow):
                 self._lay3d.addWidget(self.split3d, 1)
         self.view2d.show()
         self.split3d.show()
-        self._ov_roi.setVisible(on and self.ov_zoom.has_image())
+        for key, view in (("macula", self.ov_macula), ("zoom", self.ov_zoom)):
+            self._ov_rois[key].setVisible(on and view.has_image())
 
     def _fill_overview(self, multi: bool = True) -> None:
-        """모두 보기의 작은 화면들: 다중(4장) · 확대(큰 화면과 같은 처리를 한 사진) — 3D 는 _update_3d."""
+        """모두 보기의 작은 화면 둘: 큰 화면과 같은 처리를 한 사진의 황반과 시신경 유두를 확대해서."""
         if not self._ov_on:
             return
         row = self.current
         rgb = self.view2d._rgb if row is not None else None     # what the big view shows now
-        center = self._ov_center if row is not None and self._ov_img == row["id"] else None  # same photo: same place
         self._ov_busy = True                                    # set_rgb fits the view: not a pan
         try:
-            self.ov_zoom.set_rgb(rgb)
+            for v in (self.ov_macula, self.ov_zoom):
+                v.set_rgb(rgb)
         finally:
             self._ov_busy = False
         if rgb is None:
-            self._ov_img, self._ov_center = None, None
-            self._ov_roi.setVisible(False)
-        else:
-            self._ov_img = row["id"]
-            if center is None:                     # 처음엔 시신경 유두 (모르면 사진 가운데)
-                h, w = rgb.shape[:2]
-                center = (row["disc_x"], row["disc_y"]) if row["disc_x"] is not None else (w / 2, h / 2)
-            self._ov_zoom_to(*center)
-        if multi:
-            self._fill_multi(self.ov_multi)
-
-    def _ov_zoom_to(self, x: float, y: float) -> None:
-        """확대 화면을 사진의 (x, y) 가운데로, 사진 긴 변의 1/OV_ZOOM 을 칸 폭에."""
-        self._ov_center = (x, y)
-        if not self.ov_zoom.has_image():
+            self._ov_img, self._ov_targets = None, {}
+            for roi in self._ov_rois.values():
+                roi.setVisible(False)
             return
-        pm = self.ov_zoom._pix.pixmap()
-        vw, vh = max(self.ov_zoom.viewport().width(), 1), max(self.ov_zoom.viewport().height(), 1)
-        w = max(pm.width(), pm.height()) / OV_ZOOM
+        self._ov_img = row["id"]
+        h, w = rgb.shape[:2]
+        _, disc, fovea = self._marks_of(row)
+        # how much is shown: the macula with its surround, the disc with the vessels leaving it —
+        # by the photo's own scale (the disc–fovea distance, about 15°) where both were found
+        d = math.hypot(disc[0] - fovea[0], disc[1] - fovea[1]) if disc and fovea else None
+        long = max(w, h)
+        centre = (w / 2, h / 2)
+        self._ov_targets = {"macula": (fovea or centre, 1.5 * d if d else long / 3),
+                            "zoom": (disc or centre, 0.85 * d if d else long / OV_ZOOM)}
+        for key, found in (("macula", fovea), ("zoom", disc)):
+            note = "" if found else "  (찾지 못함 — 사진 가운데)"
+            self.ov_heads[key].setText(f"{self._ov_titles[key]}{note}   ⤢")
+        self._ov_apply()
+
+    def _ov_focus(self, key: str) -> None:
+        """The big photo zoomed to the place a pane shows (황반 / 시신경 유두), with its surround."""
+        if key not in self._ov_targets or not self.view2d.has_image():
+            return
+        (x, y), w = self._ov_targets[key]
+        w *= 2.0
+        vw, vh = max(self.view2d.viewport().width(), 1), max(self.view2d.viewport().height(), 1)
         h = w * vh / vw
-        self._ov_busy = True                       # the scroll bars move: keep the asked-for centre
+        self.view2d.zoom_to_rect(QRectF(x - w / 2, y - h / 2, w, h))
+
+    def _ov_apply(self) -> None:
+        """Each pane on its place, that place's width across the pane."""
+        if not self._ov_on:
+            return
+        self._ov_busy = True                       # the scroll bars move: keep the asked-for centres
         try:
-            self.ov_zoom.zoom_to_rect(QRectF(x - w / 2, y - h / 2, w, h), animate=False)
+            for key, view in (("macula", self.ov_macula), ("zoom", self.ov_zoom)):
+                if key not in self._ov_targets or not view.has_image():
+                    continue
+                (x, y), w = self._ov_targets[key]
+                vw, vh = max(view.viewport().width(), 1), max(view.viewport().height(), 1)
+                h = w * vh / vw
+                view.zoom_to_rect(QRectF(x - w / 2, y - h / 2, w, h), animate=False)
         finally:
             self._ov_busy = False
         self._ov_sync_roi()
 
     def _ov_sync_roi(self) -> None:
-        """큰 사진 위의 틀 = 확대 화면에 지금 보이는 곳 (확대 화면을 끌어 옮기면 틀도 따라감)."""
-        if not (self._ov_on and self.ov_zoom.has_image()):
-            self._ov_roi.setVisible(False)
-            return
-        vis = self.ov_zoom.mapToScene(self.ov_zoom.viewport().rect()).boundingRect()
-        r = vis.intersected(QRectF(self.ov_zoom._pix.pixmap().rect()))
-        self._ov_roi.setRect(r)
-        self._ov_roi.setVisible(not r.isEmpty())
-        if not self._ov_busy:
-            c = vis.center()
-            self._ov_center = (c.x(), c.y())
+        """큰 사진 위의 틀 = 두 확대 화면에 지금 보이는 곳 (확대 화면을 끌어 옮기면 틀도 따라감)."""
+        for key, view in (("macula", self.ov_macula), ("zoom", self.ov_zoom)):
+            roi = self._ov_rois[key]
+            if not (self._ov_on and view.has_image()):
+                roi.setVisible(False)
+                continue
+            vis = view.mapToScene(view.viewport().rect()).boundingRect()
+            r = vis.intersected(QRectF(view._pix.pixmap().rect()))
+            roi.setRect(r)
+            roi.setVisible(not r.isEmpty())
 
     # -- compare -------------------------------------------------------------------
     def _set_compare(self, image_id: int) -> None:
@@ -3316,10 +3397,8 @@ class MainWindow(QMainWindow):
             return
         self.compare = self.db.get_image(image_id)
         self._mark_pair()
-        self.lbl_status.setText(keys("두 사진을 골랐습니다 (② = 두 번째) — [디스크 2장]으로 시신경 유두 2장 만들기 · "
+        self.lbl_status.setText(keys("두 사진을 골랐습니다 (② = 두 번째) — [디스크 2장] · [녹내장](스테레오 · 경과 비교) · "
                                      "Ctrl+클릭으로 해제"))
-        self._go("cmp")
-        self._fill_compare()
 
     def _fill_compare(self) -> None:
         for view, lab, row in zip(self.cmp_views, self.cmp_labels, (self.current, self.compare)):

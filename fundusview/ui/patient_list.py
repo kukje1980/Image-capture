@@ -199,7 +199,7 @@ class PatientListPage(QWidget):
         self.list_stack.addWidget(self.table)
         self.list_stack.addWidget(self.lbl_empty)
         left.addWidget(self.list_stack, 1)
-        hint = QLabel("환자를 누르면 오른쪽에 검사 목록이 나오고, 두 번 누르거나 Enter를 누르면 검토 화면이 열립니다.")
+        hint = QLabel("환자를 누르면 오른쪽에 검사 목록이 나오고, 두 번 누르거나 Enter를 누르면 그 검사의 사진이 열립니다.")
         hint.setObjectName("caption")
         hint.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)     # cut, not a wider window
         left.addWidget(hint)
@@ -273,10 +273,10 @@ class PatientListPage(QWidget):
         dl.addWidget(self.lbl_detail_empty, 1)
         row = QHBoxLayout()
         row.setSpacing(8)
-        self.btn_open = QPushButton("검토 화면 열기")
+        self.btn_open = QPushButton("사진 보기")
         self.btn_open.setObjectName("primary")
-        self.btn_open.setToolTip("체크한 검사를 양안(OD | OS)으로 열고, 이전 검사와 비교합니다 (두 번 누르기 · Enter)")
-        self.btn_open.clicked.connect(lambda: self._request("review"))
+        self.btn_open.setToolTip("체크한 검사의 사진을 엽니다 — 큰 사진과 황반 · 시신경 유두 확대 (두 번 누르기 · Enter)")
+        self.btn_open.clicked.connect(lambda: self._request("all"))
         row.addWidget(self.btn_open, 1)
         self.btn_import = QPushButton("사진 가져오기")
         self.btn_import.setToolTip("사진 파일을 골라 가져옵니다 — 환자는 파일에서 읽은 환자 ID로 정해집니다\n"
@@ -287,7 +287,8 @@ class PatientListPage(QWidget):
         row2 = QHBoxLayout()
         row2.setSpacing(8)
         self.btn_2d = QPushButton("2D 보기")
-        self.btn_3d = QPushButton("3D 안구")
+        self.btn_2d.hide()                       # (2D 보기 is no longer a view of its own: 사진 보기)
+        self.btn_3d = QPushButton("3D")
         for b, where, tip in ((self.btn_2d, "2d", "체크한 검사의 사진을 2D 보기로 크게 엽니다"),
                               (self.btn_3d, "3d", "체크한 검사의 사진을 3D 안구 모형으로 엽니다")):
             b.setObjectName("plain")
@@ -397,7 +398,7 @@ class PatientListPage(QWidget):
         ref = self.table.item(rows[0].row(), 0).data(Qt.ItemDataRole.UserRole)
         if ref != self._ref:
             self.patientSelected.emit(ref)
-        self._request("review")
+        self._request("all")
 
     def _request(self, where: str) -> None:
         if self._ref is None:
@@ -483,7 +484,7 @@ class PatientListPage(QWidget):
                       "성별": SEX_LABEL.get(patient["sex"] or "", "—"), "메모": patient["note"] or "—"}
             for key, value in values.items():
                 self._kv_labels[key][1].setText(value)
-            self.btn_open.setText("검토 화면 열기")
+            self.btn_open.setText("사진 보기")
         self.lbl_exams.setText(f"검사 목록 · {len(groups)}회 · 사진 {len(self._images)}장")
         dates = [d for d, _ in groups]
         if self._exam not in dates:
@@ -512,6 +513,6 @@ class PatientListPage(QWidget):
         return list(self._rows)
 
     def shortcut_photo(self):
-        """The photo 2D 보기 / 3D 안구 open: from the checked exam."""
+        """The photo 사진 보기 / 3D open: from the checked exam."""
         return review.newest_photo(self._images, self._exam)
 

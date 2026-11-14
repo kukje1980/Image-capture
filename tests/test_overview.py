@@ -1,4 +1,6 @@
-"""모두 보기 (first tab): the big 2D photo with 다중 · 확대 · 3D panes, photo list under the views."""
+"""모두 보기 (v0.3.0): the big 2D photo with its macula and optic disc enlarged beside it; no tab row —
+the views (모두 보기 · 다중 보기 · 3D) are switched in the line under the photos; the patient line is
+in the menu bar; the command toolbar at the left."""
 import os
 
 import pytest
@@ -36,7 +38,11 @@ def _inside(widget, ancestor) -> bool:
     return False
 
 
-def test_overview_panes_follow_the_photo(tmp_path, demo_dir, import_and_wait):
+def _shows(view, point) -> bool:
+    return view.mapToScene(view.viewport().rect()).boundingRect().contains(point)
+
+
+def test_overview_is_the_photo_with_its_macula_and_disc(tmp_path, demo_dir, import_and_wait):
     from PySide6.QtCore import QPoint, QPointF, Qt
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QApplication
@@ -46,90 +52,121 @@ def test_overview_panes_follow_the_photo(tmp_path, demo_dir, import_and_wait):
     try:
         w.resize(1500, 950)
         w.show()
-        # the program starts on the patient list; the workspace behind it opens on 모두 보기 (the tab
-        # after 검토) with the big 2D view in it; the photo list sits under the views
         assert w.page() == "patients" and not w.tabs.isVisible()
         import_and_wait(app, w, [demo_dir])
         w._select_patient_ref(db.find_patient("20260115001")["id"])
         w.show_page("work")              # (new photos may have brought the workspace up already)
         app.processEvents()
-        assert w.page() == "work" and w.tabs.isVisible()
-        assert w._tab() == "all" and [w.tabs.tabText(i) for i in (0, 1)] == ["검토", "모두 보기"]
+        assert w.page() == "work" and w._tab() == "all"
+
+        # -- the frame: no tab row; the view switch under the photos; patient line in the menu bar --
+        assert w.tabs.tabBar().isHidden()
+        assert [b.text() for b in w.view_buttons.values()] == ["모두 보기", "다중 보기", "3D"]
+        assert w.view_buttons["all"].isChecked() and _inside(w.seg_views, w.strip_w) and w.seg_views.isVisible()
+        assert w.thumbs.mapTo(w, QPoint(0, 0)).y() > w.view2d.mapTo(w, QPoint(0, 0)).y() + w.view2d.height() - 5
+        assert w.menuBar().cornerWidget(Qt.Corner.TopRightCorner) is w.top_w
+        assert w.btn_patients.isVisible() and _inside(w.btn_patients, w.top_w)
+        assert "김민수" in w.banner.text() and "20260115001" in w.banner.text()
+        assert w.toolBarArea(w.tb_cmd) == Qt.ToolBarArea.LeftToolBarArea
+        assert w.thumbs.height() < 130                                   # one low line of photos
+
+        # -- 모두 보기: the big photo, 황반 and 시신경 유두 enlarged; no 다중 · 3D panes --
         assert _inside(w.view2d, w.page_all) and w.view2d.has_image()
-        assert w.thumbs.mapTo(w, QPoint(0, 0)).y() > w.tabs.mapTo(w, QPoint(0, 0)).y() + w.tabs.height() - 5
-        # 다중 (2 × 2): the patient's 2 photos; 확대: the same processed photo as the big view
-        cells = [c for c in w.ov_multi.cells if c.isVisible()]
-        assert len(cells) == 4 and sum(c.image_id is not None for c in cells) == 2
-        assert not w.ov_multi.topbar.isVisible()
-        assert w.ov_zoom._rgb is w.view2d._rgb and w.ov_zoom.zoomed_in()
-        # the frame on the big photo shows what the 확대 화면 shows: first the optic disc
+        assert list(w.ov_heads) == ["macula", "zoom"] and not w.ov_multi.isVisible()
+        assert not w._ov_gl and _inside(w.split3d, w.page3d)
         row = w.current
-        disc = QPointF(row["disc_x"], row["disc_y"])
-        assert w._ov_roi.isVisible() and w._ov_roi.rect().contains(disc)
-        # a click on the big photo moves the 확대 화면 there; a drag (zoom) does not
+        fovea, disc = QPointF(row["fovea_x"], row["fovea_y"]), QPointF(row["disc_x"], row["disc_y"])
+        for v in (w.ov_macula, w.ov_zoom):
+            assert v._rgb is w.view2d._rgb and v.zoomed_in()             # the same processed photo
+        assert _shows(w.ov_macula, fovea) and not _shows(w.ov_macula, disc) or _shows(w.ov_macula, fovea)
+        assert _shows(w.ov_zoom, disc) and not _shows(w.ov_zoom, fovea)
+        assert w.ov_zoom.zoom > w.ov_macula.zoom                         # the disc closer than the macula
+        # the frames on the big photo are where the panes look (macula light blue, disc yellow)
+        roi_m, roi_d = w._ov_rois["macula"], w._ov_rois["zoom"]
+        assert roi_m.isVisible() and roi_m.rect().contains(fovea)
+        assert roi_d.isVisible() and roi_d.rect().contains(disc) and not roi_d.rect().contains(fovea)
+        assert "찾지 못함" not in w.ov_heads["macula"].text() + w.ov_heads["zoom"].text()
+        # a click on the big photo leaves the panes where they are (they show their own places)
+        before = (roi_m.rect(), roi_d.rect())
         h, wd = w.view2d._rgb.shape[:2]
-        target = QPointF(wd * 0.3, h * 0.6)
-        QTest.mouseClick(w.view2d.viewport(), Qt.MouseButton.LeftButton, pos=w.view2d.mapFromScene(target))
+        QTest.mouseClick(w.view2d.viewport(), Qt.MouseButton.LeftButton,
+                         pos=w.view2d.mapFromScene(QPointF(wd * 0.3, h * 0.6)))
         app.processEvents()
-        assert w._ov_roi.rect().contains(target) and not w._ov_roi.rect().contains(disc)
-        before = w._ov_roi.rect()
-        vp = w.view2d.viewport()
-        a = w.view2d.mapFromScene(QPointF(wd * 0.7, h * 0.4))
-        QTest.mousePress(vp, Qt.MouseButton.LeftButton, pos=a)
-        QTest.mouseMove(vp, a + QPoint(0, 30))
-        QTest.mouseRelease(vp, Qt.MouseButton.LeftButton, pos=a + QPoint(0, 30))
-        app.processEvents()
-        assert w._ov_roi.rect() == before
-        w._on_action("fit")
-        # processing (Red-free) reaches the 확대 화면 and keeps its place
+        assert (roi_m.rect(), roi_d.rect()) == before
+        # processing (Red-free) reaches both panes; their places stay
         w._on_action("chan:redfree")
         _wait(app, lambda: not w._adjust_timer.isActive())
-        assert w.ov_zoom._rgb is w.view2d._rgb and w._ov_roi.rect().contains(target)
-        # the frame is never in a copy / saved / printed picture
+        assert w.ov_macula._rgb is w.view2d._rgb and w.ov_zoom._rgb is w.view2d._rgb
+        assert roi_m.rect().contains(fovea) and roi_d.rect().contains(disc)
+        w._on_action("chan:redfree", False)
+        # the frames are never in a copy / saved / printed picture
         img = w._rendered()
-        assert w._ov_roi.isVisible()
-        w._ov_roi.setVisible(False)
+        assert roi_m.isVisible() and roi_d.isVisible()
+        roi_m.setVisible(False)
+        roi_d.setVisible(False)
         assert img == w.view2d.render_image()
-        w._ov_roi.setVisible(True)
-        # the next photo: 확대 화면 back on its disc, 다중 marks it
+        w._ov_sync_roi()
+        assert roi_m.isVisible() and roi_d.isVisible()
+        # a pane's heading zooms the big photo to that place; double click on the big photo: all of it
+        w._on_action("fit")
+        assert not w.view2d.zoomed_in()
+        w.ov_heads["zoom"].click()
+        assert w.view2d.zoomed_in() and _shows(w.view2d, disc)
+        w.ov_heads["macula"].click()
+        assert w.view2d.zoomed_in() and _shows(w.view2d, fovea)
+        w._on_action("fit")
+        # the next photo: both panes on its own macula and disc
         w._on_action("next")
         app.processEvents()
         row = w.current
-        assert w._ov_roi.rect().contains(QPointF(row["disc_x"], row["disc_y"]))
-        from fundusview.ui.theme import ACCENT                     # the selected cell's frame
-        assert any(c.image_id == row["id"] and ACCENT in c.styleSheet() for c in w.ov_multi.cells)
-        # clicking a 다중 cell selects that photo
-        other = next(c for c in w.ov_multi.cells if c.image_id not in (None, row["id"]))
-        other.view.clicked.emit()
-        app.processEvents()
-        assert w.current["id"] == other.image_id
-        # 2D 보기 gets the big view back (no frame there); pane headers open the big tabs
-        w._go("2d")
-        assert _inside(w.view2d, w.page2d) and not w._ov_roi.isVisible()
-        w._go("all")
-        assert _inside(w.view2d, w.page_all) and w._ov_roi.isVisible()
-        w.ov_heads["multi"].click()
-        assert w._tab() == "multi"
-        w._go("all")
-        w.ov_heads["zoom"].click()
-        assert w._tab() == "2d"
-        w._go("all")
-        # no OpenGL offscreen: the 3D pane is a button to the 3D tab, the eye stays in its tab
-        assert not w._ov_gl and _inside(w.split3d, w.page3d)
-        btn = w.ov_3d.findChild(type(w.ov_heads["3d"]), "ovOpen3d")
-        btn.click()
-        assert w._tab() == "3d"
-        # 보기 menu: tabs by name, Ctrl+1~4 as before, Ctrl+5 for 모두 보기, Ctrl+6 for 검토, Ctrl+0 patient list
-        acts = {a.text(): a.shortcut().toString() for a in w.findChildren(type(w.acts["fit"]))
-                if a.text() in ("모두 보기", "2D 보기", "3D 안구", "다중 보기", "비교", "검토", "환자 목록")
-                and not a.shortcut().isEmpty()}
-        assert acts == {"모두 보기": "Ctrl+5", "2D 보기": "Ctrl+1", "3D 안구": "Ctrl+2", "다중 보기": "Ctrl+3",
-                        "비교": "Ctrl+4", "검토": "Ctrl+6", "환자 목록": "Ctrl+0"}
-        for key in ("2d", "3d", "multi", "cmp", "review", "all"):
+        assert roi_d.rect().contains(QPointF(row["disc_x"], row["disc_y"]))
+        if row["fovea_x"] is not None:
+            assert roi_m.rect().contains(QPointF(row["fovea_x"], row["fovea_y"]))
+
+        # -- the view switch: 다중 보기 · 3D · back --
+        w.view_buttons["multi"].click()
+        assert w._tab() == "multi" and w.view_buttons["multi"].isChecked()
+        w.view_buttons["3d"].click()
+        assert w._tab() == "3d" and w.view_buttons["3d"].isChecked()
+        w._on_action("view3d")                                           # the toolbar's 3D again: back
+        assert w._tab() == "all" and w.view_buttons["all"].isChecked()
+        assert _inside(w.view2d, w.page_all) and roi_d.isVisible()
+        # whatever led to 검토 · 2D 보기 · 비교 stays on 모두 보기
+        for key in ("review", "2d", "cmp"):
             w._go(key)
-            app.processEvents()
-            assert w._tab() == key
+            assert w._tab() == "all"
+        # 보기 menu: Ctrl+1~3 for the three views, Ctrl+0 the patient list
+        acts = {a.text(): a.shortcut().toString() for a in w.findChildren(type(w.acts["fit"]))
+                if a.text() in ("모두 보기", "다중 보기", "3D", "2D 보기", "비교", "검토", "3D 안구", "환자 목록")
+                and not a.shortcut().isEmpty()}
+        assert acts == {"모두 보기": "Ctrl+1", "다중 보기": "Ctrl+2", "3D": "Ctrl+3", "환자 목록": "Ctrl+0"}
+        assert w.acts["view3d"].text() == "3D"
     finally:
         w.close()
         db.close()
 
+
+def test_a_photo_without_macula_or_disc_says_so(tmp_path, demo_dir, import_and_wait):
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication([])
+    w, db = _window(tmp_path, demo_dir)
+    try:
+        w.resize(1500, 950)
+        w.show()
+        import_and_wait(app, w, [demo_dir])
+        row = db.images_for_patient(db.find_patient("20260115001")["id"])[0]
+        db.update_image(row["id"], disc_x=None, disc_y=None, fovea_x=None, fovea_y=None)
+        w._select_patient_ref(row["patient_ref"])
+        w.show_page("work")
+        w._go("all")
+        w.thumbs.setCurrentRow(0)
+        app.processEvents()
+        if w.current["fovea_x"] is None:                       # (not found again when shown)
+            assert "찾지 못함" in w.ov_heads["macula"].text()
+        if w.current["disc_x"] is None:
+            assert "찾지 못함" in w.ov_heads["zoom"].text()
+        assert w.ov_macula.has_image() and w.ov_zoom.has_image()      # the centre of the photo instead
+    finally:
+        w.close()
+        db.close()

@@ -70,7 +70,8 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
         w.btn_rows.click()
         assert s.thumb_rows == 3
         w.btn_rows.click()
-        assert not w.thumbs.isWrapping() and s.thumb_rows == 1 and w.thumbs.height() == 182
+        from fundusview.ui.main_window import THUMB_GRID
+        assert not w.thumbs.isWrapping() and s.thumb_rows == 1 and w.thumbs.height() == THUMB_GRID[1] + 10
         w.btn_rows.click()
         assert s.thumb_rows == 2
         w.thumbs.setFixedWidth(2 * w.thumbs.gridSize().width() + 30)  # narrow strip: 3 photos need 2 rows
@@ -93,10 +94,10 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
         _click(w, w.thumbs.item(1))
         assert w.picks() == [ids[0], ids[1]]
 
-        # double click = open in 2D, the picks stay as they were
-        w._go("cmp")
+        # double click = that photo large (모두 보기, whose big photo is the 2D view), the picks stay as they were
+        w._go("multi")
         _click(w, w.thumbs.item(2), double=True)
-        assert w.current["id"] == ids[2] and w._tab() == "2d"
+        assert w.current["id"] == ids[2] and w._tab() == "all"
         assert w.picks() == [ids[0], ids[1]]
 
         # [멀티]: the picked photos, in pick order, the first one selected
