@@ -278,6 +278,17 @@ def test_empty_library_explains_how_photos_arrive(tmp_path):
         db.close()
 
 
+def _settle(app, rv, timeout: float = 20.0):
+    """Wait until the reduced photos of the larger layouts are on their cells."""
+    import time
+    end = time.time() + timeout
+    while rv.loading() and time.time() < end:
+        app.processEvents()
+        time.sleep(0.005)
+    app.processEvents()
+    assert not rv.loading()
+
+
 def _open_review(app, w, refs, who="kim"):
     page = w.patient_page
     row = next(r for r in range(page.table.rowCount()) if page.refs()[r] == refs[who])
@@ -353,13 +364,14 @@ def test_checked_exam_is_the_current_one_and_stages_follow(win):
     assert rv.slot_ids()[0] == ids["od2"]
     rv.btn_older.click()
     assert rv.slot_ids()[0] == ids["od1"]
-    # ◀ 이전 · 다음 ▶ go round the possible stages; a new stage starts at the latest earlier exam
-    rv.btn_next.click()
+    # the stages are chosen in the 배치 list (the arrows page through photos now); a new stage starts
+    # at the latest earlier exam
+    rv.c_stage.activated.emit(2)
     assert rv.stage == "os" and rv.slot_ids() == [ids["os2"], ids["os3"]] and rv.lbl_prior.text() == "이전 검사 1/1"
-    rv.btn_next.click()
+    rv.c_stage.activated.emit(0)
     assert rv.stage == "ou" and not rv.prior_nav.isVisible()
-    rv.btn_prev.click()
-    assert rv.stage == "os"
+    rv.set_stage("os")
+    assert rv.stage == "os" and rv.c_stage.currentData() == "os"
 
     # another exam checked in the patient list: it is the current one, older exams are its priors
     w.show_page("patients")
@@ -373,17 +385,16 @@ def test_checked_exam_is_the_current_one_and_stages_follow(win):
     assert [model.item(i).isEnabled() for i in range(3)] == [True, True, False]
     assert rv.c_stage.itemText(2) == "OS 비교* (이전 | 현재) — 이전 검사 없음" and "이전 검사 없음" not in rv.c_stage.itemText(1)
     rv.set_stage("os")
-    assert rv.stage == "ou"
-    rv.btn_next.click()
+    assert rv.stage == "ou"                             # not possible: falls back to 양안
+    rv.set_stage("od")
     assert rv.stage == "od" and rv.slot_ids() == [ids["od1"], ids["od2"]] and rv.lbl_prior.text() == "이전 검사 1/1"
-    rv.btn_next.click()
-    assert rv.stage == "ou"                             # OS 비교 is skipped
+    rv.set_stage("ou")
 
     # the oldest exam: OS was not taken then — nothing earlier to fall back on; no compare stage at all
     w.patient_page.set_exam("2025-08-20")
     assert rv.current == "2025-08-20" and rv.slot_ids() == [ids["od1"], None]
     assert not rv.views[1].has_image() and rv.views[1].empty_text == "OS 좌안 사진이 없습니다"
-    assert not rv.btn_next.isEnabled() and not rv.btn_prev.isEnabled()
+    assert not rv.prior_nav.isVisible() and rv.prior_count() == 0
     rv.set_active(1)
     assert not rv.btn_2d.isEnabled() and not rv.btn_glaucoma.isEnabled()
     rv.set_active(0)
@@ -406,7 +417,8 @@ def test_checked_exam_is_the_current_one_and_stages_follow(win):
     assert [model.item(i).isEnabled() for i in range(3)] == [True, False, False]
 
 
-def test_timeline_puts_photos_on_the_views(win):
+def test_drop_puts_a_photo_on_a_cell(win):
+    """A timeline photo dragged onto a cell goes to that cell (a click selects — see the multi-view tests)."""
     from PySide6.QtCore import QMimeData, QPoint, QPointF, Qt
     from PySide6.QtGui import QDragEnterEvent, QDropEvent
 
@@ -414,47 +426,50 @@ def test_timeline_puts_photos_on_the_views(win):
 
     app, w, db, refs, ids = win
     rv = _open_review(app, w, refs)
-    thumb = {t.image_id: t for t in rv.timeline.thumbs}
-    # 양안: a clicked photo goes to the view of its eye, whichever view is active
-    rv.set_active(1)
-    thumb[ids["od2"]].click()
-    assert rv.slot_ids() == [ids["od2"], ids["os3"]] and rv.active == 0 and rv.views[0].tag == "이전"
-    thumb[ids["os2"]].click()
-    assert rv.slot_ids() == [ids["od2"], ids["os2"]] and rv.active == 1
-    assert {t.image_id for t in rv.timeline.thumbs if t.shown} == {ids["od2"], ids["os2"]}
-    # a photo of an unknown eye goes to the active view
-    rv.set_active(0)
-    thumb[ids["na3"]].click()
-    assert rv.slot_ids() == [ids["na3"], ids["os2"]] and rv.views[0].tag == ""
-    # compare stages: the clicked photo goes to the active view, whatever its eye
+
+    def drop(view, image_id):
+        mime = QMimeData()
+        mime.setData(MIME, str(image_id).encode())
+        enter = QDragEnterEvent(QPoint(30, 30), Qt.DropAction.CopyAction, mime, Qt.MouseButton.LeftButton,
+                                Qt.KeyboardModifier.NoModifier)
+        view.dragEnterEvent(enter)
+        assert enter.isAccepted() and view._drop
+        view.dropEvent(QDropEvent(QPointF(30, 30), Qt.DropAction.CopyAction, mime, Qt.MouseButton.LeftButton,
+                                  Qt.KeyboardModifier.NoModifier))
+        assert not view._drop
+
+    # the stage's pair: the dropped photo takes that cell, whatever its eye; an earlier one is tagged 이전
+    drop(rv.views[1], ids["od2"])
+    assert rv.slot_ids() == [ids["od3"], ids["od2"]] and rv.active == 1 and rv.views[1].tag == "이전"
+    assert rv.selection == [] and rv.preset and rv.layout_n == 2
+    assert {t.image_id for t in rv.timeline.thumbs if t.shown} == {ids["od3"], ids["od2"]}
+    drop(rv.views[0], ids["na3"])
+    assert rv.slot_ids() == [ids["na3"], ids["od2"]] and rv.views[0].tag == ""
     rv.set_stage("od")
-    rv.set_active(1)
-    thumb[ids["os2"]].click()
-    assert rv.slot_ids() == [ids["od2"], ids["os2"]]
-    rv.set_active(0)
-    thumb[ids["rf3"]].click()
+    drop(rv.views[0], ids["rf3"])
     assert rv.slot_ids()[0] == ids["rf3"] and rv.views[0].tag == "현재"
-    # drag & drop: on the view the photo is dropped on (files are left to the window's import)
-    mime = QMimeData()
-    mime.setData(MIME, str(ids["od1"]).encode())
-    view = rv.views[1]
-    pos = QPointF(30, 30)
-    enter = QDragEnterEvent(QPoint(30, 30), Qt.DropAction.CopyAction, mime, Qt.MouseButton.LeftButton,
-                            Qt.KeyboardModifier.NoModifier)
-    view.dragEnterEvent(enter)
-    assert enter.isAccepted() and view._drop
-    drop = QDropEvent(pos, Qt.DropAction.CopyAction, mime, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
-    view.dropEvent(drop)
-    assert rv.slot_ids()[1] == ids["od1"] and rv.active == 1 and not view._drop
+    # files are left to the window's import
     files = QMimeData()
     files.setUrls([])
     enter = QDragEnterEvent(QPoint(30, 30), Qt.DropAction.CopyAction, files, Qt.MouseButton.LeftButton,
                             Qt.KeyboardModifier.NoModifier)
-    view.dragEnterEvent(enter)
-    assert not enter.isAccepted() and not view._drop
+    rv.views[1].dragEnterEvent(enter)
+    assert not enter.isAccepted() and not rv.views[1]._drop
     # choosing the stage again puts the default photos back
     rv.set_stage("ou")
     assert rv.slot_ids() == [ids["od3"], ids["os3"]]
+    # in a selection the dropped photo takes the place of that cell's photo
+    for k in ("od3", "os3", "od2"):
+        rv.timeline.photoClicked.emit(ids[k])
+    _settle(app, rv)
+    assert rv.layout_n == 4 and rv.selection == [ids["od3"], ids["os3"], ids["od2"]]
+    drop(rv.views[1], ids["od1"])
+    _settle(app, rv)
+    assert rv.selection == [ids["od3"], ids["od1"], ids["od2"]] and rv.slot_ids()[:3] == rv.selection
+    drop(rv.views[3], ids["os2"])                        # an empty cell: added at the end
+    assert rv.selection[-1] == ids["os2"] and len(rv.selection) == 4
+    drop(rv.views[0], ids["od2"])                        # already picked: it moves, nothing doubles
+    assert rv.selection == [ids["od2"], ids["od1"], ids["os2"]]
 
 
 def test_linked_views_view_modes_and_zoom(win):
@@ -501,10 +516,11 @@ def test_linked_views_view_modes_and_zoom(win):
     assert b.zoom == pytest.approx(z)
     rv.btn_fit.click()
     assert state(a)[3] and state(b)[3] and not a.zoomed_in() and not b.zoomed_in()
-    # a double click on a view fits as well
+    # 맞춤 from the other cell as well (a double click is "this photo alone" now, not fit)
     b.zoom_to(b.zoom * 3)
     assert a.zoomed_in()
-    QTest.mouseDClick(a.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(50, 50))
+    rv.set_active(0)
+    rv.fit()
     assert not a.zoomed_in() and not b.zoomed_in()
     # 연동 off: each view on its own; on again: the other joins the active view
     rv.sw_link.setChecked(False)
@@ -765,12 +781,409 @@ def test_timeline_eye_filter(win):
     tl.eye_buttons["OS"].click()
     assert [t.image_id for t in tl.thumbs] == [i for i in everything if eye_of[i] == "OS"]
     assert [b.text() for b in tl.dates] == ["2026-03-02 · 현재", "2025-12-01"]   # no OS photo in the oldest exam
-    # a click still puts the photo on its eye's view; the views themselves are not filtered
-    assert rv.slot_ids() == [ids["od3"], ids["os3"]]
-    tl.photoClicked.emit(ids["os2"])
-    assert rv.slot_ids() == [ids["od3"], ids["os2"]]
+    # the cells themselves are not filtered: the stage's pair stays, only the pool to page through changes
+    assert rv.slot_ids() == [ids["od3"], ids["os3"]] and rv.preset
+    assert [r["id"] for r in rv.pool()] == [i for i in everything if eye_of[i] == "OS"] and rv.position() == "2장 / 2"
     # the choice stays when the photos are handed over again, and 모두 brings everything back
     rv.set_photos(rv.rows, "2025-12-01")
     assert tl.eye == "OS" and all(eye_of[t.image_id] == "OS" for t in tl.thumbs)
     tl.set_eye("")
     assert tl.eye_buttons[""].isChecked() and len(tl.thumbs) == 7
+
+
+# ---------------------------------------------------------------------------------------------
+# 검토 as a multi-view: the cells show what is selected; layouts 1 – 32; paging; one photo alone
+# ---------------------------------------------------------------------------------------------
+def _pool_ids(rv):
+    return [r["id"] for r in rv.pool()]
+
+
+def test_review_opens_two_up_and_selection_sets_the_layout(win):
+    from fundusview.ui.review_view import LAYOUTS, layout_for
+
+    app, w, db, refs, ids = win
+    rv = _open_review(app, w, refs)
+    tl = rv.timeline
+    thumb = {t.image_id: t for t in tl.thumbs}
+    assert list(LAYOUTS) == [1, 2, 4, 8, 16, 32]
+    assert [LAYOUTS[n] for n in LAYOUTS] == [(1, 1), (2, 1), (2, 2), (4, 2), (4, 4), (8, 4)]     # columns × rows
+    assert [layout_for(n) for n in (1, 2, 3, 4, 5, 8, 9, 16, 17, 40)] == [1, 2, 4, 4, 8, 8, 16, 16, 32, 32]
+    # the first screen: the stage's pair on two cells, nothing selected
+    assert rv.preset and rv.layout_n == 2 and len(rv.views) == 2 and rv.selection == []
+    assert rv.slot_ids() == [ids["od3"], ids["os3"]] and rv.layout_buttons[2].isChecked()
+    assert [b.text() for b in rv.seg_layout.buttons] == ["1", "2", "4", "8", "16", "32"]
+    assert not rv.btn_clear.isVisible() and rv.lbl_pos.text() == "2장 / 7"
+    assert all(t.rank == 0 for t in tl.thumbs)
+
+    # a click selects (numbered in the order picked); the cells show the selected photos and the
+    # layout is the smallest that holds them: 1 → 2 → 4 → 8
+    thumb[ids["od2"]].click()
+    assert rv.selection == [ids["od2"]] and not rv.preset and rv.layout_n == 1 and rv.slot_ids() == [ids["od2"]]
+    assert thumb[ids["od2"]].rank == 1 and thumb[ids["od2"]].shown and rv.btn_clear.isVisible()
+    assert rv.layout_buttons[1].isChecked() and rv.lbl_pos.text() == "1 / 1" and not rv.prior_nav.isVisible()
+    thumb[ids["os2"]].click()
+    assert rv.layout_n == 2 and rv.slot_ids() == [ids["od2"], ids["os2"]] and rv.lbl_pos.text() == "1–2 / 2"
+    assert all(v.has_image() and v.tag == "" for v in rv.views)
+    thumb[ids["od1"]].click()
+    _settle(app, rv)
+    assert rv.layout_n == 4 and rv.slot_ids() == [ids["od2"], ids["os2"], ids["od1"], None]
+    assert [thumb[ids[k]].rank for k in ("od2", "os2", "od1", "od3")] == [1, 2, 3, 0]
+    assert sum(v.isVisible() for v in rv.cells) == 4 and not rv.views[3].has_image()
+    g = [rv.views[i].mapTo(rv.stage_w, rv.views[i].rect().topLeft()) for i in range(4)]
+    assert g[0].y() == g[1].y() < g[2].y() == g[3].y() and g[0].x() == g[2].x() < g[1].x()        # 2 × 2
+    thumb[ids["od3"]].click()
+    thumb[ids["os3"]].click()
+    _settle(app, rv)
+    assert rv.layout_n == 8 and rv.slot_ids()[:5] == rv.selection and rv.slot_ids()[5:] == [None] * 3
+    assert rv.lbl_pos.text() == "1–5 / 5" and not rv.btn_next.isEnabled() and not rv.btn_prev.isEnabled()
+    g = [rv.views[i].mapTo(rv.stage_w, rv.views[i].rect().topLeft()) for i in range(8)]
+    assert len({p.y() for p in g}) == 2 and len({p.x() for p in g}) == 4                          # 4 columns × 2 rows
+    assert all(v.compact == 1 for v in rv.views)
+    # the clicked photo's cell is the active one; hand-offs take the active cell (no pair outside a stage)
+    assert rv.active == 4 and rv.active_row()["id"] == ids["os3"]
+    sent = []
+    w.open_glaucoma = lambda second=None: sent.append((w.current["id"], second))     # (the real window is modal)
+    rv.hand_off("glaucoma")
+    assert sent == [(ids["os3"], None)]
+    del w.open_glaucoma
+
+    # deselecting: the layout shrinks again; with nothing left the stage's pair is back
+    thumb[ids["od1"]].click()
+    _settle(app, rv)
+    assert rv.layout_n == 4 and rv.selection == [ids["od2"], ids["os2"], ids["od3"], ids["os3"]]
+    assert thumb[ids["od3"]].rank == 3 and thumb[ids["od1"]].rank == 0
+    for k in ("od2", "os2", "od3"):
+        thumb[ids[k]].click()
+    assert rv.selection == [ids["os3"]] and rv.layout_n == 1
+    thumb[ids["os3"]].click()
+    assert rv.selection == [] and rv.preset and rv.layout_n == 2 and rv.slot_ids() == [ids["od3"], ids["os3"]]
+    assert not rv.btn_clear.isVisible() and all(t.rank == 0 for t in tl.thumbs)
+    # 선택 해제 and choosing a stage clear the selection as well
+    thumb[ids["od1"]].click()
+    thumb[ids["od2"]].click()
+    rv.btn_clear.click()
+    assert rv.selection == [] and rv.preset and rv.slot_ids() == [ids["od3"], ids["os3"]]
+    thumb[ids["od1"]].click()
+    rv.c_stage.activated.emit(1)
+    assert rv.stage == "od" and rv.selection == [] and rv.preset and rv.slot_ids() == [ids["od2"], ids["od3"]]
+    assert rv.prior_nav.isVisible()
+
+    # the same photos handed over again (a list refresh): selection, layout and page stay
+    thumb[ids["od1"]].click()
+    thumb[ids["os2"]].click()
+    thumb[ids["na3"]].click()
+    _settle(app, rv)
+    rv.views[0].zoom_to(rv.views[0].zoom * 2)
+    zoom = rv.views[0].zoom
+    w._fill_thumbs()
+    w.refresh_patients(keep=True)
+    assert rv.selection == [ids["od1"], ids["os2"], ids["na3"]] and rv.layout_n == 4 and not rv.preset
+    assert rv.slot_ids()[:3] == rv.selection and rv.views[0].zoom == pytest.approx(zoom)
+    assert thumb[ids["os2"]].rank == 2
+
+
+def test_layout_control_and_paging(win):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    app, w, db, refs, ids = win
+    rv = _open_review(app, w, refs)
+    pool = _pool_ids(rv)                                  # the timeline's photos, in its order
+    assert pool == [ids[k] for k in ("od3", "os3", "rf3", "na3", "od2", "os2", "od1")]
+    # choosing the layout the tab is already in changes nothing
+    rv.layout_buttons[2].click()
+    assert rv.preset and rv.slot_ids() == [ids["od3"], ids["os3"]]
+    # 4: the cells are filled from the pool, starting at the first photo on screen
+    rv.layout_buttons[4].click()
+    _settle(app, rv)
+    assert not rv.preset and rv.layout_n == 4 and rv.start == 0 and rv.slot_ids() == pool[0:4]
+    assert rv.lbl_pos.text() == "1–4 / 7" and not rv.btn_prev.isEnabled() and rv.btn_next.isEnabled()
+    assert not rv.prior_nav.isVisible() and rv.selection == []
+    assert {t.image_id for t in rv.timeline.thumbs if t.shown} == set(pool[0:4])
+    # ▶: the next four — the cells past the end are empty; clamped at both ends
+    rv.btn_next.click()
+    _settle(app, rv)
+    assert rv.start == 4 and rv.slot_ids() == pool[4:7] + [None] and rv.lbl_pos.text() == "5–7 / 7"
+    assert rv.btn_prev.isEnabled() and not rv.btn_next.isEnabled()
+    rv.page(1)
+    assert rv.start == 4
+    rv.btn_prev.click()
+    _settle(app, rv)
+    assert rv.start == 0 and rv.slot_ids() == pool[0:4]
+    rv.page(-1)
+    assert rv.start == 0
+    # the ← / → keys do the same
+    rv.views[0].setFocus()
+    QTest.keyClick(rv.views[0], Qt.Key.Key_Right)
+    _settle(app, rv)
+    assert rv.start == 4
+    QTest.keyClick(rv.views[0], Qt.Key.Key_Left)
+    _settle(app, rv)
+    assert rv.start == 0
+    # 2 from there: the page starts at the first photo on screen; ▶ moves by two
+    rv.page(1)
+    rv.layout_buttons[2].click()
+    assert rv.layout_n == 2 and rv.start == 4 and rv.slot_ids() == pool[4:6] and rv.lbl_pos.text() == "5–6 / 7"
+    rv.btn_next.click()
+    assert rv.slot_ids() == [pool[6], None] and rv.lbl_pos.text() == "7 / 7"
+    # 1: one photo, the arrows walk one at a time
+    rv.layout_buttons[1].click()
+    assert rv.layout_n == 1 and rv.slot_ids() == [pool[6]] and rv.lbl_pos.text() == "7 / 7"
+    rv.btn_prev.click()
+    assert rv.slot_ids() == [pool[5]] and rv.lbl_pos.text() == "6 / 7"
+    rv.views[0].setFocus()
+    QTest.keyClick(rv.views[0], Qt.Key.Key_Left)          # one key press = one step
+    assert rv.lbl_pos.text() == "5 / 7"
+    QTest.keyClick(rv.views[0], Qt.Key.Key_Right)
+    assert rv.lbl_pos.text() == "6 / 7"
+    # 16 and 32: every photo there is, the rest empty; small cells carry the eye and the date only
+    rv.layout_buttons[16].click()
+    _settle(app, rv)
+    assert rv.layout_n == 16 and sum(v.isVisible() for v in rv.cells) == 16 and rv.start == 5
+    assert rv.slot_ids()[:2] == pool[5:7] and rv.slot_ids()[2:] == [None] * 14
+    rv.page(-1)
+    rv.layout_buttons[32].click()
+    _settle(app, rv)
+    assert rv.layout_n == 32 and rv.start == 0 and rv.slot_ids()[:7] == pool and rv.lbl_pos.text() == "1–7 / 7"
+    assert all(v.compact == 2 for v in rv.views) and sum(v.has_image() for v in rv.views) == 7
+    g = [rv.views[i].mapTo(rv.stage_w, rv.views[i].rect().topLeft()) for i in range(32)]
+    assert len({p.y() for p in g}) == 4 and len({p.x() for p in g}) == 8                          # 8 columns × 4 rows
+    assert all(v.width() > 60 and v.height() > 40 for v in rv.views)
+    # from the stage's pair the arrows start at the pair's place in the pool
+    rv.set_stage("ou")
+    assert rv.preset and rv.layout_n == 2 and not rv.btn_prev.isEnabled() and rv.btn_next.isEnabled()
+    rv.btn_next.click()
+    assert not rv.preset and rv.slot_ids() == pool[2:4] and rv.lbl_pos.text() == "3–4 / 7"
+    # with a selection the pool is the selection
+    for k in ("od1", "od2", "od3"):
+        rv.timeline.photoClicked.emit(ids[k])
+    rv.layout_buttons[2].click()
+    assert rv.slot_ids() == [ids["od1"], ids["od2"]] and rv.lbl_pos.text() == "1–2 / 3"
+    rv.btn_next.click()
+    assert rv.slot_ids() == [ids["od3"], None] and rv.selection == [ids["od1"], ids["od2"], ids["od3"]]
+
+    # the eye filter with nothing selected: another pool, but what is on screen stays until paged
+    rv.btn_clear.click()
+    rv.layout_buttons[2].click()
+    rv.page(1)
+    assert rv.slot_ids() == pool[2:4]                     # rf3 (OD), na3 (unknown eye)
+    rv.timeline.set_eye("OD")
+    od = _pool_ids(rv)
+    assert od == [ids[k] for k in ("od3", "rf3", "od2", "od1")] and rv.slot_ids() == pool[2:4]
+    assert rv.start == 1 and rv.lbl_pos.text() == "2–3 / 4"
+    rv.btn_next.click()
+    assert rv.slot_ids() == od[3:4] + [None]
+    rv.timeline.set_eye("")
+
+
+def test_double_click_shows_one_photo_and_back(win):
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+
+    app, w, db, refs, ids = win
+    rv = _open_review(app, w, refs)
+    pool = _pool_ids(rv)
+
+    def dclick(i=0):
+        QTest.mouseDClick(rv.views[i].viewport(), Qt.MouseButton.LeftButton, pos=QPoint(60, 60))
+        _settle(app, rv)
+
+    # from a compare stage: the photo alone, whole; again: the stage exactly as it was (the prior too)
+    rv.set_stage("od")
+    rv.step_prior(1)
+    assert rv.slot_ids() == [ids["od1"], ids["od3"]]
+    rv.views[0].zoom_to(rv.views[0].zoom * 3)
+    dclick(1)
+    assert rv.layout_n == 1 and rv.slot_ids() == [ids["od3"]] and not rv.views[0].zoomed_in()      # not "fit"
+    assert rv.layout_buttons[1].isChecked() and not rv.prior_nav.isVisible() and rv.lbl_pos.text() == "1 / 7"
+    assert rv.views[0]._rgb.shape == w._load(db.get_image(ids["od3"])).shape                      # the full photo
+    dclick()
+    assert rv.preset and rv.stage == "od" and rv.layout_n == 2 and rv.prior == 1 and rv.active == 1
+    assert rv.slot_ids() == [ids["od1"], ids["od3"]] and rv.prior_nav.isVisible()
+    # walking with the arrows in the single view, then back: the page that holds the photo last seen
+    dclick(1)
+    rv.btn_next.click()
+    rv.btn_next.click()
+    rv.btn_next.click()
+    assert rv.slot_ids() == [pool[3]] and rv.lbl_pos.text() == "4 / 7"
+    dclick()
+    assert not rv.preset and rv.layout_n == 2 and rv.start == 2 and rv.slot_ids() == pool[2:4] and rv.active == 1
+    # from a page of four
+    rv.layout_buttons[4].click()
+    rv.page(-1)
+    _settle(app, rv)
+    assert rv.slot_ids() == pool[0:4]
+    dclick(2)
+    assert rv.layout_n == 1 and rv.slot_ids() == [pool[2]] and rv.lbl_pos.text() == "3 / 7"
+    dclick()
+    assert rv.layout_n == 4 and rv.start == 0 and rv.slot_ids() == pool[0:4] and rv.active == 2
+    dclick(2)
+    rv.page(1)
+    rv.page(1)
+    rv.page(1)
+    dclick()
+    assert rv.layout_n == 4 and rv.start == 4 and rv.slot_ids() == pool[4:7] + [None] and rv.active == 1
+    # an empty cell and a single layout chosen with the control have nothing to go to / back to
+    dclick(3)
+    assert rv.layout_n == 4
+    rv.layout_buttons[1].click()
+    dclick()
+    assert rv.layout_n == 1
+    # in a selection as well
+    rv.set_stage("ou")
+    for k in ("od1", "os2", "od2"):
+        rv.timeline.photoClicked.emit(ids[k])
+    _settle(app, rv)
+    dclick(1)
+    assert rv.layout_n == 1 and rv.slot_ids() == [ids["os2"]] and rv.selection == [ids["od1"], ids["os2"], ids["od2"]]
+    assert rv.lbl_pos.text() == "2 / 3"
+    dclick()
+    assert rv.layout_n == 4 and rv.slot_ids()[:3] == rv.selection and rv.active == 1
+
+
+def test_link_and_magnifier_across_many_cells(win):
+    from PySide6.QtCore import QPoint
+
+    app, w, db, refs, ids = win
+    rv = _open_review(app, w, refs)
+    for k in ("od3", "os3", "od2", "od1"):               # od2 is 400 × 300, the others 320 × 300
+        rv.timeline.photoClicked.emit(ids[k])
+    _settle(app, rv)
+    cells = rv.views
+    assert rv.layout_n == 4 and all(v.has_image() for v in cells) and all(v.view_state()[3] for v in cells)
+    # 연동: zooming or moving one cell takes all the others to the same place of their photos
+    v = cells[2]
+    at = v.viewport().rect().center()                     # (near an edge a narrower photo cannot follow all the way)
+    v._wheel_at, v._wheel_scene = at, v.mapToScene(at)
+    v._wheel_part(8)
+    ref = v.view_state()
+    assert v.zoomed_in() and not ref[3]
+    for other in cells:
+        st = other.view_state()
+        assert st[0] == pytest.approx(ref[0], rel=1e-6) and st[1] == pytest.approx(ref[1], abs=0.03)
+        assert st[2] == pytest.approx(ref[2], abs=0.03)
+    v.horizontalScrollBar().setValue(v.horizontalScrollBar().value() + 12)
+    ref = v.view_state()
+    assert all(o.view_state()[1] == pytest.approx(ref[1], abs=0.03) for o in cells)
+    rv.set_active(0)
+    rv.btn_fit.click()
+    assert all(o.view_state()[3] and not o.zoomed_in() for o in cells)
+    rv.sw_link.setChecked(False)
+    cells[1].zoom_to(cells[1].zoom * 2)
+    assert cells[1].zoomed_in() and not any(cells[i].zoomed_in() for i in (0, 2, 3))
+    rv.sw_link.setChecked(True)
+    rv.btn_fit.click()
+
+    # 확대창: "반대쪽" is the next cell on screen (the last one wraps to the first)
+    lens = rv.lens
+    assert lens.views == cells
+    rv.set_lens(True, cells[0].mapTo(rv.stage_w, cells[0].rect().center()))
+    assert lens.host() == 0 and lens.source()[0] is cells[0]
+    lens.toggle_other()
+    assert lens.other and lens.source()[0] is cells[1] and lens.caption().endswith("· 반대쪽")
+    lens.move_to(cells[3].mapTo(rv.stage_w, cells[3].rect().center()))
+    assert lens.host() == 3 and lens.source()[0] is cells[0]
+    lens.toggle_other()
+    assert not lens.other and lens.source()[0] is cells[3]
+    # one cell: there is no other photo — the toggle does nothing
+    rv.layout_buttons[1].click()
+    lens.move_to(rv.views[0].mapTo(rv.stage_w, rv.views[0].rect().center()))
+    lens.toggle_other()
+    assert not lens.other and lens.source()[0] is rv.views[0] and "반대쪽" not in lens.caption()
+    assert lens.views == rv.views and len(lens.views) == 1
+
+
+def test_many_cells_hold_reduced_photos(tmp_path):
+    """Layouts of four and more read the photos reduced, in the background; one or two cells whole."""
+    import numpy as np
+    from PIL import Image
+    from PySide6.QtWidgets import QApplication
+
+    from fundusview import imaging
+    from fundusview.ui.review_view import SIDES, ReviewPage
+
+    app = QApplication.instance() or QApplication([])
+    big = synth_fundus(eye="OD", size=(2000, 1500))
+    jpg, png = tmp_path / "big.jpg", tmp_path / "big.png"
+    Image.fromarray(big).save(jpg, quality=90)
+    Image.fromarray(big[:600, :800]).save(png)
+    small = imaging.load_reduced(jpg, 448)
+    assert small.shape == (336, 448, 3) and small.dtype == np.uint8                 # the same shape, 448 at most
+    assert abs(float(small.mean()) - float(big.mean())) < 3
+    assert imaging.load_reduced(png, 448).shape == (336, 448, 3)                    # not a JPEG: read whole, then reduced
+    assert imaging.load_reduced(png, 4000).shape == (600, 800, 3)                   # never enlarged
+    assert SIDES[1] == 0 and SIDES[2] == 0 and 0 < SIDES[32] < SIDES[16] < SIDES[8] < SIDES[4]
+
+    thumb = tmp_path / "t.png"
+    Image.fromarray(big).resize((80, 60)).save(thumb)
+    rows = [{"id": i, "exam_date": f"2026-01-{i:02d}", "exam_time": "10:00:00", "laterality": "OD" if i % 2 else "OS",
+             "modality": "color", "thumb_path": str(thumb)} for i in range(1, 41)]
+    loads = []
+    rv = ReviewPage(lambda row: loads.append(row["id"]) or big, lambda row: str(jpg))
+    try:
+        rv.resize(1200, 800)
+        rv.show()
+        rv.set_photos(rows)
+        assert rv.layout_n == 2 and rv.views[0]._rgb.shape == big.shape and len(loads) == 2      # two cells: whole photos
+        rv.set_layout(32)
+        # at once: every cell has its photo's thumbnail; nothing was read whole for it
+        assert all(v.has_image() for v in rv.views) and rv.loading() and len(loads) == 2
+        assert rv.views[5]._rgb.shape == (60, 80, 3) and len(rv.slot_ids()) == 32 and None not in rv.slot_ids()
+        _settle(app, rv)
+        assert all(v._rgb.shape == (336, 448, 3) for v in rv.views) and len(loads) == 2
+        assert all(v.view_state()[3] for v in rv.views)
+        # more than 32: the arrows page; photos seen before come from the cache at once
+        # (the pair on screen was the newest exam's OD | OS: the page starts at its first photo, the 2nd of the pool)
+        assert rv.start == 1 and rv.lbl_pos.text() == "2–33 / 40" and rv.btn_next.isEnabled()
+        rv.page(1)
+        _settle(app, rv)
+        assert rv.start == 33 and rv.lbl_pos.text() == "34–40 / 40" and sum(v.has_image() for v in rv.views) == 7
+        rv.page(-1)
+        assert not rv.loading() and rv.views[0]._rgb.shape == (336, 448, 3)
+        # four cells: a moderate size; a double click gives the cell's photo whole
+        rv.set_layout(4)
+        _settle(app, rv)
+        assert max(rv.views[0]._rgb.shape[:2]) == SIDES[4]
+        rv.open_single(1)
+        assert rv.layout_n == 1 and rv.views[0]._rgb.shape == big.shape and len(loads) == 3
+        # the channel view reaches the reduced photos as well
+        rv.close_single()
+        _settle(app, rv)
+        rv.set_view_mode("retina")
+        _settle(app, rv)
+        assert all(np.array_equal(v._rgb[..., 0], v._rgb[..., 1]) for v in rv.views)
+        # a selection beyond 32 pages to where the last pick is
+        rv.set_view_mode("color")
+        for r in rows[:34]:
+            rv.toggle_select(r["id"])
+        assert rv.layout_n == 32 and rv.start == 32 and rv.lbl_pos.text() == "33–34 / 34"
+    finally:
+        rv.shutdown()
+        rv.close()
+
+
+def test_workspace_patient_pane_is_hidden_until_asked_for(win):
+    app, w, db, refs, ids = win
+    w.show_page("work")
+    app.processEvents()
+    # the workspace opens without the patient pane; the command toolbar's button shows and hides it
+    assert w.left.isHidden() and not w.acts["list"].isChecked() and w.acts["list"].text() == "환자 창"
+    assert w.btn_patients.isVisible() and w.btn_patients.text() == "‹ 환자 목록"
+    width = w.tabs.width()
+    w.acts["list"].trigger()
+    app.processEvents()
+    assert w.left.isVisible() and w.acts["list"].isChecked() and w.patients.isVisible() and w.tabs.width() < width
+    w.acts["list"].trigger()
+    app.processEvents()
+    assert w.left.isHidden() and not w.acts["list"].isChecked() and w.tabs.width() == width
+    # 환자 검색 brings the pane up and puts the cursor in its search box
+    w._on_action("search")
+    app.processEvents()
+    assert w.left.isVisible() and w.acts["list"].isChecked() and w.search.hasFocus()
+    w.acts["list"].trigger()
+    # the patient is the same with the pane hidden: choosing it elsewhere still fills the workspace
+    w._select_patient_ref(refs["park"])
+    assert w.left.isHidden() and "박정희" in w.banner.text() and w.thumbs.count() == 1
+    # ‹ 환자 목록 is the start page, not the pane
+    w.btn_patients.click()
+    assert w.page() == "patients" and w.left.isHidden()

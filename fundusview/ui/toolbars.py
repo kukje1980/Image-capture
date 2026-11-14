@@ -35,7 +35,8 @@ from .image_view import TOOL_HINTS
 # (key, label, tooltip, icon, VK-2 name)
 COMMANDS = (
     ("search", "환자 검색", "환자 ID·이름으로 찾기 (Ctrl+F)", "search", "ID# SEARCH"),
-    ("list", "환자 목록", "왼쪽 환자 목록 보이기/숨기기", "log", "OPEN LIST"),
+    ("list", "환자 창", "작업 화면 왼쪽의 환자 창 열기/닫기 (처음 화면인 환자 목록은 ‹ 환자 목록 · Ctrl+0)", "log",
+     "OPEN LIST"),
     ("prev", "이전", "이전 사진 (PageUp)", "prev", "PREV"),
     ("next", "다음", "다음 사진 (PageDown)", "next", "NEXT"),
     ("multi", "다중", "여러 장 함께 보기 — ▾ 로 1·2·4·6·9·16장", "multi", "MULTI"),

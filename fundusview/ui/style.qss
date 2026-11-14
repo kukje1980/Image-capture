@@ -213,6 +213,7 @@ QPushButton#back:pressed { color: @ACCENT_LO@; }
 /* 검토: a bar, two photos on black, the timeline */
 QWidget#barReview { background: @BG@; border-bottom: 1px solid @CARD@; }
 QFrame#vline { background: @SEP@; border: 0; }
+QLabel#reviewPos { color: @TEXT2@; font-weight: 600; }
 QWidget#barReview QPushButton { padding: 6px 10px; }
 QWidget#barReview QPushButton#square { padding: 6px 0; font-weight: 600; }
 QWidget#reviewPage, QWidget#reviewStage { background: @BLACK@; }

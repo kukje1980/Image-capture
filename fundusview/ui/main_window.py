@@ -570,7 +570,7 @@ class MainWindow(QMainWindow):
                                     and abs(d.zoom - f) > 1e-9 and d.sync_from(s))
         self.tabs.addTab(cmp_w, "비교")
         # 검토: both eyes · an eye and its earlier exams (the first tab; the workspace still opens on 모두 보기)
-        self.review = ReviewPage(self._load)
+        self.review = ReviewPage(self._load, self._image_path)
         self.review.handOff.connect(self._review_hand_off)
         self.review.status.connect(lambda t: self.lbl_status.setText(t))
         self.tabs.insertTab(0, self.review, "검토")
@@ -631,7 +631,8 @@ class MainWindow(QMainWindow):
         self.tb_proc = self._toolbar("procbar", "영상 처리 툴바", Qt.ToolBarArea.BottomToolBarArea, PROCESSING, 28)
         self.tb_proc.visibilityChanged.connect(lambda v: self.acts["tools"].setChecked(v))
         self.acts["tools"].setChecked(True)
-        self.acts["list"].setChecked(True)
+        self.left.hide()                 # the workspace opens without the patient pane ([환자 창] shows it)
+        self.acts["list"].setChecked(False)
         self.pop_gamma = SliderPopup("감마", 20, 400, 100, lambda v: f"{v / 100:.2f}", self)
         self.pop_contrast = SliderPopup("대비", 10, 300, 100, lambda v: f"{v}%", self)
         self.pop_bright = SliderPopup("밝기", -100, 100, 0, lambda v: f"{v:+d}", self)
@@ -1121,12 +1122,13 @@ class MainWindow(QMainWindow):
             "검토 화면의 현재 검사 (더 이른 검사는 이전 검사)<br>"
             "작업 화면 왼쪽 위 [‹ 환자 목록] 또는 Ctrl+0 으로 돌아옵니다<br><br>"
             "<b>검토 탭</b><br>"
-            "배치: 양안 (OD | OS) → OD 비교 → OS 비교 (← / → 또는 ◀ 이전 · 다음 ▶) · 비교 배치에서 [ / ]: "
-            "더 이전 / 더 최근 검사<br>"
-            "휠: 커서 위치 확대·축소 · 드래그: 이동 · 더블클릭: 화면 맞춤 · 연동: 두 화면을 함께 · "
+            "배치(목록): 양안 (OD | OS) · OD 비교 · OS 비교 — 비교 배치에서 [ / ]: 더 이전 / 더 최근 검사<br>"
+            "타임라인의 사진을 누르면 고르기(번호) — 고른 사진만큼 화면이 나뉨 (1·2·4·8·16·32장, 사진 수 단추로도) · "
+            "◀ ▶ 또는 ← / →: 다음 사진들 · 더블클릭: 한 장만 크게 / 다시 더블클릭: 돌아가기<br>"
+            "휠: 커서 위치 확대·축소 · 드래그: 이동 · [맞춤]: 화면 맞춤 · 연동: 모든 화면을 함께 · "
             "화면을 누르면 그 화면이 선택됨(파란 테두리)<br>"
-            "확대창: 가운데 버튼 클릭으로 켜고 끔 · 드래그로 옮기기 · 휠 1.5×–6× · 오른쪽 클릭: 반대쪽 화면의 같은 곳<br>"
-            "타임라인: 사진을 누르거나 화면으로 끌어다 놓기 · 날짜를 누르면 그 검사가 현재 검사<br>"
+            "확대창: 가운데 버튼 클릭으로 켜고 끔 · 드래그로 옮기기 · 휠 1.5×–6× · 오른쪽 클릭: 다음 화면의 같은 곳<br>"
+            "타임라인: 화면으로 끌어다 놓으면 그 칸에 · 날짜를 누르면 그 검사가 현재 검사 · 모두 / OD / OS<br>"
             "2D 보기 · 3D 안구 · 녹내장: 선택한 화면의 사진을 그 기능으로<br><br>"
             "<b>사진 목록 · 멀티</b><br>"
             "최신 사진부터, 사진마다 왼쪽 위에 눈(OD 파랑 · OS 주황) · ▤ 버튼: 1·2·3줄<br>"
@@ -3642,5 +3644,6 @@ class MainWindow(QMainWindow):
         for t in (self._search_timer, self.patient_page._search_timer, self._result_timer):
             t.stop()                           # nothing reads the database after it is closed
         self._preloader.shutdown()
+        self.review.shutdown()
         self.service.shutdown()
         super().closeEvent(e)

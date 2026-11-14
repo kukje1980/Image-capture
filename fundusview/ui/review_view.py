@@ -1,33 +1,45 @@
-"""검토 tab — both eyes side by side, and an eye next to its earlier exams.
+"""검토 tab — a multi-view of the patient's photos: both eyes side by side, an eye next to its
+earlier exams, or as many photos as are picked in the timeline.
 
-Layout (top to bottom): a bar · two photo views · the timeline.
+Layout (top to bottom): a bar · the cells (1, 2, 4, 8, 16 or 32 photos) · the timeline.
 
-Stages (배치)
+It opens on a **stage** (배치), two cells:
   양안      left = OD, right = OS: each eye's photo of the current exam (review.eye_photo); an eye
             not taken in that exam shows its newest earlier photo, tagged 이전.
   OD 비교   left = the eye's photo of an earlier exam (이전), right = the current exam (현재).
-  OS 비교   ``[`` / ``]`` (or the small ◀ ▶ on the left view) step through the earlier exams.
+  OS 비교   ``[`` / ``]`` (or the small ◀ ▶ on the left cell) step through the earlier exams.
             A compare stage needs an earlier exam of that eye.
 
-The two views are ``ImageView``s (wheel = zoom at the cursor, drag = move, double click = fit);
-연동 keeps their zoom and place together, as fractions of the photo, so photos of different
-sizes stay on the same spot. 보기 shows one colour channel (감각망막 = green, 맥락막 = red).
+Clicking photos in the timeline **selects** them (numbered): the cells then show the selected
+photos, in the smallest layout that holds them; with none selected the stage comes back. The
+layout control sets the number of cells by hand, ◀ ▶ (← →) page through the *pool* — the
+selection, or all photos the timeline lists — and a double click shows one photo alone (again:
+back).
+
+The cells are ``ImageView``s (wheel = zoom at the cursor, drag = move); 연동 keeps the zoom and
+place of all cells together, as fractions of the photo, so photos of different sizes stay on the
+same spot. 보기 shows one colour channel (감각망막 = green, 맥락막 = red). One or two cells show
+the whole photo; more cells show a reduced one, read in the background (``imaging.load_reduced``).
 The photos are shown as stored — the image-processing toolbar's adjustments belong to the 2D view.
-The buttons at the end hand the active view's photo to the 2D view, the 3D eye or the glaucoma window.
+The buttons at the end hand the active cell's photo to the 2D view, the 3D eye or the glaucoma window.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QByteArray, QEvent, QMimeData, QPoint, QPointF, QRect, QRectF, QSize, Qt, Signal
+from collections import OrderedDict
+
+import numpy as np
+
+from PySide6.QtCore import QByteArray, QEvent, QMimeData, QObject, QPoint, QPointF, QRect, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QDrag, QFont, QKeySequence, QPainter, QPen, QShortcut
 from PySide6.QtWidgets import (
-    QAbstractButton, QComboBox, QFrame, QHBoxLayout, QLabel, QMenu, QPushButton, QScrollArea, QSizePolicy,
+    QAbstractButton, QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QMenu, QPushButton, QScrollArea, QSizePolicy,
     QToolButton, QVBoxLayout, QWidget,
 )
 
 from .. import imaging, review
 from . import theme
 from .image_view import ImageView
-from .thumbs import eye_badge, paint_eye_badge, thumb_pixmap
+from .thumbs import PICK_COLOR, eye_badge, paint_eye_badge, thumb_pixmap
 from .widgets import FlowLayout, Segmented, Switch, vline
 
 MIME = "application/x-fundusview-image"
@@ -66,8 +78,10 @@ def _chip(p: QPainter, text: str, x: float, y: float, color: str, px: int = 12) 
 
 
 class ReviewViewport(ImageView):
-    """One of the two photo views: which eye, when, 이전 / 현재 on the photo; a frame when active."""
+    """One cell of the review: which eye, when, 이전 / 현재 on the photo; a frame when active.
+    ``compact`` (0 – 2) shrinks the writing for the small cells of the larger layouts."""
     pressed = Signal()                   # any press here: this is the active view now
+    doubleClicked = Signal()             # this photo alone / back to the layout
     middleClicked = Signal(QPoint)       # position in the viewport — toggles the 확대창 there
     dropped = Signal(int)                # a timeline photo was dropped here (image id)
     menuRequested = Signal(QPoint)       # global position of a right click
@@ -85,6 +99,8 @@ class ReviewViewport(ImageView):
         self.tag = ""                    # 이전 / 현재 / ""
         self.active = False
         self.empty_text = ""
+        self.compact = 0                 # 1: smaller writing (8 cells), 2: eye + date only (16 / 32)
+        self.pending = None              # the reduced photo still being read (the thumbnail stands in)
         self._drop = False
 
     def set_photo(self, row, rgb, tag: str = "", keep_view: bool = False) -> None:
@@ -106,6 +122,11 @@ class ReviewViewport(ImageView):
             self.middleClicked.emit(e.position().toPoint())
             return
         super().mousePressEvent(e)
+
+    def mouseDoubleClickEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.doubleClicked.emit()        # (화면 맞춤 is the 맞춤 button here)
+        e.accept()
 
     def _context_menu(self, gpos: QPoint, sp: QPointF) -> None:
         self.menuRequested.emit(gpos)
@@ -148,16 +169,19 @@ class ReviewViewport(ImageView):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         r = self.viewport().rect()
         if self.row is not None and self.has_image():
-            badge = paint_eye_badge(p, self.row["laterality"], 10, 10, 13)
-            x = badge.right() + 6
-            chip = _chip(p, photo_caption(self.row), x, 9, theme.TEXT)
-            if self.tag:
-                _chip(p, self.tag, chip.right() + 6, 9, theme.YELLOW if self.tag == "이전" else theme.GREEN)
+            c = self.compact
+            pad, px = (10, 13) if c == 0 else (6, 11) if c == 1 else (4, 10)
+            badge = paint_eye_badge(p, self.row["laterality"], pad, pad, px)
+            text = photo_caption(self.row) if c < 2 else (self.row["exam_date"] or "날짜 없음")
+            chip = _chip(p, text, badge.right() + (6 if c == 0 else 4), pad - 1, theme.TEXT, px - 1)
+            if self.tag and c < 2:
+                _chip(p, self.tag, chip.right() + 6, pad - 1, theme.YELLOW if self.tag == "이전" else theme.GREEN,
+                      px - 1)
         elif self.empty_text:
             f = QFont(p.font())
-            f.setPixelSize(14)
+            f.setPixelSize(14 if self.compact == 0 else 11)
             p.setFont(f)
-            p.setPen(QColor(theme.TEXT3))
+            p.setPen(QColor(theme.TEXT3 if self.compact == 0 else theme.TEXT4))
             p.drawText(r.adjusted(16, 16, -16, -16), int(Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap),
                        self.empty_text)
         p.setBrush(Qt.BrushStyle.NoBrush)
@@ -174,10 +198,10 @@ class ReviewViewport(ImageView):
 
 
 class Magnifier(QWidget):
-    """확대창: a square that floats over the two views and shows what is under its centre, larger.
+    """확대창: a square that floats over the cells and shows what is under its centre, larger.
 
-    Drag = move · wheel = 1.5× – 6× · right click (or double click) = show the *other* view's
-    photo at the same place · middle click = close."""
+    Drag = move · wheel = 1.5× – 6× · right click (or double click) = show the *next* cell's
+    photo at the same place (nothing with one cell) · middle click = close. ``views`` = the cells on screen."""
     closed = Signal()
     SIDE = 200
 
@@ -203,7 +227,7 @@ class Magnifier(QWidget):
         if i < 0 or not self.views[i].has_image():
             return None
         host = self.views[i]
-        shown = self.views[1 - i] if self.other else host
+        shown = self.views[(i + 1) % len(self.views)] if self.other and len(self.views) > 1 else host
         if not shown.has_image():
             return None
         sp = host.mapToScene(host.viewport().mapFrom(self.parentWidget(), self.geometry().center()))
@@ -219,7 +243,7 @@ class Magnifier(QWidget):
             return "사진 위로 옮기세요"
         row = src[0].row
         return (f"{self.mag:.1f}× · {eye_badge(row['laterality'])[0]} {row['exam_date'] or ''}".rstrip()
-                + (" · 반대쪽" if self.other else ""))
+                + (" · 반대쪽" if self.other and len(self.views) > 1 else ""))
 
     def move_to(self, centre: QPoint) -> None:
         """Put the centre at ``centre`` (stage coordinates), kept inside the stage."""
@@ -235,7 +259,7 @@ class Magnifier(QWidget):
         self.update()
 
     def toggle_other(self) -> None:
-        self.other = not self.other
+        self.other = not self.other and len(self.views) > 1      # one cell: there is no other photo
         self.update()
 
     def mousePressEvent(self, e):
@@ -289,14 +313,14 @@ class Magnifier(QWidget):
         p.drawText(bar.adjusted(7, 0, -7, 0), int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
                    self.caption())
         p.setBrush(Qt.BrushStyle.NoBrush)
-        p.setPen(QPen(QColor(theme.ORANGE if self.other else theme.ACCENT), 2))
+        p.setPen(QPen(QColor(theme.ORANGE if self.other and len(self.views) > 1 else theme.ACCENT), 2))
         p.drawRoundedRect(full.adjusted(1, 1, -1, -1), 6, 6)
         p.end()
 
 
 class _TimelineThumb(QAbstractButton):
-    """A photo of the timeline: thumbnail, eye badge, a frame while it is on one of the views.
-    Click = show it; drag = drop it on a view."""
+    """A photo of the timeline: thumbnail, eye badge, a frame while it is on one of the cells, a
+    yellow frame and number while it is selected. Click = select / deselect; drag = drop it on a cell."""
     SIDE = 76
 
     def __init__(self, row, parent=None):
@@ -304,6 +328,7 @@ class _TimelineThumb(QAbstractButton):
         self.image_id = row["id"]
         self.eye = row["laterality"] or ""
         self.shown = False
+        self.rank = 0                    # place in the selection (0 = not selected)
         self._pm = thumb_pixmap(row["thumb_path"], self.SIDE - 4)
         self._press: QPoint | None = None
         self.setFixedSize(self.SIDE, self.SIDE)
@@ -319,6 +344,11 @@ class _TimelineThumb(QAbstractButton):
     def set_shown(self, on: bool) -> None:
         if on != self.shown:
             self.shown = on
+            self.update()
+
+    def set_rank(self, rank: int) -> None:
+        if rank != self.rank:
+            self.rank = rank
             self.update()
 
     def mousePressEvent(self, e):
@@ -353,10 +383,25 @@ class _TimelineThumb(QAbstractButton):
                          self._pm)
         paint_eye_badge(p, self.eye, 4, 4, 10)
         p.setBrush(Qt.BrushStyle.NoBrush)
+        if self.rank:                        # selected: yellow frame, its number (as the multi picks)
+            p.setPen(QPen(QColor(PICK_COLOR), 2 if self.shown else 1.5))
+            p.drawRoundedRect(r.adjusted(1, 1, -1, -1), 7, 7)
+            f = QFont(p.font())
+            f.setBold(True)
+            f.setPixelSize(11)
+            p.setFont(f)
+            d = 18.0
+            dot = QRectF(r.right() - d - 4, r.top() + 4, d, d)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(PICK_COLOR))
+            p.drawEllipse(dot)
+            p.setPen(QColor("#111827"))
+            p.drawText(dot, Qt.AlignmentFlag.AlignCenter, str(self.rank))
+            p.setBrush(Qt.BrushStyle.NoBrush)
         if self.shown:
             p.setPen(QPen(QColor(theme.ACCENT), 2))
-            p.drawRoundedRect(r.adjusted(1, 1, -1, -1), 7, 7)
-        else:
+            p.drawRoundedRect(r.adjusted(1, 1, -1, -1) if not self.rank else r.adjusted(3, 3, -3, -3), 7, 7)
+        elif not self.rank:
             p.setPen(QPen(QColor(theme.FILL2 if self.underMouse() else theme.FILL), 1))
             p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 7, 7)
         p.end()
@@ -372,6 +417,7 @@ class Timeline(QFrame):
     """The patient's photos by exam, newest exam first; folds away to its heading."""
     photoClicked = Signal(int)
     examClicked = Signal(str)
+    eyeChanged = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -405,7 +451,8 @@ class Timeline(QFrame):
         for key, b in self.eye_buttons.items():
             b.toggled.connect(lambda on, key=key: on and self.set_eye(key))
         head.addWidget(self.eye_seg)
-        self.lbl_hint = QLabel("사진을 누르거나 화면으로 끌어다 놓으면 그 자리에 뜹니다 · 날짜를 누르면 그 검사가 현재 검사")
+        self.lbl_hint = QLabel("사진을 누르면 고르기(번호) — 고른 사진만큼 화면이 나뉩니다 · 화면으로 끌어다 놓기 · "
+                               "날짜를 누르면 그 검사가 현재 검사")
         self.lbl_hint.setObjectName("caption")
         self.lbl_hint.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.lbl_hint.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)   # cut, not a wider window
@@ -430,6 +477,18 @@ class Timeline(QFrame):
         self._groups: list = []
         self._current: str | None = None
         self._shown: set = set()
+        self._selected: list = []
+
+    def listed(self) -> list[int]:
+        """Ids of the photos listed now (the eye filter applied), in the order of the strip."""
+        return [t.image_id for t in self.thumbs]
+
+    def mark_selected(self, ids) -> None:
+        """Number the selected photos in the order they were picked."""
+        self._selected = list(ids)
+        rank = {iid: k + 1 for k, iid in enumerate(self._selected)}
+        for t in self.thumbs:
+            t.set_rank(rank.get(t.image_id, 0))
 
     def set_eye(self, eye: str) -> None:
         """List only the photos of ``eye`` ("OD" / "OS"); "" lists them all. Kept from patient to patient."""
@@ -440,6 +499,7 @@ class Timeline(QFrame):
         if eye != self.eye:
             self.eye = eye
             self._rebuild()
+            self.eyeChanged.emit(eye)
 
     def is_open(self) -> bool:
         return self.btn_fold.isChecked()
@@ -512,6 +572,7 @@ class Timeline(QFrame):
         what = f"{self.eye} 사진" if self.eye else "사진"
         self.lbl_count.setText(f"검사 {len(groups)}회 · {n}장" if n else f"{what} 없음")
         self.mark_shown(self._shown)
+        self.mark_selected(self._selected)
 
     def mark_shown(self, ids) -> None:
         ids = self._shown = set(ids)
@@ -519,24 +580,78 @@ class Timeline(QFrame):
             t.set_shown(t.image_id in ids)
 
 
+# cells of a layout: (columns, rows) — wide rather than tall, as the area is
+LAYOUTS = {1: (1, 1), 2: (2, 1), 4: (2, 2), 8: (4, 2), 16: (4, 4), 32: (8, 4)}
+# longest side of the photo read for a cell of that layout (0 = the whole photo): many cells never
+# hold many full-size photos
+SIDES = {1: 0, 2: 0, 4: 1600, 8: 900, 16: 640, 32: 448}
+SMALL_BUDGET = 256 * 1024 * 1024         # bytes of reduced photos kept
+
+
+def layout_for(n: int) -> int:
+    """The smallest layout that holds ``n`` photos (32 at most — the arrows page beyond)."""
+    return next((k for k in LAYOUTS if k >= n), 32)
+
+
+class _Reader(QObject):
+    """Reads reduced photos on worker threads (``imaging.load_reduced``) for the cells of the larger layouts."""
+    loaded = Signal(object, object)       # (image id, side), RGB array (None: unreadable)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        from concurrent.futures import ThreadPoolExecutor
+
+        self._pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="fundus-review")
+        self.busy: set = set()
+
+    def request(self, key, path: str) -> None:
+        if key not in self.busy:
+            self.busy.add(key)
+            self._pool.submit(self._run, key, path)
+
+    def _run(self, key, path: str) -> None:
+        try:
+            rgb = imaging.load_reduced(path, key[1])
+        except Exception:
+            rgb = None
+        try:
+            self.loaded.emit(key, rgb)
+        except RuntimeError:              # the page is gone
+            pass
+
+    def shutdown(self) -> None:
+        self._pool.shutdown(wait=False, cancel_futures=True)
+
+
 class ReviewPage(QWidget):
     handOff = Signal(str, int, object)   # "2d" / "3d" / "glaucoma", image id, second image id (or None)
     examPicked = Signal(str)             # a date of the timeline was clicked
     status = Signal(str)
 
-    def __init__(self, load, parent=None):
-        """``load(row)`` returns the photo of an images row as an RGB array (None: unreadable)."""
+    def __init__(self, load, path_of=None, parent=None):
+        """``load(row)`` returns the photo of an images row as an RGB array (None: unreadable);
+        ``path_of(row)`` its file (None: missing) — with it the reduced photos of the larger layouts
+        are read in the background."""
         super().__init__(parent)
         self.setObjectName("reviewPage")
-        self._load = load
+        self._load, self._path_of = load, path_of
         self.rows: list = []             # the patient's photographs (sheets left out)
         self.current: str | None = None  # exam under review
         self.stage = "ou"
         self.prior = 0                   # which earlier exam the compare stage shows (0 = the latest)
+        self.preset = True               # the cells show the stage's pair (else: a page of the pool)
+        self.layout_n = 2                # cells on screen
+        self.start = 0                   # pool index of the first cell (page of the pool)
+        self.selection: list[int] = []   # image ids picked in the timeline, in the order picked
+        self._back: dict | None = None   # where a double click came from (single photo → back)
         self.active = 0
         self.link = True
         self.view_mode = "color"
         self._syncing = False
+        self._small: OrderedDict = OrderedDict()     # (image id, side) -> reduced RGB
+        self._small_bytes = 0
+        self._reader = _Reader(self)
+        self._reader.loaded.connect(self._on_reduced)
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -547,25 +662,48 @@ class ReviewPage(QWidget):
         bar.setObjectName("barReview")
         self.bar_lay = FlowLayout(bar)
         add = self.bar_lay.addWidget
-        self.btn_prev = QPushButton("◀ 이전")
-        self.btn_prev.setToolTip("이전 배치 (←)")
-        self.btn_prev.clicked.connect(lambda: self.step_stage(-1))
+        self.btn_prev = QPushButton("◀")
+        self.btn_prev.setToolTip("앞의 사진들 (←) — 지금 배치의 장수만큼 넘깁니다")
+        self.btn_prev.clicked.connect(lambda: self.page(-1))
+        self.lbl_pos = QLabel("")
+        self.lbl_pos.setObjectName("reviewPos")
+        self.lbl_pos.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_pos.setMinimumWidth(74)
+        self.lbl_pos.setToolTip("화면에 있는 사진 / 넘겨 볼 수 있는 사진 (고른 사진이 있으면 고른 사진, 없으면 타임라인의 사진)")
+        self.btn_next = QPushButton("▶")
+        self.btn_next.setToolTip("다음 사진들 (→)")
+        self.btn_next.clicked.connect(lambda: self.page(1))
+        for b in (self.btn_prev, self.btn_next):
+            b.setObjectName("square")
+            b.setFixedWidth(34)
         self.c_stage = QComboBox()
         self.c_stage.setToolTip("배치 — * 비교는 그 눈의 이전 검사가 있을 때 쓸 수 있습니다\n"
-                                "([ / ] 로 더 이전 · 더 최근 검사)")
+                                "([ / ] 로 더 이전 · 더 최근 검사) · 배치를 고르면 고른 사진이 해제됩니다")
         for key, label in STAGES:
             self.c_stage.addItem(label, key)
         fm = self.c_stage.fontMetrics()         # as wide as a stage's name; the list as its longest line
         self.c_stage.setFixedWidth(max(fm.horizontalAdvance(label) for _, label in STAGES) + 60)
         self.c_stage.view().setMinimumWidth(max(fm.horizontalAdvance(label + NO_PRIOR) for _, label in STAGES) + 44)
         self.c_stage.activated.connect(lambda i: self.set_stage(self.c_stage.itemData(i)))
-        self.btn_next = QPushButton("다음 ▶")
-        self.btn_next.setToolTip("다음 배치 (→)")
-        self.btn_next.clicked.connect(lambda: self.step_stage(1))
-        for w in (self.btn_prev, self.c_stage, self.btn_next, vline()):
+        # how many photos at once
+        self.layout_buttons = {n: QPushButton(str(n)) for n in LAYOUTS}
+        for n, b in self.layout_buttons.items():
+            cols, rows = LAYOUTS[n]
+            b.setToolTip(f"사진 {n}장 ({cols} × {rows})" if n > 1 else "사진 1장 (화면을 두 번 눌러도 됩니다)")
+        self.seg_layout = Segmented(list(self.layout_buttons.values()), on_card=False)
+        self.seg_layout.setFixedWidth(34 * len(LAYOUTS) + 4)
+        self.seg_layout.setToolTip("한 화면에 보는 사진 수")
+        self.layout_buttons[2].setChecked(True)
+        for n, b in self.layout_buttons.items():
+            b.clicked.connect(lambda _=False, n=n: self.set_layout(n))
+        self.btn_clear = QPushButton("선택 해제")
+        self.btn_clear.setToolTip("고른 사진을 모두 해제하고 배치(양안 · 비교)로 돌아갑니다")
+        self.btn_clear.clicked.connect(self.clear_selection)
+        self.btn_clear.hide()
+        for w in (self.btn_prev, self.lbl_pos, self.btn_next, self.c_stage, self.seg_layout, self.btn_clear, vline()):
             add(w)
         self.btn_fit = QPushButton("맞춤")
-        self.btn_fit.setToolTip("사진 전체가 보이게 (더블클릭)")
+        self.btn_fit.setToolTip("사진 전체가 보이게")
         self.btn_fit.clicked.connect(self.fit)
         self.btn_out = QPushButton("−")
         self.btn_out.setToolTip("축소 (휠)")
@@ -577,7 +715,7 @@ class ReviewPage(QWidget):
             b.setObjectName("square")
             b.setFixedWidth(34)
         self.sw_link = Switch("연동", trailing=False)
-        self.sw_link.setToolTip("두 화면의 확대·이동을 함께 움직입니다")
+        self.sw_link.setToolTip("화면에 있는 모든 사진의 확대·이동을 함께 움직입니다")
         self.sw_link.setChecked(True)
         self.sw_link.toggled.connect(self.set_link)
         for w in (self.btn_fit, self.btn_out, self.btn_in, self.sw_link, vline()):
@@ -604,27 +742,20 @@ class ReviewPage(QWidget):
             add(b)
         lay.addWidget(bar)
 
-        # -- the two views -------------------------------------------------------------------------
+        # -- the cells (made when a layout first needs them) -----------------------------------------
         self.stage_w = QWidget()
         self.stage_w.setObjectName("reviewStage")
-        sl = QHBoxLayout(self.stage_w)
-        sl.setContentsMargins(0, 0, 0, 0)
-        sl.setSpacing(3)
-        self.views = (ReviewViewport(), ReviewViewport())
-        for i, v in enumerate(self.views):
-            v.setMinimumSize(120, 70)
-            sl.addWidget(v, 1)
-            v.pressed.connect(lambda i=i: self.set_active(i))
-            v.middleClicked.connect(lambda pos, i=i: self._middle(i, pos))
-            v.dropped.connect(lambda iid, i=i: self.show_photo(iid, i))
-            v.menuRequested.connect(lambda gpos, i=i: self._menu(i, gpos))
-            v.zoomChanged.connect(lambda _, i=i: self._view_moved(i))
-            v.horizontalScrollBar().valueChanged.connect(lambda _, i=i: self._view_moved(i))
-            v.verticalScrollBar().valueChanged.connect(lambda _, i=i: self._view_moved(i))
-        self.views[0].set_active(True)
+        self.grid = QGridLayout(self.stage_w)
+        self.grid.setContentsMargins(0, 0, 0, 0)
+        self.grid.setSpacing(3)
+        self.cells: list[ReviewViewport] = []
         lay.addWidget(self.stage_w, 1)
-        # ◀ 이전 검사 k/n ▶ on the left view (compare stages)
-        self.prior_nav = QWidget(self.views[0])
+        self.lens = Magnifier(self.stage_w, [])
+        self.lens.closed.connect(lambda: self.set_lens(False))
+        self._apply_layout(2)
+        self.cells[0].set_active(True)
+        # ◀ 이전 검사 k/n ▶ on the left cell (compare stages)
+        self.prior_nav = QWidget(self.cells[0])
         self.prior_nav.setObjectName("priorNav")
         pl = QHBoxLayout(self.prior_nav)
         pl.setContentsMargins(0, 0, 0, 0)
@@ -642,38 +773,98 @@ class ReviewPage(QWidget):
         for w in (self.btn_older, self.lbl_prior, self.btn_newer):
             pl.addWidget(w)
         self.prior_nav.hide()
-        self.views[0].installEventFilter(self)
-        self.lens = Magnifier(self.stage_w, self.views)
-        self.lens.closed.connect(lambda: self.set_lens(False))
+        self.cells[0].installEventFilter(self)
         self.stage_w.installEventFilter(self)
 
         # -- the timeline ----------------------------------------------------------------------------
         self.timeline = Timeline()
-        self.timeline.photoClicked.connect(self.show_photo)
+        self.timeline.photoClicked.connect(self.toggle_select)
         self.timeline.examClicked.connect(self.examPicked.emit)
+        self.timeline.eyeChanged.connect(self._on_eye)
         lay.addWidget(self.timeline)
 
-        for seq, fn in (("Left", lambda: self.step_stage(-1)), ("Right", lambda: self.step_stage(1)),
+        for seq, fn in (("Left", lambda: self.page(-1)), ("Right", lambda: self.page(1)),
                         ("[", lambda: self.step_prior(1)), ("]", lambda: self.step_prior(-1))):
             sc = QShortcut(QKeySequence(seq), self, context=Qt.ShortcutContext.WidgetWithChildrenShortcut)
             sc.activated.connect(fn)
         self._sync_ui()
 
+    def shutdown(self) -> None:
+        self._reader.shutdown()
+
+    # -- the cells -----------------------------------------------------------------------------------
+    @property
+    def views(self) -> list[ReviewViewport]:
+        """The cells on screen."""
+        return self.cells[:self.layout_n]
+
+    def _make_cell(self) -> ReviewViewport:
+        i = len(self.cells)
+        v = ReviewViewport(self.stage_w)
+        v.hide()
+        v.pressed.connect(lambda i=i: self.set_active(i))
+        v.doubleClicked.connect(lambda i=i: self._double(i))
+        v.middleClicked.connect(lambda pos, i=i: self._middle(i, pos))
+        v.dropped.connect(lambda iid, i=i: self.show_photo(iid, i))
+        v.menuRequested.connect(lambda gpos, i=i: self._menu(i, gpos))
+        v.zoomChanged.connect(lambda _, i=i: self._view_moved(i))
+        v.horizontalScrollBar().valueChanged.connect(lambda _, i=i: self._view_moved(i))
+        v.verticalScrollBar().valueChanged.connect(lambda _, i=i: self._view_moved(i))
+        self.cells.append(v)
+        return v
+
+    def _apply_layout(self, n: int) -> None:
+        """Lay ``n`` cells out (the photos are put on them by ``_fill``)."""
+        n = n if n in LAYOUTS else 2
+        while len(self.cells) < n:
+            self._make_cell()
+        cols, _ = LAYOUTS[n]
+        self.layout_n = n
+        for i, v in enumerate(self.cells):
+            self.grid.removeWidget(v)
+            if i < n:
+                v.setMinimumSize(*((120, 70) if n <= 2 else (40, 30)))     # the window's least size stays
+                v.compact = 0 if n <= 4 else 1 if n == 8 else 2
+                v.crossfade = n <= 2
+                v.set_navigator(n <= 8)
+                self.grid.addWidget(v, i // cols, i % cols)
+                v.show()
+            else:
+                v.hide()
+                if v.row is not None or v.pending is not None:
+                    v.pending = None
+                    v.set_photo(None, None)                                 # a hidden cell keeps no photo
+        rows_n = LAYOUTS[n][1]
+        for c in range(8):                                # equal cells; the columns and rows not used take nothing
+            self.grid.setColumnStretch(c, 1 if c < cols else 0)
+        for r in range(4):
+            self.grid.setRowStretch(r, 1 if r < rows_n else 0)
+        if self.active >= n:
+            self.active = 0
+        for k, v in enumerate(self.cells):
+            v.set_active(k == self.active)
+        self.lens.views = self.views
+        self.lens.raise_()
+        b = self.layout_buttons[n]
+        if not b.isChecked():
+            b.setChecked(True)
+
     # -- photos ------------------------------------------------------------------------------------
     def set_photos(self, rows, current: str | None = None) -> None:
         """The patient's ``rows`` (images, any order) and the exam under review (None = the newest).
-        The stage is kept when it is still possible; the views show the default photos again."""
+        The stage is kept when it is still possible; the cells show its default photos again."""
         rows = [r for r in rows if review.is_photo(r)]
         dates = review.exam_dates(rows)
         current = current if current in dates else (dates[0] if dates else None)
-        # the same photos and the same exam again (a list refresh, a search): leave the views as the
-        # user has them — zoom, stage, the prior on screen and photos placed by hand
+        # the same photos and the same exam again (a list refresh, a search): leave everything as the
+        # user has it — zoom, stage, the prior on screen, the selection, the layout and the page
         key = (current, tuple((r["id"], r["exam_date"], r["exam_time"], r["laterality"], r["modality"]) for r in rows))
         if key == getattr(self, "_photos_key", None):
             self.rows = rows
             return
         self._photos_key = key
         self.rows, self.current = rows, current
+        self.selection = []
         self.timeline.set_exams(review.exams(self.rows), self.current)
         self._sync_stages()
         self.set_stage(self.stage if self.stage_ok(self.stage) else "ou")
@@ -681,6 +872,15 @@ class ReviewPage(QWidget):
     def set_current_exam(self, exam_date: str) -> None:
         if exam_date != self.current:
             self.set_photos(self.rows, exam_date)
+
+    def _row(self, image_id):
+        return next((r for r in self.rows if r["id"] == image_id), None)
+
+    def pool(self) -> list:
+        """The photos one can page through: the selection if there is one, else the photos the
+        timeline lists now (its eye filter applied), in its order."""
+        ids = self.selection or self.timeline.listed()
+        return [r for r in (self._row(i) for i in ids) if r is not None]
 
     def series(self, eye: str) -> list:
         """The eye's photo per exam from the current exam back (newest first)."""
@@ -698,21 +898,22 @@ class ReviewPage(QWidget):
             item.setEnabled(ok)
 
     def set_stage(self, stage: str) -> None:
+        """The stage's pair on two cells — the state the tab opens in. Clears the selection."""
         if not self.stage_ok(stage):
             stage = "ou"
         self.stage, self.prior = stage, 0
+        self.preset, self.selection, self._back, self.start = True, [], None, 0
         self.c_stage.setCurrentIndex(self.c_stage.findData(stage))
+        self._apply_layout(2)
         self._fill(keep_view=False)          # a new stage starts with the whole photos
 
-    def step_stage(self, d: int) -> None:
-        ok = [k for k, _ in STAGES if self.stage_ok(k)]
-        self.set_stage(ok[(ok.index(self.stage) + d) % len(ok)])
-
     def prior_count(self) -> int:
-        return 0 if self.stage == "ou" else max(0, len(self.series(self.stage.upper())) - 1)
+        if not self.preset or self.layout_n != 2 or self.stage == "ou":
+            return 0
+        return max(0, len(self.series(self.stage.upper())) - 1)
 
     def step_prior(self, d: int) -> None:
-        """+1 = an earlier exam on the left view, −1 = a later one (compare stages)."""
+        """+1 = an earlier exam on the left cell, −1 = a later one (compare stages)."""
         n = self.prior_count()
         if not n:
             return
@@ -722,76 +923,295 @@ class ReviewPage(QWidget):
             self._fill(keep_view=True)
 
     def _fill(self, keep_view: bool) -> None:
-        """Put the stage's photos on the two views."""
-        if self.stage == "ou":
-            for i, eye in enumerate(review.EYES):
-                s = self.series(eye)
-                row = s[0] if s else None
-                self.views[i].empty_text = f"{EYE_NAMES[eye]} 사진이 없습니다"
-                tag = "이전" if row is not None and (row["exam_date"] or "") != (self.current or "") else ""
-                self._show(i, row, tag, keep_view)
+        """Put the photos on the cells: the stage's pair, or a page of the pool."""
+        if self.preset:
+            if self.stage == "ou":
+                for i, eye in enumerate(review.EYES):
+                    s = self.series(eye)
+                    row = s[0] if s else None
+                    self.cells[i].empty_text = f"{EYE_NAMES[eye]} 사진이 없습니다"
+                    tag = "이전" if row is not None and (row["exam_date"] or "") != (self.current or "") else ""
+                    self._show(i, row, tag, keep_view)
+            else:
+                s = self.series(self.stage.upper())
+                self.prior = max(0, min(len(s) - 2, self.prior))
+                newest = s[0]
+                for v in self.views:
+                    v.empty_text = "사진 없음"
+                self._show(0, s[1 + self.prior], "이전", keep_view)
+                self._show(1, newest, "현재" if (newest["exam_date"] or "") == (self.current or "") else "이전",
+                           keep_view)
         else:
-            s = self.series(self.stage.upper())
-            self.prior = max(0, min(len(s) - 2, self.prior))
-            newest = s[0]
-            for v in self.views:
-                v.empty_text = "사진 없음"
-            self._show(0, s[1 + self.prior], "이전", keep_view)
-            self._show(1, newest, "현재" if (newest["exam_date"] or "") == (self.current or "") else "이전", keep_view)
+            pool = self.pool()
+            for i, v in enumerate(self.views):
+                k = self.start + i
+                v.empty_text = ""
+                self._show(i, pool[k] if 0 <= k < len(pool) else None, "", keep_view)
+            if self.views[self.active].row is None and self._cell_row(self.views[self.active]) is None:
+                self.set_active(0)
         self._sync_ui()
 
-    def _show(self, i: int, row, tag: str, keep_view: bool) -> None:
-        rgb = self._load(row) if row is not None else None
+    # -- reading the photos: whole for one or two cells, reduced (and in the background) for more ---------
+    def _channel(self, rgb):
         if rgb is not None and self.view_mode != "color":
-            rgb = imaging.adjust(rgb, channel=next(ch for k, _, ch in VIEWS if k == self.view_mode))
+            return imaging.adjust(rgb, channel=next(ch for k, _, ch in VIEWS if k == self.view_mode))
+        return rgb
+
+    def _keep_small(self, key, rgb) -> None:
+        if key in self._small:
+            return
+        self._small[key] = rgb
+        self._small_bytes += rgb.nbytes
+        while self._small_bytes > SMALL_BUDGET and len(self._small) > 1:
+            _, old = self._small.popitem(last=False)
+            self._small_bytes -= old.nbytes
+
+    @staticmethod
+    def _thumb_rgb(row):
+        """The stored thumbnail as a stand-in while the reduced photo is read."""
+        try:
+            from PIL import Image
+
+            with Image.open(row["thumb_path"]) as img:
+                return np.asarray(img.convert("RGB"))
+        except Exception:
+            return None
+
+    def _show(self, i: int, row, tag: str, keep_view: bool) -> None:
+        cell = self.cells[i]
+        cell.pending = None
+        side = SIDES[self.layout_n]
+        missing = False
+        if row is None:
+            rgb = None
+        elif side == 0:
+            rgb = self._load(row)
+            missing = rgb is None
+        else:
+            key = (row["id"], side)
+            rgb = self._small.get(key)
+            if rgb is not None:
+                self._small.move_to_end(key)
+            else:
+                path = self._path_of(row) if self._path_of is not None else None
+                if self._path_of is None:                     # no files to read from: reduce the loaded photo
+                    full = self._load(row)
+                    rgb = imaging.downscale(full, side) if full is not None else None
+                    missing = rgb is None
+                    if rgb is not None:
+                        self._keep_small(key, rgb)
+                elif path is None:
+                    missing = True
+                else:                                         # the thumbnail now, the photo when it is read
+                    rgb = self._thumb_rgb(row)
+                    cell.pending = (key, row, tag)
+                    self._reader.request(key, path)
         self._syncing = True                 # a photo coming in is not a move of the view
         try:
-            self.views[i].set_photo(row, rgb, tag, keep_view=keep_view)
+            cell.set_photo(row, self._channel(rgb), tag, keep_view=keep_view)
         finally:
             self._syncing = False
-        if row is not None and rgb is None:
-            self.views[i].empty_text = "파일을 찾을 수 없습니다"
+        if missing:
+            cell.empty_text = "파일을 찾을 수 없습니다"
+
+    def _on_reduced(self, key, rgb) -> None:
+        self._reader.busy.discard(key)
+        if rgb is not None:
+            self._keep_small(key, rgb)
+        for cell in self.views:
+            if cell.pending is None or cell.pending[0] != key:
+                continue
+            _, row, tag = cell.pending
+            cell.pending = None
+            self._syncing = True
+            try:
+                cell.set_photo(row, self._channel(rgb), tag, keep_view=cell.has_image())
+            finally:
+                self._syncing = False
+            if rgb is None:
+                cell.empty_text = "파일을 찾을 수 없습니다"
+        self._sync_ui()
+
+    def loading(self) -> bool:
+        """Reduced photos are still being read for cells on screen."""
+        return any(v.pending is not None for v in self.views)
+
+    @staticmethod
+    def _cell_row(cell):
+        return cell.row if cell.row is not None else (cell.pending[1] if cell.pending is not None else None)
 
     def slot_ids(self) -> list:
-        return [v.row["id"] if v.row is not None else None for v in self.views]
+        """Image ids on the cells on screen (None: an empty cell)."""
+        rows = [self._cell_row(v) for v in self.views]
+        return [r["id"] if r is not None else None for r in rows]
 
-    def show_photo(self, image_id: int, index: int | None = None) -> None:
-        """A photo of the timeline was clicked (``index`` None) or dropped on view ``index``:
-        양안 puts a clicked photo on the view of its eye, everything else on the active view."""
-        row = next((r for r in self.rows if r["id"] == image_id), None)
+    def _pool_index(self, image_id) -> int:
+        return next((k for k, r in enumerate(self.pool()) if r["id"] == image_id), -1)
+
+    def _first_index(self) -> int:
+        """Pool index of the first photo on screen (0 when none of them is in the pool)."""
+        for iid in self.slot_ids():
+            k = self._pool_index(iid) if iid is not None else -1
+            if k >= 0:
+                return k
+        return 0
+
+    # -- selection: the photos picked in the timeline are the photos on screen ----------------------------
+    def toggle_select(self, image_id: int) -> None:
+        """A photo of the timeline was clicked: pick it / drop it. The cells show the picked photos,
+        in as small a layout as holds them; with none left the stage's pair comes back."""
+        if self._row(image_id) is None:
+            return
+        if image_id in self.selection:
+            self.selection.remove(image_id)
+        else:
+            self.selection.append(image_id)
+        if not self.selection:
+            self.set_stage(self.stage)
+            return
+        self.preset, self._back = False, None
+        n = layout_for(len(self.selection))
+        k = self.selection.index(image_id) if image_id in self.selection else 0
+        self.start = (k // n) * n if len(self.selection) > n else 0
+        self._apply_layout(n)
+        self._fill(keep_view=False)
+        if image_id in self.selection:
+            self.set_active(max(0, min(self.layout_n - 1, k - self.start)))
+
+    def clear_selection(self) -> None:
+        if self.selection:
+            self.set_stage(self.stage)
+
+    def set_layout(self, n: int) -> None:
+        """The layout control: ``n`` cells, filled from the pool starting at the first photo on screen."""
+        if n not in LAYOUTS or (n == self.layout_n and (self.preset or self._back is None)):
+            self._apply_layout(self.layout_n)            # (the same layout: nothing changes)
+            return
+        self.start = self._first_index()
+        self.preset, self._back = False, None
+        self._apply_layout(n)
+        self._fill(keep_view=False)
+
+    def page(self, d: int) -> None:
+        """◀ ▶ / ← →: the previous / next ``layout_n`` photos of the pool (one photo in the single layout)."""
+        pool = self.pool()
+        if not pool:
+            return
+        base = self._first_index() if self.preset else self.start
+        if base < 0:                                      # a single photo that is not in the pool: to its start
+            new = 0
+        elif d > 0 and base + self.layout_n >= len(pool):
+            return                                        # the last photos are on screen
+        else:
+            new = max(0, base + d * self.layout_n)
+        if new == self.start and not self.preset:
+            return
+        self.preset, self.start = False, new
+        self._fill(keep_view=False)
+
+    def _double(self, i: int) -> None:
+        """A double click: that photo alone; again: back to the layout it came from."""
+        if self.layout_n == 1:
+            if self._back is not None:
+                self.close_single()
+            return
+        row = self._cell_row(self.views[i]) if i < self.layout_n else None
+        if row is not None:
+            self.open_single(i)
+
+    def open_single(self, i: int) -> None:
+        row = self._cell_row(self.views[i])
         if row is None:
             return
-        if index is None:
-            eye = row["laterality"]
-            index = review.EYES.index(eye) if self.stage == "ou" and eye in review.EYES else self.active
+        self._back = {"preset": self.preset, "layout": self.layout_n, "start": self.start, "id": row["id"],
+                      "active": i}
+        self.preset = False
+        self.start = self._pool_index(row["id"])          # −1: not in the pool (another eye than the filter's)
+        self._apply_layout(1)
+        self.cells[0].empty_text = ""
+        self._show(0, row, "", keep_view=False)
+        self.set_active(0)
+        self._sync_ui()
+
+    def close_single(self) -> None:
+        back, self._back = self._back, None
+        if back is None:
+            return
+        now = self.slot_ids()[0]
+        if now == back["id"]:                             # nothing was walked: exactly as it was
+            self.preset, self.start = back["preset"], back["start"]
+            self._apply_layout(back["layout"])
+            self._fill(keep_view=False)
+            self.set_active(back["active"])
+            return
+        n = back["layout"]
+        k = max(0, self._pool_index(now))
+        self.preset, self.start = False, (k // n) * n     # the page that holds the photo last looked at
+        self._apply_layout(n)
+        self._fill(keep_view=False)
+        self.set_active(k - self.start)
+
+    def _on_eye(self, _eye: str) -> None:
+        """The timeline lists another eye: the pool is another one — what is on screen stays until paged."""
+        if not self.preset and not self.selection:
+            first = self.slot_ids()[0]
+            k = self._pool_index(first) if first is not None else -1
+            self.start = k if k >= 0 or self.layout_n == 1 else self._first_index()
+        self._sync_ui()
+
+    def show_photo(self, image_id: int, index: int | None = None) -> None:
+        """A photo of the timeline was dropped on cell ``index``: it goes there. In a selection it
+        takes the place of that cell's photo."""
+        row = self._row(image_id)
+        if row is None:
+            return
+        index = self.active if index is None else index
+        if self.selection:
+            k = self.start + index
+            if image_id in self.selection:
+                self.selection.remove(image_id)
+                k = min(k, len(self.selection))
+            if k < len(self.selection):
+                self.selection[k] = image_id
+            else:
+                self.selection.append(image_id)
+            self._fill(keep_view=True)
+            self.set_active(min(self.layout_n - 1, max(0, self.selection.index(image_id) - self.start)))
+            return
         tag = ""
-        if (row["exam_date"] or "") != (self.current or ""):
-            tag = "이전" if not self.current or (row["exam_date"] or "") < self.current else ""
-        elif self.stage != "ou":
-            tag = "현재"
+        if self.preset:
+            if (row["exam_date"] or "") != (self.current or ""):
+                tag = "이전" if not self.current or (row["exam_date"] or "") < self.current else ""
+            elif self.stage != "ou":
+                tag = "현재"
         self._show(index, row, tag, keep_view=True)
-        if self.link:                         # the photo swapped in follows the other view
-            self._view_moved(1 - index)
+        if self.link:                         # the photo swapped in follows the other cells
+            other = next((k for k, v in enumerate(self.views) if k != index and v.has_image()), None)
+            if other is not None:
+                self._view_moved(other)
         self.set_active(index)
         self._sync_ui()
 
     # -- the views ---------------------------------------------------------------------------------
     def set_active(self, i: int) -> None:
-        self.active = i
-        for k, v in enumerate(self.views):
-            v.set_active(k == i)
+        self.active = max(0, min(self.layout_n - 1, i))
+        for k, v in enumerate(self.cells):
+            v.set_active(k == self.active)
         self._sync_buttons()
 
     def active_row(self):
-        return self.views[self.active].row
+        return self._cell_row(self.views[self.active])
 
     def _view_moved(self, i: int) -> None:
-        if self._syncing:
+        if self._syncing or i >= self.layout_n:
             return
-        if self.link and self.views[i].has_image() and self.views[1 - i].has_image():
+        if self.link and self.cells[i].has_image():
             self._syncing = True
             try:
-                self.views[1 - i].set_view_state(self.views[i].view_state())
+                state = self.cells[i].view_state()
+                for k, v in enumerate(self.views):
+                    if k != i and v.has_image():
+                        v.set_view_state(state)
             finally:
                 self._syncing = False
         if self.lens.isVisible():
@@ -805,8 +1225,10 @@ class ReviewPage(QWidget):
             self._view_moved(self.active)
 
     def fit(self) -> None:
-        if self.link and all(v.has_image() for v in self.views):
-            self.views[self.active].fit(animate=True)       # the other view follows
+        lead = self.views[self.active]
+        if self.link and lead.has_image():
+            lead.fit(animate=True)                          # the other cells follow
+            self._view_moved(self.active)
         else:
             for v in self.views:
                 v.fit(animate=True)
@@ -824,13 +1246,14 @@ class ReviewPage(QWidget):
         if self.c_view.currentData() != key:
             self.c_view.setCurrentIndex(self.c_view.findData(key))
         for i, v in enumerate(self.views):
-            if v.row is not None:
-                self._show(i, v.row, v.tag, keep_view=True)
+            row = self._cell_row(v)
+            if row is not None:
+                self._show(i, row, v.tag, keep_view=True)
         self.lens.update()
 
     # -- 확대창 --------------------------------------------------------------------------------------
     def set_lens(self, on: bool, centre: QPoint | None = None) -> None:
-        """Show / hide the magnifier; ``centre`` (stage coordinates) = where, else over the active view."""
+        """Show / hide the magnifier; ``centre`` (stage coordinates) = where, else over the active cell."""
         if on:
             if centre is None and not self.lens.isVisible():
                 centre = _rect(self.views[self.active]).center()
@@ -846,42 +1269,47 @@ class ReviewPage(QWidget):
             self.sw_lens.blockSignals(False)
 
     def _middle(self, i: int, pos: QPoint) -> None:
-        centre = self.views[i].viewport().mapTo(self.stage_w, pos)
+        centre = self.cells[i].viewport().mapTo(self.stage_w, pos)
         self.set_lens(not self.lens.isVisible(), centre)
 
     def eventFilter(self, obj, e):
         if e.type() == QEvent.Type.Resize:
             if obj is self.stage_w and self.lens.isVisible():
                 self.lens.move_to(self.lens.geometry().center())
-            elif obj is self.views[0]:
+            elif obj is self.cells[0]:
                 self._place_prior_nav()
         return super().eventFilter(obj, e)
 
     def _place_prior_nav(self) -> None:
         self.prior_nav.adjustSize()
-        self.prior_nav.move(10, max(10, self.views[0].height() - self.prior_nav.height() - 10))
+        self.prior_nav.move(10, max(10, self.cells[0].height() - self.prior_nav.height() - 10))
         self.prior_nav.raise_()
 
     # -- hand-offs -----------------------------------------------------------------------------------
     def hand_off(self, where: str, index: int | None = None) -> None:
         i = self.active if index is None else index
-        row = self.views[i].row
+        row = self._cell_row(self.views[i])
         if row is None:
             self.status.emit("사진이 없는 화면입니다 — 사진이 있는 화면을 누른 뒤 다시 누르세요")
             return
         second = None
-        if where == "glaucoma" and self.stage != "ou" and self.views[1 - i].row is not None:
-            second = self.views[1 - i].row["id"]     # 이전 + 현재: the glaucoma window's 경과 비교
+        if where == "glaucoma" and self.preset and self.stage != "ou" and self.layout_n == 2:
+            other = self._cell_row(self.views[1 - i])
+            second = other["id"] if other is not None else None     # 이전 + 현재: the glaucoma window's 경과 비교
         self.handOff.emit(where, row["id"], second)
 
     def _menu(self, i: int, gpos: QPoint) -> None:
-        if self.views[i].row is None:
+        if self._cell_row(self.cells[i]) is None:
             return
         menu = QMenu(self)
         menu.addAction("2D 보기로 열기", lambda: self.hand_off("2d", i))
         menu.addAction("3D 안구로 보기", lambda: self.hand_off("3d", i))
         menu.addAction("녹내장 분석…", lambda: self.hand_off("glaucoma", i))
         menu.addSeparator()
+        if self.layout_n > 1:
+            menu.addAction("이 사진만 보기", lambda: self.open_single(i))
+        elif self._back is not None:
+            menu.addAction("여러 장으로 돌아가기", self.close_single)
         menu.addAction("화면에 맞춤", self.fit)
         menu.addAction("확대창 끄기" if self.lens.isVisible() else "확대창 켜기",
                        lambda: self.set_lens(not self.lens.isVisible()))
@@ -893,6 +1321,16 @@ class ReviewPage(QWidget):
         for b in (self.btn_2d, self.btn_3d, self.btn_glaucoma):
             b.setEnabled(have)
 
+    def position(self) -> str:
+        """``3–4 / 12``: the photos on screen out of the pool (``2장 / 12`` for the stage's pair)."""
+        total = len(self.pool())
+        if self.preset:
+            return f"{sum(i is not None for i in self.slot_ids())}장 / {total}"
+        if self.start < 0 or not total:
+            return f"– / {total}"
+        last = min(self.start + self.layout_n, total)
+        return f"{self.start + 1} / {total}" if last == self.start + 1 else f"{self.start + 1}–{last} / {total}"
+
     def _sync_ui(self) -> None:
         n = self.prior_count()
         self.prior_nav.setVisible(n > 0)
@@ -901,13 +1339,18 @@ class ReviewPage(QWidget):
             self.btn_older.setEnabled(self.prior < n - 1)
             self.btn_newer.setEnabled(self.prior > 0)
             self._place_prior_nav()
-        many = sum(self.stage_ok(k) for k, _ in STAGES) > 1
-        self.btn_prev.setEnabled(many)
-        self.btn_next.setEnabled(many)
-        any_photo = any(v.row is not None for v in self.views)
+        total = len(self.pool())
+        base = self._first_index() if self.preset else self.start
+        self.btn_prev.setEnabled(total > 0 and (base > 0 or (self.start < 0 and not self.preset)))
+        self.btn_next.setEnabled(total > 0 and (base + self.layout_n < total or base < 0))
+        self.lbl_pos.setText(self.position())
+        self.btn_clear.setVisible(bool(self.selection))
+        self.bar_lay.invalidate()
+        any_photo = any(v.has_image() for v in self.views)
         for b in (self.btn_fit, self.btn_out, self.btn_in):
             b.setEnabled(any_photo)
         self.timeline.mark_shown(i for i in self.slot_ids() if i is not None)
+        self.timeline.mark_selected(self.selection)
         self._sync_buttons()
         if self.lens.isVisible():
             self.lens.update()
