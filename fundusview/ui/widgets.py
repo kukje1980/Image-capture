@@ -7,11 +7,11 @@ widgets they replace.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt
+from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
-    QAbstractButton, QButtonGroup, QCheckBox, QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout,
-    QWidget,
+    QAbstractButton, QButtonGroup, QCheckBox, QFrame, QHBoxLayout, QLabel, QLayout, QPushButton, QSizePolicy,
+    QVBoxLayout, QWidget,
 )
 
 from . import motion, theme
@@ -174,6 +174,95 @@ def segment(text: str, tip: str = "") -> QPushButton:
     if tip:
         b.setToolTip(tip)
     return b
+
+
+class FlowLayout(QLayout):
+    """A row of controls that wraps onto the next line when the window is too narrow for it —
+    a bar laid out with this never forces the window wider than its widest control."""
+
+    def __init__(self, parent=None, margins=(10, 6, 10, 6), spacing: int = 6):
+        super().__init__(parent)
+        self._items: list = []
+        self._lines = 1
+        self.setContentsMargins(*margins)
+        self.setSpacing(spacing)
+
+    def addItem(self, item) -> None:
+        self._items.append(item)
+
+    def count(self) -> int:
+        return len(self._items)
+
+    def itemAt(self, i: int):
+        return self._items[i] if 0 <= i < len(self._items) else None
+
+    def takeAt(self, i: int):
+        return self._items.pop(i) if 0 <= i < len(self._items) else None
+
+    def expandingDirections(self):
+        return Qt.Orientation(0)
+
+    def hasHeightForWidth(self) -> bool:
+        return True
+
+    def heightForWidth(self, width: int) -> int:
+        return self._place(QRect(0, 0, width, 0), False)
+
+    def setGeometry(self, rect: QRect) -> None:
+        super().setGeometry(rect)
+        self._place(rect, True)
+
+    def sizeHint(self) -> QSize:
+        return self.minimumSize()
+
+    def minimumSize(self) -> QSize:
+        size = QSize()
+        for item in self._items:
+            if not item.isEmpty():
+                size = size.expandedTo(item.minimumSize())
+        m = self.contentsMargins()
+        return size + QSize(m.left() + m.right(), m.top() + m.bottom())
+
+    def rows(self) -> int:
+        """Lines the controls take at the current width (tests, screenshots)."""
+        return self._lines
+
+    def _place(self, rect: QRect, move: bool) -> int:
+        m = self.contentsMargins()
+        area = rect.adjusted(m.left(), m.top(), -m.right(), -m.bottom())
+        gap = self.spacing()
+        x, y, line_h, lines = area.x(), area.y(), 0, 1
+        line: list = []
+
+        def flush() -> None:                      # centre the line's controls on its height
+            for item, ix in line:
+                h = item.sizeHint().height()
+                item.setGeometry(QRect(QPoint(ix, y + (line_h - h) // 2), item.sizeHint()))
+
+        for item in self._items:
+            if item.isEmpty():
+                continue
+            hint = item.sizeHint()
+            if x + hint.width() > area.right() + 1 and line_h > 0:
+                if move:
+                    flush()
+                line = []
+                x, y, line_h, lines = area.x(), y + line_h + gap, 0, lines + 1
+            line.append((item, x))
+            x += hint.width() + gap
+            line_h = max(line_h, hint.height())
+        if move:
+            flush()
+            self._lines = lines
+        return y + line_h - rect.y() + m.bottom()
+
+
+def vline(height: int = 20) -> QFrame:
+    """A short vertical hairline between groups of a bar."""
+    f = QFrame()
+    f.setObjectName("vline")
+    f.setFixedSize(1, height)
+    return f
 
 
 def hairline() -> QFrame:

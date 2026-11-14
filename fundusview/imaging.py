@@ -45,6 +45,22 @@ def load_rgb(path: Path | str) -> np.ndarray:
         return np.asarray(img.convert("RGB"))
 
 
+def load_reduced(path: Path | str, max_side: int) -> np.ndarray:
+    """The photo no larger than about ``max_side`` (many small views at once). A JPEG is decoded
+    straight at 1/2, 1/4 or 1/8 of its size — a 24-megapixel frame in a few ms instead of 0.3 s."""
+    path = Path(path)
+    try:
+        with Image.open(path) as img:
+            if img.format == "JPEG" and img.mode in ("RGB", "L", "YCbCr"):
+                img.draft("RGB", (max_side, max_side))       # never below the asked size
+                img = ImageOps.exif_transpose(img).convert("RGB")
+                img.thumbnail((max_side, max_side), Image.Resampling.BILINEAR)
+                return np.asarray(img)
+    except Exception:
+        pass                                                  # not a plain image: the full reader knows more
+    return downscale(load_rgb(path), max_side)
+
+
 def _to_uint8(a: np.ndarray) -> np.ndarray:
     a = a.astype(np.float64)
     lo, hi = np.percentile(a, 0.5), np.percentile(a, 99.8)

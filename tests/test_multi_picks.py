@@ -55,6 +55,7 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
         import_and_wait(app, w, [demo_dir / "RetiCam", demo_dir / "VK2_Export"])
         pid = db.find_patient("PID20260310-0A1B2C3D")["id"]
         w._select_patient_ref(pid)
+        w.show_page("work")                 # the photo strip is in the workspace (the start screen is the patient list)
         app.processEvents()
         assert w.thumbs.count() == 3
         rows = db.images_for_patient(pid)

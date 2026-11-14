@@ -195,5 +195,40 @@ def test_montage_from_the_main_window(app, tmp_path, montage_drop, import_and_wa
         sources, why = w._montage_sources([ids[0], other])
         assert sources is None and "다른 환자" in why
         assert "두 장 이상" in w._montage_sources([ids[0]])[1]
+        # 빠르게 저장 is kept in the settings and handed to the next montage window
+        assert s.montage_fast is False and not seen[-1].c_fast.isChecked()
+        saved = []
+        monkeypatch.setattr(s, "save", lambda *a, **k: saved.append(s.montage_fast))
+        seen[-1].c_fast.setChecked(True)
+        assert s.montage_fast is True and saved == [True]
+        w.edit_montage(new["id"])
+        assert seen[-1] is not again and seen[-1].c_fast.isChecked()
     finally:
         w.close()
+
+
+def test_fast_save_draws_a_smaller_picture_and_is_remembered(app):
+    from fundusview.ui import montage_dialog as md
+
+    said = []
+    dlg = md.MontageDialog(_sources(2, side=900), auto=False, fast=False, on_fast=said.append)
+    try:
+        assert not dlg.c_fast.isChecked()
+        big = dlg._final_job()(lambda *_: None)
+        dlg.c_fast.setChecked(True)
+        assert said == [True]                                       # the main window stores it in the settings
+        small = dlg._final_job()(lambda *_: None)
+        assert max(small.rgb.shape[:2]) <= md.FAST_SIZE and max(big.rgb.shape[:2]) <= md.FULL_SIZE
+        assert small.fov_deg == big.fov_deg
+    finally:
+        dlg.close()
+        dlg.deleteLater()
+        app.processEvents()
+    again = md.MontageDialog(_sources(2, side=400), auto=False, fast=True)
+    try:
+        assert again.c_fast.isChecked()
+    finally:
+        again.close()
+        again.deleteLater()
+        app.processEvents()
+

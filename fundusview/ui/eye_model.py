@@ -31,8 +31,9 @@ from PIL import Image, ImageDraw, ImageFilter
 
 MM = 1.0 / 12.0
 
-# eye wall (≈ 0.7 mm sclera, 0.25 mm choroid, 0.25 mm retina)
-SCLERA_T = 0.058
+# eye wall (0.25 mm choroid, 0.25 mm retina). The sclera is drawn thinner than it is (≈ 0.2 mm
+# instead of 0.5 – 1 mm): at its true thickness the white rim of the cut eye looked too heavy
+SCLERA_T = 0.018
 CHOROID_T = 0.021
 RETINA_T = 0.021
 R_RET = 1.0 - SCLERA_T - CHOROID_T - RETINA_T
@@ -175,8 +176,11 @@ def _profile_normals(r, z, flip: bool = False):
 
 # -- inner wall: retina, ora serrata, pars plana, pars plicata --------------
 _ANT_Z = np.array([Z_ORA, 0.55, 0.62, 0.66, 0.70, 0.74, 0.78, IRIS_BACK_Z])
+# the radii in front of the pars plana were drawn for a wall 0.1 thick (inner radius 0.9): a thinner
+# wall moves them out with it, less and less toward the iris root, which stays where it is
+_ANT_GROW = (R_RET - 0.9) * np.array([0.0, 0.0, 0.75, 0.55, 0.35, 0.20, 0.08, 0.0])
 _ANT_R = np.array([R_RET * math.sin(ORA_THETA), math.sqrt(R_RET ** 2 - 0.55 ** 2), 0.64, 0.595, 0.562,
-                   0.540, 0.526, IRIS_ROOT_R])
+                   0.540, 0.526, IRIS_ROOT_R]) + _ANT_GROW
 
 
 def _pchip(x, xs, ys, d0=None):

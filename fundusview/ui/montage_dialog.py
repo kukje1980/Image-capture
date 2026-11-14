@@ -37,6 +37,8 @@ from . import theme
 from .image_view import ImageView, to_qimage
 
 NUMBERS = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯"
+FULL_SIZE = 4000               # the saved montage, at most this many pixels across
+FAST_SIZE = 2400               # … with 빠르게 저장
 PREVIEW_SIZE = 1400            # 완성 / 3D preview (the saved montage is drawn at full detail)
 SEL, OTHER = QColor(255, 214, 64), QColor(235, 240, 245)
 
@@ -581,7 +583,8 @@ class MontageDialog(QDialog):
     patient record and returns its id; ``definition``: a saved arrangement to edit again."""
 
     def __init__(self, sources: list[MontageSource], *, file_stem: str = "몽타주", save_record=None,
-                 definition: dict | None = None, auto: bool = True, parent=None):
+                 definition: dict | None = None, auto: bool = True, fast: bool = False, on_fast=None,
+                 parent=None):
         super().__init__(parent)
         self.setWindowTitle("몽타주 — 여러 장을 한 장으로")
         self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
@@ -701,8 +704,15 @@ class MontageDialog(QDialog):
         self.sp_mfov.valueChanged.connect(self._on_mfov)
         self.lbl_range = QLabel("")
         self.lbl_range.setWordWrap(True)
+        self.c_fast = QCheckBox("빠르게 저장")
+        self.c_fast.setChecked(bool(fast))
+        self.c_fast.setToolTip(f"저장하는 몽타주를 최대 {FAST_SIZE}픽셀로 그립니다 (기본 {FULL_SIZE}픽셀) —\n"
+                               "그리는 시간이 절반 아래로 줄고, 아주 크게 확대했을 때만 덜 선명합니다")
+        if on_fast is not None:
+            self.c_fast.toggled.connect(on_fast)
         ol = QVBoxLayout(g_out)
         ol.addWidget(self.c_gain)
+        ol.addWidget(self.c_fast)
         row = QHBoxLayout()
         row.addWidget(self.c_auto_fov)
         row.addWidget(self.sp_mfov)
@@ -855,7 +865,8 @@ class MontageDialog(QDialog):
 
     # -- undo -------------------------------------------------------------------------------------
     def _snapshot(self):
-        return [(s.R.copy(), s.fov_scale, s.fov_deg, s.fov_type, s.projection, s.gain.copy()) for s in self.shots]
+        return [(s.R.copy(), s.fov_scale, s.fov_deg, s.fov_type, s.projection, s.gain.copy(), s.radial_c, s.alpha, s.cut)
+                for s in self.shots]
 
     def _push_undo(self) -> None:
         self._undo.append(self._snapshot())
@@ -865,8 +876,11 @@ class MontageDialog(QDialog):
         if not self._undo:
             self._set_status("되돌릴 것이 없습니다")
             return
-        for s, (r, fs, fov, ft, pj, g) in zip(self.shots, self._undo.pop()):
+        for s, (r, fs, fov, ft, pj, g, rc, al, cut) in zip(self.shots, self._undo.pop()):
             s.R, s.fov_scale, s.fov_deg, s.fov_type, s.projection, s.gain = r, fs, fov, ft, pj, g
+            if al is not s.alpha:
+                s._edge = None
+            s.radial_c, s.alpha, s.cut = rc, al, cut
         self._load_photo_controls()
         self._changed()
         self._set_status("되돌렸습니다")
@@ -1014,6 +1028,10 @@ class MontageDialog(QDialog):
         for k, w in zip(idx, work):
             s = self.shots[k]
             s.R, s.fov_scale, s.gain = w.R, w.fov_scale, w.gain
+            # the lens found from the photos and what was left out of them (glare, flare)
+            s.projection, s.fov_deg, s.radial_c = w.projection, w.fov_deg, w.radial_c
+            if w.alpha is not s.alpha:
+                s.alpha, s.cut, s._edge = w.alpha, w.cut, None
         placed = [idx[k] for k in rep.placed]
         if not self._ref_chosen and len(placed) >= 3:      # the middle photo becomes the centre
             mid = mt.most_central(self.shots, placed)
@@ -1159,6 +1177,7 @@ class MontageDialog(QDialog):
         for k in idx:
             s, src = self.shots[k], self.sources[k]
             a = src.alpha if src.alpha is not None else np.full(src.rgb.shape[:2], 255, np.uint8)
+            a = mt.full_alpha(s, a)                 # glare and flare stay out of the saved montage too
             full.append(dataclasses.replace(s, rgb=src.rgb, alpha=a, circle=tuple(src.circle), scale=1.0,
                                             R=s.R.copy(), gain=s.gain.copy() if gains else np.ones(3)))
         fov, lat = round(self.montage_fov(), 1), self.laterality()
@@ -1166,8 +1185,10 @@ class MontageDialog(QDialog):
             "included": idx, "auto_fov": self.c_auto_fov.isChecked(), "brightness": gains, "fov_deg": fov}
         ids = [self.shots[k].image_id for k in idx]
 
+        size = FAST_SIZE if self.c_fast.isChecked() else FULL_SIZE
+
         def run(say):
-            geom = mt.map_for(full)
+            geom = mt.map_for(full, max_size=size)
             rgb, _, geom = mt.render(full, geom, progress=lambda f: say(f"몽타주를 그리는 중 {int(f * 100)}%"))
             return MontageResult(rgb=rgb, geom=geom, fov_deg=fov, disc=self._disc_on(geom, full, idx),
                                  definition=definition, image_ids=ids, laterality=lat)

@@ -39,6 +39,7 @@ QPushButton#toggle:checked:hover { background: #77777c; }
 QPushButton#plain { background: transparent; color: @ACCENT_HI@; padding: 5px 8px; }
 QPushButton#plain:hover { background: @CARD@; }
 QPushButton#plain:pressed { color: @ACCENT_LO@; }
+QPushButton#plain:disabled { background: transparent; color: @TEXT4@; }
 QPushButton#multiButton { background: @ACCENT@; color: #ffffff; font-weight: 600; padding: 6px 6px; }
 QPushButton#multiButton:hover { background: @ACCENT_HI@; }
 QToolButton { background: transparent; color: @TEXT@; border: 0; border-radius: 7px; padding: 4px 8px; }
@@ -188,3 +189,44 @@ QPushButton#ovHead { background: transparent; color: @TEXT2@; border: 0; border-
 QPushButton#ovHead:hover { color: @ACCENT_HI@; background: transparent; }
 QPushButton#ovOpen3d { background: #0c0c0d; color: @ACCENT_HI@; border: 1px dashed @FILL2@; font-size: 13px; }
 QPushButton#ovOpen3d:hover { background: @BG@; color: #ffffff; }
+
+/* 환자 목록 (start screen): the table of patients, the selected patient's card and exams */
+QWidget#patientPage { background: @BG@; }
+QLabel#pageTitle { font-size: 20px; font-weight: 700; color: @TEXT@; padding-right: 6px; }
+QLabel#emptyState { color: @TEXT3@; font-size: 13px; padding: 20px; }
+QTableWidget#patientTable { border-radius: 10px; }
+QLabel#avatar { background: #17365c; color: #7fc0ff; border-radius: 22px; font-size: 18px; font-weight: 700; }
+QLabel#patientName { font-size: 18px; font-weight: 700; color: @TEXT@; }
+QLabel#kvKey { color: @TEXT3@; }
+QScrollArea#examScroll, QWidget#examBox { background: transparent; }
+QFrame#examRow { background: @BG@; border: 1px solid @BG@; border-radius: 10px; }
+QFrame#examRow:hover { border: 1px solid @FILL2@; }
+QFrame#examRow[current="true"] { background: #17293f; border: 1px solid @ACCENT@; }
+QLabel#examDate { font-weight: 700; color: @TEXT@; }
+QLabel#examThumb { background: @BLACK@; border-radius: 6px; }
+QLabel#pill { background: @FILL@; color: @TEXT2@; border-radius: 8px; padding: 1px 8px; font-size: 11px;
+    font-weight: 600; }
+QPushButton#back { background: transparent; color: @ACCENT_HI@; padding: 5px 10px; font-weight: 600; }
+QPushButton#back:hover { background: @CARD@; }
+QPushButton#back:pressed { color: @ACCENT_LO@; }
+
+/* 검토: a bar, two photos on black, the timeline */
+QWidget#barReview { background: @BG@; border-bottom: 1px solid @CARD@; }
+QFrame#vline { background: @SEP@; border: 0; }
+QLabel#reviewPos { color: @TEXT2@; font-weight: 600; }
+QWidget#barReview QPushButton { padding: 6px 10px; }
+QWidget#barReview QPushButton#square { padding: 6px 0; font-weight: 600; }
+QWidget#reviewPage, QWidget#reviewStage { background: @BLACK@; }
+QWidget#priorNav { background: transparent; }
+QWidget#priorNav QToolButton { background: rgba(12, 12, 14, 205); color: @TEXT@; border: 1px solid @FILL2@;
+    border-radius: 6px; padding: 3px 9px; }
+QWidget#priorNav QToolButton:hover { background: @FILL@; }
+QWidget#priorNav QToolButton:disabled { color: @TEXT4@; border-color: @FILL@; }
+QLabel#priorPos { background: rgba(12, 12, 14, 205); color: @YELLOW@; border-radius: 6px; padding: 4px 9px;
+    font-weight: 600; }
+QFrame#timeline { background: @BG@; border-top: 1px solid @CARD@; }
+QScrollArea#timelineScroll, QWidget#timelineBody { background: transparent; }
+QPushButton#timelineDate { background: transparent; color: @TEXT2@; border: 0; padding: 1px 2px; font-size: 12px;
+    font-weight: 600; text-align: left; }
+QPushButton#timelineDate:hover { color: @TEXT@; }
+QPushButton#timelineDate[current="true"] { color: @ACCENT_HI@; }

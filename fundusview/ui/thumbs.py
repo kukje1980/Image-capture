@@ -7,7 +7,7 @@ the photos picked for the multi view (plain click) get a yellow frame with their
 from __future__ import annotations
 
 from PySide6.QtCore import QRect, QRectF, QSize, Qt
-from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPen
+from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPen, QPixmap, QPixmapCache
 from PySide6.QtWidgets import QApplication, QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
 EYE_ROLE = Qt.ItemDataRole.UserRole + 2     # laterality of the photo ("OD" / "OS" / "OU" / "")
@@ -21,6 +21,43 @@ _EYES = {"OD": ("OD", "#5aa9ff", "#04192f"), "OS": ("OS", "#f5a524", "#2a1700"),
 def eye_badge(laterality: str | None) -> tuple[str, str, str]:
     """(text, background, text colour) of the eye badge; unknown eye = grey 미상."""
     return _EYES.get(laterality or "", ("미상", "#4b5563", "#e5e7eb"))
+
+
+def thumb_pixmap(path: str | None, side: int = 0) -> QPixmap:
+    """The stored thumbnail of a photo (``images.thumb_path``), scaled to fit ``side`` pixels when
+    given — read once and kept (the patient list and the 검토 timeline show the same photos)."""
+    if not path:
+        return QPixmap()
+    key = f"fundusthumb:{side}:{path}"
+    pm = QPixmap()
+    if QPixmapCache.find(key, pm):
+        return pm
+    pm = QPixmap(path)
+    if side and not pm.isNull():
+        pm = pm.scaled(side, side, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+    if not pm.isNull():
+        QPixmapCache.insert(key, pm)
+    return pm
+
+
+def paint_eye_badge(painter: QPainter, laterality: str | None, x: float, y: float, px: int = 11) -> QRectF:
+    """The coloured eye badge (OD / OS / OU / 미상) with its top-left corner at (x, y)."""
+    text, bg, fg = eye_badge(laterality)
+    f = QFont(painter.font())
+    f.setBold(True)
+    f.setPixelSize(px)
+    painter.save()
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    painter.setFont(f)
+    fm = painter.fontMetrics()
+    rect = QRectF(x, y, fm.horizontalAdvance(text) + 10, fm.height() + 3)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor(bg))
+    painter.drawRoundedRect(rect, 4, 4)
+    painter.setPen(QColor(fg))
+    painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
+    painter.restore()
+    return rect
 
 
 def eye_badge_html(laterality: str | None) -> str:

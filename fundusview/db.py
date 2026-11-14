@@ -164,7 +164,8 @@ class Database:
 
     def list_patients(self, search: str = "") -> list[sqlite3.Row]:
         sql = (
-            "SELECT p.*, COUNT(i.id) AS n_images, MAX(i.exam_date) AS last_exam"
+            "SELECT p.*, COUNT(i.id) AS n_images, MAX(i.exam_date) AS last_exam,"
+            " COUNT(DISTINCT i.exam_date) AS n_exams"
             " FROM patients p LEFT JOIN images i ON i.patient_ref = p.id"
         )
         args: tuple = ()
@@ -174,6 +175,9 @@ class Database:
             args = (like, like, like)
         sql += " GROUP BY p.id ORDER BY COALESCE(MAX(i.imported_at), p.updated_at) DESC"
         return self._all(sql, args)
+
+    def count_patients(self) -> int:
+        return self._one("SELECT COUNT(*) FROM patients")[0]
 
     def delete_patient(self, ref: int) -> None:
         self._exec("DELETE FROM patients WHERE id = ?", (ref,))
@@ -218,6 +222,11 @@ class Database:
 
     def count_unassigned(self) -> int:
         return self._one("SELECT COUNT(*) FROM images WHERE patient_ref IS NULL")[0]
+
+    def unassigned_summary(self) -> sqlite3.Row:
+        """``n_images`` / ``n_exams`` / ``last_exam`` of the unassigned photos (the 미분류 row)."""
+        return self._one("SELECT COUNT(*) AS n_images, COUNT(DISTINCT exam_date) AS n_exams,"
+                         " MAX(exam_date) AS last_exam FROM images WHERE patient_ref IS NULL")
 
     def delete_image(self, image_id: int) -> None:
         self._exec("DELETE FROM images WHERE id = ?", (image_id,))
