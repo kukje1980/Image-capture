@@ -196,8 +196,14 @@ def test_patient_line_in_a_narrow_window_settles(tmp_path, demo_dir):
             app.processEvents()
             assert len(calls) < 20, f"{width}: the patient line kept laying the menu bar out"
             menus = mb.actionGeometry([a for a in mb.actions() if a.isVisible()][-1]).right()
-            assert w.top_w.geometry().left() >= menus             # never over the menus
-            assert w.top_w.geometry().right() <= mb.width()        # nor past the window's edge
+            assert w.top_w.geometry().right() <= mb.width()        # never past the window's edge
+            if w.top_w.want <= mb.width() - menus - 40:
+                assert w.top_w.geometry().left() >= menus         # cut to the room beside the menus
+            else:   # not even the buttons fit beside the menus (wider fonts, 900 px): the line is at
+                shortest = w.top_w.want                           # its smallest, no room for the name;
+                w.banner.setText("")                              # the menus that do not fit go to »
+                w._fit_banner()
+                assert w.top_w.want == shortest
     finally:
         w.close()
         db.close()
