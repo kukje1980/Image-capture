@@ -50,8 +50,8 @@ https://github.com/kukje1980/Image-capture/releases/download/fundus-viewer-lates
 
 **직접 빌드:** Windows는 `build_windows.bat` 실행 → `dist\FundusViewer\FundusViewer.exe` (폴더째 복사해
 사용). GitHub Actions(`fundus-viewer` 워크플로)가 커밋마다 Linux에서 시험(3D 안구 OpenGL 렌더링 포함)하고
-Windows exe를 빌드하며, `main` 브랜치의 빌드만 위 주소(릴리스 `fundus-viewer-latest`)에 올립니다(다른
-브랜치·PR은 빌드·시험만).
+Windows exe를 빌드하며, 기본 브랜치(`fundus-viewer`)의 빌드만 위 주소(릴리스 `fundus-viewer-latest`)에
+올립니다(다른 브랜치·PR은 빌드·시험만).
 
 **Mac:** 프로그램은 macOS 11 이상에서도 동작하지만 Mac용 파일은 지금은 자동으로 만들지 않습니다. 필요하면
 Mac에서 `./build_mac.sh` → `dist/FundusViewer.app`과 `dist/FundusViewer-mac-<AppleSilicon|Intel>.dmg`
