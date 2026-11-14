@@ -50,8 +50,8 @@ https://github.com/kukje1980/Image-capture/releases/download/fundus-viewer-lates
 
 **직접 빌드:** Windows는 `build_windows.bat` 실행 → `dist\FundusViewer\FundusViewer.exe` (폴더째 복사해
 사용). GitHub Actions(`fundus-viewer` 워크플로)가 커밋마다 Linux에서 시험(3D 안구 OpenGL 렌더링 포함)하고
-Windows exe를 빌드하며, `main` 브랜치의 빌드만 위 주소(릴리스 `fundus-viewer-latest`)에 올립니다(다른
-브랜치·PR은 빌드·시험만).
+Windows exe를 빌드하며, 기본 브랜치(`fundus-viewer`)의 빌드만 위 주소(릴리스 `fundus-viewer-latest`)에
+올립니다(다른 브랜치·PR은 빌드·시험만).
 
 **Mac:** 프로그램은 macOS 11 이상에서도 동작하지만 Mac용 파일은 지금은 자동으로 만들지 않습니다. 필요하면
 Mac에서 `./build_mac.sh` → `dist/FundusViewer.app`과 `dist/FundusViewer-mac-<AppleSilicon|Intel>.dmg`
@@ -71,6 +71,9 @@ Mac에서 `./build_mac.sh` → `dist/FundusViewer.app`과 `dist/FundusViewer-mac
 
 * **가져오기 폴더** `문서\안저사진 가져오기`를 만들고 감시합니다. 여기에 넣은 사진은 라이브러리로
   **옮겨지므로** 폴더가 비면 모두 들어간 것입니다.
+  다른 폴더(예: 바탕화면이나 USB·NAS의 폴더)를 쓰려면 **설정 → 일반 → 가져오기 폴더**에서 고릅니다.
+  **확인**을 누르면 다시 시작하지 않아도 바로 새 폴더를 감시하고, 예전 폴더는 감시 목록에서 빠집니다
+  (나중에 다시 그 폴더로 바꿔도 됩니다). 라이브러리 폴더 안은 고를 수 없습니다.
 * 모든 드라이브(네트워크 드라이브 포함)에서 촬영 프로그램 폴더를 찾아 알맞은 카메라 프로필로
   감시 목록에 넣습니다. 장비 폴더는 **복사**만 하고(원본 유지), 네트워크 드라이브는 폴링합니다.
 
