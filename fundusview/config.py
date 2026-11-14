@@ -77,11 +77,12 @@ class Settings:
     view3d_detail: str = "detailed"
     # Motion and 3D effects (보기 → 부드러운 움직임; 3D 안구: 입체 조명, 자동 회전)
     smooth_motion: bool = True
-    relief3d: bool = True
+    relief3d: bool = False          # 3D 입체 조명 (off: the photo keeps its own brightness, as taken)
     auto_rotate3d: bool = True
     glass3d: int = 80               # 공막 투명도 0 … 100 (0 = the opaque white sclera)
     align3d: bool = True            # 3D: the photo's fovea / disc at their place on the eye (placement.py)
-    surface3d: bool = True          # 3D 망막 입체: 표면 높낮이 (the retina raised by its relief, relief.py)
+    surface3d: bool = False         # 3D 망막 입체: 표면 높낮이 (the retina raised by its relief, relief.py;
+                                    # off: the photo lies smooth on the retina, as taken)
     surface_height3d: int = 45      # … 높이 0 … 100
     simple3d: bool = False          # 3D 단순하게 보기 (coats, iris, lens and nerve plain)
     slit_dir3d: str = "down"        # 슬릿 스캔: "down", "up", "right", "left" or "all" (상하좌우)

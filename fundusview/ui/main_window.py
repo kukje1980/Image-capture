@@ -190,9 +190,12 @@ class MainWindow(QMainWindow):
         if not settings.smooth_motion:        # 보기 → 부드러운 움직임 (off: everything changes at once)
             motion.set_enabled(False)
         if settings.ui_version < self.UI_VERSION:     # a new look: its 3D defaults, once
+            if settings.ui_version < 3:
+                settings.view3d_detail, settings.auto_rotate3d, settings.glass3d = "detailed", True, 80
+                settings.autofind3d = True
+            # 4: the photo as taken — 표면 높낮이 and 입체 조명 stay off until switched on in 망막 입체
+            settings.surface3d, settings.relief3d = False, False
             settings.ui_version = self.UI_VERSION
-            settings.view3d_detail, settings.auto_rotate3d, settings.glass3d = "detailed", True, 80
-            settings.surface3d, settings.autofind3d = True, True
         self.bridge = Bridge()
         self.service = ImportService(db, settings, on_result=self.bridge.result.emit,
                                      on_status=self.bridge.status.emit)
@@ -764,7 +767,8 @@ class MainWindow(QMainWindow):
         # -- 망막 입체: the retina's relief (relief.py) and the light on it -----------------------
         self.c_surface3d = Switch("표면 높낮이")
         self.c_surface3d.setToolTip("혈관은 솟고, 시신경 유두의 함몰(cup)과 황반의 오목(pit)은 파이도록 사진이 얹힌 "
-                                    "망막 표면을 실제로 올리고 내립니다 — 돌려 보면 높낮이가 보입니다 (자세히 보기)")
+                                    "망막 표면을 실제로 올리고 내립니다 — 돌려 보면 높낮이가 보입니다 (자세히 보기)\n"
+                                    "꺼 두면(기본) 촬영한 사진 그대로 망막에 얹습니다")
         self.c_surface3d.setChecked(bool(self.settings.surface3d))
         self.c_surface3d.toggled.connect(self._on_surface)
         self.s_height3d = QSlider(Qt.Orientation.Horizontal)
@@ -782,7 +786,8 @@ class MainWindow(QMainWindow):
         # -- effects ---------------------------------------------------------------------------
         self.c_relief3d = Switch("입체 조명")
         self.c_relief3d.setToolTip("표면의 높낮이에 비스듬한 빛을 비춰 혈관과 유두·황반이 도드라져 보이게 합니다 "
-                                   "(안구를 돌리면 빛이 따라 움직입니다)")
+                                   "(안구를 돌리면 빛이 따라 움직입니다)\n"
+                                   "꺼 두면(기본) 사진의 밝기를 바꾸지 않습니다")
         self.c_relief3d.setChecked(bool(self.settings.relief3d))
         self.c_relief3d.toggled.connect(self._on_relief)
         self.c_spin3d = Switch("자동 회전")
@@ -2986,8 +2991,9 @@ class MainWindow(QMainWindow):
     # -- 효과: 입체 조명 · 자동 회전 -----------------------------------------------------------
     RELIEF = 0.6            # strength of 입체 조명
     SPIN = 10.0             # 자동 회전, degrees per second
-    UI_VERSION = 3          # 2: the dark look — 자세히, 유리 공막 and 자동 회전 from the start; 3: the 3D tab
-                            # as the web page (자세히, 표면 높낮이, 황반·유두 자동으로 찾기)
+    UI_VERSION = 4          # 2: the dark look — 자세히, 유리 공막 and 자동 회전 from the start; 3: the 3D tab
+                            # as the web page (자세히, 황반·유두 자동으로 찾기); 4: the 3D eye shows the
+                            # original photo (망막 입체 — 표면 높낮이 and 입체 조명 — off from the start)
 
     def _on_relief(self, on: bool) -> None:
         self.settings.relief3d = bool(on)
@@ -3537,7 +3543,8 @@ class MainWindow(QMainWindow):
             dlg = MontageDialog(sources, file_stem=self._montage_stem(self.db.get_image(ids[0])),
                                 save_record=self._save_montage, definition=definition,
                                 fast=bool(getattr(self.settings, "montage_fast", False)),
-                                on_fast=self._set_montage_fast, parent=self)
+                                on_fast=self._set_montage_fast,
+                                relief3d=self.settings.relief3d, surface3d=self.settings.surface3d, parent=self)
         finally:
             QApplication.restoreOverrideCursor()
         self._montage_dlg = dlg

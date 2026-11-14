@@ -1122,7 +1122,8 @@ class EyeView(QOpenGLWidget):
         self.relief = 0.0              # 입체 조명 0 … 1: vessels and the disc in relief under the light
         self.glass = 0.0               # 유리 공막 0 … 1: the sclera see-through, the photographed retina solid
         self.simple = 0.0              # 단순하게 보기 0 … 1: coats, iris, lens and nerve plain, the retina as it is
-        self.relief_on = True          # 망막 높낮이: the photographed retina raised by its relief (relief.py)
+        self.relief_on = False         # 망막 높낮이: the photographed retina raised by its relief (relief.py);
+                                       # off = the photo as taken, smooth on the retina
         self.relief_amount = 0.036     # … the height of +1 (eye radii)
         self.dark = 0.0                # 0 … 1: the picture fades to black (the simple model's way in)
         self.auto_rotate = 0.0         # 자동 회전, degrees / s (0 = off)

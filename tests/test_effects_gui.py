@@ -65,7 +65,9 @@ def test_browsing_reads_ahead_and_effects_follow_their_controls(app, tmp_path, d
         eye = w.eye3d
         w._go("3d")
         app.processEvents()
-        assert w.c_relief3d.isChecked() and eye.relief == w.RELIEF       # on from the start
+        assert not w.c_relief3d.isChecked() and eye.relief == 0.0        # off from the start: the photo as taken
+        w.c_relief3d.setChecked(True)
+        assert eye.relief == w.RELIEF and s.relief3d is True
         w.c_relief3d.setChecked(False)
         assert eye.relief == 0.0 and s.relief3d is False
         w.c_relief3d.setChecked(True)
@@ -99,8 +101,12 @@ def test_browsing_reads_ahead_and_effects_follow_their_controls(app, tmp_path, d
         w.b_inspector.click()
         assert not w.inspector.isVisible()
         w.b_inspector.click()
-        # 망막 입체: 표면 높낮이 on from the start, its height on the slider
-        assert w.c_surface3d.isChecked() and eye.relief_on and eye._hmap is not None      # (the heights, from the photo)
+        # 망막 입체: 표면 높낮이 off from the start — the original photo, smooth on the retina
+        assert not w.c_surface3d.isChecked() and not eye.relief_on and not eye.relief_sheet_on()
+        assert not w.s_height3d.isEnabled() and s.surface3d is False
+        w.c_surface3d.setChecked(True)                    # switched on: its height on the slider
+        assert eye.relief_on and eye._hmap is not None and s.surface3d is True      # (the heights, from the photo)
+        assert w.s_height3d.isEnabled()
         assert eye.relief_amount == pytest.approx(s.surface_height3d / 100.0 * w.HEIGHT_MAX)
         w.s_height3d.setValue(80)
         assert eye.relief_amount == pytest.approx(0.8 * w.HEIGHT_MAX) and s.surface_height3d == 80
@@ -177,5 +183,39 @@ def test_smooth_motion_setting_is_kept(tmp_path):
     from fundusview.config import Settings
 
     s = Settings(library_dir=str(tmp_path / "lib"))
-    assert (s.smooth_motion, s.relief3d, s.auto_rotate3d, s.glass3d) == (True, True, True, 80)
+    assert (s.smooth_motion, s.auto_rotate3d, s.glass3d) == (True, True, 80)
+    assert (s.surface3d, s.relief3d) == (False, False)      # 3D: the photo as taken until 망막 입체 is switched on
     assert s.view3d_detail == "detailed"
+
+
+def test_3d_shows_the_original_photo_until_relief_is_switched_on(app, tmp_path):
+    """표면 높낮이 and 입체 조명 are off from the start. A settings file of the earlier look (they were on
+    by default) adopts that once; switching them on afterwards is kept."""
+    from fundusview.config import Settings
+    from fundusview.db import Database
+    from fundusview.ui.main_window import MainWindow
+
+    def open_window(s):
+        w = MainWindow(s, Database(tmp_path / "lib" / "fundus.db"))
+        try:
+            return (w.c_surface3d.isChecked(), w.c_relief3d.isChecked(), w.eye3d.relief_on, w.eye3d.relief,
+                    w.s_height3d.isEnabled())
+        finally:
+            w.close()
+
+    # a settings file written by the look before (UI version 3: 표면 높낮이 · 입체 조명 on, 공막 투명도 chosen)
+    old = Settings(library_dir=str(tmp_path / "lib"), watch_on_startup=False, auto_detect=False,
+                   ui_version=3, surface3d=True, relief3d=True, glass3d=40, view3d_detail="simple")
+    assert open_window(old) == (False, False, False, 0.0, False)
+    assert (old.ui_version, old.surface3d, old.relief3d) == (MainWindow.UI_VERSION, False, False)
+    assert (old.glass3d, old.view3d_detail) == (40, "simple")          # nothing else of theirs is touched
+
+    # switched on by the user afterwards: kept at the next start
+    old.surface3d, old.relief3d = True, True
+    assert open_window(old) == (True, True, True, MainWindow.RELIEF, True)
+    assert (old.surface3d, old.relief3d) == (True, True)
+
+    # a first start (no settings file yet)
+    new = Settings(library_dir=str(tmp_path / "lib"), watch_on_startup=False, auto_detect=False)
+    assert open_window(new) == (False, False, False, 0.0, False)
+    assert (new.view3d_detail, new.auto_rotate3d, new.glass3d, new.autofind3d) == ("detailed", True, 80, True)
