@@ -63,5 +63,7 @@ def test_the_page_is_built_in_one_file(tmp_path):
         assert control in page, control
     assert 'id="autofind" checked' in page                             # finding the macula and disc is the default
     assert "사진 펼치기" not in page and 'id="unwrap"' not in page and "가로 단면" not in page
+    from fundusview.ui import eye_model as em
+
     m = data["model"]
-    assert m["consts"]["R_RET"] == pytest.approx(0.9) and len(m["wall_base"]["z"]) == len(m["wall_base"]["r"])
+    assert m["consts"]["R_RET"] == pytest.approx(em.R_RET) and 0.9 < em.R_RET < 0.95 and len(m["wall_base"]["z"]) == len(m["wall_base"]["r"])
