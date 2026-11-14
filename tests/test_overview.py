@@ -170,3 +170,34 @@ def test_a_photo_without_macula_or_disc_says_so(tmp_path, demo_dir, import_and_w
     finally:
         w.close()
         db.close()
+
+
+def test_patient_line_in_a_narrow_window_settles(tmp_path, demo_dir):
+    """A long patient line in a narrow window is cut to the room left by the menus, once: laying the
+    menu bar out again must not set off another fit (it grew a pixel at a time and hung — Windows)."""
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication([])
+    w, db = _window(tmp_path, demo_dir)
+    try:
+        w.show()
+        if not w._line_in_menubar:
+            pytest.skip("the menu bar is the system's (macOS): the patient line is above the photo")
+        calls = []
+        fit = w._fit_banner
+        w._fit_banner = lambda: (calls.append(1), len(calls) < 500 and fit())
+        mb = w.menuBar()
+        for width in (1500, 1100, 900, 800):
+            calls.clear()
+            w.resize(width, 800)
+            app.processEvents()
+            w.banner.setText("아주아주 긴 이름의 환자  ·  PID20260310-0A1B2C3D  ·  1960-01-01 (66세)  ·  남성")
+            w._fit_banner()
+            app.processEvents()
+            assert len(calls) < 20, f"{width}: the patient line kept laying the menu bar out"
+            menus = mb.actionGeometry([a for a in mb.actions() if a.isVisible()][-1]).right()
+            assert w.top_w.geometry().left() >= menus             # never over the menus
+            assert w.top_w.geometry().right() <= mb.width()        # nor past the window's edge
+    finally:
+        w.close()
+        db.close()

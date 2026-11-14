@@ -456,6 +456,7 @@ class MainWindow(QMainWindow):
         # bar (see _build_menus), so the photos get its whole row
         self._centre_lay = cl
         self._line_in_menubar = False
+        self._banner_busy = False             # _fit_banner is laying the menu bar out (no re-entry)
         self.top_w = _WidthHint()
         self.top_w.setObjectName("patientLine")
         top = QHBoxLayout(self.top_w)
@@ -1727,7 +1728,7 @@ class MainWindow(QMainWindow):
 
     def _fit_banner(self) -> None:
         """The patient line in the menu bar: as wide as its text when there is room, else cut with …."""
-        if not hasattr(self, "top_w") or not self._line_in_menubar:
+        if not hasattr(self, "top_w") or not self._line_in_menubar or self._banner_busy:
             return
         mb = self.menuBar()
         acts = [a for a in mb.actions() if a.isVisible()]
@@ -1735,13 +1736,21 @@ class MainWindow(QMainWindow):
         fixed = self.btn_patients.sizeHint().width() + sum(
             w.sizeHint().width() + 6 for w in (self.f_date, self.f_eye, self.f_mod) if not w.isHidden())
         room = mb.width() - menus - 40
-        w = max(fixed + 80, min(fixed + self.banner.full_width() + 30, room))
+        w = max(fixed, min(fixed + self.banner.full_width() + 30, room))   # (cut to the room, not the menus)
         if self.top_w.want != w:
             self.top_w.want = w              # the menu bar lays its corner out by the size hint
             self.top_w.updateGeometry()
             mb.updateGeometry()
-            mb.resize(mb.width() + 1, mb.height())    # lay the corner out again now
-            mb.resize(mb.width() - 1, mb.height())
+            # lay the corner out again now. The nudge resizes the menu bar, which calls this again
+            # from the event filter with one pixel more room: without the guard a line cut to the
+            # room (a narrow window, a long name, wider fonts on Windows) grew by a pixel each time
+            # and never stopped
+            self._banner_busy = True
+            try:
+                mb.resize(mb.width() + 1, mb.height())
+                mb.resize(mb.width() - 1, mb.height())
+            finally:
+                self._banner_busy = False
 
     def eventFilter(self, obj, e):
         try:
