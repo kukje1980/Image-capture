@@ -621,9 +621,17 @@ class ReviewPage(QWidget):
     def set_photos(self, rows, current: str | None = None) -> None:
         """The patient's ``rows`` (images, any order) and the exam under review (None = the newest).
         The stage is kept when it is still possible; the views show the default photos again."""
-        self.rows = [r for r in rows if review.is_photo(r)]
-        dates = review.exam_dates(self.rows)
-        self.current = current if current in dates else (dates[0] if dates else None)
+        rows = [r for r in rows if review.is_photo(r)]
+        dates = review.exam_dates(rows)
+        current = current if current in dates else (dates[0] if dates else None)
+        # the same photos and the same exam again (a list refresh, a search): leave the views as the
+        # user has them — zoom, stage, the prior on screen and photos placed by hand
+        key = (current, tuple((r["id"], r["exam_date"], r["exam_time"], r["laterality"], r["modality"]) for r in rows))
+        if key == getattr(self, "_photos_key", None):
+            self.rows = rows
+            return
+        self._photos_key = key
+        self.rows, self.current = rows, current
         self.timeline.set_exams(review.exams(self.rows), self.current)
         self._sync_stages()
         self.set_stage(self.stage if self.stage_ok(self.stage) else "ou")

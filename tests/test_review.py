@@ -707,3 +707,40 @@ def test_review_bar_wraps_instead_of_widening_the_window(win):
     assert rv.width() < full and lay.rows() >= 2 and all(v.width() > 100 for v in rv.views)
     last = rv.btn_glaucoma
     assert last.mapTo(rv, last.rect().bottomRight()).x() <= rv.width()      # nothing is cut off
+
+
+def test_real_mouse_wheel_zooms_the_review_views(win):
+    """A real wheel event over a photo (not the internal helper) zooms in and out at the cursor."""
+    from PySide6.QtCore import QPoint, QPointF, Qt
+    from PySide6.QtGui import QWheelEvent
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QApplication
+
+    app, w, db, refs, ids = win
+    rv = _open_review(app, w, refs)
+    a, b = rv.views
+    vp = a.viewport()
+    pos = QPoint(vp.width() // 2, vp.height() // 2)
+
+    def wheel(delta):
+        ev = QWheelEvent(QPointF(pos), QPointF(vp.mapToGlobal(pos)), QPoint(0, 0), QPoint(0, delta),
+                         Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+                         Qt.ScrollPhase.NoScrollPhase, False)
+        QApplication.sendEvent(vp, ev)
+        QTest.qWait(30)                                  # the view glides after the notches
+        app.processEvents()
+
+    z0, zb0 = a.view_state()[0], b.view_state()[0]
+    for _ in range(8):                                   # right after opening: a late list refresh must not undo it
+        wheel(120)
+    z1 = a.view_state()[0]
+    assert z1 > z0 * 1.3 and a.zoomed_in()               # wheel up = larger
+    assert b.view_state()[0] > zb0 * 1.3                 # the linked view follows
+    for _ in range(2):
+        wheel(-120)
+    assert z0 < a.view_state()[0] < z1                   # wheel down = smaller again
+    # the same photos handed over again (list refresh) keep the zoom; a real change fits again
+    z = a.view_state()[0]
+    w._review_dirty = True
+    w._fill_review()
+    assert a.view_state()[0] == pytest.approx(z) and a.zoomed_in()
