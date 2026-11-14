@@ -140,6 +140,7 @@ class Shot:
     R: np.ndarray = field(default_factory=lambda: np.eye(3))
     gain: np.ndarray = field(default_factory=lambda: np.ones(3))
     fov_scale: float = 1.0                # correction found by 자동 (1 = as given)
+    cut: np.ndarray | None = field(default=None, repr=False, compare=False)   # uint8, 255 = glare / flare left out
     _edge: np.ndarray | None = field(default=None, init=False, repr=False, compare=False)
 
     @classmethod
@@ -229,7 +230,8 @@ class Shot:
     def to_json(self) -> dict:
         return {"image_id": self.image_id, "R": [float(x) for x in self.R.reshape(-1)],
                 "fov_deg": self.fov_deg, "fov_type": self.fov_type, "projection": self.projection,
-                "fov_scale": self.fov_scale, "gain": [float(x) for x in self.gain]}
+                "fov_scale": self.fov_scale, "gain": [float(x) for x in self.gain],
+                "radial_c": float(self.radial_c)}
 
     def apply_json(self, d: dict) -> None:
         for k in ("fov_deg", "fov_type", "projection"):
@@ -238,6 +240,8 @@ class Shot:
         if d.get("R") and len(d["R"]) == 9:
             self.R = np.asarray(d["R"], np.float64).reshape(3, 3)
         self.fov_scale = float(d.get("fov_scale", 1.0) or 1.0)
+        if d.get("radial_c") is not None:
+            self.radial_c = float(d["radial_c"])
         if d.get("gain") and len(d["gain"]) == 3:
             self.gain = np.asarray(d["gain"], np.float64)
 
@@ -450,12 +454,18 @@ class AlignReport:
     unplaced: list[int]
     residual_deg: float     # median angle between matched points after alignment
     links: int              # photo pairs that were matched
+    lens: str = ""          # the lens model found from the photos themselves, if it replaced the given one
+    masked: int = 0         # photos with glare or a flare spot left out of the blend
 
     def text(self) -> str:
         n = len(self.placed) + len(self.unplaced)
         msg = f"{len(self.placed)}/{n}장 맞춤"
         if self.placed and self.links:
             msg += f" · 맞춘 점의 오차 {self.residual_deg:.2f}°"
+        if self.lens:
+            msg += f" · {self.lens}"
+        if self.masked:
+            msg += f" · 반사·플레어 가림 {self.masked}장"
         if self.unplaced:
             msg += f" · 겹치는 곳을 찾지 못한 사진 {len(self.unplaced)}장은 손으로 옮기거나 기준점으로 맞추세요"
         return msg
@@ -498,7 +508,145 @@ def _refine_fov(shot: Shot, own_uv: np.ndarray, targets: np.ndarray) -> None:
         shot.R = kabsch(shot.dirs(own_uv), targets)
 
 
-def auto_align(shots: list[Shot], ref: int = 0, *, refine_fov: bool = True, progress=None) -> AlignReport:
+# -- the lens, from the photos themselves ---------------------------------------------------------
+WIDE = ("radial", "equidistant")      # wide-field lenses: angle ≈ a curve of the image radius
+CAL_FOVS = (0.45, 0.55, 0.65, 0.75, 0.85, 1.0, 1.15)     # × the field of view as given
+CAL_CS = (-0.15, 0.0, 0.15, 0.2545, 0.4)
+CAL_GAIN = 1.3                        # that many times more agreeing points before the given lens is dropped
+
+
+def _agree(shots, feats, matches, thresh_share: float = 0.003) -> tuple[int, float]:
+    """Matched points that agree on one rotation per photo pair, and their median error (°). The
+    tolerance is a share of the field, so a smaller field of view gets no advantage."""
+    total, res = 0, []
+    for (i, j), (ia, ib) in matches.items():
+        if len(ia) < 6:
+            continue
+        a, b = shots[i].dirs(feats[i].uv[ia]), shots[j].dirs(feats[j].uv[ib])
+        thr = thresh_share * math.degrees(shots[i].tmax)
+        r, inl = ransac_rotation(b, a, thresh_deg=thr, iters=300)
+        total += int(inl.sum())
+        if inl.sum() >= 3:
+            res.append(angle_deg(b[inl] @ r.T, a[inl]))
+    return total, (float(np.median(np.concatenate(res))) if res else 0.0)
+
+
+def calibrate_lens(shots: list[Shot], feats, matches) -> str:
+    """Wide-field photos of one camera: try other fields of view and lens curves (``radial``) on the
+    matched vessels of the series and keep the one on which clearly more of them agree. The
+    camera's own numbers are a guess until it is calibrated; the overlap of a series measures them.
+    Returns a note for the report, "" when the given lens stays."""
+    first = shots[0]
+    same = all((s.projection, s.fov_type, round(s.fov_deg, 3), round(s.radial_c, 4)) ==
+               (first.projection, first.fov_type, round(first.fov_deg, 3), round(first.radial_c, 4)) for s in shots)
+    if not same or first.projection not in WIDE or sum(len(m[0]) for m in matches.values()) < 40:
+        return ""
+    given = (first.projection, first.fov_deg, first.radial_c)
+
+    def use(fov: float, c: float) -> None:
+        for s in shots:
+            s.projection, s.fov_deg, s.radial_c, s.fov_scale = "radial", fov, c, 1.0
+
+    base, _ = _agree(shots, feats, matches)
+    best = (base, given[1], given[2] if given[0] == "radial" else 0.0)
+    for k in CAL_FOVS:
+        for c in CAL_CS:
+            use(given[1] * k, c)
+            n, _ = _agree(shots, feats, matches)
+            if n > best[0]:
+                best = (n, given[1] * k, c)
+    # a closer look around the best
+    n0, f0, c0 = best
+    for df in (-0.08, -0.04, 0.04, 0.08):
+        for dc in (-0.07, 0.0, 0.07):
+            use(f0 * (1 + df), c0 + dc)
+            n, _ = _agree(shots, feats, matches)
+            if n > best[0]:
+                best = (n, f0 * (1 + df), c0 + dc)
+    if best[0] < CAL_GAIN * max(base, 1) or best[0] < 30:
+        for s in shots:
+            s.projection, s.fov_deg, s.radial_c, s.fov_scale = given[0], given[1], given[2], 1.0
+        return ""
+    best = (best[0], round(best[1], 1), round(best[2], 3))
+    use(best[1], best[2])
+    return f"렌즈 보정 {given[1]:.0f}° → {best[1]:.0f}° (일치점 {base} → {best[0]})"
+
+
+# -- what is not retina: eyelid glare, flare spots ------------------------------------------------
+def _bright_blobs(shot: Shot) -> np.ndarray:
+    """Soft bright spots that stand out from their surroundings (flare, reflections)."""
+    g = cv2.GaussianBlur(shot.rgb[..., 1], (0, 0), 2.0).astype(np.float32)
+    cx, cy, r = shot.circle
+    # the surroundings of a pixel = the lit field around it (the black outside does not count), and
+    # the rim of the field is left alone: it is bright against the outside in every photo
+    lit = (shot.alpha > 128).astype(np.float32)
+    back = cv2.GaussianBlur(g * lit, (0, 0), 0.12 * r) / np.maximum(cv2.GaussianBlur(lit, (0, 0), 0.12 * r), 1e-3)
+    k = max(3, int(0.08 * r) | 1)
+    inner = cv2.erode((lit > 0).astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+    yy, xx = np.ogrid[0:g.shape[0], 0:g.shape[1]]
+    inner[(xx - cx) ** 2 + (yy - cy) ** 2 > (0.9 * r) ** 2] = 0
+    return (((g - back) > 22.0) & (inner > 0)).astype(np.uint8)
+
+
+def _glare(shot: Shot) -> np.ndarray:
+    """Washed-out light at the edge of the field (eyelid, lashes): bright, wide and reaching the rim."""
+    cx, cy, r = shot.circle
+    v = cv2.GaussianBlur(shot.rgb.max(axis=2), (0, 0), 3.0)
+    g = cv2.GaussianBlur(shot.rgb[..., 1], (0, 0), 3.0)
+    bright = ((v > 200) & (g > 120) & (shot.alpha > 128)).astype(np.uint8)
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(bright, 8)
+    yy, xx = np.ogrid[0:bright.shape[0], 0:bright.shape[1]]
+    rim = ((xx - cx) ** 2 + (yy - cy) ** 2) > (0.9 * r) ** 2
+    out = np.zeros_like(bright)
+    for k in range(1, n):
+        if stats[k, cv2.CC_STAT_AREA] < 0.02 * math.pi * r * r:
+            continue                                   # the optic disc is small, even at the edge of a photo
+        m = lab == k
+        if (m & rim).any():
+            out[m] = 1
+    if out.any():
+        grow = max(3, int(0.1 * r) | 1)
+        out = cv2.dilate(out, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (grow, grow)))
+    return out
+
+
+def mask_artifacts(shots: list[Shot], placed: list[int]) -> int:
+    """Leave out of the blend what the camera added: eyelid glare, and bright spots that sit at the
+    same place of the picture in photos taken at different gazes (a flare of the lens — the retina
+    would have moved). Changes ``alpha`` of the working copies; returns how many photos were cut."""
+    blobs = {k: _bright_blobs(shots[k]) for k in placed}
+    cut = 0
+    for k in placed:
+        s = shots[k]
+        bad = _glare(s)
+        r = s.circle[2]
+        still = np.zeros_like(bad)
+        votes = 0
+        for j in placed:
+            if j == k or blobs[j].shape != blobs[k].shape:
+                continue
+            moved = float(angle_deg(s.centre()[None], shots[j].centre()[None])[0])
+            if moved < 4.0:                             # the same gaze: the retina is at the same place too
+                continue
+            votes += 1
+            still = still + (blobs[k] & cv2.dilate(blobs[j], np.ones((5, 5), np.uint8)))
+        if votes:
+            flare = (still >= max(1, math.ceil(0.5 * votes))).astype(np.uint8)
+            if flare.any():
+                grow = int(0.05 * r) | 1
+                bad = bad | cv2.dilate(flare, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (grow, grow)))
+        if bad.any():
+            a = s.alpha.copy()
+            a[bad > 0] = 0
+            s.alpha = cv2.GaussianBlur(a, (0, 0), max(1.0, 0.004 * r))
+            s.cut = np.maximum(s.cut, bad * 255) if s.cut is not None else (bad * 255).astype(np.uint8)
+            s._edge = None
+            cut += 1
+    return cut
+
+
+def auto_align(shots: list[Shot], ref: int = 0, *, refine_fov: bool = True, progress=None,
+               calibrate: bool = True, mask: bool = True) -> AlignReport:
     """Place every photo relative to ``shots[ref]`` (whose rotation is kept) from matched vessels."""
     n = len(shots)
     say = progress or (lambda *_: None)
@@ -506,6 +654,14 @@ def auto_align(shots: list[Shot], ref: int = 0, *, refine_fov: bool = True, prog
     for k, s in enumerate(shots):
         say(f"혈관 특징점 찾는 중 ({k + 1}/{n})")
         feats.append(features(s))
+    lens = ""
+    if calibrate and n >= 2:
+        say("렌즈 보정 확인 중")
+        loose = {(i, j): match(feats[i], feats[j], 0.85) for i in range(n) for j in range(i + 1, n)}
+        lens = calibrate_lens(shots, feats, loose)
+        if lens:
+            for k, s in enumerate(shots):
+                feats[k].dirs = s.dirs(feats[k].uv)
     pairs: dict[tuple[int, int], PairResult] = {}
     for i in range(n):
         for j in range(i + 1, n):
@@ -568,8 +724,12 @@ def auto_align(shots: list[Shot], ref: int = 0, *, refine_fov: bool = True, prog
             b = shots[j].dirs(feats[j].uv[pr.idx_j]) @ shots[j].R.T
             res.append(angle_deg(a, b))
     resid = float(np.median(np.concatenate(res))) if res else 0.0
+    masked = 0
+    if mask and len(placed) >= 2:
+        say("반사 · 플레어 가리는 중")
+        masked = mask_artifacts(shots, sorted(placed))
     return AlignReport(sorted(placed), sorted(set(range(n)) - placed), resid,
-                       sum(1 for (i, j) in pairs if i in placed and j in placed))
+                       sum(1 for (i, j) in pairs if i in placed and j in placed), lens, masked)
 
 
 def align_points(moving: Shot, moving_uv, anchor: Shot, anchor_uv) -> float:
@@ -833,7 +993,7 @@ class Overlay:
     @staticmethod
     def _key(s: Shot):
         return (s.R.tobytes(), s.fov_scale, s.fov_deg, s.fov_type, s.projection, s.viewpoint, s.radial_c,
-                s.gain.tobytes(), s.circle, id(s.rgb))
+                s.gain.tobytes(), s.circle, id(s.rgb), id(s.alpha))
 
     def _layer(self, s: Shot):
         key = self._key(s)
@@ -887,3 +1047,14 @@ def disc_on_map(shot: Shot, disc_px, geom: MapGeometry) -> tuple[float, float]:
 def definition(shots: list[Shot], ref: int) -> dict:
     """What a saved montage needs to be edited again (stored with it in the patient record)."""
     return {"version": 1, "ref": ref, "shots": [s.to_json() for s in shots]}
+
+
+def full_alpha(shot: Shot, alpha: np.ndarray) -> np.ndarray:
+    """``alpha`` of the original photo with what 자동 left out of the working copy (``shot.cut``)."""
+    if shot.cut is None:
+        return alpha
+    h, w = alpha.shape[:2]
+    cut = cv2.resize(shot.cut, (w, h), interpolation=cv2.INTER_LINEAR)
+    out = alpha.copy()
+    out[cut > 127] = 0
+    return cv2.GaussianBlur(out, (0, 0), max(1.0, 0.004 * shot.circle[2] * shot.scale))

@@ -253,3 +253,91 @@ def test_the_looser_second_try_does_not_join_different_eyes(series):
     mt.spread(shots, 0)
     rep = mt.auto_align(shots, 0)
     assert rep.placed == [0] and rep.unplaced == [1, 2]            # another retina: nothing in common
+
+
+WIDE_GAZES = ((0.0, 0.0, 0.0), (22.0, 1.0, 2.0), (-21.0, -1.0, -1.0), (1.0, 20.0, 0.0))
+
+
+def _wide_series(fov=110.0):
+    """A wide-field series whose true lens is equidistant with a ``fov``° (eye-centre) field."""
+    return [demo.synth_fundus(eye="OD", fov_deg=fov, fov_type="internal", projection="equidistant",
+                              size=(SIDE, SIDE), seed=31, gaze=g) for g in WIDE_GAZES]
+
+
+def _wide_shots(photos, fov, projection, c=0.2545):
+    out = []
+    for k, rgb in enumerate(photos):
+        circle = imaging.detect_circle(rgb)
+        out.append(mt.Shot.from_photo(rgb, imaging.fundus_alpha(rgb, circle), circle, fov_deg=fov, fov_type="internal",
+                                      projection=projection, radial_c=c, image_id=k + 1))
+    return out
+
+
+def test_the_lens_is_found_from_the_series_when_the_given_one_is_wrong():
+    """Told 176° with the camera's curve, the photos are really 110° equidistant: the overlap of the
+    series says so, and the photos then fit — at the true gazes."""
+    photos = _wide_series(110.0)
+    truth = [demo.gaze_rotation(*g) for g in WIDE_GAZES]
+    wrong = _wide_shots(photos, 176.0, "radial")
+    rep = mt.auto_align(wrong, 0, calibrate=False, mask=False)
+    bad = max(rot_err(s.R, r) for s, r in zip(wrong, truth))
+    shots = _wide_shots(photos, 176.0, "radial")
+    rep = mt.auto_align(shots, 0)
+    assert rep.lens and "렌즈 보정" in rep.text() and rep.placed == [0, 1, 2, 3]
+    tmax = [math.degrees(s.tmax) * 2 for s in shots]
+    assert all(95 < t < 125 for t in tmax) and abs(shots[0].radial_c) < 0.12      # near 110°, near equidistant
+    good = max(rot_err(s.R, r) for s, r in zip(shots, truth))
+    assert good < 1.5 and good < 0.5 * bad and rep.residual_deg < 0.3
+
+
+def test_a_right_lens_and_a_45_degree_camera_are_left_alone(series):
+    photos = _wide_series(110.0)
+    shots = _wide_shots(photos, 110.0, "equidistant")
+    rep = mt.auto_align(shots, 0)
+    assert rep.lens == "" and all(s.projection == "equidistant" and s.fov_deg == 110.0 for s in shots)
+    cam, _ = series                                                 # perspective cameras are not searched at all
+    shots = shots_of(cam)
+    rep = mt.auto_align(shots, 0)
+    assert rep.lens == "" and all(s.projection == "perspective" and s.fov_deg == 45.0 for s in shots)
+
+
+def test_glare_and_a_flare_spot_stay_out_of_the_montage():
+    import cv2
+
+    photos = [p.copy() for p in _wide_series(110.0)]
+    h, w = photos[0].shape[:2]
+    fx, fy = int(w * 0.56), int(h * 0.72)                           # a lens flare: the same place in every picture
+    for p in photos:
+        spot = np.zeros((h, w), np.float32)
+        cv2.circle(spot, (fx, fy), int(0.03 * w), 1.0, -1)
+        spot = cv2.GaussianBlur(spot, (0, 0), 0.012 * w)[..., None]
+        p[:] = np.clip(p * (1 - spot) + np.array([225, 240, 170]) * spot, 0, 255).astype(np.uint8)
+    lid = photos[3]                                                 # the eyelid in the last one: a washed-out band
+    yy, xx = np.mgrid[0:h, 0:w]
+    band = (yy > 0.84 * h) & (np.hypot(xx - w / 2, yy - h / 2) < 0.49 * w)
+    lid[band] = (250, 250, 180)
+    shots = _wide_shots(photos, 110.0, "equidistant")
+    rep = mt.auto_align(shots, 0)
+    assert rep.placed == [0, 1, 2, 3] and rep.masked == 4 and "반사·플레어 가림 4장" in rep.text()
+    k = shots[0].rgb.shape[1] / w
+    for s in shots:
+        assert s.alpha[int(fy * k), int(fx * k)] < 30 and s.cut is not None      # the flare is cut from every photo
+        assert s.alpha[s.alpha.shape[0] // 2, s.alpha.shape[1] // 2] > 200       # the middle of the field stays
+    assert shots[3].alpha[int(0.9 * h * k), int(0.5 * w * k)] < 30               # and so is the eyelid band
+    # the optic disc is bright too, but it moves with the retina: it is kept
+    for s in shots[:3]:
+        bright = (s.rgb[..., 1] > 200) & (np.hypot(*np.indices(s.alpha.shape)[::-1] - np.array([fx * k, fy * k])[:, None, None]) > 0.1 * w * k)
+        if bright.any():
+            assert s.alpha[bright].mean() > 200
+    out, _, _ = mt.render([shots[k] for k in rep.placed])
+    assert not ((out[..., 0] > 240) & (out[..., 1] > 240)).any()                 # no washed-out light in the result
+    # the cut comes along to the full-size photo of the saved montage
+    full = mt.full_alpha(shots[0], imaging.fundus_alpha(photos[0], imaging.detect_circle(photos[0])))
+    assert full.shape == photos[0].shape[:2] and full[fy, fx] < 30 and full[h // 2, w // 2] > 200
+
+
+def test_clean_photos_are_not_cut():
+    """Nothing is left out of clean photos — not the optic disc either, bright and near the rim in one."""
+    shots = _wide_shots(_wide_series(110.0), 110.0, "equidistant")
+    rep = mt.auto_align(shots, 0)
+    assert rep.masked == 0 and all(s.cut is None for s in shots) and "가림" not in rep.text()

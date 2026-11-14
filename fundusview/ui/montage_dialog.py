@@ -855,7 +855,8 @@ class MontageDialog(QDialog):
 
     # -- undo -------------------------------------------------------------------------------------
     def _snapshot(self):
-        return [(s.R.copy(), s.fov_scale, s.fov_deg, s.fov_type, s.projection, s.gain.copy()) for s in self.shots]
+        return [(s.R.copy(), s.fov_scale, s.fov_deg, s.fov_type, s.projection, s.gain.copy(), s.radial_c, s.alpha, s.cut)
+                for s in self.shots]
 
     def _push_undo(self) -> None:
         self._undo.append(self._snapshot())
@@ -865,8 +866,11 @@ class MontageDialog(QDialog):
         if not self._undo:
             self._set_status("되돌릴 것이 없습니다")
             return
-        for s, (r, fs, fov, ft, pj, g) in zip(self.shots, self._undo.pop()):
+        for s, (r, fs, fov, ft, pj, g, rc, al, cut) in zip(self.shots, self._undo.pop()):
             s.R, s.fov_scale, s.fov_deg, s.fov_type, s.projection, s.gain = r, fs, fov, ft, pj, g
+            if al is not s.alpha:
+                s._edge = None
+            s.radial_c, s.alpha, s.cut = rc, al, cut
         self._load_photo_controls()
         self._changed()
         self._set_status("되돌렸습니다")
@@ -1014,6 +1018,10 @@ class MontageDialog(QDialog):
         for k, w in zip(idx, work):
             s = self.shots[k]
             s.R, s.fov_scale, s.gain = w.R, w.fov_scale, w.gain
+            # the lens found from the photos and what was left out of them (glare, flare)
+            s.projection, s.fov_deg, s.radial_c = w.projection, w.fov_deg, w.radial_c
+            if w.alpha is not s.alpha:
+                s.alpha, s.cut, s._edge = w.alpha, w.cut, None
         placed = [idx[k] for k in rep.placed]
         if not self._ref_chosen and len(placed) >= 3:      # the middle photo becomes the centre
             mid = mt.most_central(self.shots, placed)
@@ -1159,6 +1167,7 @@ class MontageDialog(QDialog):
         for k in idx:
             s, src = self.shots[k], self.sources[k]
             a = src.alpha if src.alpha is not None else np.full(src.rgb.shape[:2], 255, np.uint8)
+            a = mt.full_alpha(s, a)                 # glare and flare stay out of the saved montage too
             full.append(dataclasses.replace(s, rgb=src.rgb, alpha=a, circle=tuple(src.circle), scale=1.0,
                                             R=s.R.copy(), gain=s.gain.copy() if gains else np.ones(3)))
         fov, lat = round(self.montage_fov(), 1), self.laterality()
