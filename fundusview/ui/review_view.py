@@ -28,7 +28,7 @@ from .. import imaging, review
 from . import theme
 from .image_view import ImageView
 from .thumbs import eye_badge, paint_eye_badge, thumb_pixmap
-from .widgets import FlowLayout, Switch, vline
+from .widgets import FlowLayout, Segmented, Switch, vline
 
 MIME = "application/x-fundusview-image"
 STAGES = (("ou", "양안 (OD | OS)"), ("od", "OD 비교* (이전 | 현재)"), ("os", "OS 비교* (이전 | 현재)"))
@@ -391,6 +391,20 @@ class Timeline(QFrame):
         self.lbl_count = QLabel("")
         self.lbl_count.setObjectName("caption")
         head.addWidget(self.lbl_count)
+        # which eye's photos the strip lists (모두 = both and the photos without an eye)
+        self.eye = ""
+        self.eye_buttons = {}
+        for key, label, tip in (("", "모두", "모든 사진"), ("OD", "OD", "우안(OD) 사진만"), ("OS", "OS", "좌안(OS) 사진만")):
+            b = QPushButton(label)
+            b.setToolTip(tip)
+            self.eye_buttons[key] = b
+        self.eye_buttons[""].setChecked(True)
+        self.eye_seg = Segmented(list(self.eye_buttons.values()), on_card=False)
+        self.eye_seg.setFixedWidth(168)
+        self.eye_buttons[""].setChecked(True)
+        for key, b in self.eye_buttons.items():
+            b.toggled.connect(lambda on, key=key: on and self.set_eye(key))
+        head.addWidget(self.eye_seg)
         self.lbl_hint = QLabel("사진을 누르거나 화면으로 끌어다 놓으면 그 자리에 뜹니다 · 날짜를 누르면 그 검사가 현재 검사")
         self.lbl_hint.setObjectName("caption")
         self.lbl_hint.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -413,6 +427,19 @@ class Timeline(QFrame):
         lay.addWidget(self.scroll)
         self.thumbs: list[_TimelineThumb] = []
         self.dates: list[QPushButton] = []
+        self._groups: list = []
+        self._current: str | None = None
+        self._shown: set = set()
+
+    def set_eye(self, eye: str) -> None:
+        """List only the photos of ``eye`` ("OD" / "OS"); "" lists them all. Kept from patient to patient."""
+        eye = eye if eye in self.eye_buttons else ""
+        if not self.eye_buttons[eye].isChecked():
+            self.eye_buttons[eye].setChecked(True)      # comes back here through toggled
+            return
+        if eye != self.eye:
+            self.eye = eye
+            self._rebuild()
 
     def is_open(self) -> bool:
         return self.btn_fold.isChecked()
@@ -435,10 +462,23 @@ class Timeline(QFrame):
 
     def set_exams(self, groups, current: str | None) -> None:
         """``groups`` = ``review.exams`` of the photos to list; ``current`` = the exam under review."""
+        self._groups, self._current = list(groups), current
+        self._rebuild()
+
+    def _rebuild(self) -> None:
+        current = self._current
+        groups = self._groups
+        if self.eye:                                    # the eye's photos only; exams without one drop out
+            groups = [(d, [r for r in rows if r["laterality"] == self.eye]) for d, rows in groups]
+            groups = [(d, rows) for d, rows in groups if rows]
+        newest = self._groups[0][0] if self._groups else None
         while self.body_lay.count():
             item = self.body_lay.takeAt(0)
-            if item.widget() is not None:
-                item.widget().deleteLater()
+            old = item.widget()
+            if old is not None:
+                old.hide()                              # gone now, not a frame later under the new ones
+                old.setParent(None)
+                old.deleteLater()
         self.thumbs, self.dates = [], []
         n = 0
         for i, (d, rows) in enumerate(groups):
@@ -446,7 +486,7 @@ class Timeline(QFrame):
             v = QVBoxLayout(day)
             v.setContentsMargins(0, 0, 0, 0)
             v.setSpacing(3)
-            marks = [m for m, on in (("현재", d == current), ("최근", i == 0 and d != current)) if on]
+            marks = [m for m, on in (("현재", d == current), ("최근", d == newest and d != current)) if on]
             b = QPushButton(" · ".join([d or "날짜 없음"] + marks))
             b.setObjectName("timelineDate")
             b.setProperty("current", d == current)
@@ -469,10 +509,12 @@ class Timeline(QFrame):
             v.addStretch(1)
             self.body_lay.addWidget(day)
         self.body_lay.addStretch(1)
-        self.lbl_count.setText(f"검사 {len(groups)}회 · {n}장" if n else "사진 없음")
+        what = f"{self.eye} 사진" if self.eye else "사진"
+        self.lbl_count.setText(f"검사 {len(groups)}회 · {n}장" if n else f"{what} 없음")
+        self.mark_shown(self._shown)
 
     def mark_shown(self, ids) -> None:
-        ids = set(ids)
+        ids = self._shown = set(ids)
         for t in self.thumbs:
             t.set_shown(t.image_id in ids)
 

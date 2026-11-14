@@ -744,3 +744,33 @@ def test_real_mouse_wheel_zooms_the_review_views(win):
     w._review_dirty = True
     w._fill_review()
     assert a.view_state()[0] == pytest.approx(z) and a.zoomed_in()
+
+
+def test_timeline_eye_filter(win):
+    """모두 / OD / OS on the timeline: only that eye's photos are listed; 모두 is the default."""
+    app, w, db, refs, ids = win
+    rv = _open_review(app, w, refs)
+    tl = rv.timeline
+    eye_of = {i: db.get_image(i)["laterality"] for i in ids.values()}
+    everything = [t.image_id for t in tl.thumbs]
+    assert tl.eye == "" and tl.eye_buttons[""].isChecked() and len(everything) == 7
+
+    tl.eye_buttons["OD"].click()
+    assert tl.eye == "OD" and [t.image_id for t in tl.thumbs] == [i for i in everything if eye_of[i] == "OD"]
+    assert tl.thumbs and all(eye_of[t.image_id] == "OD" for t in tl.thumbs)
+    assert [b.text() for b in tl.dates] == ["2026-03-02 · 현재", "2025-12-01", "2025-08-20"]
+    assert tl.lbl_count.text() == f"검사 3회 · {len(tl.thumbs)}장"
+    assert {t.image_id for t in tl.thumbs if t.shown} == {ids["od3"]}       # the frame stays on the photo on show
+
+    tl.eye_buttons["OS"].click()
+    assert [t.image_id for t in tl.thumbs] == [i for i in everything if eye_of[i] == "OS"]
+    assert [b.text() for b in tl.dates] == ["2026-03-02 · 현재", "2025-12-01"]   # no OS photo in the oldest exam
+    # a click still puts the photo on its eye's view; the views themselves are not filtered
+    assert rv.slot_ids() == [ids["od3"], ids["os3"]]
+    tl.photoClicked.emit(ids["os2"])
+    assert rv.slot_ids() == [ids["od3"], ids["os2"]]
+    # the choice stays when the photos are handed over again, and 모두 brings everything back
+    rv.set_photos(rv.rows, "2025-12-01")
+    assert tl.eye == "OS" and all(eye_of[t.image_id] == "OS" for t in tl.thumbs)
+    tl.set_eye("")
+    assert tl.eye_buttons[""].isChecked() and len(tl.thumbs) == 7
