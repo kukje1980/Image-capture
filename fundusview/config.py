@@ -93,6 +93,7 @@ class Settings:
     last_patient: str = ""
     # Thumbnail strip: rows of photos above the views (1–3, newest first)
     thumb_rows: int = 2
+    montage_fast: bool = False      # 몽타주 빠르게: the saved picture at most 2400 px instead of 4000
     # Automatic import (autosetup.py): an always-watched inbox folder and
     # detection of the capture software's folders at every start.
     inbox_dir: str = ""

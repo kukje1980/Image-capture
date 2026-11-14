@@ -37,6 +37,8 @@ from . import theme
 from .image_view import ImageView, to_qimage
 
 NUMBERS = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯"
+FULL_SIZE = 4000               # the saved montage, at most this many pixels across
+FAST_SIZE = 2400               # … with 빠르게 저장
 PREVIEW_SIZE = 1400            # 완성 / 3D preview (the saved montage is drawn at full detail)
 SEL, OTHER = QColor(255, 214, 64), QColor(235, 240, 245)
 
@@ -581,7 +583,8 @@ class MontageDialog(QDialog):
     patient record and returns its id; ``definition``: a saved arrangement to edit again."""
 
     def __init__(self, sources: list[MontageSource], *, file_stem: str = "몽타주", save_record=None,
-                 definition: dict | None = None, auto: bool = True, parent=None):
+                 definition: dict | None = None, auto: bool = True, fast: bool = False, on_fast=None,
+                 parent=None):
         super().__init__(parent)
         self.setWindowTitle("몽타주 — 여러 장을 한 장으로")
         self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
@@ -701,8 +704,15 @@ class MontageDialog(QDialog):
         self.sp_mfov.valueChanged.connect(self._on_mfov)
         self.lbl_range = QLabel("")
         self.lbl_range.setWordWrap(True)
+        self.c_fast = QCheckBox("빠르게 저장")
+        self.c_fast.setChecked(bool(fast))
+        self.c_fast.setToolTip(f"저장하는 몽타주를 최대 {FAST_SIZE}픽셀로 그립니다 (기본 {FULL_SIZE}픽셀) —\n"
+                               "그리는 시간이 절반 아래로 줄고, 아주 크게 확대했을 때만 덜 선명합니다")
+        if on_fast is not None:
+            self.c_fast.toggled.connect(on_fast)
         ol = QVBoxLayout(g_out)
         ol.addWidget(self.c_gain)
+        ol.addWidget(self.c_fast)
         row = QHBoxLayout()
         row.addWidget(self.c_auto_fov)
         row.addWidget(self.sp_mfov)
@@ -1175,8 +1185,10 @@ class MontageDialog(QDialog):
             "included": idx, "auto_fov": self.c_auto_fov.isChecked(), "brightness": gains, "fov_deg": fov}
         ids = [self.shots[k].image_id for k in idx]
 
+        size = FAST_SIZE if self.c_fast.isChecked() else FULL_SIZE
+
         def run(say):
-            geom = mt.map_for(full)
+            geom = mt.map_for(full, max_size=size)
             rgb, _, geom = mt.render(full, geom, progress=lambda f: say(f"몽타주를 그리는 중 {int(f * 100)}%"))
             return MontageResult(rgb=rgb, geom=geom, fov_deg=fov, disc=self._disc_on(geom, full, idx),
                                  definition=definition, image_ids=ids, laterality=lat)

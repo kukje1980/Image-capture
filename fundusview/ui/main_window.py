@@ -3526,7 +3526,9 @@ class MainWindow(QMainWindow):
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             dlg = MontageDialog(sources, file_stem=self._montage_stem(self.db.get_image(ids[0])),
-                                save_record=self._save_montage, definition=definition, parent=self)
+                                save_record=self._save_montage, definition=definition,
+                                fast=bool(getattr(self.settings, "montage_fast", False)),
+                                on_fast=self._set_montage_fast, parent=self)
         finally:
             QApplication.restoreOverrideCursor()
         self._montage_dlg = dlg
@@ -3535,6 +3537,11 @@ class MainWindow(QMainWindow):
         finally:
             self._montage_dlg = None
             dlg.deleteLater()
+
+    def _set_montage_fast(self, on: bool) -> None:
+        """몽타주 창의 '빠르게 저장' — remembered for the next montage."""
+        self.settings.montage_fast = bool(on)
+        self.settings.save()
 
     def edit_montage(self, image_id: int) -> None:
         row = self.db.get_image(image_id)

@@ -341,3 +341,19 @@ def test_clean_photos_are_not_cut():
     shots = _wide_shots(_wide_series(110.0), 110.0, "equidistant")
     rep = mt.auto_align(shots, 0)
     assert rep.masked == 0 and all(s.cut is None for s in shots) and "가림" not in rep.text()
+
+
+def test_quick_rotation_agrees_with_the_slow_one():
+    rng = np.random.default_rng(3)
+    src = rng.normal(size=(120, 3))
+    src /= np.linalg.norm(src, axis=1, keepdims=True)
+    true = demo.gaze_rotation(14.0, -9.0, 4.0)
+    dst = src @ true.T
+    dst[:30] = rng.normal(size=(30, 3))                             # a quarter of the matches are wrong
+    dst /= np.linalg.norm(dst, axis=1, keepdims=True)
+    r, inl = mt.quick_rotation(src, dst, 0.3)
+    r2, inl2 = mt.ransac_rotation(src, dst, thresh_deg=0.3)
+    assert rot_err(r, true) < 0.05 and rot_err(r, r2) < 0.05
+    assert inl[30:].all() and inl.sum() == inl2.sum() and inl[:30].sum() <= 1
+    r0, none = mt.quick_rotation(src[:2], dst[:2], 0.3)             # too few points: nothing
+    assert np.allclose(r0, np.eye(3)) and not none.any()

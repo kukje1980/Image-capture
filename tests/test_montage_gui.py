@@ -197,3 +197,44 @@ def test_montage_from_the_main_window(app, tmp_path, montage_drop, import_and_wa
         assert "두 장 이상" in w._montage_sources([ids[0]])[1]
     finally:
         w.close()
+
+
+def test_fast_save_draws_a_smaller_picture_and_is_remembered(app):
+    from fundusview.ui import montage_dialog as md
+
+    said = []
+    dlg = md.MontageDialog(_sources(2, side=900), auto=False, fast=False, on_fast=said.append)
+    try:
+        assert not dlg.c_fast.isChecked()
+        big = dlg._final_job()(lambda *_: None)
+        dlg.c_fast.setChecked(True)
+        assert said == [True]                                       # the main window stores it in the settings
+        small = dlg._final_job()(lambda *_: None)
+        assert max(small.rgb.shape[:2]) <= md.FAST_SIZE and max(big.rgb.shape[:2]) <= md.FULL_SIZE
+        assert small.fov_deg == big.fov_deg
+    finally:
+        dlg.close()
+    again = md.MontageDialog(_sources(2, side=400), auto=False, fast=True)
+    try:
+        assert again.c_fast.isChecked()
+    finally:
+        again.close()
+
+
+def test_main_window_keeps_the_fast_choice(app, tmp_path):
+    from fundusview.config import Settings
+    from fundusview.db import Database
+    from fundusview.ui.main_window import MainWindow
+
+    s = Settings(library_dir=str(tmp_path / "lib"), watch_on_startup=False, auto_detect=False)
+    assert s.montage_fast is False
+    db = Database(tmp_path / "f.db")
+    w = MainWindow(s, db)
+    try:
+        saved = []
+        s.save = lambda *a, **k: saved.append(s.montage_fast)
+        w._set_montage_fast(True)
+        assert s.montage_fast is True and saved == [True]
+    finally:
+        w.close()
+        db.close()
