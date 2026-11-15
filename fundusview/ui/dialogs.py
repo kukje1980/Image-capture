@@ -36,6 +36,11 @@ def source_label(src: str | None) -> str:
     return SOURCE_LABELS.get(src, src.replace("sidecar", "부속 파일 "))
 
 
+# 설정 → 일반 → 환자를 열면 (Settings.open_view)
+OPEN_VIEWS = (("overview", "모두 보기 — 큰 사진, 아래에 사진 목록 (OD/OS)"),
+              ("grid", "VK-2 방식 — 사진 16장을 한 화면에, 골라서 [멀티]로 모아 보기"))
+
+
 def _combo(items, current) -> QComboBox:
     cb = QComboBox()
     for key, label in items:
@@ -290,6 +295,11 @@ class SettingsDialog(QDialog):
         self.detail3d = _combo([("detailed", "자세히 (실제 해부 구조)"), ("simple", "간단히 (느린 PC용 가벼운 모형)")],
                                settings.view3d_detail)
         f2.addRow("3D 모형", self.detail3d)
+        self.open_view = _combo(OPEN_VIEWS, settings.open_view)
+        self.open_view.setToolTip("환자 목록에서 환자를 열 때 처음 나오는 화면\n"
+                                  "VK-2 방식: 사진을 클릭해 고르고(번호) [멀티]를 누르면 고른 사진만 다중 보기로 모입니다.\n"
+                                  "더블클릭하면 그 사진을 크게 보고, 사진 아래 [16장]으로 돌아옵니다.")
+        f2.addRow("환자를 열면", self.open_view)
         tabs.addTab(w2, "일반")
 
         # -- filename rules -------------------------------------------------------
@@ -429,4 +439,5 @@ class SettingsDialog(QDialog):
         s.rescan_seconds = self.rescan.value()
         s.opengl = self.opengl.currentData()
         s.view3d_detail = self.detail3d.currentData()
+        s.open_view = self.open_view.currentData()
         s.custom_filename_patterns = [p for p in self.patterns.toPlainText().splitlines() if p.strip()]

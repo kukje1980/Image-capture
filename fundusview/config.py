@@ -94,6 +94,9 @@ class Settings:
     last_patient: str = ""
     # Thumbnail strip: rows of photos above the views (1–3, newest first)
     thumb_rows: int = 2
+    # 환자를 열면 (설정 → 일반): "overview" = 모두 보기 — 큰 사진, 아래에 사진 목록(OD/OS) ·
+    # "grid" = VK-2 방식 — 사진 16장을 한 화면에 (16장 보기), 골라서 [멀티]로 모아 보기
+    open_view: str = "overview"
     montage_fast: bool = False      # 몽타주 빠르게: the saved picture at most 2400 px instead of 4000
     # Automatic import (autosetup.py): an always-watched inbox folder and
     # detection of the capture software's folders at every start.

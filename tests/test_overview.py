@@ -61,7 +61,9 @@ def test_overview_is_the_photo_with_its_macula_and_disc(tmp_path, demo_dir, impo
 
         # -- the frame: no tab row; the view switch under the photos; patient line in the menu bar --
         assert w.tabs.tabBar().isHidden()
-        assert [b.text() for b in w.view_buttons.values()] == ["모두 보기", "다중 보기", "3D"]
+        # (16장 보기 is in the switch only in the VK-2 way: 설정 → 일반 → 환자를 열면 — test_photo_grid.py)
+        assert [b.text() for b in w.view_buttons.values() if not b.isHidden()] == ["모두 보기", "다중 보기", "3D"]
+        assert w.view_buttons["grid"].isHidden() and not w.view_acts["grid"].isVisible()
         assert w.view_buttons["all"].isChecked() and _inside(w.seg_views, w.strip_w) and w.seg_views.isVisible()
         assert w.thumbs.mapTo(w, QPoint(0, 0)).y() > w.view2d.mapTo(w, QPoint(0, 0)).y() + w.view2d.height() - 5
         assert w.menuBar().cornerWidget(Qt.Corner.TopRightCorner) is w.top_w

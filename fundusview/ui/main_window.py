@@ -1,6 +1,7 @@
 """Main window. It opens on the 환자 목록 (patient_list.py); a patient opened from there shows
 in the workspace, laid out like the Kowa VK-2 capture screen: patients · views
-(검토 / 모두 보기 / 2D / 3D / multi / compare) with the photo strip (thumbnails) under them,
+(검토 / 모두 보기 / 2D / 3D / multi / compare, and 16장 보기 — photo_grid.py — when 설정 → 일반 →
+환자를 열면 is the VK-2 way) with the photo strip (thumbnails) under them,
 the Command toolbar on the right edge and the Image Processing toolbar along the
 bottom (see toolbars.py). The two screens are the pages of one stack; the patient is the same
 on both.
@@ -53,6 +54,7 @@ from .montage_dialog import MontageDialog, MontageSource, confirm_sources
 from .keys import IS_MAC, keys
 from .multi_view import MultiView
 from .patient_list import SEX_LABEL, UNASSIGNED, PatientListPage, age_on
+from .photo_grid import GridPhoto, PhotoGrid
 from .review_view import ReviewPage
 from .landmarks_view import LandmarkPhoto
 from .slit_scan import SLIT, ScanPhotoView, SlitScanShow, ViewTween
@@ -65,8 +67,11 @@ THUMB_TEXT = Qt.ItemDataRole.UserRole + 1    # thumbnail caption without the ②
 SECOND_PICK = QColor(168, 104, 28)           # background of the second picked photo (②)
 MAX_PICKS = 16                               # photos picked for the multi view (4×4)
 MULTI_SIZES = (1, 2, 4, 6, 9, 16)
-# the views of the workspace, switched in the line under the photos (보기 menu: Ctrl+1~3)
-TABS = (("all", "모두 보기", "Ctrl+1"), ("multi", "다중 보기", "Ctrl+2"), ("3d", "3D", "Ctrl+3"))
+# the views of the workspace, switched in the line under the photos (보기 menu: Ctrl+1~4). 16장 보기
+# (VK-2 방식: 사진 16장을 한 화면에) is there only when 설정 → 일반 → 환자를 열면 is the VK-2 way
+TABS = (("grid", "16장", "Ctrl+4"), ("all", "모두 보기", "Ctrl+1"), ("multi", "다중 보기", "Ctrl+2"),
+        ("3d", "3D", "Ctrl+3"))
+GRID_MODE = "grid"                           # Settings.open_view of the VK-2 way
 # views no longer shown (검토 · 2D 보기 · 비교): whatever led there stays on 모두 보기, whose big
 # photo is the 2D view with all its tools
 GONE_VIEWS = {"review": "all", "2d": "all", "cmp": "all"}
@@ -350,9 +355,11 @@ class MainWindow(QMainWindow):
         self.act_patients.setShortcut(QKeySequence(PATIENT_LIST_KEY))
         self.act_patients.setToolTip("처음 화면 — 환자를 찾고 검사를 골라 검토 화면을 엽니다")
         m.addSeparator()
+        self.view_acts = {}
         for key, label, shortcut in TABS:
-            a = m.addAction(label, lambda k=key: self._go(k))
+            a = m.addAction("16장 보기" if key == "grid" else label, lambda k=key: self._go(k))
             a.setShortcut(QKeySequence(shortcut))
+            self.view_acts[key] = a
         sub = m.addMenu("다중 보기 장수")
         for a in self.menus["multi"].actions():
             sub.addAction(a)
@@ -534,6 +541,16 @@ class MainWindow(QMainWindow):
         self.thumbs.currentItemChanged.connect(lambda cur, _: cur and self._show_image(cur.data(Qt.ItemDataRole.UserRole)))
         self.thumbs.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.thumbs.customContextMenuRequested.connect(self._thumb_menu)
+        # 16장 보기 (VK-2 방식): the photos of the strip, 16 on one screen — picked the same way
+        self.grid = PhotoGrid()
+        self.grid.setToolTip(keys("클릭: 멀티로 고르기(번호) · 다시 클릭: 빼기 · 더블클릭: 크게 보기 · "
+                                  "Ctrl+클릭: 두 번째 사진(②)\n골랐으면 [멀티]: 고른 사진만 다중 보기로 · "
+                                  "휠: 다음 / 이전 16장"))
+        self.grid.pressed.connect(self._press_photo)
+        self.grid.activated.connect(self._open_photo)
+        self.grid.secondPicked.connect(self._pick_second)
+        self.grid.menuRequested.connect(self._photo_menu)
+        self.grid.pageChanged.connect(self._sync_grid_bar)
         self._thumb_rows = 0
         self._set_thumb_rows(getattr(self.settings, "thumb_rows", 2) or 2)
         self._sync_picks_ui()
@@ -602,9 +619,10 @@ class MainWindow(QMainWindow):
         self.review.handOff.connect(self._review_hand_off)
         self.review.status.connect(lambda t: self.lbl_status.setText(t))
         self.tabs.insertTab(0, self.review, "검토")
+        self.tabs.addTab(self.grid, "16장 보기")
         self.tabs.setCurrentWidget(self.page_all)
         self._pages = {"review": self.review, "all": self.page_all, "2d": self.page2d, "3d": self.page3d,
-                       "multi": self.multi, "cmp": cmp_w}
+                       "multi": self.multi, "cmp": cmp_w, "grid": self.grid}
         self._ov_on = False
         self._tab_fade = motion.Crossfade(self.tabs.findChild(QStackedWidget) or self.tabs)
         self.tabs.tabBar().tabBarClicked.connect(
@@ -619,10 +637,37 @@ class MainWindow(QMainWindow):
             vb.setToolTip(keys(f"{label} ({shortcut})"))
             vb.clicked.connect(lambda _=False, k=key: self._go(k))
             self.view_buttons[key] = vb
+        self.view_buttons["grid"].setToolTip(keys("16장 보기 (Ctrl+4) — 이 환자의 사진을 한 화면에 16장씩 (VK-2 방식)\n"
+                                                  "클릭해 고르고 [멀티]를 누르면 고른 사진만 다중 보기로 모입니다"))
         self.view_buttons["all"].setChecked(True)
         self.seg_views = Segmented(list(self.view_buttons.values()), on_card=False)
         self.seg_views.setFixedWidth(258)
         self.view_buttons["all"].setChecked(True)
+        # 16장 보기: the grid is the photo list, so the strip's place shows the grid's pages instead
+        self.grid_bar = QWidget()
+        self.grid_bar.setObjectName("gridBar")
+        gb = QHBoxLayout(self.grid_bar)
+        gb.setContentsMargins(12, 4, 12, 4)
+        gb.setSpacing(8)
+        self.btn_grid_prev = QToolButton()
+        self.btn_grid_prev.setText("◀ 이전 16장")
+        self.btn_grid_next = QToolButton()
+        self.btn_grid_next.setText("다음 16장 ▶")
+        for b, d in ((self.btn_grid_prev, -1), (self.btn_grid_next, 1)):
+            b.setAutoRaise(True)
+            b.clicked.connect(lambda _=False, d=d: self.grid.set_page(self.grid.page() + d))
+        self.lbl_grid_page = QLabel("")
+        self.lbl_grid_page.setStyleSheet("font-weight:600")
+        lbl_hint = QLabel(keys("클릭: 멀티로 고르기(번호) · 다시 클릭: 빼기 · 더블클릭: 크게 보기 · "
+                               "Ctrl+클릭: 두 번째 사진(②)\n골랐으면 [멀티]: 고른 사진만 다중 보기로 — "
+                               "다시 여기로 오려면 [16장]"))
+        lbl_hint.setStyleSheet(f"color:{theme.TEXT3}")
+        gb.addWidget(self.btn_grid_prev)
+        gb.addWidget(self.lbl_grid_page)
+        gb.addWidget(self.btn_grid_next)
+        gb.addSpacing(18)
+        gb.addWidget(lbl_hint, 1)
+        self.grid_bar.hide()
         strip = QHBoxLayout()
         strip.setSpacing(4)
         side = QGridLayout()
@@ -646,8 +691,10 @@ class MainWindow(QMainWindow):
         side_w.setObjectName("thumbSide")
         side_w.setLayout(side)
         side_w.setFixedWidth(274)
+        self._side_w = side_w
         strip.addWidget(side_w)
         strip.addWidget(self.thumbs, 1)
+        strip.addWidget(self.grid_bar, 1)
         strip.setContentsMargins(0, 0, 0, 0)
         self.strip_w = QWidget()         # hidden on the 검토 tab (its timeline lists the photos there)
         self.strip_w.setLayout(strip)
@@ -695,7 +742,8 @@ class MainWindow(QMainWindow):
             mb.installEventFilter(self)
         else:                                    # the system's menu bar (Mac): a row of its own
             self._centre_lay.insertWidget(0, self.top_w)
-        self.act_thumbs.toggled.connect(self.thumbs.setVisible)
+        # (16장 보기 is the photo list itself: the strip stays away there)
+        self.act_thumbs.toggled.connect(lambda on: self.thumbs.setVisible(on and self._tab() != "grid"))
         self.acts["captions"].toggled.connect(self.view2d.toggle_captions)
         self.acts["overlay"].toggled.connect(self.view2d.toggle_overlays)
 
@@ -751,6 +799,7 @@ class MainWindow(QMainWindow):
         self._results: list[ImportResult] = []
         self._result_timer = QTimer(self, singleShot=True, timeout=self._flush_results)
         self._page_fade = motion.Crossfade(self.stack)
+        self._apply_open_view()                      # 설정 → 일반 → 환자를 열면 (16장 보기 or not)
         self.show_page("patients", force=True)        # the program opens on the patient list
 
     def _build_3d(self) -> QWidget:
@@ -1169,7 +1218,7 @@ class MainWindow(QMainWindow):
             "보기 → 부드러운 움직임: 끄면 확대·회전·전환이 바로 바뀝니다 (원격 접속 등 느린 화면)<br><br>"
             "<b>단축키</b><br>"
             "PageUp / PageDown: 이전 / 다음 사진 · Ctrl+1: 모두 보기 · Ctrl+2: 다중 보기 · Ctrl+3: 3D · "
-            "Ctrl+0: 환자 목록<br>"
+            "Ctrl+4: 16장 보기 (VK-2 방식일 때) · Ctrl+0: 환자 목록<br>"
             "Ctrl+Z: 처리 실행 취소 · Delete: 마지막 측정 지우기 · Ctrl+C: 화면 복사<br>"
             "Ctrl+F: 환자 검색 · Ctrl+P: 인쇄<br><br>"
             "<b>환자 목록 (처음 화면)</b><br>"
@@ -1184,6 +1233,10 @@ class MainWindow(QMainWindow):
             "최신 사진부터, 사진마다 왼쪽 위에 눈(OD 파랑 · OS 주황) · ▤ 버튼: 1·2·3줄<br>"
             "클릭: 멀티로 고르기(번호, 다시 클릭하면 빼기) · 더블클릭: 그 사진을 크게<br>"
             "[멀티]: 고른 사진을 다중 보기에 — 칸을 누르면 그 사진만 보정 (밝기·대비·감마·Red-free·선명하게 …)<br><br>"
+            "<b>16장 보기 (VK-2 방식)</b><br>"
+            "설정 → 일반 → 환자를 열면: VK-2 방식을 고르면 환자를 열 때 사진 16장이 한 화면에 나옵니다<br>"
+            "클릭: 고르기(번호) · [멀티]: 고른 사진만 다중 보기로 · 더블클릭: 크게 · [16장]: 다시 16장으로 · "
+            "휠 · ◀ ▶: 다음 / 이전 16장<br><br>"
             "<b>두 사진 고르기 · 디스크 2장</b><br>"
             "두 번째 사진을 Ctrl+클릭(②, 다시 Ctrl+클릭하면 해제) → [디스크 2장] · [녹내장](스테레오 · 경과 비교)<br>"
             "[디스크 2장]: 두 사진의 시신경 유두만 확대해 한 장으로 (OD 왼쪽 · OS 오른쪽, 보험 청구용)<br><br>"
@@ -1289,8 +1342,12 @@ class MainWindow(QMainWindow):
             old_lib = str(self.settings.library)
             old_inbox = str(self.settings.inbox)
             before = list(self.settings.watch_folders)
+            old_view = self.settings.open_view
             dlg.apply()
             self._set_3d_detail(self.settings.view3d_detail, save=False)
+            self._apply_open_view()
+            if self.settings.open_view != old_view and self.page() == "work" and self.current is not None:
+                self._go(self._home())        # the other way at once: 16장 보기 / 모두 보기
             autosetup.remember_removed(self.settings, before)
             if dlg.redetect:
                 autosetup.apply(self.settings, autosetup.detect())
@@ -1427,7 +1484,8 @@ class MainWindow(QMainWindow):
 
     def open_patient(self, ref, where: str = "all") -> None:
         """Open the workspace for a patient of the patient list, with the checked exam's photo —
-        on 모두 보기, or in 3D (``where``: a view key)."""
+        on the first view (``where`` "all": 모두 보기, or 16장 보기 when 설정 → 일반 → 환자를 열면 is
+        the VK-2 way), or in 3D (``where``: a view key)."""
         self._pick_patient(ref)
         if self._patient_ref != ref or not self._images():
             self.lbl_status.setText("이 환자는 아직 사진이 없습니다 — [사진 가져오기]로 사진을 넣으세요")
@@ -1435,7 +1493,7 @@ class MainWindow(QMainWindow):
         row = self.patient_page.shortcut_photo()      # the checked exam's photo
         if row is not None:
             self._select_from_multi(row["id"])
-        self._go(where)
+        self._go(self._home() if where == "all" else where)
 
     def _on_exam_checked(self, exam_date: str) -> None:
         """Another exam was checked in the patient list (or picked in the timeline): it is the
@@ -1588,6 +1646,7 @@ class MainWindow(QMainWindow):
         self.thumbs.clear()
         first = None
         target = None
+        grid = []                              # 16장 보기: the same photos, in the same order
         for r in self._images():
             if (d and r["exam_date"] != d) or (eye and r["laterality"] != eye) or (mod and r["modality"] != mod):
                 if r["id"] != select_id:
@@ -1603,10 +1662,14 @@ class MainWindow(QMainWindow):
             it.setToolTip(f"{r['exam_date'] or ''} {r['exam_time'] or ''}\n{r['device'] or ''}\n"
                           f"{Path(r['original_path'] or r['file_path']).name}")
             self.thumbs.addItem(it)
+            when = f"{r['exam_date'] or '날짜 없음'} {(r['exam_time'] or '')[:5]}".strip()
+            grid.append(GridPhoto(r["id"], r["thumb_path"], r["laterality"],
+                                  " · ".join(t for t in (when, f"{mod_label} {fov}".strip()) if t)))
             first = first or it
             if r["id"] == select_id:
                 target = it
         self.thumbs.blockSignals(False)
+        self.grid.set_items(grid, self.current["id"] if self.current is not None else None)
         pick = target or first
         if pick:
             self.thumbs.setCurrentItem(pick)  # -> currentItemChanged -> _show_image
@@ -1702,6 +1765,7 @@ class MainWindow(QMainWindow):
             it = self.thumbs.item(i)
             iid = it.data(Qt.ItemDataRole.UserRole)
             it.setData(PICK_ROLE, self._picks.index(iid) + 1 if iid in self._picks else 0)
+        self.grid.set_picks(self._picks)
         self._sync_picks_ui()
 
     def _sync_picks_ui(self) -> None:
@@ -1805,20 +1869,32 @@ class MainWindow(QMainWindow):
                 return super().eventFilter(obj, e)
             iid = item.data(Qt.ItemDataRole.UserRole)
             if e.type() == QEvent.Type.MouseButtonPress:
-                self._stop_slideshow()
-                self._pick_pre = (iid, list(self._picks))
-                self._toggle_pick(iid)
+                self._press_photo(iid)
             elif e.type() == QEvent.Type.MouseButtonDblClick:
-                pre = self._pick_pre
-                if pre is not None and pre[0] == iid and pre[1] != self._picks:
-                    self._picks = list(pre[1])           # the first click of the double click
-                    self._mark_picks()
-                    self._refill_multis()
-                self._pick_pre = None
-                self.thumbs.setCurrentItem(item)       # -> _show_image
-                self._go("2d")
+                self._open_photo(iid)
             return True
         return super().eventFilter(obj, e)
+
+    def _press_photo(self, image_id: int) -> None:
+        """A plain click on a photo of the strip or of 16장 보기: picked for the multi view (numbered),
+        or out again — the double click it may begin takes it back (``_open_photo``)."""
+        self._stop_slideshow()
+        self._pick_pre = (image_id, list(self._picks))
+        self._toggle_pick(image_id)
+
+    def _open_photo(self, image_id: int) -> None:
+        """A double click on a photo of the strip or of 16장 보기: the photo big in 모두 보기."""
+        pre = self._pick_pre
+        if pre is not None and pre[0] == image_id and pre[1] != self._picks:
+            self._picks = list(pre[1])           # the first click of the double click
+            self._mark_picks()
+            self._refill_multis()
+        self._pick_pre = None
+        for i in range(self.thumbs.count()):
+            if self.thumbs.item(i).data(Qt.ItemDataRole.UserRole) == image_id:
+                self.thumbs.setCurrentRow(i)     # -> _show_image
+                break
+        self._go("2d")
 
     def _pick_second(self, image_id: int) -> None:
         """Ctrl+click: toggle ``image_id`` as the second photo next to the shown one."""
@@ -1842,12 +1918,15 @@ class MainWindow(QMainWindow):
             base = it.data(THUMB_TEXT) or it.text()
             it.setText(f"② {base}" if second else base)
             it.setData(Qt.ItemDataRole.BackgroundRole, QBrush(SECOND_PICK) if second else None)
+        self.grid.set_second(cid)
 
     def _thumb_menu(self, pos) -> None:
         item = self.thumbs.itemAt(pos)
-        if not item:
-            return
-        iid = item.data(Qt.ItemDataRole.UserRole)
+        if item:
+            self._photo_menu(item.data(Qt.ItemDataRole.UserRole), self.thumbs.viewport().mapToGlobal(pos))
+
+    def _photo_menu(self, iid: int, global_pos) -> None:
+        """Right click on a photo of the strip or of 16장 보기."""
         menu = QMenu(self)
         menu.addAction("멀티에서 빼기" if iid in self._picks else "멀티로 고르기", lambda: self._toggle_pick(iid))
         if self._picks:
@@ -1872,7 +1951,7 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         menu.addAction("다시 분석 (원·시신경 검출)", lambda: self._reanalyse(iid))
         menu.addAction("목록에서 제거…", lambda: self._remove_image(iid))
-        menu.exec(self.thumbs.viewport().mapToGlobal(pos))
+        menu.exec(global_pos)
 
     # =====================================================================
     # image display
@@ -1930,6 +2009,7 @@ class MainWindow(QMainWindow):
     def _show_image(self, image_id: int | None) -> None:
         row = self.db.get_image(image_id) if image_id is not None else None
         prev, self.current = self.current, row
+        self.grid.set_current(row["id"] if row is not None else None)
         if row is not None and self.compare is not None and self.compare["id"] == row["id"]:
             # clicked the ② photo: it is shown now, the one shown before becomes ②
             self.compare = prev if prev is not None and prev["id"] != row["id"] else None
@@ -2262,7 +2342,7 @@ class MainWindow(QMainWindow):
             self.left.setVisible(self.left.isHidden() if checked is None else checked)
         elif key in ("multi", "view3d"):
             tab = "multi" if key == "multi" else "3d"
-            self._go("all" if self._tab() == tab else tab)
+            self._go(self._home() if self._tab() == tab else tab)
         elif key.startswith("multi:"):
             self.multi.set_count(int(key[6:]))
             self._go("multi")
@@ -3179,6 +3259,38 @@ class MainWindow(QMainWindow):
         self._push_mapping()
         self.lbl_status.setText("황반 위치를 저장했습니다 (3D에서 안구 뒤쪽 한가운데에 맞춤)")
 
+    # -- the first view: 모두 보기, or 16장 보기 in the VK-2 way (설정 → 일반 → 환자를 열면) ----------
+    def _grid_mode(self) -> bool:
+        return self.settings.open_view == GRID_MODE
+
+    def _home(self) -> str:
+        """The view a patient opens on, and the one the 다중 / 3D buttons go back to."""
+        return "grid" if self._grid_mode() else "all"
+
+    SEG_WIDTH = {False: 258, True: 330}      # the view switch: three segments · four (with 16장)
+
+    def _apply_open_view(self) -> None:
+        """The VK-2 way has 16장 보기 in the view switch and the 보기 menu; the other way has not."""
+        on = self._grid_mode()
+        self.view_buttons["grid"].setVisible(on)
+        self.view_acts["grid"].setVisible(on)
+        self.view_acts["grid"].setEnabled(on)
+        self.seg_views.setFixedWidth(self.SEG_WIDTH[on])
+        self._side_w.setFixedWidth(self.SEG_WIDTH[on] + 16)
+        if not on and self._tab() == "grid":   # (not _go: the patient list stays if it is on screen)
+            self.tabs.setCurrentWidget(self._pages["all"])
+
+    def _sync_grid_bar(self) -> None:
+        """16장 보기's line: how many photos, which of them are on screen, the page buttons."""
+        g = self.grid
+        n, pages = len(g.items()), g.pages()
+        first, last = g.page_range()
+        self.lbl_grid_page.setText(f"사진 {n}장" + (f"  ·  {first}–{last}  ({g.page() + 1} / {pages})"
+                                                   if pages > 1 else ""))
+        for b, ok in ((self.btn_grid_prev, g.page() > 0), (self.btn_grid_next, g.page() < pages - 1)):
+            b.setVisible(pages > 1)
+            b.setEnabled(ok)
+
     # -- tabs by name -----------------------------------------------------------------
     def _tab(self) -> str:
         w = self.tabs.currentWidget()
@@ -3186,6 +3298,8 @@ class MainWindow(QMainWindow):
 
     def _go(self, key: str) -> None:
         key = GONE_VIEWS.get(key, key)
+        if key == "grid" and not self._grid_mode():
+            key = "all"                       # 16장 보기 belongs to the VK-2 way (설정 → 일반 → 환자를 열면)
         self.show_page("work")
         if self.tabs.currentWidget() is not self._pages[key]:
             self._tab_fade.snap()             # the page on screen fades into the next
@@ -3198,6 +3312,11 @@ class MainWindow(QMainWindow):
             vb.setChecked(True)
         # 검토 has its own timeline: the photo strip and its filters are for the other tabs
         self.strip_w.setVisible(key != "review")
+        # 16장 보기 is the photo list itself: its pages take the strip's place
+        self.thumbs.setVisible(key != "grid" and self.act_thumbs.isChecked())
+        self.grid_bar.setVisible(key == "grid")
+        if key == "grid":
+            self._sync_grid_bar()
         for w in (self.f_date, self.f_eye, self.f_mod):
             w.setVisible(key != "review")
         self._fit_banner()

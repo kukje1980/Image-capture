@@ -275,7 +275,8 @@ class PatientListPage(QWidget):
         row.setSpacing(8)
         self.btn_open = QPushButton("사진 보기")
         self.btn_open.setObjectName("primary")
-        self.btn_open.setToolTip("체크한 검사의 사진을 엽니다 — 큰 사진과 황반 · 시신경 유두 확대 (두 번 누르기 · Enter)")
+        self.btn_open.setToolTip("체크한 검사의 사진을 엽니다 — 큰 사진과 황반 · 시신경 유두 확대, VK-2 방식"
+                                "(설정 → 일반 → 환자를 열면)은 16장 보기 (두 번 누르기 · Enter)")
         self.btn_open.clicked.connect(lambda: self._request("all"))
         row.addWidget(self.btn_open, 1)
         self.btn_import = QPushButton("사진 가져오기")
