@@ -1,17 +1,19 @@
-"""Main window. It opens on the 환자 목록 (patient_list.py); a patient opened from there shows
-in the workspace, laid out like the Kowa VK-2 capture screen: patients · views
-(검토 / 모두 보기 / 2D / 3D / multi / compare) with the photo strip (thumbnails) under them,
-the Command toolbar on the right edge and the Image Processing toolbar along the
-bottom (see toolbars.py). The two screens are the pages of one stack; the patient is the same
-on both.
+"""Main window — the photos. The program opens with the 환자 목록 window over it (patient_list.py,
+VK-2 OPEN LIST): a patient picked there shows here, its photos 16 to a screen (다중 보기, 4 × 4);
+a click on a photo shows it large (모두 보기), [다중 보기] goes back to the 16. The patient list is
+the only one: the command toolbar's [환자 목록], the menu bar's 환자 목록 (Ctrl+0) and 환자 검색
+(Ctrl+F) bring that window up; the patient is the same in both windows.
+
+The photo screen is laid out like the Kowa VK-2 capture screen: the views (모두 보기 / 다중 보기 /
+3D) with the photo strip (thumbnails) under them, the Command toolbar on the left edge and the
+Image Processing toolbar along the bottom (see toolbars.py).
 
 검토 (review_view.py) shows both eyes side by side and an eye next to its earlier exams; it has
-its own timeline, so the photo strip is hidden while it is shown.
+its own timeline, so the photo strip is hidden while it is shown (not shown since v0.3.0).
 
-모두 보기 (the first, default tab) shows the big 2D view with three small panes on the
-right — 다중 보기 (2 × 2), 확대 화면 (where you click on the big photo, shown by a frame on
-it) and the 3D eye. The 2D view and the 3D eye are moved between that tab and their own
-tabs (like 크게 보기 does for the 3D eye), so the tools and the 3D state stay the same."""
+모두 보기 shows the big 2D view with the 황반 and 시신경 유두 enlarged on the right (where they
+are is shown by a frame on the big photo). The 2D view and the 3D eye are moved between that tab
+and their own tabs (like 크게 보기 does for the 3D eye), so the tools and the 3D state stay the same."""
 from __future__ import annotations
 
 import json
@@ -28,7 +30,7 @@ from PySide6.QtGui import QAction, QActionGroup, QBrush, QColor, QCursor, QDeskt
     QKeySequence, QPainter, QPen, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDockWidget, QDoubleSpinBox, QFileDialog,
-    QFrame, QGraphicsRectItem, QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget,
+    QFrame, QGraphicsRectItem, QGridLayout, QHBoxLayout, QHeaderView, QLabel, QListWidget,
     QListWidgetItem, QMainWindow, QMenu,
     QMessageBox, QPushButton, QScrollArea, QSizePolicy, QSlider, QSplitter, QStackedWidget, QStatusBar, QTableWidget,
     QTableWidgetItem, QTabWidget, QToolBar, QToolButton, QVBoxLayout, QWidget,
@@ -52,13 +54,13 @@ from .image_view import TOOL_HINTS, TOOLS, ImageView, from_qimage
 from .montage_dialog import MontageDialog, MontageSource, confirm_sources
 from .keys import IS_MAC, keys
 from .multi_view import MultiView
-from .patient_list import SEX_LABEL, UNASSIGNED, PatientListPage, age_on
+from .patient_list import GRID_N, SEX_LABEL, UNASSIGNED, PatientListWindow, age_on, window_start
 from .review_view import ReviewPage
 from .landmarks_view import LandmarkPhoto
 from .slit_scan import SLIT, ScanPhotoView, SlitScanShow, ViewTween
 from .thumbs import EYE_ROLE, PICK_ROLE, ThumbDelegate, eye_badge_html
 from .toolbars import CHECKABLE, COMMANDS, MENUS, PROCESSING, SliderPopup, icon_for
-from .widgets import ElidedLabel, Segmented, Switch, card, filling, segment
+from .widgets import ElidedLabel, Segmented, Switch, card, segment
 from .widgets import row as setting_row
 
 THUMB_TEXT = Qt.ItemDataRole.UserRole + 1    # thumbnail caption without the ② mark
@@ -70,9 +72,7 @@ TABS = (("all", "모두 보기", "Ctrl+1"), ("multi", "다중 보기", "Ctrl+2")
 # views no longer shown (검토 · 2D 보기 · 비교): whatever led there stays on 모두 보기, whose big
 # photo is the 2D view with all its tools
 GONE_VIEWS = {"review": "all", "2d": "all", "cmp": "all"}
-PATIENT_LIST_KEY = "Ctrl+0"                  # back to the start screen
-# commands that work on the patient list as well (the others belong to the workspace)
-PAGE_NEUTRAL = ("search", "import", "import_files", "import_dir", "scan", "settings", "exit")
+PATIENT_LIST_KEY = "Ctrl+0"                  # the 환자 목록 window
 THUMB_ICON = (64, 64)                        # 사진 목록(아래): the photo …
 THUMB_GRID = (96, 104)                       # … and its cell, two short lines of caption under it
 OV_ZOOM = 4.0                                # 확대 화면: 사진 전체 폭의 1/4 을 칸에 (×4)
@@ -239,7 +239,10 @@ class MainWindow(QMainWindow):
         self._hold_follow = False            # a bulk import (--demo) must not jump to the workspace
         self._hold_release = False
         self._closing = False
-        self._bars_shown = (True, True)      # command / processing toolbar, as left in the workspace
+        self._multi_start: int | None = None   # 다중 보기: the first photo on screen (stays while the shown one is on it)
+        self._multi_ids: list[int] = []        # … of these photos
+        self._small: OrderedDict[tuple, np.ndarray] = OrderedDict()   # reduced photos of the 16 (id, side)
+        self._list_shown = False             # the 환자 목록 window came up with the main window
         self.setWindowTitle(f"{APP_TITLE}  v{__version__}")
         self.resize(1600, 960)
         self.setAcceptDrops(True)
@@ -346,9 +349,9 @@ class MainWindow(QMainWindow):
         m.addAction(A["exit"])
 
         m = mb.addMenu("보기(&V)")
-        self.act_patients = m.addAction("환자 목록", lambda: self.show_page("patients"))
+        self.act_patients = m.addAction("환자 목록", self.show_patient_list)
         self.act_patients.setShortcut(QKeySequence(PATIENT_LIST_KEY))
-        self.act_patients.setToolTip("처음 화면 — 환자를 찾고 검사를 골라 검토 화면을 엽니다")
+        self.act_patients.setToolTip("환자 목록 창 — 환자를 찾아 누르면 그 환자의 사진이 한 화면에 16장씩 나옵니다")
         m.addSeparator()
         for key, label, shortcut in TABS:
             a = m.addAction(label, lambda k=key: self._go(k))
@@ -357,7 +360,6 @@ class MainWindow(QMainWindow):
         for a in self.menus["multi"].actions():
             sub.addAction(a)
         m.addSeparator()
-        m.addAction(A["list"])
         self.act_thumbs = m.addAction("사진 목록 (썸네일)")
         self.act_thumbs.setCheckable(True)
         self.act_thumbs.setChecked(True)
@@ -418,42 +420,12 @@ class MainWindow(QMainWindow):
         self.act_log = QAction("가져오기 기록", self, checkable=True)
         self._make_actions()
 
-        # -- left: patients (VK-2 OPEN LIST) -----------------------------------
-        self.left = QWidget()
-        ll = QVBoxLayout(self.left)
-        ll.setContentsMargins(6, 6, 0, 6)
-        self.search = QLineEdit()
-        self.search.setPlaceholderText("환자 ID · 이름 · 생년월일 검색")
-        self.search.setClearButtonEnabled(True)
-        self.search.textChanged.connect(lambda: self._search_timer.start(200))
-        self._search_timer = QTimer(self, singleShot=True, timeout=self.refresh_patients)
-        ll.addWidget(self.search)
-        self.patients = QTableWidget(0, 6)
-        self.patients.setHorizontalHeaderLabels(["환자 ID", "이름", "생년월일", "성별", "영상", "최근 검사"])
-        self.patients.verticalHeader().setVisible(False)
-        self.patients.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.patients.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.patients.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        hdr = self.patients.horizontalHeader()
-        for col in range(6):  # long ids (RetiCam PID2026…-…) must not squeeze the name
-            hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
-        hdr.setStretchLastSection(True)
-        self.patients.itemSelectionChanged.connect(self._on_patient_selected)
-        self.patients.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.patients.customContextMenuRequested.connect(self._patient_menu)
-        self.patients.doubleClicked.connect(lambda _: self._edit_patient())
-        self.patients.setShowGrid(False)
-        self.patients.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
-        self.patients.verticalHeader().setDefaultSectionSize(32)
-        self._patients_wheel = motion.SmoothWheel(self.patients, step=64.0)
-        ll.addWidget(self.patients)
-
         # -- centre: patient line + thumbnails + views ------------------------------
         centre = QWidget()
         cl = QVBoxLayout(centre)
         cl.setContentsMargins(4, 6, 4, 0)
         cl.setSpacing(4)
-        # the patient line: ‹ 환자 목록, the patient and the photo filters — in the right end of the menu
+        # the patient line: [환자 목록], the patient and the photo filters — in the right end of the menu
         # bar (see _build_menus), so the photos get its whole row
         self._centre_lay = cl
         self._line_in_menubar = False
@@ -463,11 +435,11 @@ class MainWindow(QMainWindow):
         top = QHBoxLayout(self.top_w)
         top.setContentsMargins(10, 0, 6, 0)
         top.setSpacing(6)
-        self.btn_patients = QPushButton("‹ 환자 목록")
+        self.btn_patients = QPushButton("환자 목록")
         self.btn_patients.setObjectName("back")
         self.btn_patients.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_patients.setToolTip(keys(f"환자 목록(처음 화면)으로 돌아갑니다 ({PATIENT_LIST_KEY})"))
-        self.btn_patients.clicked.connect(lambda: self.show_page("patients"))
+        self.btn_patients.setToolTip(keys(f"환자 목록 창을 엽니다 ({PATIENT_LIST_KEY})"))
+        self.btn_patients.clicked.connect(self.show_patient_list)
         top.addWidget(self.btn_patients)
         self.banner = ElidedLabel("환자를 선택하세요")
         self.banner.setObjectName("banner")
@@ -561,8 +533,10 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.page3d, "3D 안구")
         self.multi = MultiView()
         self.multi.selected.connect(self._select_from_multi)
-        self.multi.opened.connect(lambda iid: (self._select_from_multi(iid), self._go("2d")))
-        self.multi.layoutChanged.connect(lambda _: self._fill_multi())
+        # a click on one of the photos (16 to a screen): that photo large; [다중 보기] brings the 16 back
+        self.multi.opened.connect(self.open_large)
+        self.multi.layoutChanged.connect(lambda _: self._tab() == "multi" and self._fill_multi())
+        self.multi.pageRequested.connect(self._multi_page)
         self.tabs.addTab(self.multi, "다중 보기")
         cmp_w = QWidget()
         cmp_l = QVBoxLayout(cmp_w)
@@ -654,30 +628,25 @@ class MainWindow(QMainWindow):
         cl.addWidget(self.strip_w)
         self._place_overview(True)       # 처음은 모두 보기
 
-        self.split = QSplitter(Qt.Orientation.Horizontal)
-        self.split.addWidget(self.left)
-        self.split.addWidget(centre)
-        self.split.setSizes([400, 1000])
-        self.split.setStretchFactor(1, 1)
-        # the start screen (환자 목록) and the workspace are the two pages of the window
-        self.patient_page = PatientListPage(self.db)
-        self.patient_page.patientSelected.connect(self._pick_patient)
-        self.patient_page.openRequested.connect(self.open_patient)
-        self.patient_page.examChecked.connect(self._on_exam_checked)
-        self.patient_page.editRequested.connect(self._edit_patient)
-        self.patient_page.importRequested.connect(self._import_files)
-        self.review.examPicked.connect(self.patient_page.set_exam)
-        self.stack = QStackedWidget()
-        self.stack.addWidget(self.patient_page)
-        self.stack.addWidget(self.split)
-        self.setCentralWidget(self.stack)
+        self.setCentralWidget(centre)
+        # the patient list: a window of its own (VK-2 OPEN LIST), the only list of patients
+        self.patient_list = PatientListWindow(self.db, self)
+        self.patient_list.patientSelected.connect(self._pick_patient)
+        self.patient_list.openRequested.connect(self.open_patient)
+        self.patient_list.photoRequested.connect(self._open_listed_photo)
+        self.patient_list.examChecked.connect(self._on_exam_checked)
+        self.patient_list.editRequested.connect(self._edit_patient)
+        self.patient_list.deleteRequested.connect(self._delete_patient)
+        self.patient_list.importRequested.connect(self._import_files)
+        self.patient_list.filesDropped.connect(self.review_import)
+        self.patient_list.shown.connect(lambda on: self.acts["list"].setChecked(on))
+        self.review.examPicked.connect(self.patient_list.set_exam)
 
         # -- VK-2 toolbars ---------------------------------------------------------------
         self.tb_cmd = self._toolbar("cmdbar", "명령 툴바", Qt.ToolBarArea.LeftToolBarArea, COMMANDS, 26)
         self.tb_proc = self._toolbar("procbar", "영상 처리 툴바", Qt.ToolBarArea.BottomToolBarArea, PROCESSING, 28)
         self.tb_proc.visibilityChanged.connect(lambda v: self.acts["tools"].setChecked(v))
         self.acts["tools"].setChecked(True)
-        self.left.hide()                 # the workspace opens without the patient pane ([환자 창] shows it)
         self.acts["list"].setChecked(False)
         self.pop_gamma = SliderPopup("감마", 20, 400, 100, lambda v: f"{v / 100:.2f}", self)
         self.pop_contrast = SliderPopup("대비", 10, 300, 100, lambda v: f"{v}%", self)
@@ -744,14 +713,12 @@ class MainWindow(QMainWindow):
 
         a = QAction(self)
         a.setShortcut(QKeySequence("Ctrl+C"))
-        a.triggered.connect(lambda: self.page() == "work" and self._on_action("copy"))
+        a.triggered.connect(lambda: self._on_action("copy"))
         self.addAction(a)
         self._slide_timer = QTimer(self, interval=2000, timeout=lambda: self._step(1, wrap=True))
         self._adjust_timer = QTimer(self, singleShot=True, timeout=self._apply_adjust)
         self._results: list[ImportResult] = []
         self._result_timer = QTimer(self, singleShot=True, timeout=self._flush_results)
-        self._page_fade = motion.Crossfade(self.stack)
-        self.show_page("patients", force=True)        # the program opens on the patient list
 
     def _build_3d(self) -> QWidget:
         """3D tab: the eye, a slim bar with the main choices and actions above it, and the settings in
@@ -1128,11 +1095,10 @@ class MainWindow(QMainWindow):
         self.eye3d.update()
 
     def _reset_toolbars(self) -> None:
-        self._bars_shown = (True, True)
         for tb, area in ((self.tb_cmd, Qt.ToolBarArea.LeftToolBarArea),
                          (self.tb_proc, Qt.ToolBarArea.BottomToolBarArea)):
             self.addToolBar(area, tb)
-            tb.setVisible(self.page() == "work")
+            tb.setVisible(True)
 
     def _show_help(self) -> None:
         QMessageBox.information(self, "마우스·단축키", keys(
@@ -1172,9 +1138,14 @@ class MainWindow(QMainWindow):
             "Ctrl+0: 환자 목록<br>"
             "Ctrl+Z: 처리 실행 취소 · Delete: 마지막 측정 지우기 · Ctrl+C: 화면 복사<br>"
             "Ctrl+F: 환자 검색 · Ctrl+P: 인쇄<br><br>"
-            "<b>환자 목록 (처음 화면)</b><br>"
-            "환자를 누르면 오른쪽에 검사 목록 · 두 번 누르거나 Enter: 체크한 검사의 사진을 엽니다<br>"
-            "작업 화면 위쪽 오른쪽의 [‹ 환자 목록] 또는 Ctrl+0 으로 돌아옵니다<br><br>"
+            "<b>환자 목록 (따로 뜨는 창, 처음에 나옴)</b><br>"
+            "검색 조건: 환자 ID · 이름 · 생년월일 · 검사일(전체 · 오늘 · 최근 7일 · 기간) · 열 제목을 누르면 정렬<br>"
+            "환자를 한 번 누르면 오른쪽에 검사 목록과 사진 16장 · 두 번 누르거나 Enter: 주 화면에 16장씩 열기 · "
+            "사진을 누르면 크게 · Esc: 닫기<br>"
+            "다시 열기: 명령 툴바의 [환자 목록] · 메뉴 줄의 [환자 목록] · Ctrl+0 · 환자 검색(Ctrl+F)<br><br>"
+            "<b>사진 16장 (다중 보기)</b><br>"
+            "환자를 고르면 한 화면에 16장 (4 × 4) · 사진을 누르면 크게(모두 보기) · [다중 보기] 또는 Ctrl+2: 다시 16장 · "
+            "◀ ▶: 다음 16장<br><br>"
             "<b>모두 보기</b><br>"
             "큰 사진 + 오른쪽에 황반과 시신경 유두를 확대해 보여 줍니다 (큰 사진 위 점선 틀이 그 자리)<br>"
             "칸 제목이나 칸을 더블클릭하면 큰 사진을 그 쪽으로 확대 · 큰 사진 더블클릭: 전체<br>"
@@ -1206,7 +1177,7 @@ class MainWindow(QMainWindow):
         auto = self.settings.auto_detect
         threading.Thread(target=lambda: self.bridge.detected.emit(autosetup.detect() if auto else []),
                          name="fundus-autosetup", daemon=True).start()
-        if self.settings.last_patient:
+        if self.settings.last_patient and self._patient_ref is None:   # (not when one was picked already)
             self._select_patient_id(self.settings.last_patient)
 
     def _on_detected(self, found) -> None:
@@ -1249,12 +1220,12 @@ class MainWindow(QMainWindow):
 
     def _import_files(self) -> None:
         files, _ = QFileDialog.getOpenFileNames(
-            self, "가져올 사진 파일", "", "영상 (*.jpg *.jpeg *.png *.tif *.tiff *.bmp *.dcm);;모든 파일 (*)")
+            self._dialog_parent(), "가져올 사진 파일", "", "영상 (*.jpg *.jpeg *.png *.tif *.tiff *.bmp *.dcm);;모든 파일 (*)")
         if files:
             self.review_import(files)
 
     def _import_dir(self) -> None:
-        d = QFileDialog.getExistingDirectory(self, "가져올 폴더")
+        d = QFileDialog.getExistingDirectory(self._dialog_parent(), "가져올 폴더")
         if d:
             self.review_import([d])
 
@@ -1265,7 +1236,7 @@ class MainWindow(QMainWindow):
         number of photos queued (0: cancelled, or nothing to import)."""
         from .import_dialog import ImportReviewDialog
 
-        dlg = ImportReviewDialog(self.service, self.db, paths, self, current_ref=self._patient_ref)
+        dlg = ImportReviewDialog(self.service, self.db, paths, self._dialog_parent(), current_ref=self._patient_ref)
         if dlg.exec() != ImportReviewDialog.DialogCode.Accepted:
             return 0
         n = self.service.import_items(dlg.result_items())
@@ -1345,7 +1316,7 @@ class MainWindow(QMainWindow):
         elif errors:
             self.lbl_status.setText(f"오류: {Path(errors[-1].path).name} — {errors[-1].message}")
         t0 = time.perf_counter()
-        self.refresh_patients(keep=True)
+        self.refresh_patients()
         self._refresh_cost = time.perf_counter() - t0
         if self.log.isVisible():
             self._fill_log()
@@ -1362,9 +1333,12 @@ class MainWindow(QMainWindow):
         if self.act_follow.isChecked() and live:
             self._select_patient_ref(target)
             self._fill_thumbs(select_id=last.image_id)
-            self.show_page("work")                 # the new photo is shown, wherever the window was
-            if self._tab() == "review" and last.image_id not in self.review.slot_ids():
-                self._go("all")                    # not one of the two photos under review: the big view
+            # the new photo is shown, wherever the windows were: the patient list makes way for it
+            self.patient_list.hide()
+            self._raise_main()
+            tab = self._tab()
+            if tab == "multi" or (tab == "review" and last.image_id not in self.review.slot_ids()):
+                self._go("all")                    # large (not one of the 16, not one of the two under review)
         elif any((r.patient_ref if r.patient_ref is not None else UNASSIGNED) == self._patient_ref
                  for r in imported):
             self._fill_dates()
@@ -1373,82 +1347,108 @@ class MainWindow(QMainWindow):
     # =====================================================================
     # patients
     # =====================================================================
-    def refresh_patients(self, keep: bool = False) -> None:
-        sel = self._patient_ref if keep else None
-        rows = self.db.list_patients(self.search.text().strip())
-        n_un = self.db.count_unassigned()
-        entries = []
-        if n_un:
-            entries.append((UNASSIGNED, ["★ 미분류", "환자 ID 없음", "", "", str(n_un), ""]))
-        for r in rows:
-            entries.append((r["id"], [r["patient_id"], r["name"] or "", r["birth_date"] or "",
-                                      SEX_LABEL.get(r["sex"] or "", ""), str(r["n_images"]), r["last_exam"] or ""]))
-        with filling(self.patients):
-            self.patients.setRowCount(0)
-            self.patients.setRowCount(len(entries))
-            for i, (ref, cols) in enumerate(entries):
-                for j, text in enumerate(cols):
-                    it = QTableWidgetItem(text)
-                    it.setData(Qt.ItemDataRole.UserRole, ref)
-                    if ref == UNASSIGNED:
-                        it.setForeground(QColor(theme.ORANGE))
-                    self.patients.setItem(i, j, it)
-        if sel is not None:
-            self._select_patient_ref(sel, quiet=True)
-        self.patient_page.refresh()            # the start screen lists the same patients
+    def refresh_patients(self) -> None:
+        """List the patients again (after an import, an edit, a deletion). The patient on screen stays —
+        unless it is gone (deleted, merged into another): then nobody is."""
+        self.patient_list.refresh()
+        ref = self._patient_ref
+        if ref not in (None, UNASSIGNED) and self.db.get_patient(ref) is None:
+            self._set_patient(None)
 
-    def _row_ref(self, row: int):
-        it = self.patients.item(row, 0)
-        return it.data(Qt.ItemDataRole.UserRole) if it else None
-
-    def _select_patient_ref(self, ref, quiet: bool = False) -> None:
-        """Select the row of ``ref``; ``quiet`` only restores the highlight."""
-        for r in range(self.patients.rowCount()):
-            if self._row_ref(r) == ref:
-                self.patients.blockSignals(True)
-                self.patients.selectRow(r)
-                self.patients.blockSignals(False)
-                if not quiet:
-                    self._on_patient_selected()
-                return
-        if not quiet and self.search.text().strip():
-            # asked for from the patient list, but this table's own search hides the patient
-            self._search_timer.stop()
-            self.search.blockSignals(True)
-            self.search.clear()
-            self.search.blockSignals(False)
-            self.refresh_patients(keep=True)
-            self._select_patient_ref(ref)
+    def _select_patient_ref(self, ref) -> None:
+        """Make ``ref`` (UNASSIGNED / ``patients.id`` / None) the patient on screen, in both windows."""
+        self._set_patient(ref)
 
     def _pick_patient(self, ref) -> None:
-        """A patient was clicked on the patient list: the same patient everywhere."""
+        """A patient was picked in the patient list: the same patient in both windows, its photos
+        16 to a screen."""
+        if self._closing:
+            return
         if ref != self._patient_ref:
             self._select_patient_ref(ref)
+        if self._patient_ref == ref:
+            self.show_patient_grid()
 
-    def open_patient(self, ref, where: str = "all") -> None:
-        """Open the workspace for a patient of the patient list, with the checked exam's photo —
-        on 모두 보기, or in 3D (``where``: a view key)."""
-        self._pick_patient(ref)
+    def open_patient(self, ref, where: str = "multi") -> None:
+        """[사진 보기] · double click · Enter in the patient list: the patient's photos here — 16 to a
+        screen (``where`` "multi"), the selected exam's photo large ("all") or in 3D ("3d"). The
+        patient list makes way for them."""
+        if ref != self._patient_ref:
+            self._select_patient_ref(ref)
         if self._patient_ref != ref or not self._images():
             self.lbl_status.setText("이 환자는 아직 사진이 없습니다 — [사진 가져오기]로 사진을 넣으세요")
             return
-        row = self.patient_page.shortcut_photo()      # the checked exam's photo
+        self.patient_list.hide()
+        self._raise_main()
+        if where == "multi":
+            self.show_patient_grid()
+            return
+        row = self.patient_list.shortcut_photo()      # the selected exam's photo
         if row is not None:
             self._select_from_multi(row["id"])
         self._go(where)
 
+    def _strip_ids(self) -> list[int]:
+        """The photos of the strip (the patient's, through the date · eye · kind filters), newest first."""
+        return [self.thumbs.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.thumbs.count())]
+
+    def show_patient_grid(self, start_id: int | None = None) -> None:
+        """다중 보기 with the patient's photos 16 to a screen, from ``start_id`` (default: the first of
+        the 16 the patient list shows, so both windows show the same photos)."""
+        self.multi.set_count(GRID_N)
+        ids = self._strip_ids()
+        if start_id is None:
+            start_id = self.patient_list.first_shown_photo()
+        if start_id in ids and not self._picks:
+            start = window_start(ids.index(start_id), len(ids), GRID_N)
+            self._multi_start, self._multi_ids = start, ids
+            if self.current is None or self.current["id"] not in ids[start:start + GRID_N]:
+                self._select_from_multi(start_id)
+        if self._tab() == "multi":
+            self._fill_multi()
+        else:
+            self._go("multi")                         # -> _on_tab -> _fill_multi
+
+    def open_large(self, image_id: int) -> None:
+        """A click on one of the 16: that photo large (모두 보기); [다중 보기] brings the 16 back."""
+        self._select_from_multi(image_id)
+        self._go("all")
+
+    def _open_listed_photo(self, image_id: int) -> None:
+        """A photo of the 16 in the patient list: large here, the list makes way for it. The 16 it is
+        one of stay behind it ([다중 보기])."""
+        ref = self.patient_list.current()
+        if ref != self._patient_ref:
+            self._select_patient_ref(ref)
+        ids = self._strip_ids()
+        first = self.patient_list.first_shown_photo()
+        self.multi.set_count(GRID_N)
+        if first in ids and not self._picks:
+            self._multi_start, self._multi_ids = window_start(ids.index(first), len(ids), GRID_N), ids
+        self.patient_list.hide()
+        self._raise_main()
+        self.open_large(image_id)
+
+    def _raise_main(self) -> None:
+        if self.isMinimized():
+            self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
     def _on_exam_checked(self, exam_date: str) -> None:
-        """Another exam was checked in the patient list (or picked in the timeline): it is the
-        current exam of the 검토 tab now, earlier ones are its priors."""
+        """Another exam was selected in the patient list (or picked in the timeline): its photos come
+        first in the 16; it is the current exam of the 검토 tab now, earlier ones are its priors."""
         if self._tab() == "review" and not self._review_dirty:
             self.review.set_current_exam(exam_date)
         else:
             self._review_dirty = True
+        if self._tab() == "multi" and not self._picks and self.patient_list.current() == self._patient_ref:
+            self.show_patient_grid()
 
     def _fill_review(self) -> None:
         if self._review_dirty:
             self._review_dirty = False
-            self.review.set_photos(self._images(), self.patient_page.current_exam())
+            self.review.set_photos(self._images(), self.patient_list.current_exam())
 
     def _review_hand_off(self, where: str, image_id: int, second) -> None:
         """검토 → 2D 보기 / 3D 안구 / 녹내장 with the photo of the active view."""
@@ -1460,61 +1460,53 @@ class MainWindow(QMainWindow):
         else:
             self._go(where)
 
-    # -- the two screens: 환자 목록 (start) · workspace ---------------------------------------------
-    def page(self) -> str:
-        return "work" if self.stack.currentWidget() is self.split else "patients"
-
-    def show_page(self, name: str, force: bool = False) -> None:
-        if name == self.page() and not force:
-            return
-        work = name == "work"
-        if not force:
-            self._page_fade.snap()
-        if not work and self.page() == "work":
-            self._stop_slideshow()
-            self._bars_shown = (not self.tb_cmd.isHidden(), not self.tb_proc.isHidden())
-        self.stack.setCurrentWidget(self.split if work else self.patient_page)
-        # the VK-2 toolbars belong to the photo views: away on the patient list, back as they were
-        for tb, shown in zip((self.tb_cmd, self.tb_proc), self._bars_shown):
-            tb.setVisible(work and shown)
-            tb.toggleViewAction().setEnabled(work)
-        for key, a in self.acts.items():
-            if key not in PAGE_NEUTRAL:
-                a.setEnabled(work)
-        for w in (self.lbl_info, self.lbl_measure, self.lbl_hover, self.btn_zoom):   # about the photo on screen
-            w.setVisible(work and (w is not self.lbl_measure or bool(w.text())))
-        if work:
-            self.acts["tools"].setChecked(not self.tb_proc.isHidden())
-            if self._tab() == "review":
-                self._fill_review()
+    # -- the 환자 목록 window ---------------------------------------------------------------------------
+    def show_patient_list(self, search: bool = False) -> None:
+        """The 환자 목록 window in front ([환자 목록] · Ctrl+0; ``search``: with the cursor in its
+        환자 ID box — 환자 검색, Ctrl+F)."""
+        pl = self.patient_list
+        pl.place_over(self)
+        pl.set_current(self._patient_ref)
+        pl.show()
+        pl.raise_()
+        pl.activateWindow()
+        if search:
+            pl.focus_search()
         else:
-            self.patient_page.set_current(self._patient_ref)
-            self.patient_page.table.setFocus()
-        if not force:
-            self._page_fade.play()
+            pl.table.setFocus()
+
+    def showEvent(self, e) -> None:
+        super().showEvent(e)
+        if not self._list_shown:                 # the program opens with the patient list in front
+            self._list_shown = True
+            QTimer.singleShot(0, lambda: None if self._closing else self.show_patient_list())
+
+    def _dialog_parent(self) -> QWidget:
+        """A dialog asked for from the patient list opens over it."""
+        pl = self.patient_list
+        return pl if pl.isVisible() and pl.isActiveWindow() else self
 
     def _select_patient_id(self, pid: str) -> None:
         row = self.db.find_patient(pid)
         if row is not None:
             self._select_patient_ref(row["id"])
 
-    def _on_patient_selected(self) -> None:
-        rows = self.patients.selectionModel().selectedRows()
-        if not rows:
-            return
-        ref = self._row_ref(rows[0].row())
+    def _set_patient(self, ref) -> None:
+        """The patient on screen: UNASSIGNED (★ 미분류), a ``patients.id`` or None (nobody)."""
+        p = self.db.get_patient(ref) if ref not in (None, UNASSIGNED) else None
+        if ref not in (None, UNASSIGNED) and p is None:
+            ref = None                         # deleted or merged away
         if ref != self._patient_ref:
-            self.compare = None          # the second pick belongs to the previous patient
+            self.compare = None                # the second pick belongs to the previous patient
             self._picks, self._per_photo, self._pick_pre = [], {}, None   # so do the multi picks
+            self._multi_start = None
         self._patient_ref = ref
-        self.patient_page.set_current(ref)     # the patient list shows the same patient
-        if ref == UNASSIGNED:
+        self.patient_list.set_current(ref)     # the patient list shows the same patient
+        if ref is None:
+            self.banner.setText("환자를 선택하세요")
+        elif ref == UNASSIGNED:
             self.banner.setText("미분류 영상 — [정보 수정]으로 환자를 지정하세요")
-            self._fit_banner()
         else:
-            p = self.db.get_patient(ref)
-            if p is None:
-                return
             self.settings.last_patient = p["patient_id"]
             age = age_on(p["birth_date"])
             bits = [p["name"] or "(이름 없음)", p["patient_id"]]
@@ -1523,25 +1515,15 @@ class MainWindow(QMainWindow):
             if p["sex"]:
                 bits.append(SEX_LABEL.get(p["sex"], p["sex"]))
             self.banner.setText("  ·  ".join(bits))
-            self._fit_banner()
+        self._fit_banner()
         self._fill_dates()
         self._fill_thumbs()
-
-    def _patient_menu(self, pos) -> None:
-        row = self.patients.rowAt(pos.y())
-        ref = self._row_ref(row) if row >= 0 else None
-        if ref in (None, UNASSIGNED):
-            return
-        menu = QMenu(self)
-        menu.addAction("환자 정보 수정…", self._edit_patient)
-        menu.addAction("환자 삭제 (영상은 미분류로)…", self._delete_patient)
-        menu.exec(self.patients.viewport().mapToGlobal(pos))
 
     def _edit_patient(self) -> None:
         if self._patient_ref in (None, UNASSIGNED):
             return
         p = self.db.get_patient(self._patient_ref)
-        dlg = PatientDialog(self.db, p, self)
+        dlg = PatientDialog(self.db, p, self._dialog_parent())
         if dlg.exec():
             target = dlg.merged_into or self._patient_ref
             self.refresh_patients()
@@ -1551,7 +1533,7 @@ class MainWindow(QMainWindow):
         p = self.db.get_patient(self._patient_ref)
         if p is None:
             return
-        ok = QMessageBox.question(self, "환자 삭제",
+        ok = QMessageBox.question(self._dialog_parent(), "환자 삭제",
                                   f"{p['patient_id']} {p['name'] or ''} 환자를 삭제할까요?\n"
                                   "영상은 지워지지 않고 '미분류'로 옮겨집니다.")
         if ok == QMessageBox.StandardButton.Yes:
@@ -1582,7 +1564,7 @@ class MainWindow(QMainWindow):
         mod = self.f_mod.currentData() or ""
         if not _:                              # not a filter of the strip: the patient or its photos changed
             self._review_dirty = True
-            if self._tab() == "review" and self.page() == "work":
+            if self._tab() == "review":
                 self._fill_review()
         self.thumbs.blockSignals(True)
         self.thumbs.clear()
@@ -2179,11 +2161,6 @@ class MainWindow(QMainWindow):
         """``checked`` is the new state when a checkable button was clicked, None
         when called from a menu entry or code."""
         v = self.view2d
-        if key == "search" and self.page() == "patients":
-            self.patient_page.focus_search()
-            return
-        if key not in PAGE_NEUTRAL:               # a command of the photo views: they come to the front
-            self.show_page("work")
         if key.startswith(("tool:", "region:")) or key in self.TWO_D:
             if self._tab() not in ("2d", "all"):   # 2D tools: go to a view with the big 2D photo first
                 self._go("2d")
@@ -2253,13 +2230,13 @@ class MainWindow(QMainWindow):
         elif key == "glaucoma":
             self.open_glaucoma()
         # -- command toolbar ---------------------------------------------------------
-        elif key == "search":
-            self.acts["list"].setChecked(True)
-            self.left.show()
-            self.search.setFocus()
-            self.search.selectAll()
-        elif key == "list":
-            self.left.setVisible(self.left.isHidden() if checked is None else checked)
+        elif key == "search":                       # 환자 검색: the patient list, the cursor in 환자 ID
+            self.show_patient_list(search=True)
+        elif key == "list":                         # 환자 목록 (VK-2 OPEN LIST): the window up / away
+            if self.patient_list.isHidden() if checked is None else checked:
+                self.show_patient_list()
+            else:
+                self.patient_list.hide()
         elif key in ("multi", "view3d"):
             tab = "multi" if key == "multi" else "3d"
             self._go("all" if self._tab() == tab else tab)
@@ -2283,7 +2260,7 @@ class MainWindow(QMainWindow):
                     == QMessageBox.StandardButton.Yes:
                 self.close()
         self._sync_palette()
-        self.acts["list"].setChecked(not self.left.isHidden())
+        self.acts["list"].setChecked(self.patient_list.isVisible())
 
     def _show_slider(self, key: str) -> None:
         """VK-2 GAMMA / CONTST / BRIGHT: a slider pops up next to the button."""
@@ -2427,19 +2404,45 @@ class MainWindow(QMainWindow):
         return (f"{num}{eye_badge_html(row['laterality'])}&nbsp; "
                 f"{row['exam_date'] or ''} {row['exam_time'] or ''}&nbsp; {mod}")
 
+    def _small_photo(self, row, side: int) -> np.ndarray | None:
+        """The photo at most ``side`` pixels across, for a cell of 다중 보기: from the whole photo when
+        it is read already, else read reduced (a JPEG straight at 1/2 … 1/8 of its size), so 16 photos
+        come up at once. Kept for the next screens (a photo's pixels never change: edits are new photos)."""
+        key = (row["id"], side)
+        if key in self._small:
+            self._small.move_to_end(key)
+            return self._small[key]
+        full = self._cache.get(row["id"])
+        if full is not None:
+            small = imaging.downscale(full, side)
+        else:
+            path = self._image_path(row)
+            if path is None:
+                return None
+            try:
+                small = imaging.load_reduced(path, side)
+            except Exception as exc:
+                self.lbl_status.setText(f"영상을 열 수 없음: {exc}")
+                return None
+        self._small[key] = small
+        while len(self._small) > 3 * GRID_N:
+            self._small.popitem(last=False)
+        return small
+
     def _multi_small(self, row, st: dict, n: int | None = None) -> np.ndarray | None:
         """Down-scaled photo for a multi cell with the processing state ``st``."""
-        rgb = self._load(row)
-        if rgb is None:
-            return None
         n = self.multi.count if n is None else n
-        small = imaging.downscale(rgb, 1400 if n <= 4 else 900)
+        small = self._small_photo(row, 1400 if n <= 4 else 900)
+        if small is None:
+            return None
         ops = st.get("ops", [])
         return self._adjusted_with(imaging.apply_ops(small, ops) if ops else small, st)
 
     def _fill_multi(self, target: MultiView | None = None) -> None:
         """Fill the 다중 보기 tab, or ``target`` (모두 보기's 2 × 2 grid): the picked photos with
-        their own processing, else consecutive photos from the shown one."""
+        their own processing, else the patient's photos a screen at a time (16), from the shown one.
+        The screen stays while the shown photo is on it: a photo opened large from it and closed
+        again comes back to the same 16."""
         mv = target or self.multi
         if self._picks:                       # the photos picked in the strip, each with its own processing
             n = mv.count
@@ -2451,27 +2454,48 @@ class MainWindow(QMainWindow):
                     items.append((iid, self._multi_label(row, k + 1), small))
             more = f" (화면에 {n}장 — 화면 분할을 늘리세요)" if len(self._picks) > n else ""
             mv.set_mode_text(f"고른 사진 {len(self._picks)}장{more}")
+            mv.set_page(0, n, 0)
             mv.populate(items, self.current["id"] if self.current else None)
             return
         mv.set_mode_text("")
-        ids = [self.thumbs.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.thumbs.count())]
+        ids = self._strip_ids()
         if not ids:
+            mv.set_page(0, mv.count, 0)
             mv.populate([], None)
             return
         cur = self.current["id"] if self.current else ids[0]
-        start = ids.index(cur) if cur in ids else 0
+        idx = ids.index(cur) if cur in ids else 0
         n = mv.count
-        start = max(0, min(start, len(ids) - n)) if len(ids) > n else 0
+        start = idx
+        if (mv is self.multi and ids == self._multi_ids and self._multi_start is not None
+                and self._multi_start <= idx < self._multi_start + n):
+            start = self._multi_start               # the shown photo is on this screen: it stays
+        start = window_start(start, len(ids), n)
+        if mv is self.multi:
+            self._multi_start, self._multi_ids = start, ids
+        mv.set_page(start, n, len(ids))
         items = []
         for iid in ids[start:start + n]:
             row = self.db.get_image(iid)
-            rgb = self._load(row) if row else None
-            if rgb is None:
+            small = self._small_photo(row, 1400 if n <= 4 else 900) if row else None
+            if small is None:
                 continue
-            small = imaging.downscale(rgb, 1400 if n <= 4 else 900)
             small = self._adjusted(imaging.apply_ops(small, self._ops) if self._ops else small)
             items.append((iid, self._multi_label(row), small))
         mv.populate(items, cur)
+
+    def _multi_page(self, d: int) -> None:
+        """◀ ▶ of 다중 보기: the next / previous screen of photos (16)."""
+        ids = self._strip_ids()
+        n = self.multi.count
+        if self._picks or len(ids) <= n:
+            return
+        start = window_start((self._multi_start or 0) + d * n, len(ids), n)
+        if start == self._multi_start:
+            return
+        self._multi_start, self._multi_ids = start, ids
+        self._select_from_multi(ids[start])
+        self._fill_multi()
 
     def _select_from_multi(self, image_id: int) -> None:
         self._multi_lock = True
@@ -3186,7 +3210,6 @@ class MainWindow(QMainWindow):
 
     def _go(self, key: str) -> None:
         key = GONE_VIEWS.get(key, key)
-        self.show_page("work")
         if self.tabs.currentWidget() is not self._pages[key]:
             self._tab_fade.snap()             # the page on screen fades into the next
         self.tabs.setCurrentWidget(self._pages[key])
@@ -3518,7 +3541,7 @@ class MainWindow(QMainWindow):
             rows[0], rgb, note, suffix="디스크2장", derived_from=[r["id"] for r in rows],
             laterality=lat, modality="disc", fov_deg=None, fov_type=None, projection=None,
             circle_cx=None, circle_cy=None, circle_r=None)
-        self.refresh_patients(keep=True)
+        self.refresh_patients()
         self._fill_dates()
         self._fill_thumbs(select_id=self.current["id"] if self.current else None)
         self.lbl_status.setText("디스크 2장을 이 환자 기록에 저장했습니다")
@@ -3575,7 +3598,7 @@ class MainWindow(QMainWindow):
             laterality=eye if eye in ("OD", "OS") else rows[0]["laterality"], modality="glaucoma",
             fov_deg=None, fov_type=None, projection=None, circle_cx=None, circle_cy=None, circle_r=None,
             disc_x=None, disc_y=None, fovea_x=None, fovea_y=None)
-        self.refresh_patients(keep=True)
+        self.refresh_patients()
         self._fill_dates()
         self._fill_thumbs(select_id=self.current["id"] if self.current else None)
         self.lbl_status.setText("녹내장 분석 화면을 이 환자 기록에 저장했습니다")
@@ -3688,7 +3711,7 @@ class MainWindow(QMainWindow):
             laterality=res.laterality or base["laterality"], modality="montage", fov_deg=res.fov_deg,
             fov_type="internal", projection="equidistant", circle_cx=cx, circle_cy=cy, circle_r=r,
             disc_x=res.disc[0] if res.disc else None, disc_y=res.disc[1] if res.disc else None, meta_json=meta)
-        self.refresh_patients(keep=True)
+        self.refresh_patients()
         self._fill_dates()
         self._fill_thumbs(select_id=self.current["id"] if self.current else None)
         self.lbl_status.setText(f"몽타주({len(ids)}장)를 이 환자 기록에 저장했습니다 — 썸네일을 더블클릭하면 2D, "
@@ -3740,9 +3763,11 @@ class MainWindow(QMainWindow):
         if ok == QMessageBox.StandardButton.Yes:
             self.db.delete_image(image_id)
             self._cache.pop(image_id, None)
+            for key in [k for k in self._small if k[0] == image_id]:
+                del self._small[key]
             if self.compare is not None and self.compare["id"] == image_id:
                 self.compare = None
-            self.refresh_patients(keep=True)
+            self.refresh_patients()
             self._fill_thumbs()
 
     def _fill_log(self) -> None:
@@ -3770,8 +3795,11 @@ class MainWindow(QMainWindow):
         except OSError:
             pass
         self._preload_timer.stop()
-        for t in (self._search_timer, self.patient_page._search_timer, self._result_timer):
+        pl = self.patient_list
+        for t in (pl._search_timer, pl._select_timer, self._result_timer):
             t.stop()                           # nothing reads the database after it is closed
+        pl._pending = None
+        pl.hide()
         self._preloader.shutdown()
         self.review.shutdown()
         self.service.shutdown()

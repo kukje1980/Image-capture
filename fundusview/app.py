@@ -59,7 +59,7 @@ def main(argv: list[str] | None = None) -> int:
         from .demo import write_demo_folder
         demo_dir = config_dir() / "demo_drop"  # outside the library (the importer ignores the library)
         write_demo_folder(demo_dir, montage=True, history=True)
-        win.hold_follow()             # the start screen stays the patient list while the demo comes in
+        win.hold_follow()             # the patient list stays in front while the demo comes in
         win.service.import_paths([str(demo_dir)])
     win.show()
     code = app.exec()

@@ -1,6 +1,7 @@
 """VK-2 style picking: the strip shows several rows (newest first) with the eye on every photo,
-a plain click picks photos (numbered), [멀티] shows the picked photos in the multi view and a
-click on a cell lets the processing toolbar change that photo only."""
+a plain click picks photos (numbered), [멀티] shows the picked photos in the multi view; a click
+on a cell shows that photo large, and the processing toolbar changes that photo only — the
+multi view shows each picked photo with its own processing."""
 import os
 
 import pytest
@@ -55,7 +56,6 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
         import_and_wait(app, w, [demo_dir / "RetiCam", demo_dir / "VK2_Export"])
         pid = db.find_patient("PID20260310-0A1B2C3D")["id"]
         w._select_patient_ref(pid)
-        w.show_page("work")                 # the photo strip is in the workspace (the start screen is the patient list)
         app.processEvents()
         assert w.thumbs.count() == 3
         rows = db.images_for_patient(pid)
@@ -116,19 +116,30 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
         assert (cells[1].view._rgb == before_second).all()          # the other cell is untouched
         g = cells[0].view._rgb
         assert (g[..., 0] == g[..., 2]).all() and (g[..., 0] <= g[..., 1]).all()   # red-free = green-tinted grey
+        # a click on a cell: that photo large, with its own (untouched) processing
         QTest.mouseClick(cells[1].view.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(20, 20))
         app.processEvents()
-        assert w.current["id"] == ids[1] and w._channel == "rgb"    # its own (untouched) processing
+        assert w._tab() == "all" and w.current["id"] == ids[1] and w._channel == "rgb"
         w._on_action("op:sharpen")
         assert w._ops == ["sharpen"]
+        # back to the picked photos ([다중 보기]): each with its own processing
+        w.view_buttons["multi"].click()
+        app.processEvents()
+        cells = [c for c in w.multi.cells if c.isVisible()]
+        assert w._tab() == "multi" and [c.image_id for c in cells] == [ids[0], ids[1]]
+        g = cells[0].view._rgb
+        assert (g[..., 0] == g[..., 2]).all()                       # still red-free
+        assert not (cells[1].view._rgb == before_second).all()      # sharpened
         QTest.mouseClick(cells[0].view.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(20, 20))
         app.processEvents()
+        assert w._tab() == "all"
         assert w.current["id"] == ids[0] and w._channel == "redfree" and w._ops == []
         w._on_action("undo")                                         # each photo keeps its own undo
         assert w._channel == "rgb"
         assert w._per_photo[ids[1]]["state"]["ops"] == ["sharpen"]
 
         # clearing the picks goes back to the VK-2 consecutive multi view
+        w._go("multi")
         w.btn_clear_picks.click()
         app.processEvents()
         assert w.picks() == [] and w.multi.mode_label.text() == "" and w.btn_multi.text() == "멀티"

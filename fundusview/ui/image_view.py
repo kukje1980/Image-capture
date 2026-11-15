@@ -161,6 +161,7 @@ class ImageView(QGraphicsView):
     measured = Signal(str)       # result of a measurement
     hovered = Signal(str)        # pixel / retinal position under the cursor
     clicked = Signal()           # any left press (multi-view selection, slideshow stop)
+    tapped = Signal()            # a left click that did not drag (zoom / move): 다중 보기 opens the photo
     activated = Signal()         # double click
 
     def __init__(self, parent=None):
@@ -778,7 +779,7 @@ class ImageView(QGraphicsView):
         sp = self.mapToScene(pos)
         t = self.tool
         if t == "pan":
-            self._drag = {"kind": "pan", "last": pos}
+            self._drag = {"kind": "pan", "last": pos, "first": pos}
             self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
         elif t == "zoom":
             self._drag = {"kind": "zoom", "start": pos, "z0": self._zoom, "moved": False}
@@ -838,6 +839,10 @@ class ImageView(QGraphicsView):
     def mouseReleaseEvent(self, e):
         d, self._drag = self._drag, None
         pos = e.position().toPoint()
+        if (d is not None and e.button() == Qt.MouseButton.LeftButton
+                and ((d["kind"] == "zoom" and not d["moved"])
+                     or (d["kind"] == "pan" and (pos - d.get("first", pos)).manhattanLength() <= 4))):
+            self.tapped.emit()
         if d and d["kind"] == "pan":
             self._restore_cursor()
             self._fling_rest = [0.0, 0.0]

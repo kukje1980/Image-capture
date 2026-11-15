@@ -52,12 +52,13 @@ def test_overview_is_the_photo_with_its_macula_and_disc(tmp_path, demo_dir, impo
     try:
         w.resize(1500, 950)
         w.show()
-        assert w.page() == "patients" and not w.tabs.isVisible()
+        app.processEvents()
+        assert w.patient_list.isVisible() and w.tabs.isVisible()     # the patient list in front of the photos
         import_and_wait(app, w, [demo_dir])
         w._select_patient_ref(db.find_patient("20260115001")["id"])
-        w.show_page("work")              # (new photos may have brought the workspace up already)
+        w.patient_list.hide()
         app.processEvents()
-        assert w.page() == "work" and w._tab() == "all"
+        assert w._tab() == "all"
 
         # -- the frame: no tab row; the view switch under the photos; patient line in the menu bar --
         assert w.tabs.tabBar().isHidden()
@@ -158,7 +159,6 @@ def test_a_photo_without_macula_or_disc_says_so(tmp_path, demo_dir, import_and_w
         row = db.images_for_patient(db.find_patient("20260115001")["id"])[0]
         db.update_image(row["id"], disc_x=None, disc_y=None, fovea_x=None, fovea_y=None)
         w._select_patient_ref(row["patient_ref"])
-        w.show_page("work")
         w._go("all")
         w.thumbs.setCurrentRow(0)
         app.processEvents()

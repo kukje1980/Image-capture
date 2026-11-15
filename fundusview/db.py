@@ -205,6 +205,12 @@ class Database:
         sql += " GROUP BY p.id ORDER BY COALESCE(MAX(i.imported_at), p.updated_at) DESC"
         return self._all(sql, args)
 
+    def patients_examined(self, start: str, end: str) -> set:
+        """The patients (``patients.id``; ``None`` = 미분류) with a photo taken between ``start``
+        and ``end`` (ISO dates, both included) — the 검사일 search of the patient list."""
+        rows = self._all("SELECT DISTINCT patient_ref FROM images WHERE exam_date BETWEEN ? AND ?", (start, end))
+        return {r[0] for r in rows}
+
     def count_patients(self) -> int:
         return self._one("SELECT COUNT(*) FROM patients")[0]
 
