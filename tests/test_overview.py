@@ -61,8 +61,14 @@ def test_overview_is_the_photo_with_its_macula_and_disc(tmp_path, demo_dir, impo
 
         # -- the frame: no tab row; the view switch under the photos; patient line in the menu bar --
         assert w.tabs.tabBar().isHidden()
-        assert [b.text() for b in w.view_buttons.values()] == ["모두 보기", "다중 보기", "3D"]
+        assert [b.text() for b in w.seg_views.buttons] == ["모두 보기", "다중 보기"]
         assert w.view_buttons["all"].isChecked() and _inside(w.seg_views, w.strip_w) and w.seg_views.isVisible()
+        # 3D · Montage · Glaucoma: icon buttons in the row above the photos (화면 분할 there on 다중 보기 only)
+        top = (w.btn_3d, w.btn_montage, w.btn_glaucoma)
+        assert [b.text() for b in top] == ["3D", "Montage", "Glaucoma"] and w.view_buttons["3d"] is w.btn_3d
+        assert all(_inside(b, w.view_bar) and b.isVisible() and not b.icon().isNull() for b in top)
+        assert w.view_bar.mapTo(w, QPoint(0, 0)).y() + w.view_bar.height() <= w.view2d.mapTo(w, QPoint(0, 0)).y()
+        assert not w.multi_bar.isVisible() and _inside(w.multi.combo, w.view_bar)
         assert w.thumbs.mapTo(w, QPoint(0, 0)).y() > w.view2d.mapTo(w, QPoint(0, 0)).y() + w.view2d.height() - 5
         assert w.menuBar().cornerWidget(Qt.Corner.TopRightCorner) is w.top_w
         assert w.btn_patients.isVisible() and _inside(w.btn_patients, w.top_w)
@@ -125,9 +131,10 @@ def test_overview_is_the_photo_with_its_macula_and_disc(tmp_path, demo_dir, impo
 
         # -- the view switch: 다중 보기 · 3D · back --
         w.view_buttons["multi"].click()
-        assert w._tab() == "multi" and w.view_buttons["multi"].isChecked()
+        assert w._tab() == "multi" and w.view_buttons["multi"].isChecked() and w.multi_bar.isVisible()
         w.view_buttons["3d"].click()
-        assert w._tab() == "3d" and w.view_buttons["3d"].isChecked()
+        assert w._tab() == "3d" and w.view_buttons["3d"].isChecked() and not w.multi_bar.isVisible()
+        assert w.seg_views.group.checkedButton() is None                 # 3D is not a segment under the photos
         w._on_action("view3d")                                           # the toolbar's 3D again: back
         assert w._tab() == "all" and w.view_buttons["all"].isChecked()
         assert _inside(w.view2d, w.page_all) and roi_d.isVisible()

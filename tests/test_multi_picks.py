@@ -106,7 +106,7 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
         assert w._tab() == "multi" and w.multi.count == 2
         cells = [c for c in w.multi.cells if c.isVisible()]
         assert [c.image_id for c in cells] == [ids[0], ids[1]]
-        assert w.current["id"] == ids[0] and "고른 사진 2장" in w.multi.mode_label.text()
+        assert w.current["id"] == ids[0] and "고른 사진 2장" in w.multi.mode_text
         assert "OD" in cells[0].label.text() or "OS" in cells[0].label.text() or "미상" in cells[0].label.text()
 
         # processing applies to the selected cell's photo only
@@ -131,7 +131,7 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
         # clearing the picks goes back to the VK-2 consecutive multi view
         w.btn_clear_picks.click()
         app.processEvents()
-        assert w.picks() == [] and w.multi.mode_label.text() == "" and w.btn_multi.text() == "멀티"
+        assert w.picks() == [] and w.multi.mode_text == "" and w.btn_multi.text() == "멀티"
         assert not w.btn_clear_picks.isVisible()
 
         # another patient: the picks belong to the previous one

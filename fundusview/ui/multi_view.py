@@ -57,12 +57,8 @@ class MultiView(QWidget):
         self.combo.setCurrentIndex(2)
         self.combo.currentIndexChanged.connect(lambda _: self.layoutChanged.emit(self.count))
         top.addWidget(self.combo)
-        self.mode_label = QLabel("")
-        self.mode_label.setStyleSheet(f"color:{theme.YELLOW}; font-weight:600; padding-left:6px")
-        top.addWidget(self.mode_label)
-        hint = QLabel("위/아래 드래그: 확대·축소 · 클릭: 선택 · 더블클릭: 2D로 열기")
-        hint.setStyleSheet(f"color:{theme.TEXT3}")
-        top.addWidget(hint, 1)
+        self.mode_text = ""                  # '고른 사진 3장' — shown in the combo's tooltip
+        self._tip()
         self.grid = QGridLayout()
         self.grid.setSpacing(3)
         lay = QVBoxLayout(self)
@@ -114,9 +110,21 @@ class MultiView(QWidget):
         for c in range(4):
             self.grid.setColumnStretch(c, 1 if c < cols else 0)
 
+    def take_topbar(self) -> QWidget:
+        """The 화면 분할 row, out of this view — the main window shows it in its own top row,
+        next to the 3D · Montage · Glaucoma buttons."""
+        self.layout().removeWidget(self.topbar)
+        self.topbar.layout().setContentsMargins(0, 0, 0, 0)
+        return self.topbar
+
     def set_mode_text(self, text: str) -> None:
         """'고른 사진 3장' (picked photos) or '' (consecutive photos from the shown one)."""
-        self.mode_label.setText(text)
+        self.mode_text = text
+        self._tip()
+
+    def _tip(self) -> None:
+        tip = "화면 분할 — 위/아래 드래그: 확대·축소 · 클릭: 선택 · 더블클릭: 2D로 열기"
+        self.combo.setToolTip(f"{self.mode_text}\n{tip}" if self.mode_text else tip)
 
     def update_cell(self, image_id: int, rgb) -> bool:
         """Show new pixels for one photo, keeping that cell's zoom and position."""

@@ -164,6 +164,9 @@ QToolBar QToolButton:hover { background: @CARD@; color: @TEXT@; }
 QToolBar QToolButton:pressed { background: @FILL@; }
 QToolBar QToolButton:checked { background: #17365c; color: #7fc0ff; }
 QToolBar QToolButton:disabled { color: @FILL2@; }
+/* the row above the photos: 3D · Montage · Glaucoma */
+QToolButton#viewBarButton { font-weight: 600; padding: 4px 10px 4px 6px; }
+QToolButton#viewBarButton:disabled { color: @TEXT4@; }
 QFrame#sliderPopup { background: @CARD@; border: 1px solid @FILL2@; border-radius: 12px; }
 
 /* -- the main window's own pieces ------------------------------------------------------------ */

@@ -65,7 +65,7 @@ THUMB_TEXT = Qt.ItemDataRole.UserRole + 1    # thumbnail caption without the ②
 SECOND_PICK = QColor(168, 104, 28)           # background of the second picked photo (②)
 MAX_PICKS = 16                               # photos picked for the multi view (4×4)
 MULTI_SIZES = (1, 2, 4, 6, 9, 16)
-# the views of the workspace, switched in the line under the photos (보기 menu: Ctrl+1~3)
+# the views of the workspace: 모두 보기 · 다중 보기 under the photos, 3D the icon above them (보기 menu: Ctrl+1~3)
 TABS = (("all", "모두 보기", "Ctrl+1"), ("multi", "다중 보기", "Ctrl+2"), ("3d", "3D", "Ctrl+3"))
 # views no longer shown (검토 · 2D 보기 · 비교): whatever led there stays on 모두 보기, whose big
 # photo is the 2D view with all its tools
@@ -264,6 +264,19 @@ class MainWindow(QMainWindow):
         a.setCheckable(checkable)
         a.triggered.connect(lambda checked=False, k=key: self._on_action(k, checked if a.isCheckable() else None))
         return a
+
+    def _top_button(self, icon: str, label: str, tip: str) -> QToolButton:
+        """An icon button of the row above the photos (3D · Montage · Glaucoma)."""
+        b = QToolButton()
+        b.setObjectName("viewBarButton")
+        b.setIcon(icon_for(icon))
+        b.setIconSize(QSize(20, 20))
+        b.setText(label)
+        b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        b.setAutoRaise(True)
+        b.setCursor(Qt.CursorShape.PointingHandCursor)
+        b.setToolTip(tip)
+        return b
 
     def _make_actions(self) -> None:
         self.acts: dict[str, QAction] = {}
@@ -504,13 +517,18 @@ class MainWindow(QMainWindow):
         self.btn_multi.setToolTip("고른 사진을 다중 보기에 모아 보고, 칸을 눌러 그 사진만 보정합니다\n"
                                   "(사진 클릭 = 고르기 · 다시 클릭 = 빼기 · 더블클릭 = 2D로 크게)")
         self.btn_multi.clicked.connect(self.open_picks)
-        self.btn_montage = QPushButton("몽타주")
-        self.btn_montage.setToolTip("고른 사진(2장 이상, 같은 눈)을 자동·수동으로 맞춰 한 장으로 합칩니다 —\n"
-                                    "반투명 겹치기 · 기준점 맞추기 · 3D 안구에서 보기")
+        # 3D · Montage · Glaucoma: icon buttons in the row above the photos (see view_bar below)
+        self.btn_3d = self._top_button("eye3d", "3D", keys("광각 사진을 3D 안구 모형으로 보기 (Ctrl+3)\n"
+                                                           "다시 누르면 모두 보기"))
+        self.btn_3d.setCheckable(True)
+        self.btn_3d.clicked.connect(lambda: self._on_action("view3d"))
+        self.btn_montage = self._top_button("montage", "Montage",
+                                            "몽타주 — 고른 사진(2장 이상, 같은 눈)을 자동·수동으로 맞춰 한 장으로 합칩니다\n"
+                                            "반투명 겹치기 · 기준점 맞추기 · 3D 안구에서 보기")
         self.btn_montage.clicked.connect(lambda: self.open_montage())
-        self.btn_glaucoma = QPushButton("녹내장")
-        self.btn_glaucoma.setToolTip(keys("녹내장 분석 — 보고 있는 사진의 디스크 C/D · 광각 RNFL 분석,\n"
-                                          "두 번째 사진을 Ctrl+클릭(②)하면 스테레오 보기 · 경과 비교"))
+        self.btn_glaucoma = self._top_button("glaucoma", "Glaucoma",
+                                             keys("녹내장 분석 — 보고 있는 사진의 디스크 C/D · 광각 RNFL 분석,\n"
+                                                  "두 번째 사진을 Ctrl+클릭(②)하면 스테레오 보기 · 경과 비교"))
         self.btn_glaucoma.clicked.connect(lambda: self.open_glaucoma())
         self.thumbs = QListWidget()
         self.thumbs.setViewMode(QListWidget.ViewMode.IconMode)
@@ -610,17 +628,33 @@ class MainWindow(QMainWindow):
         self.tabs.tabBar().tabBarClicked.connect(
             lambda i: i != self.tabs.currentIndex() and self._tab_fade.snap())
         self.tabs.currentChanged.connect(self._on_tab)
+        # the row above the photos: 화면 분할 (다중 보기 only), then 3D · Montage · Glaucoma
+        self.view_bar = QWidget()
+        self.view_bar.setObjectName("viewBar")
+        vbar = QHBoxLayout(self.view_bar)
+        vbar.setContentsMargins(4, 0, 4, 0)
+        vbar.setSpacing(4)
+        self.multi_bar = self.multi.take_topbar()
+        self.multi_bar.hide()                # shown on the 다중 보기 tab (_on_tab)
+        vbar.addWidget(self.multi_bar)
+        vbar.addSpacing(6)
+        for b in (self.btn_3d, self.btn_montage, self.btn_glaucoma):
+            vbar.addWidget(b)
+        vbar.addStretch(1)
+        cl.addWidget(self.view_bar)
         cl.addWidget(self.tabs, 1)
-        # 화면 아래 한 줄: 보기 전환(모두 보기 · 다중 보기 · 3D), 멀티 · 몽타주 · 녹내장, 그리고 사진 목록
+        # 화면 아래 한 줄: 보기 전환(모두 보기 · 다중 보기), 멀티, 그리고 사진 목록 — 3D는 위 줄의 아이콘
         self.lbl_picks.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.view_buttons = {}
         for key, label, shortcut in TABS:
+            if key == "3d":
+                self.view_buttons[key] = self.btn_3d
+                continue
             vb = QPushButton(label)
             vb.setToolTip(keys(f"{label} ({shortcut})"))
             vb.clicked.connect(lambda _=False, k=key: self._go(k))
             self.view_buttons[key] = vb
-        self.view_buttons["all"].setChecked(True)
-        self.seg_views = Segmented(list(self.view_buttons.values()), on_card=False)
+        self.seg_views = Segmented([self.view_buttons[k] for k in ("all", "multi")], on_card=False)
         self.seg_views.setFixedWidth(258)
         self.view_buttons["all"].setChecked(True)
         strip = QHBoxLayout()
@@ -630,9 +664,8 @@ class MainWindow(QMainWindow):
         side.setHorizontalSpacing(6)
         side.setVerticalSpacing(4)
         side.addWidget(self.seg_views, 0, 0, 1, 3)
-        for c, w in enumerate((self.btn_multi, self.btn_montage, self.btn_glaucoma)):
-            w.setStyleSheet("padding: 4px 6px;")
-            side.addWidget(w, 1, c)
+        self.btn_multi.setStyleSheet("padding: 4px 6px;")
+        side.addWidget(self.btn_multi, 1, 0, 1, 3)
         self.btn_clear_picks.setStyleSheet("padding: 2px 4px;")
         picks = QHBoxLayout()
         picks.setSpacing(6)
@@ -1179,7 +1212,7 @@ class MainWindow(QMainWindow):
             "큰 사진 + 오른쪽에 황반과 시신경 유두를 확대해 보여 줍니다 (큰 사진 위 점선 틀이 그 자리)<br>"
             "칸 제목이나 칸을 더블클릭하면 큰 사진을 그 쪽으로 확대 · 큰 사진 더블클릭: 전체<br>"
             "잘못 찾았으면 큰 사진에서 오른쪽 클릭 → 황반 / 시신경 유두로 지정<br>"
-            "화면 아래 줄의 [모두 보기 | 다중 보기 | 3D] 로 보기를 바꿉니다<br><br>"
+            "화면 아래 줄의 [모두 보기 | 다중 보기] 로 보기를 바꿉니다 · 사진 위 줄: [3D] · [Montage] · [Glaucoma]<br><br>"
             "<b>사진 목록 · 멀티</b><br>"
             "최신 사진부터, 사진마다 왼쪽 위에 눈(OD 파랑 · OS 주황) · ▤ 버튼: 1·2·3줄<br>"
             "클릭: 멀티로 고르기(번호, 다시 클릭하면 빼기) · 더블클릭: 그 사진을 크게<br>"
@@ -3196,8 +3229,13 @@ class MainWindow(QMainWindow):
         vb = getattr(self, "view_buttons", {}).get(key)
         if vb is not None and not vb.isChecked():
             vb.setChecked(True)
+        self.btn_3d.setChecked(key == "3d")
+        if key == "3d":
+            self.seg_views.clear()            # 3D is the icon at the top, not a segment under the photos
         # 검토 has its own timeline: the photo strip and its filters are for the other tabs
         self.strip_w.setVisible(key != "review")
+        self.view_bar.setVisible(key != "review")
+        self.multi_bar.setVisible(key == "multi")
         for w in (self.f_date, self.f_eye, self.f_mod):
             w.setVisible(key != "review")
         self._fit_banner()
@@ -3611,7 +3649,7 @@ class MainWindow(QMainWindow):
         """``(sources, "")`` for the photos ``ids``, or ``(None, why not)``."""
         if len(ids) < 2:
             return None, ("사진을 두 장 이상 고르세요.\n\n아래 사진 목록에서 같은 눈의 사진을 차례로 클릭해 번호를 "
-                          "붙인 뒤 [몽타주]를 누르세요.")
+                          "붙인 뒤 사진 위 줄의 [Montage]를 누르세요.")
         rows = [self.db.get_image(i) for i in ids]
         if any(r is None for r in rows):
             return None, "몽타주에 쓰인 사진 가운데 목록에서 지워진 것이 있습니다."
