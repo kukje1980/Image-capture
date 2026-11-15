@@ -1139,12 +1139,11 @@ class MainWindow(QMainWindow):
     def _show_help(self) -> None:
         QMessageBox.information(self, "마우스·단축키", keys(
             "<b>사진 보기</b><br>"
-            "위/아래 드래그: 확대·축소 (위로 끌면 확대, 아래로 끌면 축소, 누른 곳 중심)<br>"
-            "휠: 커서 위치 확대·축소 · 오른쪽 버튼 드래그: 어떤 도구에서든 확대·축소<br>"
+            "마우스 확대·축소는 휠로만: 커서 위치를 중심으로 (Mac 트랙패드는 두 손가락 벌리기·오므리기)<br>"
+            "왼쪽 드래그: 사진 이동 (길이·각도 같은 도구를 쓰는 중에는 가운데 버튼 드래그)<br>"
             "+/−: 확대·축소 · 0: 화면 맞춤 · 1: 100%<br>"
             "확대하면 오른쪽 위 미니맵에 전체 사진과 보이는 곳이 나옵니다 — 눌러서 이동<br>"
             "화면 맞춤 ▾ 또는 아래쪽 [배율]: 400·800%, 후극부·위/아래/코/귀쪽 주변부로 바로 확대<br>"
-            "확대된 사진은 왼쪽 드래그로 이동 · 가운데 버튼 드래그: 이동<br>"
             "더블클릭: 돋보기 켜기·끄기 (마우스를 따라다님, Esc로도 끔)<br>"
             "오른쪽 클릭: 메뉴 (시신경 유두 · 황반 위치 지정, 돋보기 배율, 미니맵)<br><br>"
             "<b>3D 안구</b><br>"
@@ -3249,7 +3248,7 @@ class MainWindow(QMainWindow):
             v.set_navigator(False)
             v.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)   # a small pane:
             v.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)     # move by dragging
-            v.setToolTip(f"{what} 확대 — 위/아래 드래그·휠: 배율 · 가운데 버튼 드래그: 이동 · "
+            v.setToolTip(f"{what} 확대 — 휠: 배율 · 드래그: 이동 · "
                          f"더블클릭: 큰 사진을 {what} 쪽으로 확대\n"
                          "잘못 찾았으면 큰 사진에서 오른쪽 클릭 → 황반 / 시신경 유두로 지정")
             v.zoomChanged.connect(lambda _: self._ov_sync_roi())

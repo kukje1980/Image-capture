@@ -4,8 +4,8 @@ Cells show the photos picked in the thumbnail strip (plain click, in pick order)
 nothing picked, consecutive photos of the current patient starting at the shown one
 (down-scaled for speed). Click a cell to select it: the info panel, the other tabs and the
 image-processing toolbar follow, and with picked photos the processing applies to that photo
-only. Double-click opens it in the 2D tab. Each cell can be zoomed (drag up/down, wheel) and
-panned on its own.
+only. Double-click opens it in the 2D tab. Each cell can be zoomed (wheel) and panned (drag)
+on its own.
 
 ``compact=True`` (모두 보기의 작은 화면): no layout row, always 4 photos (2 × 2).
 """
@@ -60,7 +60,7 @@ class MultiView(QWidget):
         self.mode_label = QLabel("")
         self.mode_label.setStyleSheet(f"color:{theme.YELLOW}; font-weight:600; padding-left:6px")
         top.addWidget(self.mode_label)
-        hint = QLabel("위/아래 드래그: 확대·축소 · 클릭: 선택 · 더블클릭: 2D로 열기")
+        hint = QLabel("휠: 확대·축소 · 드래그: 이동 · 클릭: 선택 · 더블클릭: 2D로 열기")
         hint.setStyleSheet(f"color:{theme.TEXT3}")
         top.addWidget(hint, 1)
         self.grid = QGridLayout()

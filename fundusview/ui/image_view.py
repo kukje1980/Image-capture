@@ -1,19 +1,14 @@
 """2D image viewer with VK-2 style tools.
 
 Mouse
-  * **drag up/down — zoom** (anchored where the drag started): the left button
-    does it by default (확대/축소 is the starting tool, in every view), the right
-    button does it with any tool (a right click without dragging opens the menu).
-    A click without dragging leaves the zoom alone.
-  * **zoomed in, the left button moves the photo** (확대/축소 tool): once part of
-    the photo is outside the view a left drag pans it (the wheel or a right drag
-    zooms further, 0 fits it back).
+  * **only the wheel zooms** (at the cursor; a Mac trackpad pinch the same) — no
+    drag changes the zoom.
+  * **a left drag moves the photo** (확대/축소, the starting tool in every view, and
+    이동); the middle button moves it with any tool. A right click opens the menu.
   * **a double click turns the loupe on** (확대/축소 · 이동 tools, views with
     ``dblclick_loupe``: the 2D view, 비교): it follows the mouse — through drags and
     zooms too — until the next double click or Esc. Elsewhere a double click fits.
-  * wheel — zoom at the cursor; middle-drag — pan; 0 — fit.
-  * left button depends on the active tool: 확대/축소 (default, above), 이동
-    (pan), 돋보기 (hold for a loupe; wheel while holding changes its power),
+  * left button depends on the active tool: 확대/축소 · 이동 (default, above), 돋보기 (hold for a loupe; wheel while holding changes its power),
     길이 / 각도 / C/D 비 (길이·면적) measurements, 글자 / 화살표+글자
     annotations, 회색조 분석 (hold: grey-level profile of the row under the
     cursor).
@@ -53,9 +48,8 @@ TOOLS = {
     "profile": "회색조 분석",
 }
 TOOL_HINTS = {
-    "pan": "드래그: 이동 · 휠/오른쪽 드래그: 확대·축소 · 더블클릭: 돋보기 켜기·끄기 · 0: 화면 맞춤",
-    "zoom": "위로 드래그: 확대 · 아래로 드래그: 축소 (누른 곳 중심) · 확대된 상태에서 드래그: 이동 · "
-            "더블클릭: 돋보기 켜기·끄기 · 휠/오른쪽 드래그: 확대·축소 · 0: 화면 맞춤",
+    "pan": "드래그: 이동 · 휠: 확대·축소 · 더블클릭: 돋보기 켜기·끄기 · 0: 화면 맞춤",
+    "zoom": "휠: 확대·축소 (커서 위치 중심) · 드래그: 이동 · 더블클릭: 돋보기 켜기·끄기 · 0: 화면 맞춤",
     "loupe": "누르고 있는 동안 돋보기 · 누른 채 휠: 배율",
     "length": "드래그해서 길이 측정 (px · 망막 각도 · mm)",
     "angle": "세 점 클릭 (가운데 점이 꼭짓점)",
@@ -209,7 +203,7 @@ class ImageView(QGraphicsView):
         self.geometry: measure.Geometry | None = None
         # view state
         self._zoom, self._rot, self._fh, self._fv, self._fit = 1.0, 0, False, False, True
-        # tools (plain left drag zooms until another tool is picked)
+        # tools (a plain left drag moves the photo until another tool is picked; the wheel zooms)
         self.tool = "zoom"
         self._drag: dict | None = None
         self._annots: list[list[QGraphicsItem]] = []   # one entry per finished annotation
@@ -299,7 +293,6 @@ class ImageView(QGraphicsView):
             self._disc.setVisible(False)
             self._fovea.setVisible(False)
             self._update_navigator()
-            self._restore_cursor()
             self._loupe.hide()
             return
         self._pix.setPixmap(to_pixmap(rgb))
@@ -390,8 +383,7 @@ class ImageView(QGraphicsView):
         for lab in self._labels:  # keep text upright and unmirrored
             lab.setTransform(inv)
         self._update_navigator()
-        if self._drag is None:    # 확대/축소: the hand once zoomed in (a left drag moves the photo then)
-            self._restore_cursor()
+        if self._drag is None:
             self._refresh_loupe()
 
     # -- mini-map -------------------------------------------------------------------
@@ -609,8 +601,6 @@ class ImageView(QGraphicsView):
         if self._fit:
             self.fit()
         self._update_navigator()
-        if self._drag is None:
-            self._restore_cursor()                    # a larger window may show the whole photo again
 
     # =====================================================================
     # tools
@@ -621,17 +611,10 @@ class ImageView(QGraphicsView):
         self.tool = tool if tool in TOOLS else "zoom"
         self._restore_cursor()
 
-    def _left_pans(self) -> bool:
-        """A left drag moves the photo: the 이동 tool, or 확대/축소 while zoomed in."""
-        return self.tool == "pan" or (self.tool == "zoom" and self.zoomed_in())
-
     def _restore_cursor(self) -> None:
-        cursors = {"pan": Qt.CursorShape.OpenHandCursor, "zoom": Qt.CursorShape.SizeVerCursor,
+        cursors = {"pan": Qt.CursorShape.OpenHandCursor, "zoom": Qt.CursorShape.OpenHandCursor,
                    "loupe": Qt.CursorShape.CrossCursor, "text": Qt.CursorShape.IBeamCursor}
-        shape = (Qt.CursorShape.OpenHandCursor if self._left_pans()
-                 else cursors.get(self.tool, Qt.CursorShape.CrossCursor))
-        if self.viewport().cursor().shape() != shape:
-            self.viewport().setCursor(shape)
+        self.viewport().setCursor(cursors.get(self.tool, Qt.CursorShape.CrossCursor))
 
     def _pen(self, color: QColor = YELLOW) -> QPen:
         pen = QPen(color, max(2.0, self._side / 700))
@@ -823,7 +806,7 @@ class ImageView(QGraphicsView):
         self._vel.reset()
         self._vel.add(pos.x(), pos.y())
         if btn == Qt.MouseButton.RightButton:
-            self._drag = {"kind": "rzoom", "start": pos, "z0": self._zoom, "moved": False}
+            self._drag = {"kind": "menu", "start": pos, "moved": False}   # the menu, unless it is dragged
             return
         if btn == Qt.MouseButton.MiddleButton:
             self._drag = {"kind": "pan", "last": pos}
@@ -834,11 +817,9 @@ class ImageView(QGraphicsView):
         self.clicked.emit()
         sp = self.mapToScene(pos)
         t = self.tool
-        if self._left_pans():                         # 이동 — or 확대/축소 with the photo zoomed in
+        if t in ("pan", "zoom"):                      # 확대/축소 · 이동: a drag moves the photo (the wheel zooms)
             self._drag = {"kind": "pan", "last": pos}
             self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
-        elif t == "zoom":
-            self._drag = {"kind": "zoom", "start": pos, "z0": self._zoom, "moved": False}
         elif t == "loupe":
             self._drag = {"kind": "loupe"}
             self._show_loupe(pos)
@@ -873,12 +854,9 @@ class ImageView(QGraphicsView):
                 self._rubber.setLine(QLineF(self._pts[-1], sp))
             return super().mouseMoveEvent(e)
         kind = d["kind"]
-        if kind in ("rzoom", "zoom"):
-            dy = pos.y() - d["start"].y()
-            if abs(dy) > 3:
+        if kind == "menu":
+            if (pos - d["start"]).manhattanLength() > 3:
                 d["moved"] = True
-            if d["moved"]:
-                self._zoom_at(d["z0"] * math.exp(-dy / 150.0), d["start"])
         elif kind == "pan":
             delta = pos - d["last"]
             d["last"] = pos
@@ -901,13 +879,12 @@ class ImageView(QGraphicsView):
         if d and d["kind"] == "pan":
             self._fling_rest = [0.0, 0.0]
             self._fling.start(*self._vel.get())       # let go while moving: it slides on and settles
-        if d:
-            self._restore_cursor()                    # a zoom drag may have zoomed in: the hand now
+            self._restore_cursor()
         if d is None:
             return super().mouseReleaseEvent(e)
         kind = d["kind"]
         sp = self.mapToScene(pos)
-        if kind == "rzoom" and not d["moved"]:
+        if kind == "menu" and not d["moved"]:
             self._context_menu(e.globalPosition().toPoint(), sp)
         elif kind == "loupe":
             self._loupe.hide()
