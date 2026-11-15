@@ -1,17 +1,19 @@
 """Multi-image view (VK-2 "Multiple Images": 1 / 2 / 4 / 6 / 9 / 16 on screen).
 
-Cells show the photos picked in the thumbnail strip (plain click, in pick order) — or, with
-nothing picked, consecutive photos of the current patient starting at the shown one
-(down-scaled for speed). Click a cell to select it: the info panel, the other tabs and the
+Cells show the photos picked in the thumbnail strip (plain click, in pick order; a patient
+opens with its newest OD and OS photo picked) and the layout follows the number picked — or,
+with nothing picked, consecutive photos of the current patient starting at the shown one
+(down-scaled for speed). Once the photos picked were all clicked away a hint takes the cells'
+place. Click a cell to select it: the info panel, the other tabs and the
 image-processing toolbar follow, and with picked photos the processing applies to that photo
-only. Double-click opens it in the 2D tab. Each cell can be zoomed (drag up/down, wheel) and
-panned on its own.
+only. Double-click opens it in the 2D tab. Each cell can be zoomed (wheel) and panned (drag)
+on its own.
 
 ``compact=True`` (모두 보기의 작은 화면): no layout row, always 4 photos (2 × 2).
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from . import theme
@@ -37,6 +39,7 @@ class _Cell(QFrame):
         self.select(False)
 
     def select(self, on: bool) -> None:
+        self.selected = on
         self.setStyleSheet("QFrame { border: 2px solid %s; }" % (theme.ACCENT if on else theme.CARD))
 
 
@@ -57,18 +60,22 @@ class MultiView(QWidget):
         self.combo.setCurrentIndex(2)
         self.combo.currentIndexChanged.connect(lambda _: self.layoutChanged.emit(self.count))
         top.addWidget(self.combo)
-        self.mode_label = QLabel("")
-        self.mode_label.setStyleSheet(f"color:{theme.YELLOW}; font-weight:600; padding-left:6px")
-        top.addWidget(self.mode_label)
-        hint = QLabel("위/아래 드래그: 확대·축소 · 클릭: 선택 · 더블클릭: 2D로 열기")
-        hint.setStyleSheet(f"color:{theme.TEXT3}")
-        top.addWidget(hint, 1)
+        self.mode_text = ""                  # '고른 사진 3장' — shown in the combo's tooltip
+        self._tip()
         self.grid = QGridLayout()
         self.grid.setSpacing(3)
+        # nothing picked any more: what to do, where the cells were
+        self.empty = QLabel("")
+        self.empty.setObjectName("multiEmpty")
+        self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty.setWordWrap(True)
+        self.empty.setStyleSheet(f"color:{theme.TEXT3}; font-size:15px; padding:24px")
+        self.empty.hide()
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self.topbar)
         lay.addLayout(self.grid, 1)
+        lay.addWidget(self.empty, 1)
         if compact:
             self.grid.setSpacing(2)
             self.topbar.hide()
@@ -78,13 +85,28 @@ class MultiView(QWidget):
     def count(self) -> int:
         return int(self.combo.currentData())
 
-    def set_count(self, n: int) -> None:
+    def set_count(self, n: int, quiet: bool = False) -> None:
+        """``quiet``: no ``layoutChanged`` (the caller fills the cells itself)."""
         i = self.combo.findData(n)
-        if i >= 0:
+        if i < 0:
+            return
+        was = self.combo.blockSignals(quiet or self.combo.signalsBlocked())
+        try:
             self.combo.setCurrentIndex(i)
+        finally:
+            self.combo.blockSignals(was)
 
-    def populate(self, items, current_id: int | None) -> None:
-        """``items`` = list of ``(image_id, label, rgb)`` (already processed)."""
+    @staticmethod
+    def fit(n: int) -> int:
+        """The smallest layout that holds ``n`` photos (3 → 4 · 5 → 6 · 7 → 9 …, at most 16)."""
+        return next((k for k in LAYOUTS if k >= n), max(LAYOUTS))
+
+    def populate(self, items, current_id: int | None, empty: str = "") -> None:
+        """``items`` = list of ``(image_id, label, rgb)`` (already processed). With no items and
+        an ``empty`` text, that text is shown instead of the cells."""
+        hint = not items and bool(empty)
+        self.empty.setText(empty if hint else "")
+        self.empty.setVisible(hint)
         rows, cols = LAYOUTS[self.count]
         while len(self.cells) < rows * cols:
             cell = _Cell()
@@ -97,7 +119,7 @@ class MultiView(QWidget):
         for i in range(rows * cols):
             cell = self.cells[i]
             self.grid.addWidget(cell, i // cols, i % cols)
-            cell.show()
+            cell.setVisible(not hint)
             if i < len(items):
                 iid, label, rgb = items[i]
                 cell.image_id = iid
@@ -114,9 +136,21 @@ class MultiView(QWidget):
         for c in range(4):
             self.grid.setColumnStretch(c, 1 if c < cols else 0)
 
+    def take_topbar(self) -> QWidget:
+        """The 화면 분할 row, out of this view — the main window shows it in its own top row,
+        next to the 3D · Montage · Glaucoma buttons."""
+        self.layout().removeWidget(self.topbar)
+        self.topbar.layout().setContentsMargins(0, 0, 0, 0)
+        return self.topbar
+
     def set_mode_text(self, text: str) -> None:
         """'고른 사진 3장' (picked photos) or '' (consecutive photos from the shown one)."""
-        self.mode_label.setText(text)
+        self.mode_text = text
+        self._tip()
+
+    def _tip(self) -> None:
+        tip = "화면 분할 — 휠: 확대·축소 · 드래그: 이동 · 클릭: 선택 · 더블클릭: 크게 보기"
+        self.combo.setToolTip(f"{self.mode_text}\n{tip}" if self.mode_text else tip)
 
     def update_cell(self, image_id: int, rgb) -> bool:
         """Show new pixels for one photo, keeping that cell's zoom and position."""

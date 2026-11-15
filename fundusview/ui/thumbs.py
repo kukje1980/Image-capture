@@ -3,12 +3,17 @@
 VK-2 lists the photos newest first and shows which eye each one is. Here every thumbnail gets
 a coloured eye badge in its top-left corner (OD blue · OS orange · OU purple · 미상 grey), and
 the photos picked for the multi view (plain click) get a yellow frame with their pick number.
+
+``ThumbStrip`` lays the photos out by eye: OD photos in the top row, OS photos in the row under
+it, and anything else (OU) in a third row only when there is any; the rows scroll sideways
+together. Or all of them in one line. (The main window leaves 미상 photos out of the list.)
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QRect, QRectF, QSize, Qt
+from PySide6.QtCore import QPoint, QRect, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPen, QPixmap, QPixmapCache
-from PySide6.QtWidgets import QApplication, QStyle, QStyledItemDelegate, QStyleOptionViewItem
+from PySide6.QtWidgets import (QAbstractItemView, QApplication, QListWidget, QStyle, QStyledItemDelegate,
+                               QStyleOptionViewItem)
 
 EYE_ROLE = Qt.ItemDataRole.UserRole + 2     # laterality of the photo ("OD" / "OS" / "OU" / "")
 PICK_ROLE = Qt.ItemDataRole.UserRole + 3    # pick order for the multi view (0 = not picked)
@@ -16,6 +21,11 @@ PICK_ROLE = Qt.ItemDataRole.UserRole + 3    # pick order for the multi view (0 =
 PICK_COLOR = "#facc15"
 _EYES = {"OD": ("OD", "#5aa9ff", "#04192f"), "OS": ("OS", "#f5a524", "#2a1700"),
          "OU": ("OU", "#b18cff", "#1b0f3a")}
+
+
+def eye_row(laterality: str | None) -> int:
+    """The row of a photo in the strip by eye: OD 0 (top), OS 1 (under it), OU / 미상 2."""
+    return {"OD": 0, "OS": 1}.get(laterality or "", 2)
 
 
 def eye_badge(laterality: str | None) -> tuple[str, str, str]:
@@ -108,3 +118,75 @@ class ThumbDelegate(QStyledItemDelegate):
             painter.setPen(QColor("#111827"))
             painter.drawText(dot, Qt.AlignmentFlag.AlignCenter, str(rank))
         painter.restore()
+
+
+class ThumbStrip(QListWidget):
+    """The photo list under the views: by eye (OD row on top, OS row under it, any other in a
+    third row when there is one) or all photos in one line.
+
+    One list keeps one order for 이전 / 다음, the n/N on the photo and the multi view: the caller
+    adds the photos OD first, then OS, then the rest, so reading the rows left to right, top to
+    bottom is that order. Qt lays the items out in one line and ``doItemsLayout`` then moves each
+    to its eye's row (``setPositionForIndex`` needs a non-static movement; dragging stays off).
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setViewMode(QListWidget.ViewMode.IconMode)
+        self.setFlow(QListWidget.Flow.LeftToRight)
+        self.setWrapping(False)
+        self.setMovement(QListWidget.Movement.Static)
+        self._by_eye = False
+        self._slots: list[tuple[int, int]] = []     # (row, column) of every item, by eye
+        self._shape = (1, 0)                         # rows and columns of the by-eye grid
+
+    def set_by_eye(self, on: bool) -> None:
+        self._by_eye = bool(on)
+        self.setMovement(QListWidget.Movement.Free if on else QListWidget.Movement.Static)
+        self.setDragEnabled(False)                   # (setMovement switches dragging on)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.NoDragDrop)
+        self.viewport().setAcceptDrops(False)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.doItemsLayout()
+
+    def grid_shape(self) -> tuple[int, int]:
+        """(rows, columns) the photos take: by eye one row per eye present, else one line."""
+        return self._eye_slots()[1] if self._by_eye else (1, self.count())
+
+    def _eye_slots(self) -> tuple[list[tuple[int, int]], tuple[int, int]]:
+        eyes = [eye_row(self.item(i).data(EYE_ROLE)) for i in range(self.count())]
+        line = {e: k for k, e in enumerate(sorted(set(eyes)))}     # no OD photo: OS is the top row
+        cols = [0] * max(1, len(line))
+        slots = []
+        for e in eyes:
+            k = line[e]
+            slots.append((k, cols[k]))
+            cols[k] += 1
+        return slots, (max(1, len(line)), max(cols))
+
+    def doItemsLayout(self) -> None:
+        if self._by_eye:
+            self._slots, self._shape = self._eye_slots()
+        super().doItemsLayout()
+        if not self._by_eye or not self._slots:
+            return
+        gw, gh = self.gridSize().width(), self.gridSize().height()
+        model = self.model()
+        for i, (row, col) in enumerate(self._slots):
+            index = model.index(i, 0)
+            dx = max(0, (gw - self.rectForIndex(index).width()) // 2)    # centred in its cell, as Qt does
+            self.setPositionForIndex(QPoint(col * gw + dx, row * gh), index)
+        self.updateGeometries()
+
+    def updateGeometries(self) -> None:
+        super().updateGeometries()
+        if not self._by_eye or not self.count():
+            return
+        # Qt still counts the one line it laid out first: the scroll range is that of the eye rows
+        rows, cols = self._shape
+        vp = self.viewport()
+        h = self.horizontalScrollBar()
+        h.setPageStep(vp.width())
+        h.setRange(0, max(0, cols * self.gridSize().width() - vp.width()))
+        self.verticalScrollBar().setRange(0, 0)     # the strip is as high as its rows: the wheel goes sideways

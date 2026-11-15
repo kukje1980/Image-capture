@@ -523,8 +523,8 @@ def test_review_dialog_closed_while_reading(env):
 
 
 def test_the_patient_lists_fill_quickly_with_thousands_of_patients(tmp_path):
-    """Both patient tables size their columns to their contents; measured after every cell that
-    took ten seconds for 300 patients. Now 3000 patients are listed in well under that."""
+    """The patient table sizes its columns to its contents; measured after every cell that took
+    ten seconds for 300 patients. Now 3000 patients are listed (and sorted) in well under that."""
     from PySide6.QtWidgets import QApplication
     from fundusview.ui.main_window import MainWindow
 
@@ -541,16 +541,21 @@ def test_the_patient_lists_fill_quickly_with_thousands_of_patients(tmp_path):
         w.show()
         app.processEvents()
         t0 = time.perf_counter()
-        w.refresh_patients(keep=True)
+        w.refresh_patients()
         app.processEvents()
         took = time.perf_counter() - t0
-        assert w.patients.rowCount() == 3000 and len(w.patient_page.refs()) == 3000
+        pl = w.patient_list
+        assert pl.table.rowCount() == 3000 and len(pl.refs()) == 3000
         assert took < 5.0, f"{took:.1f} s"
-        assert w.patients.columnWidth(0) > 40 and w.patient_page.table.columnWidth(1) > 40   # still sized to fit
-        w.search.setText("김12")
+        assert pl.table.columnWidth(0) > 40 and pl.table.columnWidth(1) > 40   # still sized to fit
+        assert pl.table.item(0, 0).text() == "100000" and pl.table.item(2999, 0).text() == "102999"
         t0 = time.perf_counter()
-        w.refresh_patients()
-        assert w.patients.rowCount() == 100 and time.perf_counter() - t0 < 2.0
+        pl.sort_by(1, ascending=False)
+        assert pl.table.item(0, 1).text() == "김2999" and time.perf_counter() - t0 < 5.0
+        pl.f_name.setText("김12")
+        t0 = time.perf_counter()
+        pl.refresh()
+        assert pl.table.rowCount() == 100 and time.perf_counter() - t0 < 2.0
     finally:
         w.service.shutdown()
         w.close()

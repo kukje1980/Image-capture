@@ -362,6 +362,14 @@ def _draw(name: str, p: QPainter) -> None:
         p.drawEllipse(QPointF(32, 32), 24, 25)
         p.setPen(_pen(QColor(255, 214, 10), 2.5))
         p.drawEllipse(QPointF(32, 33), 16, 18)
+    elif name == "montage":   # three overlapping photos of one eye, put together into one
+        for cx, cy in ((19.0, 38.0), (45.0, 38.0), (32.0, 21.0)):
+            p.setPen(_pen(INK, 2.5))
+            p.setBrush(QBrush(QColor(178, 86, 52, 200)))
+            p.drawEllipse(QPointF(cx, cy), 15, 15)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(QColor(244, 212, 156)))
+        p.drawEllipse(QPointF(32, 34), 4.5, 4.5)
     elif name == "eye3d":
         p.setPen(_pen())
         p.drawEllipse(r.adjusted(2, 2, -2, -2))

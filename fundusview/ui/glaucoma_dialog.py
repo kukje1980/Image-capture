@@ -1,9 +1,10 @@
 """녹내장 분석 — disc C/D, wide-field RNFL, stereo viewing and progression (``glaucoma.py``).
 
-Opened with the [녹내장] button beside the photo list. The photo on screen goes to **디스크 C/D**
-(cut around its optic disc) and **광각 분석** (its disc and fovea, found at import, are already
-marked); with a second photo picked (Ctrl+click, ②) the two go to **스테레오 보기** and
-**경과 비교**, cut around their discs to the same retinal field so that different cameras compare.
+Opened with the [Glaucoma] button above the photos (or [녹내장] in the command toolbar). The
+photo on screen goes to **디스크 C/D** (cut around its optic disc) and **광각 분석** (its disc and
+fovea, found at import, are already marked); with a second photo picked (Ctrl+click, ②) the two
+go to **스테레오 보기** and **경과 비교**, cut around their discs to the same retinal field so
+that different cameras compare.
 What a tab shows can be saved into the patient record as a new photo (the originals stay as they
 are), written to a file or copied.
 """

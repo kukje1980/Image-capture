@@ -52,23 +52,35 @@ def test_overview_is_the_photo_with_its_macula_and_disc(tmp_path, demo_dir, impo
     try:
         w.resize(1500, 950)
         w.show()
-        assert w.page() == "patients" and not w.tabs.isVisible()
+        app.processEvents()
+        assert w.patient_list.isVisible() and w.tabs.isVisible()     # the patient list in front of the photos
         import_and_wait(app, w, [demo_dir])
         w._select_patient_ref(db.find_patient("20260115001")["id"])
-        w.show_page("work")              # (new photos may have brought the workspace up already)
+        w.patient_list.hide()
         app.processEvents()
-        assert w.page() == "work" and w._tab() == "all"
+        assert w._tab() == "all"
 
         # -- the frame: no tab row; the view switch under the photos; patient line in the menu bar --
         assert w.tabs.tabBar().isHidden()
-        assert [b.text() for b in w.view_buttons.values()] == ["모두 보기", "다중 보기", "3D"]
+        # (16장 보기 is in the switch only in the VK-2 way: 설정 → 일반 → 환자를 열면 — test_photo_grid.py)
+        assert [b.text() for b in w.seg_views.buttons if not b.isHidden()] == ["모두 보기", "다중 보기"]
+        assert w.view_buttons["grid"].isHidden() and not w.view_acts["grid"].isVisible()
         assert w.view_buttons["all"].isChecked() and _inside(w.seg_views, w.strip_w) and w.seg_views.isVisible()
+        # 3D · Montage · Glaucoma: icon buttons in the row above the photos (화면 분할 there on 다중 보기 only)
+        top = (w.btn_3d, w.btn_montage, w.btn_glaucoma)
+        assert [b.text() for b in top] == ["3D", "Montage", "Glaucoma"] and w.view_buttons["3d"] is w.btn_3d
+        assert all(_inside(b, w.view_bar) and b.isVisible() and not b.icon().isNull() for b in top)
+        assert w.view_bar.mapTo(w, QPoint(0, 0)).y() + w.view_bar.height() <= w.view2d.mapTo(w, QPoint(0, 0)).y()
+        assert not w.multi_bar.isVisible() and _inside(w.multi.combo, w.view_bar)
         assert w.thumbs.mapTo(w, QPoint(0, 0)).y() > w.view2d.mapTo(w, QPoint(0, 0)).y() + w.view2d.height() - 5
         assert w.menuBar().cornerWidget(Qt.Corner.TopRightCorner) is w.top_w
         assert w.btn_patients.isVisible() and _inside(w.btn_patients, w.top_w)
         assert "김민수" in w.banner.text() and "20260115001" in w.banner.text()
         assert w.toolBarArea(w.tb_cmd) == Qt.ToolBarArea.LeftToolBarArea
-        assert w.thumbs.height() < 130                                   # one low line of photos
+        # low rows of photos, one per eye on the list: OD on top, OS under it
+        from fundusview.ui.thumbs import EYE_ROLE, eye_row
+        eyes = {eye_row(w.thumbs.item(i).data(EYE_ROLE)) for i in range(w.thumbs.count())}
+        assert w.thumbs.grid_shape()[0] == len(eyes) and w.thumbs.height() < len(eyes) * 130
 
         # -- 모두 보기: the big photo, 황반 and 시신경 유두 enlarged; no 다중 · 3D panes --
         assert _inside(w.view2d, w.page_all) and w.view2d.has_image()
@@ -125,9 +137,10 @@ def test_overview_is_the_photo_with_its_macula_and_disc(tmp_path, demo_dir, impo
 
         # -- the view switch: 다중 보기 · 3D · back --
         w.view_buttons["multi"].click()
-        assert w._tab() == "multi" and w.view_buttons["multi"].isChecked()
+        assert w._tab() == "multi" and w.view_buttons["multi"].isChecked() and w.multi_bar.isVisible()
         w.view_buttons["3d"].click()
-        assert w._tab() == "3d" and w.view_buttons["3d"].isChecked()
+        assert w._tab() == "3d" and w.view_buttons["3d"].isChecked() and not w.multi_bar.isVisible()
+        assert w.seg_views.group.checkedButton() is None                 # 3D is not a segment under the photos
         w._on_action("view3d")                                           # the toolbar's 3D again: back
         assert w._tab() == "all" and w.view_buttons["all"].isChecked()
         assert _inside(w.view2d, w.page_all) and roi_d.isVisible()
@@ -158,7 +171,6 @@ def test_a_photo_without_macula_or_disc_says_so(tmp_path, demo_dir, import_and_w
         row = db.images_for_patient(db.find_patient("20260115001")["id"])[0]
         db.update_image(row["id"], disc_x=None, disc_y=None, fovea_x=None, fovea_y=None)
         w._select_patient_ref(row["patient_ref"])
-        w.show_page("work")
         w._go("all")
         w.thumbs.setCurrentRow(0)
         app.processEvents()

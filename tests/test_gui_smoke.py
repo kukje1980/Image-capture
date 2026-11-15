@@ -22,7 +22,7 @@ def test_main_window_imports_and_lists(tmp_path, demo_dir, import_and_wait):
     try:
         w.show()
         import_and_wait(app, w, [demo_dir])
-        assert w.patients.rowCount() == 7  # 6 patients + 미분류
+        assert w.patient_list.table.rowCount() == 7  # 6 patients + 미분류
         ref = db.find_patient("20260115001")["id"]
         w._select_patient_ref(ref)
         assert w.thumbs.count() == 2 and w.current is not None

@@ -164,6 +164,9 @@ QToolBar QToolButton:hover { background: @CARD@; color: @TEXT@; }
 QToolBar QToolButton:pressed { background: @FILL@; }
 QToolBar QToolButton:checked { background: #17365c; color: #7fc0ff; }
 QToolBar QToolButton:disabled { color: @FILL2@; }
+/* the row above the photos: 3D · Montage · Glaucoma */
+QToolButton#viewBarButton { font-weight: 600; padding: 4px 10px 4px 6px; }
+QToolButton#viewBarButton:disabled { color: @TEXT4@; }
 QFrame#sliderPopup { background: @CARD@; border: 1px solid @FILL2@; border-radius: 12px; }
 
 /* -- the main window's own pieces ------------------------------------------------------------ */
@@ -173,6 +176,7 @@ QLabel#measure { background: @CARD@; color: @YELLOW@; padding: 2px 10px; border-
 QWidget#thumbSide { background: transparent; }
 QListWidget#thumbStrip { font-size: 11px; }
 QListWidget#thumbStrip::item { padding: 2px; border-radius: 6px; }
+QWidget#gridBar QToolButton:disabled { color: @TEXT4@; background: transparent; }
 QWidget#leftPane { background: @BG@; border-right: 1px solid @CARD@; }
 
 /* 3D: a slim bar of the main actions over the eye, the settings in cards beside it */
@@ -208,6 +212,13 @@ QLabel#examDate { font-weight: 700; color: @TEXT@; }
 QLabel#examThumb { background: @BLACK@; border-radius: 6px; }
 QLabel#pill { background: @FILL@; color: @TEXT2@; border-radius: 8px; padding: 1px 8px; font-size: 11px;
     font-weight: 600; }
+QDialog#patientWindow { background: @BG@; }
+QTableWidget#patientTable::item, QTableWidget#examTable::item { padding: 4px 6px; }
+QTableWidget#patientTable QHeaderView::section, QTableWidget#examTable QHeaderView::section { padding: 6px 6px; }
+QFrame#photoCell { background: @BLACK@; border: 1px solid @BLACK@; border-radius: 8px; }
+QFrame#photoCell[filled="true"]:hover { border: 1px solid @ACCENT@; }
+QLabel#photoCaption { color: @TEXT2@; font-size: 11px; }
+QLabel#photoPic { background: transparent; color: @TEXT4@; }
 QPushButton#back { background: transparent; color: @ACCENT_HI@; padding: 5px 10px; font-weight: 600; }
 QPushButton#back:hover { background: @CARD@; }
 QPushButton#back:pressed { color: @ACCENT_LO@; }

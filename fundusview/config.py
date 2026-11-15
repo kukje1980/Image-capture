@@ -92,14 +92,26 @@ class Settings:
     # Extra user-defined filename regexes tried before the profile patterns.
     custom_filename_patterns: list[str] = field(default_factory=list)
     last_patient: str = ""
-    # Thumbnail strip: rows of photos above the views (1–3, newest first)
+    # Photo list under the views: 1 = one line; otherwise by eye — OD row on top, OS row under it
+    # (newest first in each; an older 3 means by eye too)
     thumb_rows: int = 2
+    # 환자를 열면 (설정 → 일반): "odos" = 최신 OD | OS 두 장을 다중 보기에 나란히 (처음 설정) ·
+    # "grid" = VK-2 방식 — 사진 16장을 한 화면에 (16장 보기), 골라서 [멀티]로 모아 보기.
+    # Anything else (an older "overview") is the first way.
+    open_view: str = "odos"
     montage_fast: bool = False      # 몽타주 빠르게: the saved picture at most 2400 px instead of 4000
     # Automatic import (autosetup.py): an always-watched inbox folder and
     # detection of the capture software's folders at every start.
     inbox_dir: str = ""
     auto_detect: bool = True
     ignored_auto_folders: list[str] = field(default_factory=list)  # removed by the user: never re-added
+    # Sharing with other computers (share.py, 설정 → 공유): "off" — this computer only; "server" — this
+    # computer holds the database and the photos and answers the others; "client" — the library of
+    # the server at ``server_url`` is shown in place of this computer's own
+    share_mode: str = "off"
+    share_port: int = 8765
+    share_key: str = ""             # 접속 암호 (the server's; on a client: the password of its server)
+    server_url: str = ""            # client: http://<server>:<port>
 
     @property
     def library(self) -> Path:
