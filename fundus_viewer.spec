@@ -8,7 +8,9 @@
 # fallback on PCs without a capable GPU driver).
 # macOS:   dist/FundusViewer.app for the architecture of the building Mac
 # (Apple Silicon = arm64, Intel = x86_64); build_mac.sh signs it ad hoc and
-# packs a .dmg.
+# packs a .dmg. Info.plist's LSMinimumSystemVersion is the newest macOS any
+# bundled library is built for (macos_bundle.py: Qt 6.12 → 14.4), so an older
+# Mac says so instead of starting an app that quits.
 import sys
 from pathlib import Path
 
@@ -56,6 +58,11 @@ exe = EXE(
 coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="FundusViewer")
 
 if MAC:
+    from macos_bundle import minimum_macos, version_text  # noqa: E402
+
+    need = minimum_macos([src for _dest, src, _kind in a.binaries + a.datas])
+    min_macos = version_text(need.version)
+    print(f"FundusViewer.app needs macOS {min_macos}" + (f" ({need.file})" if need.file else ""))
     app = BUNDLE(
         coll,
         name="FundusViewer.app",
@@ -67,7 +74,7 @@ if MAC:
             "CFBundleDisplayName": "안저 사진 뷰어",
             "CFBundleShortVersionString": __version__,
             "CFBundleVersion": __version__,
-            "LSMinimumSystemVersion": "11.0",
+            "LSMinimumSystemVersion": min_macos,
             "NSHighResolutionCapable": True,
             # shown when macOS first asks for access to these folders
             "NSDocumentsFolderUsageDescription":
