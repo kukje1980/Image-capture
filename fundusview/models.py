@@ -26,6 +26,16 @@ MODALITY_LABELS = {
 
 
 @dataclass
+class PatientAssign:
+    """The patient the user gave to photos while importing them (사진 가져오기 → 확인 창):
+    it replaces what the file says, or fills in what the file does not say."""
+    patient_id: str
+    name: str | None = None
+    birth_date: str | None = None   # YYYY-MM-DD
+    sex: str | None = None          # M / F / O
+
+
+@dataclass
 class ExtractedMeta:
     patient_id: str | None = None
     name: str | None = None

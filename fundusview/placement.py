@@ -22,6 +22,7 @@ field centre ``c``. Image up stays superior (plus the roll set by the user).
 from __future__ import annotations
 
 import math
+from functools import lru_cache
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -120,8 +121,7 @@ class Camera:
         dx, dy = (xs - self.cx) / self.r, (self.cy - ys) / self.r
         rho = np.hypot(dx, dy)
         tmax = self.tmax
-        lut = np.array([proj.theta_of_rho(k / 256.0, tmax, self.projection, self.viewpoint, c=self.radial_c)
-                        for k in range(257)])
+        lut = _theta_lut(tmax, self.projection, self.viewpoint, self.radial_c)
         theta = np.interp(np.clip(rho, 0.0, 1.0), np.linspace(0.0, 1.0, 257), lut)
         phi = np.arctan2(dy, dx) - math.radians(self.roll_deg)
         st = np.sin(theta)
@@ -130,6 +130,15 @@ class Camera:
     def with_fov(self, fov_deg: float) -> "Camera":
         return Camera(self.cx, self.cy, self.r, fov_deg, self.fov_type, self.projection, self.viewpoint,
                       self.radial_c, self.roll_deg)
+
+
+@lru_cache(maxsize=64)
+def _theta_lut(tmax: float, projection: str, viewpoint: float, radial_c: float) -> np.ndarray:
+    """Retinal angle at 257 image radii 0 … 1 — the same for every photo of one camera, and 15 000
+    steps of bisection to make, so it is kept."""
+    lut = np.array([proj.theta_of_rho(k / 256.0, tmax, projection, viewpoint, c=radial_c) for k in range(257)])
+    lut.setflags(write=False)
+    return lut
 
 
 @dataclass

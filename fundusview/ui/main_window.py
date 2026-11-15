@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import time
 from collections import OrderedDict
 from datetime import date
 from pathlib import Path
@@ -57,7 +58,7 @@ from .landmarks_view import LandmarkPhoto
 from .slit_scan import SLIT, ScanPhotoView, SlitScanShow, ViewTween
 from .thumbs import EYE_ROLE, PICK_ROLE, ThumbDelegate, eye_badge_html
 from .toolbars import CHECKABLE, COMMANDS, MENUS, PROCESSING, SliderPopup, icon_for
-from .widgets import ElidedLabel, Segmented, Switch, card, segment
+from .widgets import ElidedLabel, Segmented, Switch, card, filling, segment
 from .widgets import row as setting_row
 
 THUMB_TEXT = Qt.ItemDataRole.UserRole + 1    # thumbnail caption without the ② mark
@@ -1250,14 +1251,26 @@ class MainWindow(QMainWindow):
         files, _ = QFileDialog.getOpenFileNames(
             self, "가져올 사진 파일", "", "영상 (*.jpg *.jpeg *.png *.tif *.tiff *.bmp *.dcm);;모든 파일 (*)")
         if files:
-            n = self.service.import_paths(files, force=True)
-            self.lbl_status.setText(f"{n}개 파일 가져오기 대기")
+            self.review_import(files)
 
     def _import_dir(self) -> None:
         d = QFileDialog.getExistingDirectory(self, "가져올 폴더")
         if d:
-            n = self.service.import_paths([d])
-            self.lbl_status.setText(f"{n}개 파일 가져오기 대기")
+            self.review_import([d])
+
+    def review_import(self, paths: list[str]) -> int:
+        """Photos picked by hand (사진 가져오기, 폴더 가져오기, drag & drop): the patient data
+        read from them is shown first (확인 창) — the user confirms it, corrects it, or names
+        the patient of photos that do not say — and then they are imported. Returns the
+        number of photos queued (0: cancelled, or nothing to import)."""
+        from .import_dialog import ImportReviewDialog
+
+        dlg = ImportReviewDialog(self.service, self.db, paths, self, current_ref=self._patient_ref)
+        if dlg.exec() != ImportReviewDialog.DialogCode.Accepted:
+            return 0
+        n = self.service.import_items(dlg.result_items())
+        self.lbl_status.setText(f"{n}개 파일 가져오기 대기" if n else "새로 가져올 사진이 없습니다")
+        return n
 
     def dragEnterEvent(self, e):
         if e.mimeData().hasUrls():
@@ -1265,8 +1278,10 @@ class MainWindow(QMainWindow):
 
     def dropEvent(self, e):
         paths = [u.toLocalFile() for u in e.mimeData().urls() if u.isLocalFile()]
-        n = self.service.import_paths(paths, force=True)
-        self.lbl_status.setText(f"{n}개 파일 가져오기 대기")
+        if paths:
+            e.acceptProposedAction()
+            # after the drop has returned: the file manager must not wait for the dialog
+            QTimer.singleShot(0, lambda: self.review_import(paths))
 
     def _open_settings(self) -> None:
         dlg = SettingsDialog(self.settings, self)
@@ -1310,22 +1325,28 @@ class MainWindow(QMainWindow):
         Call it right before ``service.import_paths``."""
         self._hold_follow, self._hold_release = True, False
 
+    _refresh_cost = 0.0     # seconds the last listing of the patients took (see _on_import_result)
+
     def _on_import_result(self, res: ImportResult) -> None:
         # Coalesce: a first scan can deliver thousands of results.
         self._results.append(res)
         if not self._result_timer.isActive():
-            self._result_timer.start(300)
+            # … and with thousands of patients listing them takes a while: never more than a
+            # fifth of the time goes into showing results, the rest is the user's
+            self._result_timer.start(int(min(5000, max(300, 5000 * self._refresh_cost))))
 
     def _flush_results(self) -> None:
         results, self._results = self._results, []
-        imported = [r for r in results if r.status == "imported"]
+        imported = [r for r in results if r.status in ("imported", "assigned")]
         errors = [r for r in results if r.status == "error"]
         if imported:
             more = f" 외 {len(imported) - 1}건" if len(imported) > 1 else ""
             self.lbl_status.setText(f"새 영상: {imported[-1].message}  ({Path(imported[-1].path).name}){more}")
         elif errors:
             self.lbl_status.setText(f"오류: {Path(errors[-1].path).name} — {errors[-1].message}")
+        t0 = time.perf_counter()
         self.refresh_patients(keep=True)
+        self._refresh_cost = time.perf_counter() - t0
         if self.log.isVisible():
             self._fill_log()
         if not imported:
@@ -1356,25 +1377,22 @@ class MainWindow(QMainWindow):
         sel = self._patient_ref if keep else None
         rows = self.db.list_patients(self.search.text().strip())
         n_un = self.db.count_unassigned()
-        self.patients.blockSignals(True)
-        self.patients.setRowCount(0)
         entries = []
         if n_un:
             entries.append((UNASSIGNED, ["★ 미분류", "환자 ID 없음", "", "", str(n_un), ""]))
         for r in rows:
             entries.append((r["id"], [r["patient_id"], r["name"] or "", r["birth_date"] or "",
                                       SEX_LABEL.get(r["sex"] or "", ""), str(r["n_images"]), r["last_exam"] or ""]))
-        for ref, cols in entries:
-            i = self.patients.rowCount()
-            self.patients.insertRow(i)
-            for j, text in enumerate(cols):
-                it = QTableWidgetItem(text)
-                it.setData(Qt.ItemDataRole.UserRole, ref)
-                if ref == UNASSIGNED:
-                    it.setForeground(QColor(theme.ORANGE))
-                self.patients.setItem(i, j, it)
-        self.patients.resizeColumnToContents(0)
-        self.patients.blockSignals(False)
+        with filling(self.patients):
+            self.patients.setRowCount(0)
+            self.patients.setRowCount(len(entries))
+            for i, (ref, cols) in enumerate(entries):
+                for j, text in enumerate(cols):
+                    it = QTableWidgetItem(text)
+                    it.setData(Qt.ItemDataRole.UserRole, ref)
+                    if ref == UNASSIGNED:
+                        it.setForeground(QColor(theme.ORANGE))
+                    self.patients.setItem(i, j, it)
         if sel is not None:
             self._select_patient_ref(sel, quiet=True)
         self.patient_page.refresh()            # the start screen lists the same patients

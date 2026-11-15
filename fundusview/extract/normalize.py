@@ -23,11 +23,15 @@ def norm_date(s: str | None, *, min_year: int = 1900, max_year: int = 2100) -> s
     if not s:
         return None
     s = str(s).strip()
+    k = re.match(r"^(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일?", s)   # 2024년 3월 5일
     m = re.match(r"^(\d{4})[-./:_ ]?(\d{1,2})[-./:_ ]?(\d{1,2})(?:$|[ T_\-]?\d)", s)
-    if m and (len(s) >= 8 or re.match(r"^\d{4}\D", s)):
+    if k:
+        y, mo, d = (int(g) for g in k.groups())
+    elif m and (len(s) >= 8 or re.match(r"^\d{4}\D", s)):
         y, mo, d = (int(g) for g in m.groups())
     else:
-        m = re.match(r"^(\d{2})(\d{2})(\d{2})$", s)
+        # YYMMDD, and YY.MM.DD / YY-MM-DD as written by hand in Korea
+        m = re.match(r"^(\d{2})(\d{2})(\d{2})$", s) or re.match(r"^(\d{2})[.\-/](\d{1,2})[.\-/](\d{1,2})\.?$", s)
         if not m:
             m2 = re.match(r"^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$", s)  # DD.MM.YYYY
             if not m2:
@@ -133,12 +137,39 @@ _KEYMAP = {
     "description": ("comment", "comments", "description", "memo", "note", "비고", "메모"),
 }
 _KEYLOOKUP = {alias: f for f, aliases in _KEYMAP.items() for alias in aliases}
+# Words that also turn up in text that has nothing to do with a patient ("id=5" in a URL, an
+# XMP packet's ``id``, "Name: Sunset", "Type: screenshot"). In free text inside a picture file
+# (``strict``) they only count when the text reads as a patient record — see parse_key_values.
+_GENERIC_KEYS = frozenset((
+    "id", "pid", "name", "patient", "fullname", "chart", "birth", "date", "time", "side", "lr", "안", "성",
+    "type", "mode", "filter", "model", "device", "camera", "equipment", "comment", "comments",
+    "description", "memo", "note", "lastname", "firstname", "surname", "sex", "gender", "눈", "이름",
+))
+_PATIENT_FIELDS = ("patient_id", "name", "_last", "_first", "birth_date", "sex")
 _KV = re.compile(r"(?P<key>[A-Za-z가-힣][A-Za-z가-힣0-9 _.()/-]{0,30}?)\s*[:=]\s*(?P<val>[^;\n\r|&]*)")
 
 
 def canonical_key(key: str) -> str | None:
     k = re.sub(r"[\s_.\-/]", "", key).lower()
     return _KEYLOOKUP.get(k)
+
+
+def is_generic_key(key: str) -> bool:
+    return re.sub(r"[\s_.\-/]", "", key).lower() in _GENERIC_KEYS
+
+
+def valid_patient_id(value: str | None) -> bool:
+    """A value that can be a chart number: short, one word, no URL / path / sentence."""
+    v = re.sub(r"\s+", "", value or "")
+    return bool(v) and len(v) <= 32 and re.fullmatch(r"[\w\-.#+]+", v) is not None \
+        and v.lower() not in ("none", "null", "unknown", "anonymous", "n/a", "na", "test", "0")
+
+
+def valid_person_name(value: str | None) -> bool:
+    """A value that can be a person's name: no digits-only, no ``key: value`` / URL remains."""
+    v = (value or "").strip()
+    return bool(v) and len(v) <= 40 and not re.search(r"[:=/\\@<>{}\[\]|;]|\d{3}", v) \
+        and re.search(r"[^\W\d_]", v) is not None
 
 
 def apply_field(meta, field: str, value: str, source: str) -> None:
@@ -170,20 +201,36 @@ def apply_field(meta, field: str, value: str, source: str) -> None:
         meta.set(field, value, source)
 
 
-def parse_key_values(text: str, meta, source: str) -> int:
+def parse_key_values(text: str, meta, source: str, *, strict: bool = False) -> int:
     """Pull recognised ``key: value`` / ``key=value`` pairs out of ``text``.
 
     Returns the number of fields filled. Split family/given names are joined.
+
+    ``strict`` is for free text found *inside* a picture file (EXIF, comments, XMP), which is
+    often not about a patient at all: a patient id or name has to look like one, and a common
+    word used as the key ("id", "name" …) only counts when the text reads as a patient record —
+    an unmistakable key (``PatientID``, ``환자번호`` …) or at least two different patient fields.
     """
     if not text:
         return 0
     before = sum(1 for v in meta.sources)
     parts: dict[str, str] = {}
+    pairs = []
     for m in _KV.finditer(text):
         field = canonical_key(m.group("key"))
         if not field:
             continue
-        val = m.group("val").strip()
+        val = m.group("val").strip().strip('"').strip()
+        if strict and ((field == "patient_id" and not valid_patient_id(val))
+                       or (field in ("name", "_last", "_first") and not valid_person_name(val))):
+            continue
+        pairs.append((field, val, is_generic_key(m.group("key"))))
+    if strict:
+        patient = {f for f, v, _ in pairs if f in _PATIENT_FIELDS and v}
+        record = any(f in _PATIENT_FIELDS and not generic for f, _, generic in pairs) or len(patient) >= 2
+        if not record:
+            pairs = [(f, v, g) for f, v, g in pairs if f not in _PATIENT_FIELDS]
+    for field, val, _generic in pairs:
         if field.startswith("_"):
             parts[field] = val
         else:

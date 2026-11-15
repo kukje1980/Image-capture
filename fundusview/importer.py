@@ -14,6 +14,11 @@ For each candidate file:
 
 Files without a patient id are kept as 미분류 (unassigned) for the user to
 assign; nothing is guessed.
+
+Photos picked by hand (사진 가져오기, drag & drop) are first *previewed*
+(:meth:`Importer.preview`: the same extraction, no image analysis) so the user
+sees which patient each one goes to and can name the patient of those that do
+not say (:class:`~fundusview.models.PatientAssign`).
 """
 from __future__ import annotations
 
@@ -23,7 +28,7 @@ import os
 import re
 import shutil
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from PIL import Image
@@ -32,17 +37,57 @@ from . import imaging, placement
 from .config import ACTION_MOVE, ACTION_REFERENCE, Settings, WatchFolder
 from .db import Database
 from .extract import extract_metadata, is_dicom
+from .models import FIELD_LABELS, ExtractedMeta, PatientAssign
 from .profiles import IGNORED_EXTS, IMAGE_EXTS
 from .projection import theta_max
 
 
 @dataclass
 class ImportResult:
-    status: str            # imported / duplicate / skipped / pending / error
+    status: str            # imported / duplicate / assigned (an unassigned duplicate got its patient)
+                           # / skipped / pending / error
     path: str
     message: str = ""
     image_id: int | None = None
     patient_ref: int | None = None
+
+
+# Folder names read for a photo picked by hand (no watched root): …/12345_홍길동/2026-03-01/IMG_1.jpg
+MANUAL_PARENT_LEVELS = 2
+
+
+@dataclass
+class PreviewItem:
+    """What importing ``path`` would do — shown before the import (사진 가져오기 → 확인 창)."""
+    path: str
+    status: str                       # new / duplicate (already in the library) / error
+    meta: ExtractedMeta = field(default_factory=ExtractedMeta)
+    profile_name: str = ""
+    message: str = ""
+    image_id: int | None = None       # duplicate: the photo it already is
+    patient_ref: int | None = None    # duplicate: that photo's patient (None = 미분류)
+    folder: WatchFolder | None = None  # the folder settings it was read with (and is imported with)
+
+
+def apply_assign(meta: ExtractedMeta, assign: PatientAssign | None) -> ExtractedMeta:
+    """The patient the user named wins over what the file says (which is kept in ``raw``)."""
+    if assign is None or not (assign.patient_id or "").strip():
+        return meta
+    other = meta.patient_id not in (None, "", assign.patient_id.strip())
+    for name in ("patient_id", "name", "birth_date", "sex"):
+        value = getattr(assign, name)
+        value = value.strip() if isinstance(value, str) else value
+        have = getattr(meta, name)
+        if value and value != have:
+            if have:
+                meta.raw[f"파일의 {FIELD_LABELS[name]}"] = str(have)
+            setattr(meta, name, value)
+            meta.sources[name] = "user"
+        elif other and not value and have:      # another patient: the file's name / birth date are not theirs
+            meta.raw[f"파일의 {FIELD_LABELS[name]}"] = str(have)
+            setattr(meta, name, None)
+            meta.sources.pop(name, None)
+    return meta
 
 
 def sha256_of(path: Path, chunk: int = 1 << 20) -> str:
@@ -56,9 +101,43 @@ def sha256_of(path: Path, chunk: int = 1 << 20) -> str:
     return h.hexdigest()
 
 
+_WINDOWS_RESERVED = re.compile(r"^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?$", re.IGNORECASE)
+
+
 def safe_component(s: str, fallback: str = "_") -> str:
+    """``s`` as a file / folder name every file system takes: no separators or control
+    characters, no name Windows reserves (a patient id ``CON`` or ``NUL``), at most 80
+    characters — cut in the stem, so a long file name keeps its extension."""
     s = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", s or "").strip(" .")
-    return s[:80] or fallback
+    if len(s) > 80:
+        stem, dot, ext = s.rpartition(".")
+        s = stem[:80 - len(ext) - 1].rstrip(" .") + "." + ext if dot and 0 < len(ext) <= 8 and stem else s[:80]
+        s = s.strip(" .")
+    if _WINDOWS_RESERVED.match(s):
+        s = "_" + s
+    return s or fallback
+
+
+def describe_error(exc: BaseException) -> str:
+    """An import failure in the user's words, the technical message after it."""
+    kind, text = type(exc).__name__, str(exc)
+    if kind == "DecompressionBombError":
+        said = "사진이 너무 큽니다 (4억 화소 초과)"
+    elif kind == "UnidentifiedImageError":
+        said = "사진 파일이 아니거나 손상된 파일입니다"
+    elif "truncated" in text.lower() or "Truncated" in text:
+        said = "끝까지 저장되지 않은 사진입니다 (파일 손상)"
+    elif "pixel data" in text.lower() or "Pixel Data" in text or kind == "InvalidDicomError":
+        said = "DICOM 영상을 읽을 수 없습니다"
+    elif isinstance(exc, PermissionError):
+        said = "파일을 열 권한이 없거나 다른 프로그램이 쓰고 있습니다"
+    elif isinstance(exc, OSError) and getattr(exc, "errno", None) == 28:
+        said = "디스크에 남은 공간이 없습니다"
+    elif isinstance(exc, MemoryError):
+        said = "메모리가 부족합니다"
+    else:
+        return f"{kind}: {text}"
+    return f"{said} — {kind}: {text}"
 
 
 def is_candidate(path: Path) -> bool:
@@ -75,8 +154,13 @@ def is_candidate(path: Path) -> bool:
 
 
 def wait_until_stable(path: Path, seconds: float, timeout: float = 180.0) -> bool:
-    """True once the file stopped changing and can be opened."""
+    """True once the file stopped changing and can be opened.
+
+    A file that stays empty is given up soon (False: tried again when it changes) — a failed
+    copy leaves such files behind, and waiting the whole ``timeout`` for each of them would hold
+    up every photo queued after it."""
     deadline = time.monotonic() + timeout
+    empty_deadline = time.monotonic() + min(max(2 * seconds, 0.3), 3.0)
     last = None
     stable_since = time.monotonic()
     while time.monotonic() < deadline:
@@ -88,7 +172,10 @@ def wait_until_stable(path: Path, seconds: float, timeout: float = 180.0) -> boo
         now = time.monotonic()
         if sig != last:
             last, stable_since = sig, now
-        elif now - stable_since >= seconds and st.st_size > 0:
+        elif st.st_size == 0:
+            if now >= empty_deadline:
+                return False
+        elif now - stable_since >= seconds:
             try:
                 with open(path, "rb") as f:  # still locked by the writer on Windows?
                     f.read(1)
@@ -115,8 +202,43 @@ class Importer:
         except (ValueError, OSError):
             return False
 
+    def _extract(self, path: Path, folder: WatchFolder | None, assign: PatientAssign | None = None):
+        """``(meta, profile)`` of a file: a watched folder gives its profile and root, a photo
+        picked by hand is read with its nearest folder names."""
+        meta, profile = extract_metadata(
+            path, folder.profile if folder else "auto", watch_root=Path(folder.path) if folder else None,
+            custom_patterns=self.settings.custom_filename_patterns,
+            parent_levels=None if folder else MANUAL_PARENT_LEVELS)
+        return apply_assign(meta, assign), profile
+
+    def preview(self, path: Path | str, folder: WatchFolder | None = None) -> PreviewItem:
+        """What :meth:`import_file` would read from ``path`` — nothing is stored."""
+        path = Path(path)
+        spath = str(path)
+        try:
+            if not path.is_file() or not is_candidate(path) or self._in_library(path):
+                return PreviewItem(spath, "error", message="지원하지 않는 파일")
+            st = path.stat()
+            if st.st_size == 0:
+                return PreviewItem(spath, "error", message="빈 파일")
+            image_id = self.db.seen_image(spath, st.st_size, st.st_mtime)
+            dup = self.db.get_image(image_id) if image_id is not None else None
+            if dup is None:
+                dup = self.db.image_by_sha(sha256_of(path))
+            if dup is None and not is_dicom(path):
+                with Image.open(path) as img:        # the header only: is it a picture at all?
+                    img.size
+            meta, profile = self._extract(path, folder)
+            if dup is not None:
+                return PreviewItem(spath, "duplicate", meta, profile.name, "이미 가져온 사진",
+                                   dup["id"], dup["patient_ref"], folder)
+            return PreviewItem(spath, "new", meta, profile.name, folder=folder)
+        except Exception as exc:
+            return PreviewItem(spath, "error", message=describe_error(exc)[:200])
+
     def import_file(self, path: Path | str, folder: WatchFolder | None = None, *,
-                    force: bool = False, wait: bool = True) -> ImportResult:
+                    force: bool = False, wait: bool = True,
+                    assign: PatientAssign | None = None) -> ImportResult:
         path = Path(path)
         spath = str(path)
         if not path.is_file() or not is_candidate(path) or self._in_library(path):
@@ -129,29 +251,32 @@ class Importer:
                 and abs((seen["mtime"] or 0) - st.st_mtime) < 1e-3 and seen["status"] != "error"):
             return ImportResult("skipped", spath, "이미 처리됨", seen["image_id"])
         try:
-            return self._import(path, folder, st)
+            return self._import(path, folder, st, assign)
         except Exception as exc:  # keep the watcher alive on any bad file
-            msg = f"{type(exc).__name__}: {exc}"
+            msg = describe_error(exc)
             self.db.mark_seen(spath, st.st_size, st.st_mtime, "error", None, msg[:500])
             self.db.log("error", f"가져오기 실패 — {msg}", spath)
             return ImportResult("error", spath, msg)
 
-    def _import(self, path: Path, folder: WatchFolder | None, st: os.stat_result) -> ImportResult:
+    def _import(self, path: Path, folder: WatchFolder | None, st: os.stat_result,
+                assign: PatientAssign | None = None) -> ImportResult:
         spath = str(path)
         digest = sha256_of(path)
         dup = self.db.image_by_sha(digest)
         if dup is not None:
-            self.db.mark_seen(spath, st.st_size, st.st_mtime, "duplicate", dup["id"])
-            self.db.log("info", f"중복 파일 — 이미 등록된 영상 #{dup['id']}", spath)
-            return ImportResult("duplicate", spath, "중복", dup["id"], dup["patient_ref"])
+            return self._duplicate(path, folder, st, dup, assign)
 
-        root = Path(folder.path) if folder else None
-        meta, profile = extract_metadata(
-            path, folder.profile if folder else "auto", watch_root=root,
-            custom_patterns=self.settings.custom_filename_patterns)
+        meta, profile = self._extract(path, folder, assign)
 
-        rgb = imaging.load_rgb(path)
-        h, w = rgb.shape[:2]
+        # The photo as the analysis needs it: a large JPEG is decoded reduced (its full size is
+        # ``w`` × ``h``); what is found is scaled back to the photo's own pixels below.
+        needs_display = is_dicom(path) or path.suffix.lower() in (".tif", ".tiff", "")
+        if needs_display:
+            rgb = imaging.load_rgb(path)
+            h, w = rgb.shape[:2]
+        else:
+            rgb, w, h = imaging.load_for_import(path)
+        fx, fy = w / rgb.shape[1], h / rgb.shape[0]
         circle = imaging.detect_circle(rgb)
         tmax_deg = math.degrees(theta_max(meta.fov_deg or profile.fov_deg,
                                           meta.fov_type or profile.fov_type, profile.viewpoint))
@@ -173,34 +298,71 @@ class Importer:
                 fovea = found[:3]
                 if guessed and found[3] != meta.laterality:
                     meta.set("laterality", found[3], "fovea-estimate")
+        if (fx, fy) != (1.0, 1.0):      # back to the photo's own pixels
+            circle = (circle[0] * fx, circle[1] * fy, circle[2] * (fx + fy) / 2)
+            disc = (disc[0] * fx, disc[1] * fy, *disc[2:]) if disc is not None else None
+            fovea = (fovea[0] * fx, fovea[1] * fy, *fovea[2:]) if fovea is not None else None
 
         # -- store the file -------------------------------------------------
         pid_dir = safe_component(meta.patient_id or "", "_미분류")
         date_dir = meta.exam_date or "날짜없음"
         dest_dir = self.library / "images" / pid_dir / date_dir
         action = folder.action if folder else "copy"
-        if action == ACTION_REFERENCE:
-            stored = path
-        else:
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            stored = dest_dir / safe_component(path.name, "image")
-            if stored.exists():
-                stored = dest_dir / f"{stored.stem}_{digest[:8]}{stored.suffix}"
-            if action == ACTION_MOVE:
-                shutil.move(spath, stored)
+        made: list[Path] = []           # files written here: removed again if the import fails
+        try:
+            if action == ACTION_REFERENCE:
+                stored = path
             else:
-                shutil.copy2(spath, stored)
-        display = None
-        if is_dicom(path) or stored.suffix.lower() in (".tif", ".tiff") or stored.suffix == "":
-            display = self.library / "display" / f"{digest[:24]}.png"
-            display.parent.mkdir(parents=True, exist_ok=True)
-            Image.fromarray(rgb).save(display, compress_level=1)
-        thumb = self.library / "thumbs" / f"{digest[:24]}.jpg"
-        thumb.parent.mkdir(parents=True, exist_ok=True)
-        imaging.thumbnail(rgb).save(thumb, quality=88)
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                stored = dest_dir / safe_component(path.name, "image")
+                if stored.exists():
+                    stored = dest_dir / f"{stored.stem}_{digest[:8]}{stored.suffix}"
+                made.append(stored)
+                shutil.copy2(spath, stored)     # a moved file leaves its folder only once it is registered
+            display = None
+            if needs_display:
+                display = self.library / "display" / f"{digest[:24]}.png"
+                display.parent.mkdir(parents=True, exist_ok=True)
+                made.append(display)
+                Image.fromarray(rgb).save(display, compress_level=1)
+            thumb = self.library / "thumbs" / f"{digest[:24]}.jpg"
+            thumb.parent.mkdir(parents=True, exist_ok=True)
+            made.append(thumb)
+            imaging.thumbnail(rgb).save(thumb, quality=88)
 
-        # -- database ---------------------------------------------------------
-        if meta.patient_id and meta.name:
+            # -- database (one commit) ---------------------------------------------
+            with self.db.batch():
+                patient_ref = self._patient_of(meta, spath)
+                meta_dict = meta.as_dict()
+                meta_dict["profile_name"] = profile.name
+                meta_dict["source_file"] = spath
+                image_id = self._insert(meta, profile, meta_dict, patient_ref, stored, display, thumb, spath,
+                                        digest, w, h, circle, disc, fovea)
+                # A moved file no longer exists at its source path; index the source
+                # path anyway so a rescan of a "reference" folder does not re-import.
+                self.db.mark_seen(spath, st.st_size, st.st_mtime, "imported", image_id)
+                who = f"{meta.patient_id} {meta.name or ''}".strip() if meta.patient_id else "미분류"
+                self.db.log("info", f"가져옴 — {who} · {meta.exam_date or '-'} · {meta.laterality or '-'} "
+                                    f"· {profile.name}", spath)
+        except BaseException:
+            for f in made:                      # nothing half-imported stays in the library
+                try:
+                    f.unlink()
+                except OSError:
+                    pass
+            raise
+        if action == ACTION_MOVE:
+            try:
+                os.remove(spath)
+            except OSError as exc:              # still open in the capture software: it stays, already imported
+                self.db.log("warn", f"가져온 뒤 원본을 지우지 못함 — {exc}", spath)
+        return ImportResult("imported", spath, who, image_id, patient_ref)
+
+    def _patient_of(self, meta: ExtractedMeta, spath: str) -> int | None:
+        """The patient row of ``meta`` (made or completed), ``None`` = 미분류."""
+        if not meta.patient_id:
+            return None
+        if meta.name:
             existing = self.db.find_patient(meta.patient_id)
             if existing is not None and existing["name"] and \
                     existing["name"].replace(" ", "").lower() != meta.name.replace(" ", "").lower():
@@ -209,11 +371,34 @@ class Importer:
                 meta.raw["이름 불일치"] = f"파일: {meta.name} / 등록: {existing['name']}"
                 self.db.log("warn", f"환자 ID {meta.patient_id}: 파일의 이름 '{meta.name}' ≠ 등록된 이름 "
                                     f"'{existing['name']}' — 확인 필요", spath)
-        patient_ref = self.db.upsert_patient(meta) if meta.patient_id else None
-        meta_dict = meta.as_dict()
-        meta_dict["profile_name"] = profile.name
-        meta_dict["source_file"] = spath
-        image_id = self.db.insert_image(
+        return self.db.upsert_patient(meta)
+
+    def _duplicate(self, path: Path, folder: WatchFolder | None, st: os.stat_result, dup,
+                   assign: PatientAssign | None) -> ImportResult:
+        """The same photo again. One that lies in 미분류 gets the patient this copy names (the
+        user picked it once more and said whose it is, or it came again with its data)."""
+        spath = str(path)
+        if dup["patient_ref"] is None:
+            try:
+                meta, _profile = self._extract(path, folder, assign)
+            except Exception:
+                meta = apply_assign(ExtractedMeta(), assign)
+            if meta.patient_id:
+                with self.db.batch():
+                    ref = self._patient_of(meta, spath)
+                    self.db.update_image(dup["id"], patient_ref=ref)
+                    self.db.mark_seen(spath, st.st_size, st.st_mtime, "duplicate", dup["id"])
+                    who = f"{meta.patient_id} {meta.name or ''}".strip()
+                    self.db.log("info", f"미분류였던 영상 #{dup['id']} → 환자 {who}", spath)
+                return ImportResult("assigned", spath, who, dup["id"], ref)
+        with self.db.batch():
+            self.db.mark_seen(spath, st.st_size, st.st_mtime, "duplicate", dup["id"])
+            self.db.log("info", f"중복 파일 — 이미 등록된 영상 #{dup['id']}", spath)
+        return ImportResult("duplicate", spath, "중복", dup["id"], dup["patient_ref"])
+
+    def _insert(self, meta, profile, meta_dict, patient_ref, stored, display, thumb, spath, digest, w, h,
+                circle, disc, fovea) -> int:
+        return self.db.insert_image(
             patient_ref=patient_ref, exam_date=meta.exam_date, exam_time=meta.exam_time,
             laterality=meta.laterality, modality=meta.modality, device=meta.device,
             profile=profile.key, fov_deg=meta.fov_deg, fov_type=meta.fov_type,
@@ -225,13 +410,6 @@ class Importer:
             fovea_x=fovea[0] if fovea else None, fovea_y=fovea[1] if fovea else None,
             meta_json=meta_dict,
         )
-        # A moved file no longer exists at its source path; index the source
-        # path anyway so a rescan of a "reference" folder does not re-import.
-        self.db.mark_seen(spath, st.st_size, st.st_mtime, "imported", image_id)
-        who = f"{meta.patient_id} {meta.name or ''}".strip() if meta.patient_id else "미분류"
-        self.db.log("info", f"가져옴 — {who} · {meta.exam_date or '-'} · {meta.laterality or '-'} "
-                            f"· {profile.name}", spath)
-        return ImportResult("imported", spath, who, image_id, patient_ref)
 
     def add_derived(self, row, rgb, note: str = "편집 영상", *, suffix: str = "편집", derived_from=None,
                     **fields) -> int:

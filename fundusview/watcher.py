@@ -29,7 +29,8 @@ from typing import Callable
 
 from .config import Settings, WatchFolder
 from .db import Database
-from .importer import Importer, ImportResult, is_candidate
+from .importer import Importer, ImportResult, PreviewItem, is_candidate
+from .models import PatientAssign
 from .profiles import IMAGE_EXTS
 
 POLL_SECONDS = 10
@@ -97,6 +98,7 @@ class ImportService:
         self._lock = threading.Lock()
         self._known: dict[str, tuple[int, float]] = db.seen_index()
         self._dir_mtime: dict[str, tuple[float, float]] = {}  # dir -> (mtime, listed at)
+        self._empty: dict[str, float] = {}   # files found empty -> mtime: left alone until they change
         self._scan_lock = threading.Lock()
         self._observers: list = []
         self._poll_folders: list[WatchFolder] = []
@@ -107,13 +109,14 @@ class ImportService:
         self._worker.start()
 
     # -- queue ---------------------------------------------------------------
-    def enqueue(self, path: str | Path, folder: WatchFolder | None = None, force: bool = False) -> None:
+    def enqueue(self, path: str | Path, folder: WatchFolder | None = None, force: bool = False,
+                assign: PatientAssign | None = None) -> None:
         p = os.path.normpath(str(path))
         with self._lock:
             if p in self._pending:
                 return
             self._pending.add(p)
-        self._q.put((p, folder, force))
+        self._q.put((p, folder, force, assign))
 
     @property
     def queued(self) -> int:
@@ -123,7 +126,7 @@ class ImportService:
     def _run(self) -> None:
         while not self._stop.is_set():
             try:
-                p, folder, force = self._q.get(timeout=0.5)
+                p, folder, force, assign = self._q.get(timeout=0.5)
             except queue.Empty:
                 continue
             if p is None:
@@ -132,13 +135,15 @@ class ImportService:
                 self._pending.discard(p)
             try:
                 self.on_status(f"가져오는 중: {os.path.basename(p)} (대기 {self.queued})")
-                res = self.importer.import_file(p, folder, force=force)
-                if res.status != "pending":  # pending = still being written: retry later
-                    try:
-                        st = os.stat(p)
+                res = self.importer.import_file(p, folder, force=force, assign=assign)
+                try:
+                    st = os.stat(p)
+                    if res.status != "pending":  # pending = still being written: retry later
                         self._known[p] = (st.st_size, st.st_mtime)
-                    except OSError:  # moved into the library
-                        pass
+                    elif st.st_size == 0:        # … but an empty file only once it has changed
+                        self._empty[p] = st.st_mtime
+                except OSError:  # moved into the library
+                    pass
                 if res.status not in ("skipped", "pending") or force:
                     self.on_result(res)
             except Exception as exc:  # never let the worker die
@@ -189,6 +194,8 @@ class ImportService:
                         continue
                     if self._known.get(p) == (st.st_size, st.st_mtime):
                         continue
+                    if st.st_size == 0 and self._empty.get(p) == st.st_mtime:
+                        continue                 # still the empty file a failed copy left behind
                     if is_candidate(Path(p)):
                         self.enqueue(p, folder)
                         n += 1
@@ -197,21 +204,58 @@ class ImportService:
     def scan_all(self, full: bool = False) -> int:
         return sum(self.scan_folder(f, full) for f in self.settings.watch_folders if f.enabled)
 
-    def import_paths(self, paths: list[str], force: bool = False) -> int:
-        """Manual import of files and/or folders (drag & drop, menu)."""
-        n = 0
+    def manual_files(self, paths: list[str]) -> list[tuple[str, WatchFolder | None]]:
+        """The files a manual import of ``paths`` (files and / or folders: menu, drag & drop)
+        takes, each with the folder settings it is read with.
+
+        A file inside a watched folder is read as that folder says. A picked folder is read from
+        its parent, so its own name counts (``12345_홍길동``); a picked file has no folder — the
+        importer then reads its nearest folder names."""
+        out: list[tuple[str, WatchFolder | None]] = []
         for p in paths:
             if os.path.isdir(p):
-                for dirpath, _, filenames in os.walk(p):
-                    for name in filenames:
+                p = os.path.normpath(p)
+                own = WatchFolder(path=os.path.dirname(p) or p)
+                for dirpath, dirnames, filenames in os.walk(p):
+                    dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
+                    for name in sorted(filenames):
                         fp = os.path.join(dirpath, name)
-                        if _cheap_candidate(fp):
-                            self.enqueue(fp, self.folder_for(fp) or WatchFolder(path=p), force)
-                            n += 1
+                        if _cheap_candidate(fp) and not self.importer._in_library(Path(fp)):
+                            out.append((fp, self.folder_for(fp) or own))
             elif os.path.isfile(p):
-                self.enqueue(p, self.folder_for(p), force)
-                n += 1
-        return n
+                out.append((p, self.folder_for(p)))
+        return out
+
+    def preview_paths(self, paths: list[str], progress: Callable[[int, int], None] | None = None,
+                      cancelled: Callable[[], bool] | None = None) -> list[PreviewItem]:
+        """What a manual import of ``paths`` would read — nothing is stored (see ``Importer.preview``).
+        Files that are not pictures are left out."""
+        files = self.manual_files(paths)
+        items: list[PreviewItem] = []
+        for i, (fp, folder) in enumerate(files):
+            if cancelled is not None and cancelled():
+                break
+            if is_candidate(Path(fp)):
+                items.append(self.importer.preview(fp, folder))
+            if progress is not None:
+                progress(i + 1, len(files))
+        return items
+
+    def import_items(self, items: list[tuple[PreviewItem, PatientAssign | None]]) -> int:
+        """Import previewed photos as the user confirmed them (each with the patient named for it)."""
+        for item, assign in items:
+            self.enqueue(item.path, item.folder, True, assign)
+        return len(items)
+
+    def import_paths(self, paths: list[str], force: bool = False,
+                     assign: dict[str, PatientAssign] | None = None) -> int:
+        """Manual import of files and/or folders (drag & drop, menu). ``assign``: the patient
+        the user named for a file (by the path :meth:`preview_paths` gave)."""
+        assign = assign or {}
+        files = self.manual_files(paths)
+        for fp, folder in files:
+            self.enqueue(fp, folder, force, assign.get(fp))
+        return len(files)
 
     # -- watching ------------------------------------------------------------
     @property
@@ -315,5 +359,5 @@ class ImportService:
     def shutdown(self) -> None:
         self.stop_watching()
         self._stop.set()
-        self._q.put((None, None, False))
+        self._q.put((None, None, False, None))
         self._worker.join(timeout=5)

@@ -115,17 +115,33 @@ def embedded_meta(path: Path) -> ExtractedMeta:
         body = re.sub(r"^\s*Description:\s*", "", text)
         if body.startswith("{") or re.fullmatch(r"[0-9a-fA-F\s]{64,}", body):
             continue  # vendor JSON / hex blob (Microclear) — parsed by apollo_meta
-        parse_key_values(text, meta, source)
+        parse_key_values(text, meta, source, strict=True)   # not every comment is about a patient
     return meta
 
 
+# XMP namespaces that describe the file and its editing history, never the patient
+_XMP_TECHNICAL = {"x", "rdf", "xml", "xmlns", "xmpMM", "stEvt", "stRef", "stDim", "xmpTPg", "crs", "aux",
+                  "exifEX", "pdf", "xmpRights", "Iptc4xmpCore", "GCamera", "MicrosoftPhoto"}
+
+
 def _xmp_to_text(xmp: str) -> str:
-    """Flatten XMP to ``name: value`` lines (dc:description, custom tags ...)."""
+    """Flatten XMP to ``name: value`` lines (dc:description, custom tags ...).
+
+    The packet wrapper (``<?xpacket … id="W5M0MpCehiHzreSzNTczkc9d"?>`` — the same in every
+    file Photoshop, a phone or a camera writes) and the editing-history namespaces are left out,
+    and list items (``rdf:li``) give their text as it is, so ``PatientID=…; Name: …`` typed
+    into a description is read like any other comment."""
+    xmp = re.sub(r"<\?.*?\?>", " ", xmp, flags=re.S)
     out = []
-    for m in re.finditer(r"<(?:\w+:)?(\w+)[^>]*>([^<]{1,200})</", xmp):
-        out.append(f"{m.group(1)}: {m.group(2).strip()}")
-    for m in re.finditer(r"\s(?:\w+:)?(\w+)=\"([^\"]{1,200})\"", xmp):
-        out.append(f"{m.group(1)}: {m.group(2).strip()}")
+    for m in re.finditer(r"<(?:([\w\-]+):)?(\w+)[^>]*>([^<]{1,300})</", xmp):
+        prefix, tag, value = m.group(1), m.group(2), m.group(3).strip()
+        if not value or prefix in _XMP_TECHNICAL and tag != "li":
+            continue
+        out.append(value if tag == "li" else f"{tag}: {value}")
+    for m in re.finditer(r"\s(?:([\w\-]+):)?(\w+)=\"([^\"]{1,200})\"", xmp):
+        if m.group(1) in _XMP_TECHNICAL or m.group(1) is None and m.group(2) in ("id", "begin", "end"):
+            continue
+        out.append(f"{m.group(2)}: {m.group(3).strip()}")
     return "\n".join(out)
 
 

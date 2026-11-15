@@ -24,7 +24,7 @@ from .. import review
 from ..db import Database
 from . import motion, theme
 from .thumbs import eye_badge, thumb_pixmap
-from .widgets import Segmented, hairline, segment
+from .widgets import Segmented, filling, hairline, segment
 
 UNASSIGNED = -1
 SEX_LABEL = {"M": "남", "F": "여", "O": "기타"}
@@ -279,7 +279,8 @@ class PatientListPage(QWidget):
         self.btn_open.clicked.connect(lambda: self._request("all"))
         row.addWidget(self.btn_open, 1)
         self.btn_import = QPushButton("사진 가져오기")
-        self.btn_import.setToolTip("사진 파일을 골라 가져옵니다 — 환자는 파일에서 읽은 환자 ID로 정해집니다\n"
+        self.btn_import.setToolTip("사진 파일을 골라 가져옵니다 — 사진에서 읽은 환자 정보를 먼저 보여 주고,\n"
+                                   "환자 정보가 없는 사진은 그 자리에서 환자를 지정할 수 있습니다\n"
                                    "(이 창에 파일·폴더를 끌어다 놓아도 됩니다)")
         self.btn_import.clicked.connect(self.importRequested.emit)
         row.addWidget(self.btn_import)
@@ -336,23 +337,22 @@ class PatientListPage(QWidget):
             if self._in_period(r["last_exam"]):
                 entries.append((r["id"], [r["patient_id"], r["name"] or "", sex_age(r["sex"], r["birth_date"]),
                                           r["last_exam"] or "없음", str(r["n_exams"]), str(r["n_images"])]))
-        self.table.blockSignals(True)
-        self.table.setRowCount(len(entries))
-        for i, (ref, cols) in enumerate(entries):
-            for j, value in enumerate(cols):
-                it = QTableWidgetItem(value)
-                it.setData(Qt.ItemDataRole.UserRole, ref)
-                if j >= 4:
-                    it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                if ref == UNASSIGNED:
-                    it.setForeground(QColor(theme.ORANGE))
-                elif (j == 3 and value == "없음") or (j == 2 and not value):
-                    it.setForeground(QColor(theme.TEXT4))
-                self.table.setItem(i, j, it)
-            filler = QTableWidgetItem("")
-            filler.setData(Qt.ItemDataRole.UserRole, ref)
-            self.table.setItem(i, len(COLUMNS), filler)
-        self.table.blockSignals(False)
+        with filling(self.table):
+            self.table.setRowCount(len(entries))
+            for i, (ref, cols) in enumerate(entries):
+                for j, value in enumerate(cols):
+                    it = QTableWidgetItem(value)
+                    it.setData(Qt.ItemDataRole.UserRole, ref)
+                    if j >= 4:
+                        it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                    if ref == UNASSIGNED:
+                        it.setForeground(QColor(theme.ORANGE))
+                    elif (j == 3 and value == "없음") or (j == 2 and not value):
+                        it.setForeground(QColor(theme.TEXT4))
+                    self.table.setItem(i, j, it)
+                filler = QTableWidgetItem("")
+                filler.setData(Qt.ItemDataRole.UserRole, ref)
+                self.table.setItem(i, len(COLUMNS), filler)
         self._highlight()
         total = self.db.count_patients() if text else len(patients)
         shown = sum(ref != UNASSIGNED for ref, _ in entries)

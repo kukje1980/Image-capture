@@ -54,7 +54,10 @@ def detect_profile(path: Path, meta: ExtractedMeta | None = None) -> CameraProfi
 
 
 def extract_metadata(path: Path, profile_key: str = AUTO, *, watch_root: Path | None = None,
-                     custom_patterns: list[str] | tuple = ()) -> tuple[ExtractedMeta, CameraProfile]:
+                     custom_patterns: list[str] | tuple = (),
+                     parent_levels: int | None = None) -> tuple[ExtractedMeta, CameraProfile]:
+    """``parent_levels``: how many folder names above the file are read when there is no
+    ``watch_root`` (a photo picked by hand: ``…/12345_홍길동/2026-03-01/IMG_0001.jpg``)."""
     path = Path(path)
     meta = ExtractedMeta()
     dicom = is_dicom(path)
@@ -74,7 +77,8 @@ def extract_metadata(path: Path, profile_key: str = AUTO, *, watch_root: Path | 
     if not dicom:
         meta.merge(embedded_meta(path))
     meta.merge(filename_meta(path, list(custom_patterns) + list(profile.filename_patterns),
-                             watch_root=watch_root, id_only=profile.id_only_filenames))
+                             watch_root=watch_root, id_only=profile.id_only_filenames,
+                             parent_levels=parent_levels))
 
     if not meta.fov_deg:
         meta.fov_deg, meta.fov_type = profile.fov_deg, profile.fov_type
