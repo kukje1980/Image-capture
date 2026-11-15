@@ -7,8 +7,11 @@ Mouse
     A click without dragging leaves the zoom alone.
   * **zoomed in, the left button moves the photo** (확대/축소 tool): once part of
     the photo is outside the view a left drag pans it (the wheel or a right drag
-    zooms further, a double click fits it back).
-  * wheel — zoom at the cursor; middle-drag — pan; double-click — fit.
+    zooms further, 0 fits it back).
+  * **a double click turns the loupe on** (확대/축소 · 이동 tools, views with
+    ``dblclick_loupe``: the 2D view, 비교): it follows the mouse — through drags and
+    zooms too — until the next double click or Esc. Elsewhere a double click fits.
+  * wheel — zoom at the cursor; middle-drag — pan; 0 — fit.
   * left button depends on the active tool: 확대/축소 (default, above), 이동
     (pan), 돋보기 (hold for a loupe; wheel while holding changes its power),
     길이 / 각도 / C/D 비 (길이·면적) measurements, 글자 / 화살표+글자
@@ -50,9 +53,9 @@ TOOLS = {
     "profile": "회색조 분석",
 }
 TOOL_HINTS = {
-    "pan": "드래그: 이동 · 휠/오른쪽 드래그: 확대·축소 · 더블클릭: 화면 맞춤",
+    "pan": "드래그: 이동 · 휠/오른쪽 드래그: 확대·축소 · 더블클릭: 돋보기 켜기·끄기 · 0: 화면 맞춤",
     "zoom": "위로 드래그: 확대 · 아래로 드래그: 축소 (누른 곳 중심) · 확대된 상태에서 드래그: 이동 · "
-            "휠/오른쪽 드래그: 확대·축소 · 더블클릭: 화면 맞춤",
+            "더블클릭: 돋보기 켜기·끄기 · 휠/오른쪽 드래그: 확대·축소 · 0: 화면 맞춤",
     "loupe": "누르고 있는 동안 돋보기 · 누른 채 휠: 배율",
     "length": "드래그해서 길이 측정 (px · 망막 각도 · mm)",
     "angle": "세 점 클릭 (가운데 점이 꼭짓점)",
@@ -222,6 +225,9 @@ class ImageView(QGraphicsView):
         self._loupe.setStyleSheet("background: transparent; border: none;")
         self._loupe.hide()
         self.loupe_mag, self.loupe_size = 3.0, 260
+        self.dblclick_loupe = False      # 확대/축소 · 이동: a double click turns a loupe on that follows the mouse
+        self._loupe_on = False
+        self._mouse_at = QPoint()        # last mouse position in the viewport (the loupe follows it)
         self.show_navigator = True
         self._nav = _Navigator(self)
         # motion: the wheel's zoom glides, a flicked photo keeps sliding, 맞춤 / 100 % ease in
@@ -261,6 +267,7 @@ class ImageView(QGraphicsView):
         lab = self._fade_lab
         self._fade.stop()
         lab.hide()
+        self._loupe.hide()                             # not part of the fading picture
         lab.setPixmap(self.viewport().grab())
         lab.setGeometry(self.viewport().rect())
         lab.graphicsEffect().setOpacity(1.0)
@@ -293,12 +300,14 @@ class ImageView(QGraphicsView):
             self._fovea.setVisible(False)
             self._update_navigator()
             self._restore_cursor()
+            self._loupe.hide()
             return
         self._pix.setPixmap(to_pixmap(rgb))
         self.scene().setSceneRect(QRectF(self._pix.pixmap().rect()))
         if not keep_view:
             self.fit()
         self._update_navigator()
+        self._refresh_loupe()                          # the loupe shows the new photo
 
     def set_overlays(self, circle, disc, fovea=None) -> None:
         self._circle_px, self._disc_px, self._fovea_px = circle, disc, fovea
@@ -383,6 +392,7 @@ class ImageView(QGraphicsView):
         self._update_navigator()
         if self._drag is None:    # 확대/축소: the hand once zoomed in (a left drag moves the photo then)
             self._restore_cursor()
+            self._refresh_loupe()
 
     # -- mini-map -------------------------------------------------------------------
     def zoomed_in(self) -> bool:
@@ -414,6 +424,8 @@ class ImageView(QGraphicsView):
     def scrollContentsBy(self, dx: int, dy: int) -> None:
         super().scrollContentsBy(dx, dy)
         self._update_navigator()
+        if getattr(self, "_drag", None) is None:   # a slide after a flick, the mini-map, linked views
+            self._refresh_loupe()
 
     def zoom_to_rect(self, rect: QRectF, animate: bool = True) -> None:
         """Zoom so ``rect`` (image pixels) fills the view, centred on it (gliding there unless
@@ -540,6 +552,8 @@ class ImageView(QGraphicsView):
                 and e.gestureType() == Qt.NativeGestureType.ZoomNativeGesture):
             self.pinch(e.value(), e.position().toPoint())
             return True
+        if e.type() == QEvent.Type.Leave and getattr(self, "_loupe_on", False) and self._drag is None:
+            self._loupe.hide()                         # back when the mouse comes in again
         return super().viewportEvent(e)
 
     def rotate90(self, clockwise: bool = True) -> None:
@@ -603,6 +617,7 @@ class ImageView(QGraphicsView):
     # =====================================================================
     def set_tool(self, tool: str) -> None:
         self._cancel_work()
+        self.set_loupe(False)
         self.tool = tool if tool in TOOLS else "zoom"
         self._restore_cursor()
 
@@ -696,6 +711,30 @@ class ImageView(QGraphicsView):
         return text.strip() if ok and text.strip() else None
 
     # -- loupe / profile -------------------------------------------------------------
+    @property
+    def loupe_on(self) -> bool:
+        """The double-click loupe is on (it follows the mouse)."""
+        return self._loupe_on
+
+    def set_loupe(self, on: bool, vpos: QPoint | None = None) -> None:
+        """Turn the double-click loupe on (at ``vpos``, else where the mouse last was) or off."""
+        self._loupe_on = bool(on) and self.has_image()
+        if vpos is not None:
+            self._mouse_at = QPoint(vpos)
+        if self._loupe_on:
+            self._show_loupe(self._mouse_at)
+        else:
+            self._loupe.hide()
+
+    def _refresh_loupe(self) -> None:
+        """The double-click loupe shows what is under the mouse now (after a zoom, a move, a new photo)."""
+        if not getattr(self, "_loupe_on", False):
+            return
+        if self.has_image() and self.viewport().rect().contains(self._mouse_at):
+            self._show_loupe(self._mouse_at)
+        else:
+            self._loupe.hide()
+
     def _show_loupe(self, vpos: QPoint) -> None:
         size, mag = self.loupe_size, self.loupe_mag
         sp = self.mapToScene(vpos)
@@ -730,6 +769,7 @@ class ImageView(QGraphicsView):
         self._loupe.resize(size, size)
         self._loupe.move(vpos.x() - size // 2, vpos.y() - size // 2)
         self._loupe.show()
+        self._loupe.raise_()                           # over a photo still fading out
 
     def _show_profile(self, sp: QPointF) -> None:
         for it in self._profile:
@@ -771,7 +811,7 @@ class ImageView(QGraphicsView):
             return
         self._glide.stop()
         self._fling.stop()
-        self._wheel_at = e.position().toPoint()
+        self._wheel_at = self._mouse_at = e.position().toPoint()
         self._wheel_scene = self.mapToScene(self._wheel_at)
         self._wheel.add(steps)                        # the view glides after the notches
 
@@ -779,6 +819,7 @@ class ImageView(QGraphicsView):
         pos = e.position().toPoint()
         btn = e.button()
         self.stop_motion()                            # a touch stops whatever was gliding
+        self._mouse_at = pos
         self._vel.reset()
         self._vel.add(pos.x(), pos.y())
         if btn == Qt.MouseButton.RightButton:
@@ -822,10 +863,12 @@ class ImageView(QGraphicsView):
 
     def mouseMoveEvent(self, e):
         pos = e.position().toPoint()
+        self._mouse_at = pos
         sp = self.mapToScene(pos)
         d = self._drag
         if d is None:
             self._hover(sp)
+            self._refresh_loupe()
             if self._rubber is not None and self._pts:
                 self._rubber.setLine(QLineF(self._pts[-1], sp))
             return super().mouseMoveEvent(e)
@@ -850,6 +893,7 @@ class ImageView(QGraphicsView):
             d["item"].setLine(QLineF(d["a"], sp))
             if self.tool == "length":
                 self.measured.emit(self._length_text(d["a"], sp))
+        self._refresh_loupe()                         # the loupe stays under the mouse
 
     def mouseReleaseEvent(self, e):
         d, self._drag = self._drag, None
@@ -881,13 +925,17 @@ class ImageView(QGraphicsView):
             return
         if self.tool in ("angle", "cd_area", "length", "arrow", "cd_length", "text"):
             return
-        self.fit(animate=True)
+        if self.dblclick_loupe and self.tool in ("zoom", "pan") and self.has_image():
+            self.set_loupe(not self._loupe_on, e.position().toPoint())   # the loupe on / off
+        else:
+            self.fit(animate=True)
         self.activated.emit()
 
     def keyPressEvent(self, e):
         k = e.key()
         if k == Qt.Key.Key_Escape:
             self._cancel_work()
+            self.set_loupe(False)
         elif k in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and self.tool == "cd_area" and len(self._pts) >= 3:
             self._close_polygon()
         elif k in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):

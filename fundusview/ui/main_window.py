@@ -543,6 +543,7 @@ class MainWindow(QMainWindow):
         self.tabs.tabBar().hide()                # the views are switched in the line under the photos
         self.view2d = ImageView()
         self.view2d.crossfade = True            # the next photo fades in over the last
+        self.view2d.dblclick_loupe = True       # a double click: the loupe on / off
         self.view2d.toggle_captions(True)
         self.view2d.discPicked.connect(self._on_disc_picked)
         self.view2d.foveaPicked.connect(self._on_fovea_picked)
@@ -576,6 +577,7 @@ class MainWindow(QMainWindow):
         cmp_split = QSplitter(Qt.Orientation.Horizontal)
         self.cmp_views = (ImageView(), ImageView())
         for v in self.cmp_views:
+            v.dblclick_loupe = True
             cmp_split.addWidget(v)
         cmp_l.addWidget(cmp_split, 1)
         self.cmp_sync = QCheckBox("확대·이동 동기화")
@@ -1142,7 +1144,8 @@ class MainWindow(QMainWindow):
             "+/−: 확대·축소 · 0: 화면 맞춤 · 1: 100%<br>"
             "확대하면 오른쪽 위 미니맵에 전체 사진과 보이는 곳이 나옵니다 — 눌러서 이동<br>"
             "화면 맞춤 ▾ 또는 아래쪽 [배율]: 400·800%, 후극부·위/아래/코/귀쪽 주변부로 바로 확대<br>"
-            "가운데 버튼 드래그(이동 도구는 왼쪽 드래그): 이동 · 더블클릭: 화면 맞춤<br>"
+            "확대된 사진은 왼쪽 드래그로 이동 · 가운데 버튼 드래그: 이동<br>"
+            "더블클릭: 돋보기 켜기·끄기 (마우스를 따라다님, Esc로도 끔)<br>"
             "오른쪽 클릭: 메뉴 (시신경 유두 · 황반 위치 지정, 돋보기 배율, 미니맵)<br><br>"
             "<b>3D 안구</b><br>"
             "위 막대: 간단히 / 자세히 (가벼운 기본 모형 / 실제 해부 구조) · 외부 / 내부 · ▶ 슬릿 스캔 · "
@@ -1177,7 +1180,7 @@ class MainWindow(QMainWindow):
             "작업 화면 위쪽 오른쪽의 [‹ 환자 목록] 또는 Ctrl+0 으로 돌아옵니다<br><br>"
             "<b>모두 보기</b><br>"
             "큰 사진 + 오른쪽에 황반과 시신경 유두를 확대해 보여 줍니다 (큰 사진 위 점선 틀이 그 자리)<br>"
-            "칸 제목이나 칸을 더블클릭하면 큰 사진을 그 쪽으로 확대 · 큰 사진 더블클릭: 전체<br>"
+            "칸 제목이나 칸을 더블클릭하면 큰 사진을 그 쪽으로 확대 · 큰 사진 전체로: 0<br>"
             "잘못 찾았으면 큰 사진에서 오른쪽 클릭 → 황반 / 시신경 유두로 지정<br>"
             "화면 아래 줄의 [모두 보기 | 다중 보기 | 3D] 로 보기를 바꿉니다<br><br>"
             "<b>사진 목록 · 멀티</b><br>"
@@ -3269,7 +3272,7 @@ class MainWindow(QMainWindow):
             v.setSpacing(0)
             head = QPushButton(f"{self._ov_titles[key]}   ⤢")
             head.setObjectName("ovHead")
-            head.setToolTip(f"큰 사진을 {self._ov_titles[key]} 쪽으로 확대 (큰 사진을 더블클릭하면 전체)")
+            head.setToolTip(f"큰 사진을 {self._ov_titles[key]} 쪽으로 확대 (큰 사진 전체로: 0 키)")
             head.clicked.connect(lambda _=False, k=key: self._ov_focus(k))
             body.activated.connect(lambda k=key: self._ov_focus(k))
             v.addWidget(head)

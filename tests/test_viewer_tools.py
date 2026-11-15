@@ -103,6 +103,47 @@ def test_left_drag_moves_the_photo_once_zoomed_in(view):
     assert view.viewport().cursor().shape() == Qt.CursorShape.SizeVerCursor
 
 
+def test_double_click_turns_on_a_loupe_that_follows_the_mouse(view):
+    """2D view / 비교 (``dblclick_loupe``): a double click shows the loupe, which follows the mouse —
+    through drags and zooms too — until the next double click or Esc. Other views: a double click fits."""
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+    vp, lab = view.viewport(), view._loupe
+
+    def at(p):
+        c = lab.geometry().center()
+        return abs(c.x() - p[0]) <= 2 and abs(c.y() - p[1]) <= 2
+
+    view.zoom_to(3.0)
+    QTest.mouseDClick(vp, Qt.MouseButton.LeftButton, pos=QPoint(300, 250))
+    assert not view.loupe_on and view.zoom == pytest.approx(view._fit_zoom())   # without it: fit
+    view.stop_motion()
+    view.fit()
+    view.dblclick_loupe = True
+    z0 = view.zoom
+    QTest.mouseDClick(vp, Qt.MouseButton.LeftButton, pos=QPoint(300, 250))
+    assert view.loupe_on and lab.isVisible() and at((300, 250))
+    assert view.zoom == pytest.approx(z0)                            # the double click is not a zoom
+    QTest.mouseMove(vp, QPoint(420, 330))
+    assert lab.isVisible() and at((420, 330))                        # it follows the mouse
+    _drag(view, Qt.MouseButton.LeftButton, (400, 300), (400, 180))   # a zoom drag: still on, under the mouse
+    assert view.loupe_on and view.zoom > z0 * 1.5 and at((400, 180))
+    view.stop_motion()
+    h0 = view.horizontalScrollBar().value()
+    _drag(view, Qt.MouseButton.LeftButton, (400, 300), (340, 300))   # zoomed in: the drag moves the photo
+    view.stop_motion()
+    assert view.horizontalScrollBar().value() == h0 + 60 and view.loupe_on and at((340, 300))
+    QTest.mouseDClick(vp, Qt.MouseButton.LeftButton, pos=QPoint(340, 300))
+    assert not view.loupe_on and not lab.isVisible()                 # double click again: off
+    QTest.mouseDClick(vp, Qt.MouseButton.LeftButton, pos=QPoint(200, 200))
+    assert view.loupe_on
+    QTest.keyClick(view, Qt.Key.Key_Escape)
+    assert not view.loupe_on and not lab.isVisible()                 # Esc: off
+    QTest.mouseDClick(vp, Qt.MouseButton.LeftButton, pos=QPoint(200, 200))
+    view.set_tool("length")
+    assert not view.loupe_on                                         # another tool: off
+
+
 def test_pan_with_middle_button_or_pan_tool(view):
     from PySide6.QtCore import Qt
     view.zoom_to(3.0)
@@ -206,6 +247,8 @@ def test_main_window_tools(app, tmp_path, demo_dir, import_and_wait):
         # drag zoom is on from the start: 2D, compare and multi views, and the ZOOM button is lit
         assert w.view2d.tool == "zoom" and w.acts["tool:zoom"].isChecked()
         assert all(v.tool == "zoom" for v in w.cmp_views)
+        # a double click shows the loupe in the 2D view and 비교 (the multi view opens the photo instead)
+        assert w.view2d.dblclick_loupe and all(v.dblclick_loupe for v in w.cmp_views)
         first = w.current["id"]
         w._on_action("op:sharpen")
         w._on_action("op:enhance")
