@@ -68,7 +68,10 @@ def test_overview_is_the_photo_with_its_macula_and_disc(tmp_path, demo_dir, impo
         assert w.btn_patients.isVisible() and _inside(w.btn_patients, w.top_w)
         assert "김민수" in w.banner.text() and "20260115001" in w.banner.text()
         assert w.toolBarArea(w.tb_cmd) == Qt.ToolBarArea.LeftToolBarArea
-        assert w.thumbs.height() < 130                                   # one low line of photos
+        # low rows of photos, one per eye on the list: OD on top, OS under it
+        from fundusview.ui.thumbs import EYE_ROLE, eye_row
+        eyes = {eye_row(w.thumbs.item(i).data(EYE_ROLE)) for i in range(w.thumbs.count())}
+        assert w.thumbs.grid_shape()[0] == len(eyes) and w.thumbs.height() < len(eyes) * 130
 
         # -- 모두 보기: the big photo, 황반 and 시신경 유두 enlarged; no 다중 · 3D panes --
         assert _inside(w.view2d, w.page_all) and w.view2d.has_image()

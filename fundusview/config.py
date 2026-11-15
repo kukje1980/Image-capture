@@ -92,7 +92,8 @@ class Settings:
     # Extra user-defined filename regexes tried before the profile patterns.
     custom_filename_patterns: list[str] = field(default_factory=list)
     last_patient: str = ""
-    # Thumbnail strip: rows of photos above the views (1–3, newest first)
+    # Photo list under the views: 1 = one line; otherwise by eye — OD row on top, OS row under it
+    # (newest first in each; an older 3 means by eye too)
     thumb_rows: int = 2
     montage_fast: bool = False      # 몽타주 빠르게: the saved picture at most 2400 px instead of 4000
     # Automatic import (autosetup.py): an always-watched inbox folder and

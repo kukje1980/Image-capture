@@ -30,7 +30,8 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDockWidget, QDoubleSpinBox, QFileDialog,
     QFrame, QGraphicsRectItem, QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QMainWindow, QMenu,
-    QMessageBox, QPushButton, QScrollArea, QSizePolicy, QSlider, QSplitter, QStackedWidget, QStatusBar, QTableWidget,
+    QMessageBox, QPushButton, QScrollArea, QSizePolicy, QSlider, QSplitter, QStackedWidget, QStatusBar, QStyle,
+    QTableWidget,
     QTableWidgetItem, QTabWidget, QToolBar, QToolButton, QVBoxLayout, QWidget,
 )
 
@@ -56,7 +57,7 @@ from .patient_list import SEX_LABEL, UNASSIGNED, PatientListPage, age_on
 from .review_view import ReviewPage
 from .landmarks_view import LandmarkPhoto
 from .slit_scan import SLIT, ScanPhotoView, SlitScanShow, ViewTween
-from .thumbs import EYE_ROLE, PICK_ROLE, ThumbDelegate, eye_badge_html
+from .thumbs import EYE_ROLE, PICK_ROLE, ThumbDelegate, ThumbStrip, eye_badge_html, eye_row
 from .toolbars import CHECKABLE, COMMANDS, MENUS, PROCESSING, SliderPopup, icon_for
 from .widgets import ElidedLabel, Segmented, Switch, card, filling, segment
 from .widgets import row as setting_row
@@ -491,7 +492,7 @@ class MainWindow(QMainWindow):
         # thumbnail rows · multi view of the picked photos (VK-2: pick photos, then MULTI)
         self.btn_rows = QToolButton()
         self.btn_rows.setAutoRaise(True)
-        self.btn_rows.clicked.connect(lambda: self._set_thumb_rows(self._thumb_rows % 3 + 1, save=True))
+        self.btn_rows.clicked.connect(lambda: self._set_thumb_rows(1 if self._thumb_rows != 1 else 2, save=True))
         self.lbl_picks = QLabel("")
         self.lbl_picks.setStyleSheet(f"color:{theme.YELLOW}; font-weight:600")
         self.btn_clear_picks = QToolButton()
@@ -512,15 +513,11 @@ class MainWindow(QMainWindow):
         self.btn_glaucoma.setToolTip(keys("녹내장 분석 — 보고 있는 사진의 디스크 C/D · 광각 RNFL 분석,\n"
                                           "두 번째 사진을 Ctrl+클릭(②)하면 스테레오 보기 · 경과 비교"))
         self.btn_glaucoma.clicked.connect(lambda: self.open_glaucoma())
-        self.thumbs = QListWidget()
-        self.thumbs.setViewMode(QListWidget.ViewMode.IconMode)
-        self.thumbs.setFlow(QListWidget.Flow.LeftToRight)
-        self.thumbs.setWrapping(False)
+        self.thumbs = ThumbStrip()                 # OD 위 줄 · OS 아래 줄 (or one line)
         self.thumbs.setObjectName("thumbStrip")
         self.thumbs.setIconSize(QSize(*THUMB_ICON))          # small: the height saved goes to the photos
         self.thumbs.setGridSize(QSize(*THUMB_GRID))
         self.thumbs.setFixedHeight(THUMB_GRID[1] + 10)
-        self.thumbs.setMovement(QListWidget.Movement.Static)
         self.thumbs.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.thumbs.setResizeMode(QListWidget.ResizeMode.Adjust)
         self.thumbs.setItemDelegate(ThumbDelegate(self.thumbs))
@@ -1588,13 +1585,14 @@ class MainWindow(QMainWindow):
         self.thumbs.clear()
         first = None
         target = None
-        for r in self._images():
+        # OD first, then OS, then OU / 미상 (newest first in each): the strip's rows by eye, and the
+        # order of 이전 / 다음 in both layouts
+        for r in sorted(self._images(), key=lambda r: eye_row(r["laterality"])):
             if (d and r["exam_date"] != d) or (eye and r["laterality"] != eye) or (mod and r["modality"] != mod):
                 if r["id"] != select_id:
                     continue
             mod_label = MODALITY_LABELS.get(r["modality"] or "", r["modality"] or "")
-            fov = f"{r['fov_deg']:g}°" if r["fov_deg"] else ""
-            text = f"{r['exam_date'] or '날짜 없음'}\n{mod_label} {fov}".strip()
+            text = f"{r['exam_date'] or '날짜 없음'}\n{mod_label}".strip()       # (no field angle: the date and kind)
             it = QListWidgetItem(QIcon(QPixmap(r["thumb_path"] or "")), text)
             it.setData(Qt.ItemDataRole.UserRole, r["id"])
             it.setSizeHint(QSize(THUMB_GRID[0] - 4, THUMB_GRID[1] - 2))    # the whole cell: both caption lines
@@ -1626,16 +1624,19 @@ class MainWindow(QMainWindow):
         return list(self._picks)
 
     def _set_thumb_rows(self, n: int, save: bool = False) -> None:
-        """Rows of thumbnails above the views: 1 = one scrolling line (old strip), 2–3 = wrapped."""
-        n = n if n in (1, 2, 3) else 2
+        """The photo list: 1 = all photos in one scrolling line; otherwise by eye — OD in the top
+        row, OS in the row under it (OU / 미상 in a third row when there are any)."""
+        n = 1 if n == 1 else 2
         self._thumb_rows = n
-        self.thumbs.setWrapping(n > 1)
-        self.thumbs.setFlow(QListWidget.Flow.LeftToRight)
-        self.thumbs.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded if n == 1
-                                                 else Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.thumbs.set_by_eye(n != 1)
         self._fit_thumb_height()
-        self.btn_rows.setText(f"▤ {n}줄")
-        self.btn_rows.setToolTip(f"사진 목록을 {n}줄로 보기 — 누르면 {n % 3 + 1}줄 (1 → 2 → 3)")
+        if n == 1:
+            self.btn_rows.setText("▤ 1줄")
+            self.btn_rows.setToolTip("사진 목록을 한 줄로 보기 (OD 다음 OS) — 누르면 눈별로 (OD 위 줄 · OS 아래 줄)")
+        else:
+            self.btn_rows.setText("▤ OD/OS")
+            self.btn_rows.setToolTip("사진 목록을 눈별로 보기 — OD는 위 줄, OS는 아래 줄 (OU · 미상은 셋째 줄)\n"
+                                     "누르면 한 줄로")
         cur = self.thumbs.currentItem()
         if cur is not None:
             self.thumbs.scrollToItem(cur)
@@ -1647,14 +1648,16 @@ class MainWindow(QMainWindow):
                 pass
 
     def _fit_thumb_height(self) -> None:
-        """As many rows as the photos need, at most the chosen number (few photos: no empty band)."""
-        n = self._thumb_rows
-        if n == 1:
-            self.thumbs.setFixedHeight(THUMB_GRID[1] + 10)
-            return
-        per_row = max(1, self.thumbs.viewport().width() // self.thumbs.gridSize().width())
-        need = max(1, -(-self.thumbs.count() // per_row))
-        self.thumbs.setFixedHeight(min(n, need) * self.thumbs.gridSize().height() + 12)
+        """One row per eye in the list (only OD photos: one row), or the one line — and room for the
+        sideways scroll bar when the photos run past the strip (unless it floats over them)."""
+        t = self.thumbs
+        rows, cols = t.grid_shape()
+        h = rows * t.gridSize().height() + 10
+        bar = t.horizontalScrollBar()
+        if (cols * t.gridSize().width() > t.viewport().width()
+                and not t.style().styleHint(QStyle.StyleHint.SH_ScrollBar_Transient, None, bar)):
+            h += bar.sizeHint().height()
+        t.setFixedHeight(h)
 
     def _toggle_pick(self, image_id: int) -> bool:
         if image_id in self._picks:
@@ -1778,7 +1781,7 @@ class MainWindow(QMainWindow):
         if obj is self.menuBar() and e.type() == QEvent.Type.Resize:
             self._fit_banner()
         if obj is self.thumbs.viewport() and e.type() == QEvent.Type.Resize and e.size().width() != e.oldSize().width():
-            QTimer.singleShot(0, self._fit_thumb_height)       # wider strip: more photos per row
+            QTimer.singleShot(0, self._fit_thumb_height)       # wider strip: the scroll bar may go
         # 모두 보기: the two enlarged panes keep their places when they change size
         if (getattr(self, "_ov_on", False) and e.type() == QEvent.Type.Resize
                 and obj in (self.ov_zoom.viewport(), self.ov_macula.viewport())):
