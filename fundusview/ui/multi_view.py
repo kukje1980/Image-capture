@@ -1,8 +1,10 @@
 """Multi-image view (VK-2 "Multiple Images": 1 / 2 / 4 / 6 / 9 / 16 on screen).
 
-Cells show the photos picked in the thumbnail strip (plain click, in pick order) — or, with
-nothing picked, consecutive photos of the current patient starting at the shown one
-(down-scaled for speed). Click a cell to select it: the info panel, the other tabs and the
+Cells show the photos picked in the thumbnail strip (plain click, in pick order; a patient
+opens with its newest OD and OS photo picked) and the layout follows the number picked — or,
+with nothing picked, consecutive photos of the current patient starting at the shown one
+(down-scaled for speed). Once the photos picked were all clicked away a hint takes the cells'
+place. Click a cell to select it: the info panel, the other tabs and the
 image-processing toolbar follow, and with picked photos the processing applies to that photo
 only. Double-click opens it in the 2D tab. Each cell can be zoomed (drag up/down, wheel) and
 panned on its own.
@@ -11,7 +13,7 @@ panned on its own.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from . import theme
@@ -37,6 +39,7 @@ class _Cell(QFrame):
         self.select(False)
 
     def select(self, on: bool) -> None:
+        self.selected = on
         self.setStyleSheet("QFrame { border: 2px solid %s; }" % (theme.ACCENT if on else theme.CARD))
 
 
@@ -60,15 +63,23 @@ class MultiView(QWidget):
         self.mode_label = QLabel("")
         self.mode_label.setStyleSheet(f"color:{theme.YELLOW}; font-weight:600; padding-left:6px")
         top.addWidget(self.mode_label)
-        hint = QLabel("위/아래 드래그: 확대·축소 · 클릭: 선택 · 더블클릭: 2D로 열기")
+        hint = QLabel("위/아래 드래그: 확대·축소 · 클릭: 선택 · 더블클릭: 크게 보기")
         hint.setStyleSheet(f"color:{theme.TEXT3}")
         top.addWidget(hint, 1)
         self.grid = QGridLayout()
         self.grid.setSpacing(3)
+        # nothing picked any more: what to do, where the cells were
+        self.empty = QLabel("")
+        self.empty.setObjectName("multiEmpty")
+        self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty.setWordWrap(True)
+        self.empty.setStyleSheet(f"color:{theme.TEXT3}; font-size:15px; padding:24px")
+        self.empty.hide()
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self.topbar)
         lay.addLayout(self.grid, 1)
+        lay.addWidget(self.empty, 1)
         if compact:
             self.grid.setSpacing(2)
             self.topbar.hide()
@@ -78,13 +89,28 @@ class MultiView(QWidget):
     def count(self) -> int:
         return int(self.combo.currentData())
 
-    def set_count(self, n: int) -> None:
+    def set_count(self, n: int, quiet: bool = False) -> None:
+        """``quiet``: no ``layoutChanged`` (the caller fills the cells itself)."""
         i = self.combo.findData(n)
-        if i >= 0:
+        if i < 0:
+            return
+        was = self.combo.blockSignals(quiet or self.combo.signalsBlocked())
+        try:
             self.combo.setCurrentIndex(i)
+        finally:
+            self.combo.blockSignals(was)
 
-    def populate(self, items, current_id: int | None) -> None:
-        """``items`` = list of ``(image_id, label, rgb)`` (already processed)."""
+    @staticmethod
+    def fit(n: int) -> int:
+        """The smallest layout that holds ``n`` photos (3 → 4 · 5 → 6 · 7 → 9 …, at most 16)."""
+        return next((k for k in LAYOUTS if k >= n), max(LAYOUTS))
+
+    def populate(self, items, current_id: int | None, empty: str = "") -> None:
+        """``items`` = list of ``(image_id, label, rgb)`` (already processed). With no items and
+        an ``empty`` text, that text is shown instead of the cells."""
+        hint = not items and bool(empty)
+        self.empty.setText(empty if hint else "")
+        self.empty.setVisible(hint)
         rows, cols = LAYOUTS[self.count]
         while len(self.cells) < rows * cols:
             cell = _Cell()
@@ -97,7 +123,7 @@ class MultiView(QWidget):
         for i in range(rows * cols):
             cell = self.cells[i]
             self.grid.addWidget(cell, i // cols, i % cols)
-            cell.show()
+            cell.setVisible(not hint)
             if i < len(items):
                 iid, label, rgb = items[i]
                 cell.image_id = iid

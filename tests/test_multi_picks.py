@@ -1,6 +1,7 @@
 """VK-2 style picking: the strip shows several rows (newest first) with the eye on every photo,
-a plain click picks photos (numbered), [멀티] shows the picked photos in the multi view and a
-click on a cell lets the processing toolbar change that photo only."""
+a plain click puts the photo on the multi view at once (numbered; the layout fits the number
+picked), [멀티] goes back to the picked photos and a click on a cell lets the processing toolbar
+change that photo only."""
 import os
 
 import pytest
@@ -82,20 +83,26 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
         w.thumbs.setMaximumWidth(16777215)
         app.processEvents()
 
-        # plain click = pick (numbered), the shown photo stays; click again = unpick
-        shown = w.current["id"]
+        # the patient comes with its newest OD and OS picked (OD first); 선택 해제 starts from nothing
+        eyes = {r["id"]: r["laterality"] for r in rows}
+        assert [eyes[i] for i in w.picks()] == ["OD", "OS"] and w.current["id"] == w.picks()[0]
+        w.clear_picks()
+        assert w.picks() == [] and not w.btn_clear_picks.isVisible()
+
+        # plain click = the photo on the multi view at once (numbered, selected); click again = it leaves
         _click(w, w.thumbs.item(2))
+        app.processEvents()
+        assert w._tab() == "multi" and w.picks() == [ids[2]] and w.multi.count == 1 and w.current["id"] == ids[2]
         _click(w, w.thumbs.item(0))
-        assert w.picks() == [ids[2], ids[0]] and w.current["id"] == shown
+        assert w.picks() == [ids[2], ids[0]] and w.multi.count == 2 and w.current["id"] == ids[0]
         assert w.thumbs.item(2).data(PICK_ROLE) == 1 and w.thumbs.item(0).data(PICK_ROLE) == 2
         assert w.btn_multi.text() == "멀티 2" and w.btn_clear_picks.isVisible()
         _click(w, w.thumbs.item(2))
-        assert w.picks() == [ids[0]] and w.thumbs.item(0).data(PICK_ROLE) == 1
+        assert w.picks() == [ids[0]] and w.thumbs.item(0).data(PICK_ROLE) == 1 and w.multi.count == 1
         _click(w, w.thumbs.item(1))
-        assert w.picks() == [ids[0], ids[1]]
+        assert w.picks() == [ids[0], ids[1]] and w.multi.count == 2
 
         # double click = that photo large (모두 보기, whose big photo is the 2D view), the picks stay as they were
-        w._go("multi")
         _click(w, w.thumbs.item(2), double=True)
         assert w.current["id"] == ids[2] and w._tab() == "all"
         assert w.picks() == [ids[0], ids[1]]
@@ -128,17 +135,21 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
         assert w._channel == "rgb"
         assert w._per_photo[ids[1]]["state"]["ops"] == ["sharpen"]
 
-        # clearing the picks goes back to the VK-2 consecutive multi view
+        # clearing the picks: the multi view says how to pick; 다중 ▾ N장 = VK-2's consecutive photos
         w.btn_clear_picks.click()
         app.processEvents()
         assert w.picks() == [] and w.multi.mode_label.text() == "" and w.btn_multi.text() == "멀티"
-        assert not w.btn_clear_picks.isVisible()
+        assert not w.btn_clear_picks.isVisible() and w.multi.empty.isVisible()
+        w._on_action("multi:2")
+        app.processEvents()
+        assert not w.multi.empty.isVisible() and len([c for c in w.multi.cells if c.isVisible() and c.image_id]) == 2
 
-        # another patient: the picks belong to the previous one
+        # another patient: the picks belong to the previous one — that patient's own newest OD | OS
         _click(w, w.thumbs.item(0))
         assert w.picks() == [ids[0]]
         other = next(p["id"] for p in db.list_patients() if p["id"] != pid)
         w._select_patient_ref(other)
-        assert w.picks() == [] and w._per_photo == {}
+        theirs = {r["id"] for r in db.images_for_patient(other)}
+        assert set(w.picks()) <= theirs and w._per_photo == {}
     finally:
         w.close()

@@ -350,8 +350,8 @@ def test_double_click_opens_the_review_of_both_eyes(win):
     # the way back to the patient list, and the patient's review again
     w.act_patients.trigger()
     assert w.page() == "patients" and w.tb_cmd.isHidden()
-    w.patient_page.btn_open.click()                    # 사진 보기: the workspace opens on 모두 보기 now
-    assert w.page() == "work" and w._tab() == "all"
+    w.patient_page.btn_open.click()                    # 사진 보기: the newest OD | OS on 다중 보기 now
+    assert w.page() == "work" and w._tab() == "multi" and w.picks() == [ids["od3"], ids["os3"]]
     _show_review(w)
     assert rv.views[0].mapTo(w, QPoint(0, 0)).x() < rv.views[1].mapTo(w, QPoint(0, 0)).x()
 
@@ -677,12 +677,13 @@ def test_hand_off_to_2d_3d_and_glaucoma(win):
     assert dlg is not None and why == "" and dlg.progress.has_image()
     assert dlg.tabs.currentWidget() is dlg.progress       # two exam days: 경과 비교 comes first
     dlg.close()
-    # the patient list: the checked exam's photo — 사진 보기 (모두 보기) / 3D
+    # the patient list: the checked exam's photos — 사진 보기 (OD | OS on 다중 보기, OD selected) / 3D
     w.show_page("patients")
     w.patient_page.set_exam("2025-12-01")
     assert w.patient_page.btn_2d.isHidden() and w.patient_page.btn_open.text() == "사진 보기"
     w.patient_page.btn_open.click()
-    assert w.page() == "work" and w._tab() == "all" and w.current["id"] == ids["od2"]
+    assert w.page() == "work" and w._tab() == "multi" and w.current["id"] == ids["od2"]
+    assert w.picks() == [ids["od2"], ids["os2"]]
     w.show_page("patients")
     w.patient_page.btn_3d.click()
     assert w._tab() == "3d" and w.current["id"] == ids["od2"]
