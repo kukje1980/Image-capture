@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Build dist/FundusViewer.app and dist/FundusViewer-mac-<arch>.dmg on macOS 11+
+# Build dist/FundusViewer.app and dist/FundusViewer-mac-<AppleSilicon|Intel>.dmg on a Mac
 # (Python 3.10+). The app is built for the architecture of this Mac:
-# Apple Silicon (arm64) or Intel (x86_64).
+# Apple Silicon (arm64) or Intel (x86_64). It runs on the macOS its libraries are
+# built for or newer (today macOS 14.4, from Qt 6.12); dist/mac-min-<label>.txt says
+# which (e.g. "macOS 14.4 Sonoma") for the download page.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -25,10 +27,13 @@ if [ -z "${VIRTUAL_ENV:-}" ] && [ -z "${CI:-}" ]; then
 fi
 "$PY" -m pip install --upgrade pip
 "$PY" -m pip install -r requirements.txt pyinstaller pytest
-QT_QPA_PLATFORM=offscreen "$PY" -m pytest -q tests
+QT_QPA_PLATFORM=offscreen "$PY" -m pytest -q -o faulthandler_timeout=180 tests
 
 rm -rf build/FundusViewer dist/FundusViewer dist/FundusViewer.app
 "$PY" -m PyInstaller fundus_viewer.spec --noconfirm
+
+# Info.plist must name the newest macOS any bundled library needs (fails otherwise)
+"$PY" macos_bundle.py dist/FundusViewer.app --notes-out "dist/mac-min-$LABEL.txt"
 
 # Ad-hoc signature: no developer certificate needed, and Apple Silicon
 # refuses to start unsigned code.
@@ -51,5 +56,5 @@ for try in 1 2 3 4 5; do
 done
 rm -rf "$STAGE"
 echo
-echo "Done: dist/FundusViewer.app and $DMG"
+echo "Done: dist/FundusViewer.app and $DMG (runs on $(cat "dist/mac-min-$LABEL.txt") or newer)"
 echo "Try it with: dist/FundusViewer.app/Contents/MacOS/FundusViewer --demo"

@@ -1,11 +1,33 @@
-## 안저 사진 뷰어 — 최신 빌드 (Windows)
+## 안저 사진 뷰어 — 최신 빌드 (Windows · Mac)
 
-아래 **Assets** 의 **FundusViewer-windows.zip** 을 눌러 내려받으세요 (Windows 10 / 11, 로그인 필요 없음).
+아래 **Assets** 에서 내 컴퓨터에 맞는 파일을 눌러 내려받으세요 (로그인 필요 없음).
+
+| 컴퓨터 | 파일 | 필요한 버전 |
+|---|---|---|
+| Windows | **FundusViewer-windows.zip** | Windows 10 / 11 |
+| Mac — Apple Silicon (M1 · M2 · M3 · M4 …) | **FundusViewer-mac-AppleSilicon.dmg** | @MAC_MIN_AppleSilicon@ 이상 |
+| Mac — Intel | **FundusViewer-mac-Intel.dmg** | @MAC_MIN_Intel@ 이상 |
+
+내 Mac의 칩과 macOS 버전은 화면 왼쪽 위  메뉴 → **이 Mac에 관하여**에 나옵니다 — "칩"(Apple M…) 또는
+"프로세서"(Intel …), 그리고 "macOS Sonoma 14.…" 같은 버전. 버전이 낮으면  메뉴 → **시스템 설정 → 일반 →
+소프트웨어 업데이트**로 올립니다(그보다 낮은 macOS에서는 "이 버전의 macOS에서는 사용할 수 없습니다"라고 나옵니다).
 
 ### Windows 설치·실행
 1. 내려받은 zip 파일의 압축을 풉니다.
 2. `FundusViewer` 폴더 안의 **FundusViewer.exe** 를 실행합니다.
 3. "Windows의 PC 보호" 창이 뜨면 **추가 정보 → 실행** 을 누릅니다 (서명하지 않은 프로그램이라 나오는 경고입니다).
+
+### Mac 설치·실행
+1. 내려받은 dmg 파일을 열고 **FundusViewer** 를 **Applications(응용 프로그램)** 폴더로 끌어다 놓습니다.
+2. 응용 프로그램 폴더에서 FundusViewer 를 엽니다. 애플 인증서 없이 만든 앱이라 처음에는 "열 수 없습니다"
+   ("Apple은 … 확인할 수 없습니다") 경고가 나옵니다.
+   - **macOS 15 (Sequoia) 이상**: 경고 창을 **완료**로 닫고 **시스템 설정 → 개인정보 보호 및 보안** 맨 아래의
+     **그래도 열기** 를 누른 뒤 암호를 넣습니다.
+   - **macOS 14 (Sonoma)**: 앱을 **Control+클릭 → 열기 → 열기**.
+3. 한 번 열고 나면 다음부터는 그냥 열립니다. 문서 폴더 · USB · 네트워크 폴더에 접근해도 되는지 물으면 **허용**을
+   누릅니다(사진 보관함과 가져오기 폴더가 문서 폴더에 있습니다).
+4. Mac에서는 Ctrl 대신 ⌘ 키를 씁니다(⌘+클릭 = 두 번째 사진, ⌘1 · ⌘2 · ⌘3 = 보기). 트랙패드의 두 손가락
+   벌리기 / 오므리기로 사진과 3D 안구를 확대 · 축소합니다. 메뉴는 화면 맨 위 메뉴 막대에 있습니다.
 
 ### 버전 0.4.0 — 사진 가져오기: 환자 정보 확인 · 극한 테스트 · 더 빠르게
 * **사진 가져오기 → 환자 정보 확인 창**: 직접 고른 사진(파일 · 폴더 · 끌어다 놓기)은 가져오기 전에 사진에서 읽은
@@ -144,6 +166,9 @@
 설정할 것이 없습니다. 실행하면 레티캠(`reticam`·`레티캠`) 등 장비 폴더와 `문서\안저사진 가져오기` 폴더를 찾아 자동으로 감시하고, 새 사진의 환자 ID·이름을 읽어 환자별로 정리합니다.
 
 가상 데모 사진으로 먼저 써 보려면 명령 프롬프트에서 `FundusViewer.exe --demo` 로 실행합니다 (몽타주는 데모 환자 `D0001240`).
+Mac은 터미널에서 `/Applications/FundusViewer.app/Contents/MacOS/FundusViewer --demo`.
 
 ### 항상 최신 버전 주소
-https://github.com/kukje1980/Image-capture/releases/download/fundus-viewer-latest/FundusViewer-windows.zip
+* Windows: https://github.com/kukje1980/Image-capture/releases/download/fundus-viewer-latest/FundusViewer-windows.zip
+* Mac (Apple Silicon): https://github.com/kukje1980/Image-capture/releases/download/fundus-viewer-latest/FundusViewer-mac-AppleSilicon.dmg
+* Mac (Intel): https://github.com/kukje1980/Image-capture/releases/download/fundus-viewer-latest/FundusViewer-mac-Intel.dmg

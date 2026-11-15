@@ -1,6 +1,6 @@
 # 안저 사진 뷰어 (Fundus Viewer)
 
-Windows 10 / 11 · macOS 11 이상용 안저카메라 전용 뷰어입니다. **감시 폴더에 사진 파일이 떨어지면** 파일에서
+Windows 10 / 11 · macOS 14 (Sonoma) 이상용 안저카메라 전용 뷰어입니다. **감시 폴더에 사진 파일이 떨어지면** 파일에서
 환자 ID·이름 등 환자 정보를 추출해 뷰어 데이터베이스로 가져오고, 2D로 보거나 **광각 사진을
 실제 안구처럼 입체(3D) 모델**로 돌려 볼 수 있습니다.
 
@@ -48,18 +48,30 @@ https://github.com/kukje1980/Image-capture/releases/download/fundus-viewer-lates
 — 로그인 없이 받아지며 항상 최신 빌드입니다. 압축을 풀고 `FundusViewer\FundusViewer.exe`를 실행합니다
 ("Windows의 PC 보호" 창이 뜨면 **추가 정보 → 실행**).
 
-**직접 빌드:** Windows는 `build_windows.bat` 실행 → `dist\FundusViewer\FundusViewer.exe` (폴더째 복사해
-사용). GitHub Actions(`fundus-viewer` 워크플로)가 커밋마다 Linux에서 시험(3D 안구 OpenGL 렌더링 포함)하고
-Windows exe를 빌드하며, 기본 브랜치(`fundus-viewer`)의 빌드만 위 주소(릴리스 `fundus-viewer-latest`)에
-올립니다(다른 브랜치·PR은 빌드·시험만).
+**내려받기 (Mac):**
+Apple Silicon(M1 · M2 · M3 · M4 …)
+https://github.com/kukje1980/Image-capture/releases/download/fundus-viewer-latest/FundusViewer-mac-AppleSilicon.dmg ·
+Intel https://github.com/kukje1980/Image-capture/releases/download/fundus-viewer-latest/FundusViewer-mac-Intel.dmg
+(내 Mac의 칩과 macOS 버전은 화면 왼쪽 위  메뉴 → **이 Mac에 관하여**에 나옵니다). **macOS 14.4 (Sonoma) 이상**이
+필요합니다 — 함께 들어가는 Qt 6.12가 그 버전용으로 만들어져 있어, 더 낮은 macOS에서는 "이 버전의 macOS에서는
+사용할 수 없습니다"라고 나옵니다(정확한 버전은 내려받기 페이지의 표에 빌드마다 나옵니다). dmg를 열어
+FundusViewer를 응용 프로그램 폴더로 끌어다 놓습니다. 애플 개발자 인증서 없이 임시(ad-hoc) 서명만 한 앱이라
+처음 열 때 경고가 나옵니다: macOS 15 이상은 한 번 열어 경고를 닫은 뒤 **시스템 설정 → 개인정보 보호 및 보안 →
+아래쪽 "그래도 열기"**, 14는 앱을 **Control+클릭 → 열기**. Mac에서는 Ctrl 대신 ⌘(⌘+클릭 = 두 번째 사진,
+⌘1 · ⌘2 · ⌘3 = 보기), 트랙패드 두 손가락 스크롤·벌리기/오므리기로 확대·축소하고, 메뉴는 화면 맨 위 메뉴 막대에
+있습니다. 설정은 `~/Library/Application Support/FundusViewer`, 라이브러리는 `문서/FundusViewerLibrary`에 둡니다.
+장비 폴더는 홈 폴더와 연결된 볼륨(`/Volumes`의 USB 디스크·NAS)에서 찾고, 네트워크 공유(SMB·AFP·NFS)의 폴더는
+폴링으로 감시합니다.
 
-**Mac:** 프로그램은 macOS 11 이상에서도 동작하지만 Mac용 파일은 지금은 자동으로 만들지 않습니다. 필요하면
-Mac에서 `./build_mac.sh` → `dist/FundusViewer.app`과 `dist/FundusViewer-mac-<AppleSilicon|Intel>.dmg`
-(빌드하는 Mac의 칩용)를 직접 만듭니다. 애플 인증서 없이 임시(ad-hoc) 서명만 한 앱이라 처음 열 때 경고가
-나옵니다: macOS 15 이상은 한 번 열어 경고를 닫은 뒤 **시스템 설정 → 개인정보 보호 및 보안 → 그래도 열기**,
-14 이하는 앱을 **Control+클릭 → 열기**. Mac에서는 Ctrl 대신 ⌘(⌘+클릭 = 두 번째 사진), 트랙패드 두 손가락
-스크롤·벌리기/오므리기로 확대·축소합니다. 설정은 `~/Library/Application Support/FundusViewer`, 라이브러리는
-`문서/FundusViewerLibrary`에 둡니다.
+**직접 빌드:** Windows는 `build_windows.bat` 실행 → `dist\FundusViewer\FundusViewer.exe` (폴더째 복사해
+사용). Mac은 `./build_mac.sh` → `dist/FundusViewer.app`과 `dist/FundusViewer-mac-<AppleSilicon|Intel>.dmg`
+(빌드하는 Mac의 칩용). 앱의 최소 macOS(Info.plist `LSMinimumSystemVersion`)는 `macos_bundle.py`가 앱에 들어간
+라이브러리에서 읽어 정합니다(PySide6·shiboken6의 바인딩 모듈은 PyPI 빌드 기계의 macOS가 적혀 있을 뿐이라 빼고 셉니다).
+GitHub Actions(`fundus-viewer` 워크플로)가 커밋마다 Linux에서 시험(3D 안구 OpenGL 렌더링 포함)하고 Windows exe와
+Mac 앱 두 가지(Apple Silicon · Intel)를 빌드·시험하며, 기본 브랜치(`fundus-viewer`)의 빌드만 위 주소(릴리스
+`fundus-viewer-latest`)에 올립니다(다른 브랜치·PR은 빌드·시험만). Mac 빌드는 전체 시험 뒤 번들 앱을 데모 사진으로
+실제 실행해 보고, 3D 안구를 macOS OpenGL로 렌더링하는 시험도 거칩니다(macOS 15 러너 — GitHub에 macOS 14 러너는 이제
+없습니다).
 
 **3D 안구 미리보기 (웹 페이지):** `web3d/eye3d.html` 하나를 브라우저(Chrome·Edge·Safari·Firefox)로 열면 프로그램의
 3D 안구를 설치 없이 돌려 볼 수 있습니다. 새 3D 기능은 여기서 먼저 확인한 뒤 프로그램에 넣습니다. 자세한 내용은
@@ -730,6 +742,8 @@ tests/              pytest (추출·투영·영상·가져오기·감시·GUI·�
                     test_import_review: 가져오기 확인 창 · 환자 지정, test_import_stress: 극한 테스트 —
                     손상 파일 · 무작위 이름 · 대량 · 여러 스레드 · 환자 수천 명)
 web3d/              3D 안구 미리보기 웹 페이지 (build.py → eye3d.html)
+fundus_viewer.spec  PyInstaller (Windows exe · Mac .app), build_windows.bat · build_mac.sh
+macos_bundle.py     Mac 앱의 최소 macOS: 앱에 든 라이브러리(Mach-O)에서 읽어 Info.plist에 쓰고 빌드 뒤 확인
 ```
 
 라이브러리 폴더(기본: `문서\FundusViewerLibrary`)에는 `fundus.db`, `images\<환자ID>\<검사일>\`

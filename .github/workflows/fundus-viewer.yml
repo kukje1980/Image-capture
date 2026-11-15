@@ -72,20 +72,79 @@ jobs:
           name: release-windows
           path: FundusViewer-windows.zip
 
-  # Fixed download address for the newest build (Windows only for now — a Mac app is built by hand
-  # with ./build_mac.sh when needed):
+  build-mac:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15          # Apple Silicon (M1, M2, M3, M4 …)
+            label: AppleSilicon
+          - runner: macos-15-intel    # Intel Macs
+            label: Intel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # the whole test suite, the .app (Info.plist names the lowest macOS its libraries
+      # run on: macos_bundle.py), an ad-hoc signature and the dmg
+      - name: Tests, app bundle, ad-hoc signature and dmg
+        run: ./build_mac.sh
+      - name: Start the bundled app (demo photos)
+        timeout-minutes: 5
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          HOME_DIR="$RUNNER_TEMP/fv-home"
+          dist/FundusViewer.app/Contents/MacOS/FundusViewer --demo --home "$HOME_DIR" &
+          PID=$!
+          n=0
+          for i in $(seq 1 90); do
+            n=$(sqlite3 "$HOME_DIR/Library/fundus.db" "select count(*) from images" 2>/dev/null || echo 0)
+            [ "$n" -gt 0 ] && break
+            sleep 1
+          done
+          kill -0 $PID            # still running
+          kill $PID || true
+          echo "imported demo photos: $n"
+          [ "$n" -gt 0 ]
+      # render the 3D eye with Apple's OpenGL (the runner's window server
+      # provides a context), which also checks that every shader compiles there
+      - name: 3D eye on macOS OpenGL
+        timeout-minutes: 20       # Apple Silicon 4 min, Intel (software OpenGL) 7 min
+        env:
+          FUNDUSVIEW_REQUIRE_GL: "1"
+        run: python -m pytest -q -rs tests/test_eye3d_gl.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-mac-${{ matrix.label }}
+          path: dist/FundusViewer-mac-${{ matrix.label }}.dmg
+          if-no-files-found: error
+      # "macOS 14.4 Sonoma": the lowest macOS this build runs on, for the download page
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macmin-${{ matrix.label }}
+          path: dist/mac-min-${{ matrix.label }}.txt
+          if-no-files-found: error
+
+  # Fixed download addresses for the newest builds:
   # https://github.com/<owner>/<repo>/releases/download/fundus-viewer-latest/FundusViewer-windows.zip
-  # Only main publishes: pushes to other branches (and pull requests) still build and test,
-  # but must not replace the public download with unmerged work. A manual run on main
-  # (workflow_dispatch) republishes.
-  # The download waits for the Windows build, which runs the whole test suite itself. test-linux
-  # (the same tests, and the 3D eye rendered with OpenGL) stays a check of its own, so a Linux
-  # runner that cannot reach its package mirror does not hold the download back.
+  # https://github.com/<owner>/<repo>/releases/download/fundus-viewer-latest/FundusViewer-mac-AppleSilicon.dmg
+  # https://github.com/<owner>/<repo>/releases/download/fundus-viewer-latest/FundusViewer-mac-Intel.dmg
+  # Only the default branch publishes: pushes to other branches (and pull requests) still build
+  # and test, but must not replace the public download with unmerged work. A manual run on the
+  # default branch (workflow_dispatch) republishes.
+  # The download waits for the builds, which run every test themselves (Windows: the whole
+  # suite; Mac: the whole suite, the bundled app started, the 3D eye on OpenGL). test-linux
+  # stays a check of its own, so a Linux runner that cannot reach its package mirror does
+  # not hold the Windows and Mac downloads back.
   publish:
     if: >-
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
       && github.ref_name == github.event.repository.default_branch
-    needs: [build-windows]
+    needs: [build-windows, build-mac]
     runs-on: ubuntu-latest
     permissions:
       contents: write   # publish the builds as a release (download without logging in)
@@ -96,6 +155,23 @@ jobs:
           pattern: release-*
           merge-multiple: true
           path: out
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: macmin-*
+          merge-multiple: true
+          path: macmin
+      # the download page names the lowest macOS of each Mac build (@MAC_MIN_<label>@)
+      - name: Release notes
+        run: |
+          cp docs/release_notes.md "$RUNNER_TEMP/notes.md"
+          for f in macmin/mac-min-*.txt; do
+            label=$(basename "$f" .txt); label=${label#mac-min-}
+            sed -i "s/@MAC_MIN_${label}@/$(head -n 1 "$f")/g" "$RUNNER_TEMP/notes.md"
+          done
+          if grep -n '@MAC_MIN_' "$RUNNER_TEMP/notes.md"; then
+            echo "release notes: a Mac build's lowest macOS is missing" >&2; exit 1
+          fi
+          grep -n 'macOS' "$RUNNER_TEMP/notes.md" | head -n 5
       - name: Publish latest builds
         env:
           GH_TOKEN: ${{ github.token }}
@@ -105,5 +181,5 @@ jobs:
           gh release delete fundus-viewer-latest --yes --cleanup-tag || true
           gh release create fundus-viewer-latest out/* \
             --target "$GITHUB_SHA" --prerelease \
-            --title "안저 사진 뷰어 (Windows 최신 빌드)" \
-            --notes-file docs/release_notes.md
+            --title "안저 사진 뷰어 (Windows · Mac 최신 빌드)" \
+            --notes-file "$RUNNER_TEMP/notes.md"
