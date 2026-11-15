@@ -275,8 +275,8 @@ class PatientListPage(QWidget):
         row.setSpacing(8)
         self.btn_open = QPushButton("사진 보기")
         self.btn_open.setObjectName("primary")
-        self.btn_open.setToolTip("체크한 검사의 사진을 엽니다 — 큰 사진과 황반 · 시신경 유두 확대 (두 번 누르기 · Enter)")
-        self.btn_open.clicked.connect(lambda: self._request("all"))
+        self.btn_open.setToolTip("체크한 검사의 사진을 엽니다 — 사진을 클릭하는 대로 그 수만큼 나란히 보여 줍니다 (두 번 누르기 · Enter)")
+        self.btn_open.clicked.connect(lambda: self._request("multi"))
         row.addWidget(self.btn_open, 1)
         self.btn_import = QPushButton("사진 가져오기")
         self.btn_import.setToolTip("사진 파일을 골라 가져옵니다 — 사진에서 읽은 환자 정보를 먼저 보여 주고,\n"
@@ -398,7 +398,7 @@ class PatientListPage(QWidget):
         ref = self.table.item(rows[0].row(), 0).data(Qt.ItemDataRole.UserRole)
         if ref != self._ref:
             self.patientSelected.emit(ref)
-        self._request("all")
+        self._request("multi")
 
     def _request(self, where: str) -> None:
         if self._ref is None:

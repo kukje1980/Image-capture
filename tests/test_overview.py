@@ -57,7 +57,10 @@ def test_overview_is_the_photo_with_its_macula_and_disc(tmp_path, demo_dir, impo
         w._select_patient_ref(db.find_patient("20260115001")["id"])
         w.show_page("work")              # (new photos may have brought the workspace up already)
         app.processEvents()
-        assert w.page() == "work" and w._tab() == "all"
+        assert w.page() == "work" and w._tab() == "multi" and w.view_buttons["multi"].isChecked()   # the first view
+        w.view_buttons["all"].click()
+        app.processEvents()
+        assert w._tab() == "all"
 
         # -- the frame: no tab row; the view switch under the photos; patient line in the menu bar --
         assert w.tabs.tabBar().isHidden()

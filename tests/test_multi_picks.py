@@ -82,11 +82,28 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
         w.thumbs.setMaximumWidth(16777215)
         app.processEvents()
 
-        # plain click = pick (numbered), the shown photo stays; click again = unpick
+        # the first view is 다중 보기, 화면 분할 자동: as many cells as clicked photos (one when nothing is picked)
+        def on_screen():
+            return [c.image_id for c in w.multi.cells if c.isVisible()]
+
         shown = w.current["id"]
+        assert w._tab() == "multi" and w.multi.auto and w.multi.combo.currentText() == "자동"
+        assert on_screen() == [shown] and w.multi.mode_label.text() == ""
+        # plain click = pick (numbered), the shown photo stays; click again = unpick
         _click(w, w.thumbs.item(2))
+        assert on_screen() == [ids[2]]
         _click(w, w.thumbs.item(0))
+        assert on_screen() == [ids[2], ids[0]] and "늘리세요" not in w.multi.mode_label.text()
         assert w.picks() == [ids[2], ids[0]] and w.current["id"] == shown
+        _click(w, w.thumbs.item(1))
+        assert on_screen() == [ids[2], ids[0], ids[1]] and w.multi.count == 3      # 3 clicks: 3 photos in a row
+        assert len({c.y() for c in w.multi.cells if c.isVisible()}) == 1
+        w.multi.set_count(2)                                         # a fixed 화면 분할 still holds
+        assert on_screen() == [ids[2], ids[0]] and "늘리세요" in w.multi.mode_label.text()
+        w.multi.set_count(0)
+        assert on_screen() == [ids[2], ids[0], ids[1]]
+        _click(w, w.thumbs.item(1))
+        assert on_screen() == [ids[2], ids[0]]
         assert w.thumbs.item(2).data(PICK_ROLE) == 1 and w.thumbs.item(0).data(PICK_ROLE) == 2
         assert w.btn_multi.text() == "멀티 2" and w.btn_clear_picks.isVisible()
         _click(w, w.thumbs.item(2))

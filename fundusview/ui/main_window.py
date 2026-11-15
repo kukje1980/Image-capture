@@ -69,6 +69,7 @@ MULTI_SIZES = (1, 2, 4, 6, 9, 16)
 TABS = (("all", "모두 보기", "Ctrl+1"), ("multi", "다중 보기", "Ctrl+2"), ("3d", "3D", "Ctrl+3"))
 # views no longer shown (검토 · 2D 보기 · 비교): whatever led there stays on 모두 보기, whose big
 # photo is the 2D view with all its tools
+HOME_VIEW = "multi"                          # the view the workspace opens on (사진 보기)
 GONE_VIEWS = {"review": "all", "2d": "all", "cmp": "all"}
 PATIENT_LIST_KEY = "Ctrl+0"                  # back to the start screen
 # commands that work on the patient list as well (the others belong to the workspace)
@@ -602,7 +603,7 @@ class MainWindow(QMainWindow):
         self.review.handOff.connect(self._review_hand_off)
         self.review.status.connect(lambda t: self.lbl_status.setText(t))
         self.tabs.insertTab(0, self.review, "검토")
-        self.tabs.setCurrentWidget(self.page_all)
+        self.tabs.setCurrentWidget(self.multi)             # the first view: 다중 보기 (the clicked photos)
         self._pages = {"review": self.review, "all": self.page_all, "2d": self.page2d, "3d": self.page3d,
                        "multi": self.multi, "cmp": cmp_w}
         self._ov_on = False
@@ -619,10 +620,10 @@ class MainWindow(QMainWindow):
             vb.setToolTip(keys(f"{label} ({shortcut})"))
             vb.clicked.connect(lambda _=False, k=key: self._go(k))
             self.view_buttons[key] = vb
-        self.view_buttons["all"].setChecked(True)
+        self.view_buttons[HOME_VIEW].setChecked(True)
         self.seg_views = Segmented(list(self.view_buttons.values()), on_card=False)
         self.seg_views.setFixedWidth(258)
-        self.view_buttons["all"].setChecked(True)
+        self.view_buttons[HOME_VIEW].setChecked(True)
         strip = QHBoxLayout()
         strip.setSpacing(4)
         side = QGridLayout()
@@ -652,7 +653,6 @@ class MainWindow(QMainWindow):
         self.strip_w = QWidget()         # hidden on the 검토 tab (its timeline lists the photos there)
         self.strip_w.setLayout(strip)
         cl.addWidget(self.strip_w)
-        self._place_overview(True)       # 처음은 모두 보기
 
         self.split = QSplitter(Qt.Orientation.Horizontal)
         self.split.addWidget(self.left)
@@ -1183,6 +1183,7 @@ class MainWindow(QMainWindow):
             "<b>사진 목록 · 멀티</b><br>"
             "최신 사진부터, 사진마다 왼쪽 위에 눈(OD 파랑 · OS 주황) · ▤ 버튼: 1·2·3줄<br>"
             "클릭: 멀티로 고르기(번호, 다시 클릭하면 빼기) · 더블클릭: 그 사진을 크게<br>"
+            "처음 화면은 다중 보기 — 화면 분할 [자동]: 클릭한 사진 수만큼 나란히 (1·2·4·6·9·16장으로 고정할 수도 있음)<br>"
             "[멀티]: 고른 사진을 다중 보기에 — 칸을 누르면 그 사진만 보정 (밝기·대비·감마·Red-free·선명하게 …)<br><br>"
             "<b>두 사진 고르기 · 디스크 2장</b><br>"
             "두 번째 사진을 Ctrl+클릭(②, 다시 Ctrl+클릭하면 해제) → [디스크 2장] · [녹내장](스테레오 · 경과 비교)<br>"
@@ -1365,6 +1366,8 @@ class MainWindow(QMainWindow):
             self.show_page("work")                 # the new photo is shown, wherever the window was
             if self._tab() == "review" and last.image_id not in self.review.slot_ids():
                 self._go("all")                    # not one of the two photos under review: the big view
+            elif self._tab() == "multi" and self._picks and last.image_id not in self._picks:
+                self._go("all")                    # the cells hold the picked photos: the new one, large
         elif any((r.patient_ref if r.patient_ref is not None else UNASSIGNED) == self._patient_ref
                  for r in imported):
             self._fill_dates()
@@ -1425,9 +1428,9 @@ class MainWindow(QMainWindow):
         if ref != self._patient_ref:
             self._select_patient_ref(ref)
 
-    def open_patient(self, ref, where: str = "all") -> None:
+    def open_patient(self, ref, where: str = HOME_VIEW) -> None:
         """Open the workspace for a patient of the patient list, with the checked exam's photo —
-        on 모두 보기, or in 3D (``where``: a view key)."""
+        on 다중 보기 (the first view: the clicked photos side by side), or in 3D (``where``: a view key)."""
         self._pick_patient(ref)
         if self._patient_ref != ref or not self._images():
             self.lbl_status.setText("이 환자는 아직 사진이 없습니다 — [사진 가져오기]로 사진을 넣으세요")
@@ -1666,7 +1669,9 @@ class MainWindow(QMainWindow):
             self._picks.append(image_id)
         self._mark_picks()
         if self._picks:
-            self.lbl_status.setText(f"{len(self._picks)}장 골랐습니다 — [멀티]를 누르면 한 화면에 모아 보고 보정합니다")
+            self.lbl_status.setText(
+                f"{len(self._picks)}장 골랐습니다 — 칸을 누르면 그 사진만 보정됩니다" if self._tab() == "multi" else
+                f"{len(self._picks)}장 골랐습니다 — [멀티]를 누르면 한 화면에 모아 보고 보정합니다")
         self._refill_multis()
         return True
 
@@ -1688,7 +1693,8 @@ class MainWindow(QMainWindow):
             self.lbl_status.setText("사진을 클릭해 고른 뒤 [멀티]를 누르세요 (다시 클릭하면 빠집니다)")
             return
         n = len(self._picks)
-        self.multi.set_count(next((k for k in MULTI_SIZES if k >= n), MULTI_SIZES[-1]))
+        if not self.multi.auto and self.multi.count < n:     # a fixed 화면 분할 too small for the picks
+            self.multi.set_count(next((k for k in MULTI_SIZES if k >= n), MULTI_SIZES[-1]))
         if self.current is None or self.current["id"] not in self._picks:
             self._select_from_multi(self._picks[0])
         if self._tab() == "multi":
@@ -2441,6 +2447,8 @@ class MainWindow(QMainWindow):
         """Fill the 다중 보기 tab, or ``target`` (모두 보기's 2 × 2 grid): the picked photos with
         their own processing, else consecutive photos from the shown one."""
         mv = target or self.multi
+        if mv.auto:                           # 화면 분할 자동: as many cells as picked photos
+            mv.set_auto_count(len(self._picks) or 1)
         if self._picks:                       # the photos picked in the strip, each with its own processing
             n = mv.count
             items = []

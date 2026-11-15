@@ -39,7 +39,7 @@ COMMANDS = (
      "OPEN LIST"),
     ("prev", "이전", "이전 사진 (PageUp)", "prev", "PREV"),
     ("next", "다음", "다음 사진 (PageDown)", "next", "NEXT"),
-    ("multi", "다중", "여러 장 함께 보기 — ▾ 로 1·2·4·6·9·16장", "multi", "MULTI"),
+    ("multi", "다중", "여러 장 함께 보기 — ▾ 로 자동 · 1·2·4·6·9·16장", "multi", "MULTI"),
     ("fit", "화면 맞춤", "화면에 맞춤 — ▾ 로 배율(100~800%)과 확대 위치(후극부·주변부)", "fit", "SCALE"),
     ("tools", "도구", "영상 처리 툴바 보이기/숨기기", "tools", "TOOLS"),
     ("edit", "정보 수정", "이 사진의 환자·검사 정보 수정/환자 지정", "edit", "EDIT DATA"),
@@ -97,7 +97,7 @@ MENUS = {
     "rot_cw": (("rot_cw", "오른쪽으로 90°"), ("rot_ccw", "왼쪽으로 90°")),
     "tool:text": (("tool:text", "글자"), ("tool:arrow", "화살표 + 글자")),
     "annot_undo": (("annot_undo", "마지막 측정 지우기"), ("annot_clear", "측정·글자 모두 지우기")),
-    "multi": tuple((f"multi:{n}", f"{n}장") for n in (1, 2, 4, 6, 9, 16)),
+    "multi": (("multi:0", "자동 (고른 사진 수만큼)"),) + tuple((f"multi:{n}", f"{n}장") for n in (1, 2, 4, 6, 9, 16)),
     # None = separator; region:* zoom onto a part of an (ultra-)wide-field photo
     "fit": (("fit", "화면에 맞춤"), ("actual", "100% (실제 크기)"), ("zoom2", "200%"), ("zoom4", "400%"),
             ("zoom8", "800%"), None,

@@ -223,11 +223,11 @@ def test_patient_list_and_workspace_share_the_patient(win):
     assert not page.btn_open.isEnabled() and not page.btn_2d.isEnabled()
     page.table.doubleClicked.emit(page.table.model().index(row_of(page.table, refs["jung"]), 0))
     assert w.page() == "patients"
-    # 미분류: its photos open in the workspace (모두 보기) to be assigned
+    # 미분류: its photos open in the workspace (다중 보기, the first view) to be assigned
     page.table.selectRow(row_of(page.table, UNASSIGNED))
     assert page.lbl_name.text() == "미분류" and not page.btn_edit.isVisible() and page.btn_open.text() == "사진 보기"
     page.btn_open.click()
-    assert w.page() == "work" and w._tab() == "all" and w._patient_ref == UNASSIGNED and w.thumbs.count() == 1
+    assert w.page() == "work" and w._tab() == "multi" and w._patient_ref == UNASSIGNED and w.thumbs.count() == 1
 
     # the workspace's search hides the patient asked for from the list: it is cleared, not ignored
     w.search.setText("박")
@@ -350,8 +350,8 @@ def test_double_click_opens_the_review_of_both_eyes(win):
     # the way back to the patient list, and the patient's review again
     w.act_patients.trigger()
     assert w.page() == "patients" and w.tb_cmd.isHidden()
-    w.patient_page.btn_open.click()                    # 사진 보기: the workspace opens on 모두 보기 now
-    assert w.page() == "work" and w._tab() == "all"
+    w.patient_page.btn_open.click()                    # 사진 보기: the workspace opens on 다중 보기 now
+    assert w.page() == "work" and w._tab() == "multi"
     _show_review(w)
     assert rv.views[0].mapTo(w, QPoint(0, 0)).x() < rv.views[1].mapTo(w, QPoint(0, 0)).x()
 
@@ -677,12 +677,13 @@ def test_hand_off_to_2d_3d_and_glaucoma(win):
     assert dlg is not None and why == "" and dlg.progress.has_image()
     assert dlg.tabs.currentWidget() is dlg.progress       # two exam days: 경과 비교 comes first
     dlg.close()
-    # the patient list: the checked exam's photo — 사진 보기 (모두 보기) / 3D
+    # the patient list: the checked exam's photo — 사진 보기 (다중 보기: that photo alone, nothing picked yet) / 3D
     w.show_page("patients")
     w.patient_page.set_exam("2025-12-01")
     assert w.patient_page.btn_2d.isHidden() and w.patient_page.btn_open.text() == "사진 보기"
     w.patient_page.btn_open.click()
-    assert w.page() == "work" and w._tab() == "all" and w.current["id"] == ids["od2"]
+    assert w.page() == "work" and w._tab() == "multi" and w.current["id"] == ids["od2"]
+    assert [c.image_id for c in w.multi.cells if c.isVisible()] == [ids["od2"]]
     w.show_page("patients")
     w.patient_page.btn_3d.click()
     assert w._tab() == "3d" and w.current["id"] == ids["od2"]
@@ -698,7 +699,7 @@ def test_new_photo_still_opens_its_patient(win):
     w._results.append(res)
     w._flush_results()
     assert w.page() == "work" and w._patient_ref == refs["park"] and w.current["id"] == ids["p_od"]
-    assert w._tab() == "all" and w.view2d.has_image()
+    assert w._tab() == "multi" and [c.image_id for c in w.multi.cells if c.isVisible()] == [ids["p_od"]]
     # on the 검토 tab: a photo that is one of the two under review stays there …
     _show_review(w)
     w._results.append(res)
