@@ -5,6 +5,9 @@ Mouse
     does it by default (확대/축소 is the starting tool, in every view), the right
     button does it with any tool (a right click without dragging opens the menu).
     A click without dragging leaves the zoom alone.
+  * **zoomed in, the left button moves the photo** (확대/축소 tool): once part of
+    the photo is outside the view a left drag pans it (the wheel or a right drag
+    zooms further, a double click fits it back).
   * wheel — zoom at the cursor; middle-drag — pan; double-click — fit.
   * left button depends on the active tool: 확대/축소 (default, above), 이동
     (pan), 돋보기 (hold for a loupe; wheel while holding changes its power),
@@ -48,7 +51,8 @@ TOOLS = {
 }
 TOOL_HINTS = {
     "pan": "드래그: 이동 · 휠/오른쪽 드래그: 확대·축소 · 더블클릭: 화면 맞춤",
-    "zoom": "위로 드래그: 확대 · 아래로 드래그: 축소 (누른 곳 중심) · 가운데 버튼 드래그: 이동 · 더블클릭: 화면 맞춤",
+    "zoom": "위로 드래그: 확대 · 아래로 드래그: 축소 (누른 곳 중심) · 확대된 상태에서 드래그: 이동 · "
+            "휠/오른쪽 드래그: 확대·축소 · 더블클릭: 화면 맞춤",
     "loupe": "누르고 있는 동안 돋보기 · 누른 채 휠: 배율",
     "length": "드래그해서 길이 측정 (px · 망막 각도 · mm)",
     "angle": "세 점 클릭 (가운데 점이 꼭짓점)",
@@ -288,6 +292,7 @@ class ImageView(QGraphicsView):
             self._disc.setVisible(False)
             self._fovea.setVisible(False)
             self._update_navigator()
+            self._restore_cursor()
             return
         self._pix.setPixmap(to_pixmap(rgb))
         self.scene().setSceneRect(QRectF(self._pix.pixmap().rect()))
@@ -376,6 +381,8 @@ class ImageView(QGraphicsView):
         for lab in self._labels:  # keep text upright and unmirrored
             lab.setTransform(inv)
         self._update_navigator()
+        if self._drag is None:    # 확대/축소: the hand once zoomed in (a left drag moves the photo then)
+            self._restore_cursor()
 
     # -- mini-map -------------------------------------------------------------------
     def zoomed_in(self) -> bool:
@@ -588,6 +595,8 @@ class ImageView(QGraphicsView):
         if self._fit:
             self.fit()
         self._update_navigator()
+        if self._drag is None:
+            self._restore_cursor()                    # a larger window may show the whole photo again
 
     # =====================================================================
     # tools
@@ -597,10 +606,17 @@ class ImageView(QGraphicsView):
         self.tool = tool if tool in TOOLS else "zoom"
         self._restore_cursor()
 
+    def _left_pans(self) -> bool:
+        """A left drag moves the photo: the 이동 tool, or 확대/축소 while zoomed in."""
+        return self.tool == "pan" or (self.tool == "zoom" and self.zoomed_in())
+
     def _restore_cursor(self) -> None:
         cursors = {"pan": Qt.CursorShape.OpenHandCursor, "zoom": Qt.CursorShape.SizeVerCursor,
                    "loupe": Qt.CursorShape.CrossCursor, "text": Qt.CursorShape.IBeamCursor}
-        self.viewport().setCursor(cursors.get(self.tool, Qt.CursorShape.CrossCursor))
+        shape = (Qt.CursorShape.OpenHandCursor if self._left_pans()
+                 else cursors.get(self.tool, Qt.CursorShape.CrossCursor))
+        if self.viewport().cursor().shape() != shape:
+            self.viewport().setCursor(shape)
 
     def _pen(self, color: QColor = YELLOW) -> QPen:
         pen = QPen(color, max(2.0, self._side / 700))
@@ -777,7 +793,7 @@ class ImageView(QGraphicsView):
         self.clicked.emit()
         sp = self.mapToScene(pos)
         t = self.tool
-        if t == "pan":
+        if self._left_pans():                         # 이동 — or 확대/축소 with the photo zoomed in
             self._drag = {"kind": "pan", "last": pos}
             self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
         elif t == "zoom":
@@ -839,9 +855,10 @@ class ImageView(QGraphicsView):
         d, self._drag = self._drag, None
         pos = e.position().toPoint()
         if d and d["kind"] == "pan":
-            self._restore_cursor()
             self._fling_rest = [0.0, 0.0]
             self._fling.start(*self._vel.get())       # let go while moving: it slides on and settles
+        if d:
+            self._restore_cursor()                    # a zoom drag may have zoomed in: the hand now
         if d is None:
             return super().mouseReleaseEvent(e)
         kind = d["kind"]

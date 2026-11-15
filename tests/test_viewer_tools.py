@@ -69,13 +69,38 @@ def test_plain_left_drag_zooms(view):
     assert z1 > z0 * 1.5
     after = view.mapToScene(QPoint(300, 250))
     assert abs(after.x() - anchor.x()) < 3 and abs(after.y() - anchor.y()) < 3
+    view.fit()
     _drag(view, Qt.MouseButton.LeftButton, (300, 250), (300, 330))   # down = zoom out
     z2 = view.zoom
-    assert z2 < z1
+    assert z2 < view._fit_zoom() and not view.zoomed_in()
     _click(view, (300, 250))                                         # a click is not a zoom
     assert view.zoom == pytest.approx(z2)
     _drag(view, Qt.MouseButton.LeftButton, (300, 250), (420, 251))   # sideways: no zoom
     assert view.zoom == pytest.approx(z2)
+
+
+def test_left_drag_moves_the_photo_once_zoomed_in(view):
+    """확대/축소 tool: with part of the photo outside the view, a left drag moves it (no zoom)."""
+    from PySide6.QtCore import Qt
+    assert view.tool == "zoom" and not view.zoomed_in()
+    assert view.viewport().cursor().shape() == Qt.CursorShape.SizeVerCursor
+    _drag(view, Qt.MouseButton.LeftButton, (400, 300), (400, 180))   # whole photo shown: zoom in
+    z1 = view.zoom
+    assert view.zoomed_in()
+    assert view.viewport().cursor().shape() == Qt.CursorShape.OpenHandCursor
+    view.stop_motion()
+    h0, v0 = view.horizontalScrollBar().value(), view.verticalScrollBar().value()
+    _drag(view, Qt.MouseButton.LeftButton, (400, 300), (340, 250))   # zoomed in: move
+    view.stop_motion()                                               # no slide after the drag
+    assert view.zoom == pytest.approx(z1)
+    assert view.horizontalScrollBar().value() == h0 + 60
+    assert view.verticalScrollBar().value() == v0 + 50
+    _drag(view, Qt.MouseButton.LeftButton, (400, 300), (400, 420))   # straight down: moves, not zoom out
+    assert view.zoom == pytest.approx(z1)
+    _drag(view, Qt.MouseButton.RightButton, (400, 300), (400, 200))  # right drag still zooms
+    assert view.zoom > z1 * 1.5
+    view.fit()                                                       # whole photo again: zoom drag
+    assert view.viewport().cursor().shape() == Qt.CursorShape.SizeVerCursor
 
 
 def test_pan_with_middle_button_or_pan_tool(view):
