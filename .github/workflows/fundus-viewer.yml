@@ -113,7 +113,7 @@ jobs:
       # render the 3D eye with Apple's OpenGL (the runner's window server
       # provides a context), which also checks that every shader compiles there
       - name: 3D eye on macOS OpenGL
-        timeout-minutes: 10
+        timeout-minutes: 20       # Apple Silicon 4 min, Intel (software OpenGL) 7 min
         env:
           FUNDUSVIEW_REQUIRE_GL: "1"
         run: python -m pytest -q -rs tests/test_eye3d_gl.py
