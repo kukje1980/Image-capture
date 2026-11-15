@@ -159,6 +159,27 @@ def test_browsing_reads_ahead_and_effects_follow_their_controls(app, tmp_path, d
         assert w._where.isVisible() and "앞방" in w._where.text()
         eye.reset_view(animate=True)                          # 처음 시점: an ordinary view takes over
         assert not eye.journey_on() and eye.out_fov == 38.0 and eye.cut == pytest.approx(0.25)
+        # 휠로 들어가기: [전안부 선택] (or a click on the cornea) — the wheel walks in, the chip says how
+        look = s.view3d_detail
+        w._set_3d_detail("simple", save=False)
+        assert not w.b_walk.isChecked() and not eye.walk
+        w.b_walk.click()
+        assert eye.walk and eye.detail == "detailed" and s.view3d_detail == look   # (not saved as the look)
+        assert w._where.isVisible() and w._where.text() == w.WALK_HINT
+        eye.walk_by(15)                                       # (motion off: at once) in the anterior chamber
+        assert w.s_journey.value() == 60 and "앞방" in w._where.text() and w.r_out.isChecked()
+        eye.walk_by(20)                                       # to the retina: 내부
+        assert eye.mode == "inside" and w.r_in.isChecked() and w.s_journey.value() == 100
+        assert "망막" in w._where.text() and "휠" in w._where.text()
+        eye.walk_by(-40)                                      # all the way out: still picked
+        assert eye.mode == "outside" and w.s_journey.value() == 0 and w._where.text() == w.WALK_HINT
+        assert eye.walk and w.b_walk.isChecked()
+        w.b_walk.click()                                      # let go: the wheel zooms again
+        assert not eye.walk and not w._where.isVisible()
+        eye.set_walk(True)                                    # (a click on the cornea) the button follows
+        assert w.b_walk.isChecked()
+        eye.reset_view(animate=True)                          # another view lets it go
+        assert not eye.walk and not w.b_walk.isChecked()
         # 슬릿 스캔: the way of the slit, remembered
         assert w._show.direction == "down" and w._slit_buttons["down"].isChecked()
         w._slit_buttons["right"].click()
