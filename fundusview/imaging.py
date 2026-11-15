@@ -26,6 +26,20 @@ except ImportError:          # pragma: no cover - listed in requirements.txt
 Image.MAX_IMAGE_PIXELS = 400_000_000  # montages are large; files are local and trusted
 
 
+_EXIF_ORIENTATION = 0x0112
+
+
+def _upright(img: Image.Image) -> Image.Image:
+    """``img`` turned as its EXIF orientation says. Most photos say nothing: they are returned
+    as they are (``ImageOps.exif_transpose`` copies every pixel even then — 0.1 s of a
+    24-megapixel frame)."""
+    try:
+        turned = img.getexif().get(_EXIF_ORIENTATION, 1) not in (1, None)
+    except Exception:
+        turned = False
+    return ImageOps.exif_transpose(img) if turned else img
+
+
 def load_rgb(path: Path | str) -> np.ndarray:
     path = Path(path)
     from .extract.dicom_meta import is_dicom
@@ -33,7 +47,7 @@ def load_rgb(path: Path | str) -> np.ndarray:
     if is_dicom(path):
         return _dicom_rgb(path)
     with Image.open(path) as img:
-        img = ImageOps.exif_transpose(img)
+        img = _upright(img)
         if img.mode in ("I;16", "I;16B", "I;16L", "I"):
             a = np.asarray(img, dtype=np.float64)
             return np.repeat(_to_uint8(a)[..., None], 3, axis=2)
@@ -42,7 +56,32 @@ def load_rgb(path: Path | str) -> np.ndarray:
             rgba = img.convert("RGBA")
             bg.paste(rgba, mask=rgba.getchannel("A"))
             return np.asarray(bg)
-        return np.asarray(img.convert("RGB"))
+        return np.asarray(img if img.mode == "RGB" else img.convert("RGB"))
+
+
+def load_for_import(path: Path | str, min_side: int = 1024) -> tuple[np.ndarray, int, int]:
+    """``(rgb, width, height)`` for analysing a photo that is being imported: ``width`` ×
+    ``height`` is the photo's full size, ``rgb`` may be smaller.
+
+    The import looks at the photo at about 500 px (image circle, disc, fovea) and writes a
+    320 px thumbnail, so a large JPEG is decoded straight at 1/2, 1/4 or 1/8 of its size (never
+    below ``min_side``) — a 24-megapixel frame in 0.03 s instead of 0.25 s. Anything else is
+    read in full (:func:`load_rgb`)."""
+    path = Path(path)
+    try:
+        with Image.open(path) as img:
+            if img.format == "JPEG" and img.mode in ("RGB", "L", "YCbCr") and max(img.size) >= 2 * min_side:
+                full = img.size
+                swapped = img.getexif().get(_EXIF_ORIENTATION, 1) in (5, 6, 7, 8)
+                img.draft("RGB", (min_side, min_side))
+                img = _upright(img)
+                a = np.asarray(img if img.mode == "RGB" else img.convert("RGB"))
+                w, h = full[::-1] if swapped else full
+                return a, w, h
+    except Exception:
+        pass                                                  # not a plain image: the full reader knows more
+    a = load_rgb(path)
+    return a, a.shape[1], a.shape[0]
 
 
 def load_reduced(path: Path | str, max_side: int) -> np.ndarray:
@@ -53,7 +92,7 @@ def load_reduced(path: Path | str, max_side: int) -> np.ndarray:
         with Image.open(path) as img:
             if img.format == "JPEG" and img.mode in ("RGB", "L", "YCbCr"):
                 img.draft("RGB", (max_side, max_side))       # never below the asked size
-                img = ImageOps.exif_transpose(img).convert("RGB")
+                img = _upright(img).convert("RGB")
                 img.thumbnail((max_side, max_side), Image.Resampling.BILINEAR)
                 return np.asarray(img)
     except Exception:
@@ -156,6 +195,9 @@ def gaussian_blur(a: np.ndarray, sigma: float) -> np.ndarray:
     x = np.arange(-rad, rad + 1, dtype=np.float64)
     k = np.exp(-x * x / (2 * sigma * sigma))
     k /= k.sum()
+    if cv2 is not None and rad < min(a.shape[:2]):   # the same kernel and border, in C (20× faster)
+        return cv2.sepFilter2D(np.ascontiguousarray(a, np.float64), cv2.CV_64F, k, k,
+                               borderType=cv2.BORDER_REFLECT_101)
     p = np.pad(a.astype(np.float64), rad, mode="reflect")
     t = np.apply_along_axis(np.convolve, 1, p, k, mode="valid")
     return np.apply_along_axis(np.convolve, 0, t, k, mode="valid")

@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -93,6 +94,7 @@ class Database:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
+        self._batch = 0                      # depth of batch(): writes inside are committed together
         self._con = sqlite3.connect(str(self.path), check_same_thread=False)
         self._con.row_factory = sqlite3.Row
         with self._lock:
@@ -112,8 +114,28 @@ class Database:
     def _exec(self, sql: str, args=()) -> sqlite3.Cursor:
         with self._lock:
             cur = self._con.execute(sql, args)
-            self._con.commit()
+            if not self._batch:
+                self._con.commit()
             return cur
+
+    @contextmanager
+    def batch(self):
+        """Several writes, one commit (one disk sync instead of one per statement — an imported
+        photo is a patient row, an image row, a seen-file row and a log line). Other threads wait
+        meanwhile, so keep it to the writes themselves. An exception rolls all of them back."""
+        with self._lock:
+            self._batch += 1
+            try:
+                yield self
+            except BaseException:
+                if self._batch == 1:
+                    self._con.rollback()
+                raise
+            else:
+                if self._batch == 1:
+                    self._con.commit()
+            finally:
+                self._batch -= 1
 
     def _all(self, sql: str, args=()) -> list[sqlite3.Row]:
         with self._lock:
@@ -161,6 +183,13 @@ class Database:
 
     def find_patient(self, patient_id: str) -> sqlite3.Row | None:
         return self._one("SELECT * FROM patients WHERE patient_id = ?", (patient_id,))
+
+    def patients_named(self, name: str) -> list[sqlite3.Row]:
+        """Registered patients with this name (spaces and letter case aside)."""
+        key = (name or "").replace(" ", "").lower()
+        if not key:
+            return []
+        return self._all("SELECT * FROM patients WHERE LOWER(REPLACE(name, ' ', '')) = ?", (key,))
 
     def list_patients(self, search: str = "") -> list[sqlite3.Row]:
         sql = (
@@ -232,6 +261,14 @@ class Database:
         self._exec("DELETE FROM images WHERE id = ?", (image_id,))
 
     # -- seen-file index (so restarts / rescans skip finished files) ------
+    def seen_image(self, path: str, size: int, mtime: float) -> int | None:
+        """The image a file was imported as, when this very file (same size and time) was."""
+        row = self.seen(path)
+        if row is not None and row["size"] == size and abs((row["mtime"] or 0) - mtime) < 1e-3 \
+                and row["status"] in ("imported", "duplicate") and row["image_id"] is not None:
+            return row["image_id"]
+        return None
+
     def seen(self, path: str) -> sqlite3.Row | None:
         return self._one("SELECT * FROM seen_files WHERE path = ?", (path,))
 

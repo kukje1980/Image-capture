@@ -7,6 +7,8 @@ widgets they replace.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
@@ -15,6 +17,28 @@ from PySide6.QtWidgets import (
 )
 
 from . import motion, theme
+
+
+@contextmanager
+def filling(table):
+    """Fill ``table`` inside this block. Columns that size themselves to their contents are
+    measured once at the end instead of after every cell — with them, setting the cells of
+    300 patients one by one took ten seconds and grew with the square of the list."""
+    from PySide6.QtWidgets import QHeaderView
+
+    hdr = table.horizontalHeader()
+    auto = [c for c in range(hdr.count()) if hdr.sectionResizeMode(c) == QHeaderView.ResizeMode.ResizeToContents]
+    blocked = table.blockSignals(True)
+    table.setUpdatesEnabled(False)
+    for c in auto:
+        hdr.setSectionResizeMode(c, QHeaderView.ResizeMode.Fixed)
+    try:
+        yield table
+    finally:
+        for c in auto:
+            hdr.setSectionResizeMode(c, QHeaderView.ResizeMode.ResizeToContents)
+        table.setUpdatesEnabled(True)
+        table.blockSignals(blocked)
 
 
 def _mix(a: QColor, b: QColor, t: float) -> QColor:
