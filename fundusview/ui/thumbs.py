@@ -5,8 +5,8 @@ a coloured eye badge in its top-left corner (OD blue · OS orange · OU purple �
 the photos picked for the multi view (plain click) get a yellow frame with their pick number.
 
 ``ThumbStrip`` lays the photos out by eye: OD photos in the top row, OS photos in the row under
-it, and OU / unknown-eye photos in a third row only when there are any; the rows scroll sideways
-together. Or all of them in one line.
+it, and anything else (OU) in a third row only when there is any; the rows scroll sideways
+together. Or all of them in one line. (The main window leaves 미상 photos out of the list.)
 """
 from __future__ import annotations
 
@@ -121,8 +121,8 @@ class ThumbDelegate(QStyledItemDelegate):
 
 
 class ThumbStrip(QListWidget):
-    """The photo list under the views: by eye (OD row on top, OS row under it, OU / 미상 in a
-    third row when there are any) or all photos in one line.
+    """The photo list under the views: by eye (OD row on top, OS row under it, any other in a
+    third row when there is one) or all photos in one line.
 
     One list keeps one order for 이전 / 다음, the n/N on the photo and the multi view: the caller
     adds the photos OD first, then OS, then the rest, so reading the rows left to right, top to

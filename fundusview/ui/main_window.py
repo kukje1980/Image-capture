@@ -63,6 +63,7 @@ from .widgets import ElidedLabel, Segmented, Switch, card, filling, segment
 from .widgets import row as setting_row
 
 THUMB_TEXT = Qt.ItemDataRole.UserRole + 1    # thumbnail caption without the ② mark
+UNKNOWN_EYE = "?"                            # 눈 filter: the photos of an unknown eye (미상) — not in 양안
 SECOND_PICK = QColor(168, 104, 28)           # background of the second picked photo (②)
 MAX_PICKS = 16                               # photos picked for the multi view (4×4)
 MULTI_SIZES = (1, 2, 4, 6, 9, 16)
@@ -478,7 +479,8 @@ class MainWindow(QMainWindow):
         self.f_date.setMinimumWidth(110)
         self.f_date.currentIndexChanged.connect(self._fill_thumbs)
         self.f_eye = QComboBox()
-        for k, v in (("", "양안"), ("OD", "OD (우안)"), ("OS", "OS (좌안)")):
+        # 양안 = OD · OS (· OU): photos of an unknown eye (미상) are only under 미상
+        for k, v in (("", "양안"), ("OD", "OD (우안)"), ("OS", "OS (좌안)"), (UNKNOWN_EYE, "미상")):
             self.f_eye.addItem(v, k)
         self.f_eye.currentIndexChanged.connect(self._fill_thumbs)
         self.f_mod = QComboBox()
@@ -1585,11 +1587,22 @@ class MainWindow(QMainWindow):
         self.thumbs.clear()
         first = None
         target = None
-        # OD first, then OS, then OU / 미상 (newest first in each): the strip's rows by eye, and the
-        # order of 이전 / 다음 in both layouts
-        for r in sorted(self._images(), key=lambda r: eye_row(r["laterality"])):
-            if (d and r["exam_date"] != d) or (eye and r["laterality"] != eye) or (mod and r["modality"] != mod):
-                if r["id"] != select_id:
+        # OD first, then OS, then OU (newest first in each): the strip's rows by eye, and the order of
+        # 이전 / 다음 in both layouts
+        images = sorted(self._images(), key=lambda r: eye_row(r["laterality"]))
+
+        def dated(r) -> bool:                  # the date and kind filters
+            return not (d and r["exam_date"] != d) and not (mod and r["modality"] != mod)
+
+        def known(r) -> bool:
+            return r["laterality"] in ("OD", "OS", "OU")
+
+        # 미상 (eye unknown) photos stay out of 양안 — unless they are all there is (no empty strip)
+        hide_unknown = eye == "" and any(dated(r) and known(r) for r in images)
+        for r in images:
+            if (not dated(r) or (eye in ("OD", "OS") and r["laterality"] != eye)
+                    or (eye == UNKNOWN_EYE and known(r)) or (hide_unknown and not known(r))):
+                if r["id"] != select_id:       # (the photo to show stays, whatever the filters)
                     continue
             mod_label = MODALITY_LABELS.get(r["modality"] or "", r["modality"] or "")
             text = f"{r['exam_date'] or '날짜 없음'}\n{mod_label}".strip()       # (no field angle: the date and kind)
@@ -1625,7 +1638,7 @@ class MainWindow(QMainWindow):
 
     def _set_thumb_rows(self, n: int, save: bool = False) -> None:
         """The photo list: 1 = all photos in one scrolling line; otherwise by eye — OD in the top
-        row, OS in the row under it (OU / 미상 in a third row when there are any)."""
+        row, OS in the row under it (OU in a third row when there are any). 미상: see _fill_thumbs."""
         n = 1 if n == 1 else 2
         self._thumb_rows = n
         self.thumbs.set_by_eye(n != 1)
@@ -1635,8 +1648,7 @@ class MainWindow(QMainWindow):
             self.btn_rows.setToolTip("사진 목록을 한 줄로 보기 (OD 다음 OS) — 누르면 눈별로 (OD 위 줄 · OS 아래 줄)")
         else:
             self.btn_rows.setText("▤ OD/OS")
-            self.btn_rows.setToolTip("사진 목록을 눈별로 보기 — OD는 위 줄, OS는 아래 줄 (OU · 미상은 셋째 줄)\n"
-                                     "누르면 한 줄로")
+            self.btn_rows.setToolTip("사진 목록을 눈별로 보기 — OD는 위 줄, OS는 아래 줄\n누르면 한 줄로")
         cur = self.thumbs.currentItem()
         if cur is not None:
             self.thumbs.scrollToItem(cur)

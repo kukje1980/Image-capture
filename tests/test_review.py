@@ -189,7 +189,7 @@ def test_patient_list_and_workspace_share_the_patient(win):
     page.table.selectRow(row_of(page.table, refs["kim"]))
     app.processEvents()
     assert w._patient_ref == refs["kim"] and selected(w.patients) == refs["kim"] and w.page() == "patients"
-    assert "김영수" in w.banner.text() and w.thumbs.count() == 8
+    assert "김영수" in w.banner.text() and w.thumbs.count() == 7      # 8 photos, na3 (eye unknown) not listed
     # the card: name, ID, birth date (age), sex, and 정보 수정
     assert page.lbl_name.text() == "김영수" and page.lbl_id.text() == "K001" and page.avatar.text() == "김"
     assert page._kv_labels["생년월일"][1].text().startswith("1958-03-12 (") and page._kv_labels["성별"][1].text() == "남"

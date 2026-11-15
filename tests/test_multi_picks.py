@@ -145,6 +145,36 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
         app.processEvents()
         assert w.thumbs.count() == 3 and w.thumbs.height() == 2 * grid_h + 10
 
+        # 미상 (eye unknown): not in the list — 눈 → 미상 shows them, and so does a patient with nothing else
+        from fundusview.ui.main_window import UNKNOWN_EYE
+
+        def strip_ids():
+            return [w.thumbs.item(i).data(Qt.ItemDataRole.UserRole) for i in range(w.thumbs.count())]
+
+        eye_of = {r["id"]: r["laterality"] for r in rows}
+        db.update_image(ids[1], laterality=None)
+        w._fill_thumbs()
+        app.processEvents()
+        assert strip_ids() == [ids[0], ids[2]] and w.thumbs.grid_shape() == (2, 1)
+        assert w.thumbs.height() == 2 * grid_h + 10                  # two rows: OD, OS
+        w.f_eye.setCurrentIndex(w.f_eye.findData(UNKNOWN_EYE))
+        app.processEvents()
+        assert strip_ids() == [ids[1]]
+        w.f_eye.setCurrentIndex(w.f_eye.findData("OD"))
+        app.processEvents()
+        assert strip_ids() == [ids[0]]
+        w.f_eye.setCurrentIndex(0)
+        for k in ids:
+            db.update_image(k, laterality=None)
+        w._fill_thumbs()
+        app.processEvents()
+        assert sorted(strip_ids()) == sorted(ids) and w.thumbs.grid_shape() == (1, 3)
+        for k in ids:
+            db.update_image(k, laterality=eye_of[k])
+        w._fill_thumbs()
+        app.processEvents()
+        assert strip_ids() == ids
+
         # plain click = pick (numbered), the shown photo stays; click again = unpick
         shown = w.current["id"]
         _click(w, w.thumbs.item(2))
