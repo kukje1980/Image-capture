@@ -235,6 +235,25 @@ class _WidthHint(QWidget):
         return QSize(self.want or hint.width(), hint.height())
 
 
+class _PatientLabel(ElidedLabel):
+    """The patient in the status bar: as wide as its text, up to ``cap`` pixels (then cut with …)."""
+    PAD = 14
+    cap = 520
+
+    def __init__(self, text: str = "", parent=None):
+        super().__init__(text, parent)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+
+    def setText(self, text: str) -> None:
+        super().setText(text)
+        self.updateGeometry()
+
+    def sizeHint(self) -> QSize:
+        return QSize(min(self.full_width() + 2, self.cap), super().sizeHint().height())
+
+    minimumSizeHint = sizeHint
+
+
 class MainWindow(QMainWindow):
     def __init__(self, settings: Settings, db: Database):
         super().__init__()
@@ -511,8 +530,9 @@ class MainWindow(QMainWindow):
         cl = QVBoxLayout(centre)
         cl.setContentsMargins(4, 6, 4, 0)
         cl.setSpacing(4)
-        # the patient line: [환자 목록], the patient and the photo filters — in the right end of the menu
-        # bar (see _build_menus), so the photos get its whole row
+        # the view icons (16장 · Simple · Multi · Detail · 3D · Montage · Glaucoma) sit in the menu bar,
+        # right of the menus (see _build_menus), so the photos get their whole row. The patient is
+        # named in the status bar; the patient list opens from the tool bar (환자 목록)
         self._centre_lay = cl
         self._line_in_menubar = False
         self._banner_busy = False             # _fit_banner is laying the menu bar out (no re-entry)
@@ -521,32 +541,34 @@ class MainWindow(QMainWindow):
         top = QHBoxLayout(self.top_w)
         top.setContentsMargins(10, 0, 6, 0)
         top.setSpacing(6)
-        self.btn_patients = QPushButton("환자 목록")
+        self._top_lay = top
+        self.btn_patients = QPushButton("환자 목록", self)      # (kept for its action; not on screen)
+        self.btn_patients.hide()
         self.btn_patients.setObjectName("back")
         self.btn_patients.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_patients.setToolTip(keys(f"환자 목록 창을 엽니다 ({PATIENT_LIST_KEY})"))
         self.btn_patients.clicked.connect(self.show_patient_list)
-        top.addWidget(self.btn_patients)
-        self.banner = ElidedLabel("환자를 선택하세요")
+        self.banner = _PatientLabel("환자를 선택하세요")        # in the status bar (see below)
         self.banner.setObjectName("banner")
-        self.banner.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        top.addWidget(self.banner, 1)
-        self.f_date = QComboBox()
+        self.banner.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        # the photo filters (검사일 · 눈 · 촬영 종류) are no longer on screen: every photo of the
+        # patient is listed. The boxes stay (hidden, on "all") for the code that reads them
+        self.f_date = QComboBox(self)
         self.f_date.setMinimumWidth(110)
         self.f_date.currentIndexChanged.connect(self._fill_thumbs)
-        self.f_eye = QComboBox()
+        self.f_eye = QComboBox(self)
         # 양안 = OD · OS (· OU): photos of an unknown eye (미상) are only under 미상
         for k, v in (("", "양안"), ("OD", "OD (우안)"), ("OS", "OS (좌안)"), (UNKNOWN_EYE, "미상")):
             self.f_eye.addItem(v, k)
         self.f_eye.currentIndexChanged.connect(self._fill_thumbs)
-        self.f_mod = QComboBox()
+        self.f_mod = QComboBox(self)
         self.f_mod.addItem("전체 종류", "")
         for k, v in MODALITY_LABELS.items():
             self.f_mod.addItem(v, k)
         self.f_mod.currentIndexChanged.connect(self._fill_thumbs)
         for w, tip in ((self.f_date, "검사일"), (self.f_eye, "눈"), (self.f_mod, "촬영 종류")):
             w.setToolTip(tip)
-            top.addWidget(w)
+            w.hide()
         # Multi: how many photos are picked, and letting them go
         self.lbl_picks = QLabel("")
         self.lbl_picks.setObjectName("picksCount")
@@ -680,9 +702,14 @@ class MainWindow(QMainWindow):
         self.review.status.connect(lambda t: self.lbl_status.setText(t))
         self.tabs.insertTab(0, self.review, "검토")
         self.tabs.addTab(self.grid, "16장 보기")
+        # 두 장 3D: the two photos of Simple (or two picked ones), each on its own 3D eye (pair3d.py)
+        from .pair3d import Pair3D
+        self.pair3d = Pair3D()
+        self.pair3d.glError.connect(lambda msg: self.lbl_status.setText(f"3D를 그릴 수 없습니다: {msg}"))
+        self.tabs.addTab(self.pair3d, "두 장 3D")
         self.tabs.setCurrentWidget(self.page_all)
         self._pages = {"review": self.review, "all": self.page_all, "2d": self.page2d, "3d": self.page3d,
-                       "multi": self.multi, "cmp": cmp_w, "grid": self.grid}
+                       "multi": self.multi, "cmp": cmp_w, "grid": self.grid, "3d2": self.pair3d}
         self._ov_on = False
         self._tab_fade = motion.Crossfade(self.tabs.findChild(QStackedWidget) or self.tabs)
         self.tabs.tabBar().tabBarClicked.connect(
@@ -715,7 +742,7 @@ class MainWindow(QMainWindow):
         self.multi_bar.hide()                # shown on Multi (_sync_views)
         vbar.addWidget(self.multi_bar)
         vbar.addStretch(1)
-        cl.addWidget(self.view_bar)
+        self._top_lay.addWidget(self.view_bar, 1)     # in the menu bar's row
         cl.addWidget(self.tabs, 1)
         # 16장 보기: the grid is the photo list, so the strip's place shows the grid's pages instead
         self.grid_bar = QWidget()
@@ -730,17 +757,11 @@ class MainWindow(QMainWindow):
         for b, d in ((self.btn_grid_prev, -1), (self.btn_grid_next, 1)):
             b.setAutoRaise(True)
             b.clicked.connect(lambda _=False, d=d: self.grid.set_page(self.grid.page() + d))
-        self.lbl_grid_page = QLabel("")
-        self.lbl_grid_page.setStyleSheet("font-weight:600")
-        lbl_hint = QLabel(keys("클릭: Multi로 고르기(번호) · 다시 클릭: 빼기 · 더블클릭: 크게 보기 (Detail) · "
-                               "Ctrl+클릭: 두 번째 사진(②)\n골랐으면 [Multi]: 고른 사진만 모아 보기 — "
-                               "다시 여기로 오려면 [16장]"))
-        lbl_hint.setStyleSheet(f"color:{theme.TEXT3}")
+        self.lbl_grid_page = QLabel("", self)     # the page count: kept up to date, not on screen
+        self.lbl_grid_page.hide()
         gb.addWidget(self.btn_grid_prev)
-        gb.addWidget(self.lbl_grid_page)
         gb.addWidget(self.btn_grid_next)
-        gb.addSpacing(18)
-        gb.addWidget(lbl_hint, 1)
+        gb.addStretch(1)
         self.grid_bar.hide()
         # under the photos: the photo list over the whole width, the eye of each row at its left
         # (both straight in this row: a box of their own around them made the photos above settle
@@ -823,8 +844,8 @@ class MainWindow(QMainWindow):
         self.lbl_measure.setObjectName("measure")
         self.lbl_measure.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.lbl_measure.hide()
-        self.lbl_hover = QLabel("")
-        self.lbl_hover.setStyleSheet(f"color:{theme.TEXT3}")
+        self.lbl_hover = QLabel("", self)         # x, y · RGB under the mouse: not on screen any more
+        self.lbl_hover.hide()
         sb.addWidget(self.lbl_watch)
         self.lbl_share = QLabel("")               # server: the address the other computers connect to
         self.lbl_share.setStyleSheet(f"color:{theme.GREEN}; font-weight:600")
@@ -832,19 +853,20 @@ class MainWindow(QMainWindow):
         sb.addWidget(self.lbl_share)
         self._share_busy = False
         self._share_timer = QTimer(self, timeout=self._poll_share)
+        sb.addWidget(self.banner)                 # the patient: name · ID · birth date (age) · sex
         sb.addWidget(self.lbl_info)
         sb.addWidget(self.lbl_status, 1)
         sb.addPermanentWidget(self.lbl_measure)
-        sb.addPermanentWidget(self.lbl_hover)
         # current 2D magnification; its menu = 화면 맞춤 ▾ (zoom steps, wide-field regions)
-        self.btn_zoom = QToolButton()
+        # (not on screen any more: the 화면 맞춤 tool has the same menu)
+        self.btn_zoom = QToolButton(self)
+        self.btn_zoom.hide()
         self.btn_zoom.setText("배율 맞춤")
         self.btn_zoom.setToolTip("2D 배율 — 눌러서 배율이나 확대 위치(후극부·주변부) 고르기 · +/−/0/1 키")
         self.btn_zoom.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.btn_zoom.setAutoRaise(True)
         self.btn_zoom.setMenu(self.menus["fit"])
         self.view2d.zoomChanged.connect(self._show_zoom)
-        sb.addPermanentWidget(self.btn_zoom)
         self.setStatusBar(sb)
 
         a = QAction(self)
@@ -2332,6 +2354,11 @@ class MainWindow(QMainWindow):
         self._fit_multi_count()
         if self._tab() == "multi":
             self._fill_multi()
+        elif self._tab() == "3d2" and self._pair3d_ids() != self.pair3d.image_ids:
+            # 두 장 3D: another photo was put in — the two eyes show the two photos of now
+            # (no longer two: back to the photos)
+            if not self._open_pair3d():
+                self.show_simple() if self._mode == SIMPLE else self.open_picks()
 
     def _on_multi_layout(self, _n: int) -> None:
         """화면 분할 chosen by hand: with nothing picked, consecutive photos from the shown one (VK-2)."""
@@ -2404,16 +2431,20 @@ class MainWindow(QMainWindow):
             pop._show(pop.slider.value())
 
     def _fit_banner(self) -> None:
-        """The patient line in the menu bar: as wide as its text when there is room, else cut with …."""
-        if not hasattr(self, "top_w") or not self._line_in_menubar or self._banner_busy:
+        """The patient in the status bar: as wide as its text, at most a third of the window. The
+        view icons in the menu bar: the whole room right of the menus (so they start beside them)."""
+        if not hasattr(self, "top_w") or self._banner_busy:
+            return
+        cap = max(160, self.width() // 3)
+        if self.banner.cap != cap:
+            self.banner.cap = cap
+            self.banner.updateGeometry()
+        if not self._line_in_menubar:
             return
         mb = self.menuBar()
         acts = [a for a in mb.actions() if a.isVisible()]
         menus = mb.actionGeometry(acts[-1]).right() if acts else 0
-        fixed = self.btn_patients.sizeHint().width() + sum(
-            w.sizeHint().width() + 6 for w in (self.f_date, self.f_eye, self.f_mod) if not w.isHidden())
-        room = mb.width() - menus - 40
-        w = max(fixed, min(fixed + self.banner.full_width() + 30, room))   # (cut to the room, not the menus)
+        w = max(200, mb.width() - menus - 24)
         if self.top_w.want != w:
             self.top_w.want = w              # the menu bar lays its corner out by the size hint
             self.top_w.updateGeometry()
@@ -2946,7 +2977,11 @@ class MainWindow(QMainWindow):
             else:
                 self.patient_list.hide()
         elif key == "view3d":                    # 3D, and again: back to the view before it
-            if self._tab() != "3d":
+            if self._tab() == "3d2":             # 두 장 3D: back to the two photos
+                self.show_simple() if self._mode == SIMPLE else self.open_picks()
+            elif self._tab() == "multi" and self._open_pair3d():
+                pass                             # two photos on screen: both in 3D, side by side
+            elif self._tab() != "3d":
                 self._go("3d")
             elif self._last_view == "multi":
                 self.show_simple() if self._mode == SIMPLE else self.open_picks()
@@ -3896,6 +3931,42 @@ class MainWindow(QMainWindow):
         self.lbl_status.setText("부드러운 움직임을 켰습니다" if on else
                                 "부드러운 움직임을 껐습니다 — 확대·회전·전환이 바로 바뀝니다")
 
+    def _pair3d_ids(self) -> list[int]:
+        """The two photos the two-photo view shows (Simple's OD | OS, or exactly two picked ones)."""
+        ids = [i for i in self._picks if self.db.get_image(i) is not None]
+        return ids if len(ids) == 2 else []
+
+    def _open_pair3d(self) -> bool:
+        """두 장 3D: each of the two photos on screen on its own 3D eye, side by side, with the look
+        of the 3D tab; turned and zoomed like it (together unless 함께 움직이기 is off). False when
+        the view does not show two photos (then the 3D icon opens the 3D tab as before)."""
+        ids = self._pair3d_ids()
+        if not ids:
+            return False
+        photos = []
+        for iid in ids:
+            row = self.db.get_image(iid)
+            rgb = self._load(row)
+            if rgb is None:
+                return False
+            prof = get_profile(row["profile"])
+            circle = ((row["circle_cx"], row["circle_cy"], row["circle_r"]) if row["circle_r"]
+                      else imaging.detect_circle(rgb))
+            disc, fovea = self._marks_for_3d(row)
+            photos.append({
+                "id": iid, "label": self._multi_label(row), "rgb": rgb,
+                "alpha": imaging.fundus_alpha(rgb, circle), "circle": circle,
+                "mapping": dict(fov_deg=row["fov_deg"] or prof.fov_deg, fov_type=row["fov_type"] or prof.fov_type,
+                                projection=row["projection"] or prof.projection, viewpoint=prof.viewpoint,
+                                roll_deg=0.0, radial_c=prof.radial_c),
+                "laterality": row["laterality"], "disc": disc, "fovea": fovea,
+                "mark_circle": self._marks_of(row)[0], "from_cover": row["modality"] == "montage"})
+        self.pair3d.copy_look(self.eye3d)
+        self.pair3d.set_photos(photos)
+        self._go("3d2")
+        self.lbl_status.setText("두 장 3D — 드래그: 회전 · 휠: 확대 · 축소 · [3D]를 다시 누르면 사진으로 돌아갑니다")
+        return True
+
     def _mark_3d_dirty(self) -> None:
         self._3d_dirty = True
         if self._tab() == "3d":
@@ -4029,7 +4100,7 @@ class MainWindow(QMainWindow):
         two modes); 화면 분할 and the picks are there on Multi only, ◀ ▶ at the cells' sides on Simple."""
         key = self._tab()
         on = {"grid": key == "grid", SIMPLE: key == "multi" and self._mode == SIMPLE,
-              MULTI: key == "multi" and self._mode == MULTI, "all": key == "all", "3d": key == "3d"}
+              MULTI: key == "multi" and self._mode == MULTI, "all": key == "all", "3d": key in ("3d", "3d2")}
         for k, b in self.view_buttons.items():
             b.setChecked(on[k])
         self.multi_bar.setVisible(on[MULTI])
@@ -4038,8 +4109,10 @@ class MainWindow(QMainWindow):
 
     def _on_tab(self, i: int) -> None:
         key = self._tab()
-        if key and key != "3d":
+        if key and key not in ("3d", "3d2"):
             self._last_view = key             # where the 3D icon goes back to
+        if key != "3d2" and self.pair3d.image_ids:
+            self.pair3d.clear()               # (its two photos are let go)
         self._sync_views()
         # 검토 has its own timeline: the photo strip and its filters are for the other tabs
         self.strip_w.setVisible(key != "review")
@@ -4049,8 +4122,6 @@ class MainWindow(QMainWindow):
         self.grid_bar.setVisible(key == "grid")
         if key == "grid":
             self._sync_grid_bar()
-        for w in (self.f_date, self.f_eye, self.f_mod):
-            w.setVisible(key != "review")
         self._fit_banner()
         if key == "review":
             self._fill_review()

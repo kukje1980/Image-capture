@@ -489,7 +489,7 @@ def test_double_click_opens_the_review_of_both_eyes(win):
     # the other tabs get the photo strip back; coming back keeps the review as it was
     rv.set_stage("od")
     w._go("all")
-    assert w.strip_w.isVisible() and w.f_date.isVisible() and w.view2d.has_image()
+    assert w.strip_w.isVisible() and not w.f_date.isVisible() and w.view2d.has_image()
     _show_review(w)
     assert not w.strip_w.isVisible() and rv.stage == "od"
     # the patient list again, and the patient's photos again

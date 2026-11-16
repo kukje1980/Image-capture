@@ -175,7 +175,7 @@ class PhotoGrid(QWidget):
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QColor(theme.FILL if k == self._hover else theme.CARD))
             p.drawRoundedRect(cell, 6, 6)
-            photo_area = cell.adjusted(4, 4, -4, -4 - self.CAPTION)
+            photo_area = cell.adjusted(4, 4, -4, -4)        # the whole cell: the caption lies on it
             photo = QRectF(photo_area)
             pm = thumb_pixmap(it.thumb)
             p.fillRect(photo_area, QColor(theme.BLACK))
@@ -185,6 +185,17 @@ class PhotoGrid(QWidget):
                 photo.moveCenter(photo_area.center())
                 p.drawPixmap(photo, pm, QRectF(pm.rect()))
             paint_eye_badge(p, it.eye, photo.left() + 4, photo.top() + 4, px=13)
+            # the date · time (· kind) of the photo: in the top right corner of its cell
+            p.setFont(f)
+            text = ("② " if second else "") + it.caption
+            text = p.fontMetrics().elidedText(text, Qt.TextElideMode.ElideRight, int(photo_area.width()) - 16)
+            tw = p.fontMetrics().horizontalAdvance(text) + 12
+            cap = QRectF(photo_area.right() - tw - 2, photo_area.top() + 2, tw, self.CAPTION)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(SECOND_COLOR) if second else QColor(0, 0, 0, 150))
+            p.drawRoundedRect(cap, 4, 4)
+            p.setPen(QColor(theme.TEXT if second or it.image_id == self._current else theme.TEXT2))
+            p.drawText(cap, Qt.AlignmentFlag.AlignCenter, text)
             rank = self._picks.get(it.image_id, 0)
             if rank:                         # picked for the multi view: yellow frame and its number
                 p.setBrush(Qt.BrushStyle.NoBrush)
@@ -196,21 +207,13 @@ class PhotoGrid(QWidget):
                 p.setFont(nf)
                 d = p.fontMetrics().height() + 8
                 dot = QRectF(photo.right() - d - 4, photo.top() + 4, d, d)
+                if dot.intersects(cap):       # (a narrow cell: under the caption)
+                    dot.moveTop(cap.bottom() + 4)
                 p.setPen(Qt.PenStyle.NoPen)
                 p.setBrush(QColor(PICK_COLOR))
                 p.drawEllipse(dot)
                 p.setPen(QColor("#111827"))
                 p.drawText(dot, Qt.AlignmentFlag.AlignCenter, str(rank))
-            cap = QRectF(cell.left() + 4, cell.bottom() - 4 - self.CAPTION, cell.width() - 8, self.CAPTION)
-            if second:
-                p.setPen(Qt.PenStyle.NoPen)
-                p.setBrush(QColor(SECOND_COLOR))
-                p.drawRoundedRect(cap, 4, 4)
-            p.setFont(f)
-            p.setPen(QColor(theme.TEXT if second or it.image_id == self._current else theme.TEXT2))
-            text = ("② " if second else "") + it.caption
-            text = p.fontMetrics().elidedText(text, Qt.TextElideMode.ElideRight, int(cap.width()) - 8)
-            p.drawText(cap.adjusted(4, 0, -4, 0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, text)
             if it.image_id == self._current:  # the photo shown in Detail / selected
                 p.setBrush(Qt.BrushStyle.NoBrush)
                 p.setPen(QPen(QColor(theme.ACCENT), 2))

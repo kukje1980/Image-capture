@@ -116,13 +116,14 @@ def test_a_patient_opens_on_simple_with_its_newest_od_and_os(win):
     w.view_buttons["3d"].click()
     assert w._tab() == "multi" and w._mode == "simple" and w.view_buttons["simple"].isChecked()
     assert _cells(w) == ([ids["od3"], ids["os3"]], ids["od3"])
-    # from Simple the 3D icon goes straight to 3D with the selected photo, and back again
+    # from Simple the 3D icon puts both photos in 3D, side by side (두 장 3D — test_pair3d.py), and back again
     left, right = (c for c in w.multi.cells if c.isVisible())
     QTest_click(right.view.viewport())
     app.processEvents()
     assert w.current["id"] == ids["os3"]
     w.view_buttons["3d"].click()
-    assert w._tab() == "3d" and w.current["id"] == ids["os3"]
+    assert w._tab() == "3d2" and w.current["id"] == ids["os3"] and w.view_buttons["3d"].isChecked()
+    assert w.pair3d.image_ids == [ids["od3"], ids["os3"]]
     w.view_buttons["3d"].click()
     assert w._tab() == "multi" and _cells(w) == ([ids["od3"], ids["os3"]], ids["os3"])
 
