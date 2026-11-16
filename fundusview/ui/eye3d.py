@@ -1064,6 +1064,7 @@ class EyeView(QOpenGLWidget):
     glError = Signal(str)
     zoomChanged = Signal(float)        # magnification relative to the start view
     interacted = Signal()              # the user dragged, zoomed or pressed a view key
+    depthWheel = Signal(float)         # wheel notches over the eye seen from outside (``wheel_depth``)
     journeyChanged = Signal(float)     # 들어가며 보기: where on the way (0 the whole eye … 1 the retina)
 
     DETAILS = ("simple", "detailed")
@@ -1101,6 +1102,8 @@ class EyeView(QOpenGLWidget):
         self._marks: tuple = (None, None, None)        # disc, fovea (pixels), image circle
         # view
         self.detail = "simple"
+        self.wheel_depth = False       # the wheel sets the cut's depth (depthWheel) instead of zooming —
+                                       # outside only; Ctrl+wheel, the zoom bar, + / − and right drag zoom
         self.mode = "outside"
         self.cut = 0.25
         self.show_nerve = True
@@ -1696,6 +1699,24 @@ class EyeView(QOpenGLWidget):
     def _view_changed(self) -> None:
         self.zoomChanged.emit(self.magnification)
         self.update()
+
+    def set_magnification(self, m: float) -> None:
+        """Zoom about the centre of the view until things appear ``m`` times the start view's size
+        (the zoom bar); it stops where the wheel's zoom would."""
+        m = max(m, 1e-3)
+        self._fling.stop()
+        self._view_glide.stop()
+        self._zoom_glide.stop()
+        self._finish_enter()
+        self._touched = time.perf_counter()
+        self.interacted.emit()
+        if self.mode == "inside":
+            fov = math.degrees(2.0 * math.atan(math.tan(math.radians(self.FOV0) / 2) / m))
+            steps = math.log(self.in_fov / max(fov, 1e-6)) / -math.log(0.88)
+        else:
+            steps = math.log(m / self.magnification) / -math.log(0.88)
+        if abs(steps) > 1e-6:
+            self.zoom_at(steps)
 
     @property
     def theta_max(self) -> float:
@@ -2634,7 +2655,8 @@ class EyeView(QOpenGLWidget):
     # -- interaction -----------------------------------------------------------
     # left drag: rotate (inside: look around) · right drag up/down: zoom where the
     # drag started · middle drag or Shift+left drag: move · wheel: zoom at the
-    # cursor · double click / 0: start view · + / -: zoom at the centre
+    # cursor (``wheel_depth``, outside: the cut's depth, and Ctrl+wheel zooms) ·
+    # double click / 0: start view · + / -: zoom at the centre
     def mousePressEvent(self, e):
         self.stop_motion()                    # a touch stops whatever was gliding
         self._touched = time.perf_counter()
@@ -2676,8 +2698,14 @@ class EyeView(QOpenGLWidget):
         self._finish_enter()
         self._touched = time.perf_counter()
         self.interacted.emit()
+        steps = e.angleDelta().y() / 120.0
+        if (self.wheel_depth and self.mode == "outside" and not self.journey_on()
+                and not e.modifiers() & Qt.KeyboardModifier.ControlModifier):
+            self._zoom_glide.stop()
+            self.depthWheel.emit(steps)                    # the cut's depth (the window moves the slider)
+            return
         self._zoom_pos = e.position()
-        self._zoom_glide.add(e.angleDelta().y() / 120.0)   # the view glides after the notches
+        self._zoom_glide.add(steps)                        # the view glides after the notches
 
     def pinch(self, value: float, pos: QPointF) -> None:
         """Trackpad pinch (macOS): magnify by ``1 + value`` toward ``pos``

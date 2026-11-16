@@ -96,11 +96,41 @@ def test_browsing_reads_ahead_and_effects_follow_their_controls(app, tmp_path, d
         w._view_buttons["front"].click()
         w._tween._finish()
         assert w.c_view3d.currentData() == "front" and eye.half == 0.0
-        # the settings beside the eye can be put away
-        assert w.inspector.isVisible()
+        # the settings beside the eye are put away until [설정] (or 설정 → 3D 보기 설정…) opens them
+        assert not w.inspector.isVisible() and s.panel3d is False
         w.b_inspector.click()
-        assert not w.inspector.isVisible()
+        assert w.inspector.isVisible() and s.panel3d is True
         w.b_inspector.click()
+        assert not w.inspector.isVisible() and s.panel3d is False
+        w._open_3d_settings()
+        assert w.inspector.isVisible() and w.b_inspector.isChecked()
+        # the wheel over the eye (outside) sets 깊이 — forward cuts deeper — and leaves the zoom alone
+        from PySide6.QtCore import QPoint, QPointF, Qt
+        from PySide6.QtGui import QWheelEvent
+
+        def wheel(notches, mods=Qt.KeyboardModifier.NoModifier):
+            pos = QPointF(eye.width() / 2, eye.height() / 2)
+            eye.wheelEvent(QWheelEvent(pos, QPointF(eye.mapToGlobal(pos.toPoint())), QPoint(0, 0),
+                                       QPoint(0, int(notches * 120)), Qt.MouseButton.NoButton, mods,
+                                       Qt.ScrollPhase.NoScrollPhase, False))
+
+        eye.reset_view()
+        cut0, mag0 = w.s_cut.value(), eye.magnification
+        wheel(2)
+        assert w.s_cut.value() == cut0 - 8 and eye.cut == pytest.approx((cut0 - 8) / 100.0)
+        wheel(-3)
+        assert w.s_cut.value() == cut0 + 4 and eye.magnification == pytest.approx(mag0)
+        wheel(-100)                                        # the end of the slider: the closed eye
+        assert w.s_cut.value() == 100 and eye.cut == 1.0
+        w.s_cut.setValue(cut0)
+        # 확대 바: the magnification on a logarithmic bar, both ways
+        assert w.s_zoom3d.value() == 0 and w.lbl_zoom3d.text() == "배율 ×1.0"
+        w.s_zoom3d.setValue(100)
+        assert eye.magnification == pytest.approx(2.0, rel=0.02) and w.lbl_zoom3d.text() == "배율 ×2.0"
+        w.s_zoom3d.setValue(-100)
+        assert eye.magnification == pytest.approx(0.5, rel=0.02)
+        eye.reset_view()
+        assert w.s_zoom3d.value() == 0
         # 망막 입체: 표면 높낮이 off from the start — the original photo, smooth on the retina
         assert not w.c_surface3d.isChecked() and not eye.relief_on and not eye.relief_sheet_on()
         assert not w.s_height3d.isEnabled() and s.surface3d is False

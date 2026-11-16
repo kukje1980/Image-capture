@@ -37,7 +37,7 @@ def test_main_window_imports_and_lists(tmp_path, demo_dir, import_and_wait):
         assert w.view2d.zoomed_in() and w.view2d._nav.isVisible()
         w._on_action("fit")
         assert not w.view2d.zoomed_in() and w.btn_zoom.text().startswith("배율 맞춤")
-        # 3D look: 자세히 from the start (with the glass sclera), as the web page; 간단히 is in 설정 → 일반
+        # 3D look: 자세히 from the start (with the glass sclera), as the web page; 간단히 | 자세히 in the bar
         assert w.eye3d.detail == "detailed" and w.c_muscle.isEnabled()
         assert w.eye3d.glass == pytest.approx(0.8) and not hasattr(w, "b_simple")
         w._set_3d_detail("simple")
@@ -46,6 +46,11 @@ def test_main_window_imports_and_lists(tmp_path, demo_dir, import_and_wait):
         w._set_3d_detail("detailed")
         assert w.eye3d.detail == "detailed" and Settings.load().view3d_detail == "detailed"
         w._set_3d_detail("simple")
+        assert w.eye3d.detail == "simple" and Settings.load().view3d_detail == "simple"
+        assert w._detail_buttons["simple"].isChecked()          # the bar shows the look, and sets it
+        w._detail_buttons["detailed"].click()
+        assert w.eye3d.detail == "detailed" and Settings.load().view3d_detail == "detailed"
+        w._detail_buttons["simple"].click()
         assert w.eye3d.detail == "simple" and Settings.load().view3d_detail == "simple"
         # 세로 단면: the slider sets how far the section plane cuts (0 = through the axis)
         eye = w.eye3d

@@ -447,6 +447,7 @@ class MainWindow(QMainWindow):
 
         m = mb.addMenu("설정(&S)")
         m.addAction(A["settings"])
+        m.addAction("3D 보기 설정…", self._open_3d_settings)
 
         m = mb.addMenu("도움말(&H)")
         m.addAction("마우스·단축키", self._show_help)
@@ -850,7 +851,16 @@ class MainWindow(QMainWindow):
         top.setContentsMargins(10, 6, 10, 6)
         top.setSpacing(8)
 
-        # -- the viewpoint (the look, 자세히 / 간단히, is in 설정 → 일반 → 3D 모형) -----------------------
+        # -- the look: 간단히 (the light-weight model) or 자세히 (the anatomical one) -------------------
+        self._detail_buttons = {}
+        for label, key, tip in (("간단히", "simple", "가벼운 기본 모형 — 느린 PC에서도 부드럽게 움직입니다"),
+                                ("자세히", "detailed", "실제 해부 구조 — 각막·홍채·수정체·공막 층·외안근")):
+            b = segment(label, tip)
+            b.clicked.connect(lambda _=False, k=key: self._set_3d_detail(k))
+            self._detail_buttons[key] = b
+        self.seg_detail = Segmented(list(self._detail_buttons.values()), on_card=False)
+
+        # -- the viewpoint -------------------------------------------------------------------------
         self.r_out = segment("외부", "안구 모형을 바깥에서 봅니다")
         self.r_in = segment("내부", "동공을 지나 안으로 들어가 망막을 바라봅니다 (망막 시점)")
         self.seg_mode = Segmented([self.r_out, self.r_in], on_card=False)
@@ -880,7 +890,7 @@ class MainWindow(QMainWindow):
         self.s_cut.setRange(-30, 100)
         self.s_cut.setValue(25)
         self.s_cut.setMinimumWidth(120)
-        self.s_cut.setToolTip("자르는 깊이 (오른쪽 끝 = 닫힌 안구)")
+        self.s_cut.setToolTip("자르는 깊이 (오른쪽 끝 = 닫힌 안구) — 안구 위에서 마우스 휠로도 조절합니다")
         self.s_cut.valueChanged.connect(self._on_cut)
         self.s_glass = QSlider(Qt.Orientation.Horizontal)
         self.s_glass.setRange(0, 100)
@@ -997,20 +1007,34 @@ class MainWindow(QMainWindow):
         self.b_full3d.setToolTip("3D 안구와 사진을 화면 전체로 (Esc: 돌아가기 · Space: 슬릿 스캔)")
         self.b_full3d.clicked.connect(self._toggle_full_3d)
         self.eye3d = EyeView()
-        self.eye3d.setToolTip("드래그: 회전 · 휠: 커서 쪽으로 확대 · 오른쪽 드래그: 확대 · "
-                              "가운데/Shift+드래그: 이동 · +/−: 확대·축소 · 더블클릭·0: 처음 보기")
+        self.eye3d.setToolTip("드래그: 회전 · 휠: 자르는 깊이 (내부에서는 확대) · 확대: 위쪽 확대 바 · Ctrl+휠 · "
+                              "오른쪽 드래그 · +/− · 가운데/Shift+드래그: 이동 · 더블클릭·0: 처음 보기")
+        self.eye3d.wheel_depth = True         # the wheel sets 깊이; the bar above the eye zooms
+        self.eye3d.depthWheel.connect(self._on_depth_wheel)
+        self._depth_wheel = 0.0               # (the part of a slider step a fine wheel has not made up yet)
         self.lbl_zoom3d = QLabel("배율 ×1.0")
         self.lbl_zoom3d.setObjectName("hint3d")
         self.lbl_zoom3d.setToolTip("처음 보기 대비 확대 배율 · 더블클릭 또는 0: 처음 보기")
-        self.eye3d.zoomChanged.connect(lambda m: self.lbl_zoom3d.setText(f"배율 ×{m:.1f}"))
+        # 확대 바: ×0.3 … ×16 on a logarithmic scale (the middle of the start view = ×1)
+        self.s_zoom3d = QSlider(Qt.Orientation.Horizontal)
+        self.s_zoom3d.setRange(round(100 * math.log2(self.ZOOM3D[0])), round(100 * math.log2(self.ZOOM3D[1])))
+        self.s_zoom3d.setValue(0)
+        self.s_zoom3d.setPageStep(50)
+        self.s_zoom3d.setFixedWidth(170)
+        self.s_zoom3d.setToolTip("확대 바: 오른쪽으로 끌면 확대, 왼쪽으로 끌면 축소 (화면 가운데를 중심으로)")
+        self.s_zoom3d.valueChanged.connect(lambda v: self.eye3d.set_magnification(2.0 ** (v / 100.0)))
+        self.eye3d.zoomChanged.connect(self._on_zoom3d)
         self.eye3d.glError.connect(self._on_gl_error)
         self.b_inspector = QPushButton("설정")
         self.b_inspector.setObjectName("toggle")
         self.b_inspector.setCheckable(True)
-        self.b_inspector.setChecked(True)
-        self.b_inspector.setToolTip("오른쪽 설정 패널 보이기 / 숨기기")
+        self.b_inspector.setChecked(bool(self.settings.panel3d))
+        self.b_inspector.setToolTip("3D 보기 설정 열기 / 닫기 — 사진 · 망막 입체 · 시점 · 들어가며 보기 · 안구 열기 · "
+                                    "슬릿 스캔 · 효과 · 표시 · 사진 맞춤")
+        top.addWidget(self.seg_detail)
         top.addWidget(self.seg_mode)
         top.addWidget(self.lbl_zoom3d)
+        top.addWidget(self.s_zoom3d)
         top.addStretch(1)
         top.addWidget(self.b_scan)
         top.addWidget(self.b_full3d)
@@ -1134,8 +1158,9 @@ class MainWindow(QMainWindow):
         self._marking3d: str | None = None
 
         # 조작: how to handle the eye (as the page's card)
-        keys_label = QLabel("<b>드래그</b> 회전 (놓으면 관성으로 더 돕니다) · <b>휠</b> 커서 쪽으로 확대 · "
-                            "<b>오른쪽 드래그</b> 확대<br><b>Shift+드래그</b> 또는 <b>가운데 버튼</b> 이동 · "
+        keys_label = QLabel("<b>드래그</b> 회전 (놓으면 관성으로 더 돕니다) · <b>휠</b> 자르는 깊이 (내부: 확대) · "
+                            "<b>확대 바</b> · <b>Ctrl+휠</b> · <b>오른쪽 드래그</b> 확대<br>"
+                            "<b>Shift+드래그</b> 또는 <b>가운데 버튼</b> 이동 · "
                             "<b>더블클릭</b> 처음 보기 · <b>←↑→↓ + − 0</b><br><b>트랙패드</b> 두 손가락 벌리기·오므리기 확대")
         keys_label.setObjectName("caption")
         keys_label.setWordWrap(True)
@@ -1170,7 +1195,9 @@ class MainWindow(QMainWindow):
         self.inspector.setFrameShape(QFrame.Shape.NoFrame)
         self.inspector.setWidget(body)
         self.inspector.setFixedWidth(320)
-        self.b_inspector.toggled.connect(self.inspector.setVisible)
+        if not self.b_inspector.isChecked():
+            self.inspector.hide()             # closed until [설정] opens it
+        self.b_inspector.toggled.connect(self._on_panel3d)
         self._inspector_wheel = motion.SmoothWheel(self.inspector, step=72.0)
 
         self.scan_photo = ScanPhotoView()
@@ -1195,6 +1222,42 @@ class MainWindow(QMainWindow):
         outer.addWidget(main, 1)
         outer.addWidget(self.inspector)
         return w
+
+    ZOOM3D = (0.3, 16.0)    # the ends of the 확대 바 (magnification relative to the start view)
+
+    def _on_zoom3d(self, m: float) -> None:
+        """The magnification next to the 확대 바, and the bar's handle where the view is."""
+        self.lbl_zoom3d.setText(f"배율 ×{m:.1f}")
+        self.s_zoom3d.blockSignals(True)
+        self.s_zoom3d.setValue(round(100 * math.log2(max(m, 1e-3))))
+        self.s_zoom3d.blockSignals(False)
+
+    def _on_depth_wheel(self, steps: float) -> None:
+        """The wheel over the eye (outside): the depth of the cut — forward cuts deeper, back closes."""
+        if not self.s_cut.isEnabled():
+            return
+        self._depth_wheel -= steps * 4.0
+        n = int(self._depth_wheel)
+        if n == 0:
+            return
+        self._depth_wheel -= n
+        v = max(self.s_cut.minimum(), min(self.s_cut.maximum(), self.s_cut.value() + n))
+        if v == self.s_cut.value():
+            self._depth_wheel = 0.0
+        self.s_cut.setValue(v)
+        lo, hi = self.s_cut.minimum(), self.s_cut.maximum()
+        self._where.say("깊이 — 닫힌 안구" if v >= hi else f"깊이 {round(100 * (hi - v) / (hi - lo))}%", hold=1.0)
+
+    def _on_panel3d(self, on: bool) -> None:
+        self.inspector.setVisible(on)
+        if self.settings.panel3d != bool(on):
+            self.settings.panel3d = bool(on)
+            self.settings.save()
+
+    def _open_3d_settings(self) -> None:
+        """설정 → 3D 보기 설정…: the 3D tab with its settings open."""
+        self._go("3d")
+        self.b_inspector.setChecked(True)
 
     def _sync_view_buttons(self) -> None:
         """The 앞쪽 절개 / 세로 단면 segments show what the (hidden) selector holds."""
@@ -1224,9 +1287,11 @@ class MainWindow(QMainWindow):
             "더블클릭: 돋보기 켜기·끄기 (마우스를 따라다님, Esc로도 끔)<br>"
             "오른쪽 클릭: 메뉴 (시신경 유두 · 황반 위치 지정, 돋보기 배율, 미니맵)<br><br>"
             "<b>3D 안구</b><br>"
-            "위 막대: 간단히 / 자세히 (가벼운 기본 모형 / 실제 해부 구조) · 외부 / 내부 · ▶ 슬릿 스캔 · "
-            "크게 보기 · 설정 (오른쪽 패널 열고 닫기)<br>"
-            "설정 패널 — <b>망막 입체</b>: 표면 높낮이 · 높이 · 입체 조명 / <b>시점</b>: 정면 · 처음 시점 · 화면 저장 / "
+            "위 막대: 간단히 / 자세히 (가벼운 기본 모형 / 실제 해부 구조) · 외부 / 내부 · 확대 바 · ▶ 슬릿 스캔 · "
+            "크게 보기 · 설정 (나머지 설정을 여닫기 — 설정 메뉴 → 3D 보기 설정… 으로도 엽니다)<br>"
+            "마우스 휠: 자르는 깊이 (앞으로 굴리면 깊게, 뒤로 굴리면 닫힘 · 내부에서는 확대) · "
+            "확대: 확대 바, Ctrl+휠, 오른쪽 드래그, +/−<br>"
+            "설정 — <b>망막 입체</b>: 표면 높낮이 · 높이 · 입체 조명 / <b>시점</b>: 정면 · 처음 시점 · 화면 저장 / "
             "<b>들어가며 보기</b>: ▶ 들어가기 · 위치 / <b>안구 열기</b>: 앞쪽 절개 · 세로 단면, 깊이, 공막 투명도, "
             "망막 투시 / <b>슬릿 스캔</b>: 방향 ↓ ↑ → ← · 상하좌우 / <b>효과</b>: 자동 회전 · 화각 표시 · 사진 나란히 / "
             "<b>표시</b>: 단순하게 보기 · 시신경 · 외안근 · 각도 격자 / <b>사진 맞춤</b>: 실제 위치에 맞춤 · 화각 · "
@@ -3118,12 +3183,19 @@ class MainWindow(QMainWindow):
     def _set_3d_detail(self, detail: str, save: bool = True) -> None:
         detail = detail if detail in EyeView.DETAILS else "detailed"
         self.eye3d.set_detail(detail)
+        self._sync_detail_buttons()
         self.c_muscle.setEnabled(detail == "detailed")     # the simple model has no muscles
         self.c_muscle.setToolTip("네 곧은근과 두 빗근의 부착부(절단면)를 함께 표시"
                                  + ("" if detail == "detailed" else " — 자세히 보기에서"))
         if save and self.settings.view3d_detail != detail:
             self.settings.view3d_detail = detail
             self.settings.save()
+
+    def _sync_detail_buttons(self) -> None:
+        """간단히 | 자세히 show the look the eye has (also one taken for a presentation, or after an error)."""
+        b = self._detail_buttons.get(self.eye3d.detail)
+        if b is not None and not b.isChecked():
+            b.setChecked(True)
 
     def _on_3d_mode(self, outside: bool) -> None:
         self._show.stop()
@@ -3706,6 +3778,7 @@ class MainWindow(QMainWindow):
         self._ov_3d_lay.addWidget(b)
 
     def _on_gl_error(self, msg: str) -> None:
+        self._sync_detail_buttons()           # (자세히 that could not be prepared fell back to 간단히)
         msg += "\n\n설정 > 일반 > 3D 렌더링을 '소프트웨어 렌더링'으로 바꾸고 다시 시작해 보세요."
         if self._ov_gl and not self.eye3d._ok and self.split3d.parent() is self.ov_3d:
             # OpenGL failed in the small 3D pane: no pop-up at every start — the pane becomes a
