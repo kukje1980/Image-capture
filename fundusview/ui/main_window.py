@@ -984,7 +984,7 @@ class MainWindow(QMainWindow):
                                "동공 → 수정체 → 유리체 → 망막으로 들어가고, 뒤로 돌리면 나옵니다. 들어가는 중에는 왼쪽 "
                                "드래그로 둘러보고, 왼쪽 클릭한 곳이 가운데로 옵니다 (Esc · 다시 누르면 해제)")
         self.b_walk.toggled.connect(self._toggle_walk)
-        walk_note = QLabel("휠로 들어가기 · 왼쪽 드래그 둘러보기")
+        walk_note = QLabel("휠로 들어가기 · 드래그 둘러보기")
         walk_note.setObjectName("caption")
         walk_row = QWidget()
         wr = QHBoxLayout(walk_row)
