@@ -27,6 +27,7 @@ TEX_PX = 640             # side of the disc-centred texture (and of the picture 
 DEPTH_DD = 0.5           # depth of height -1 at 100 %: half a disc diameter (the cup, exaggerated)
 RIM_H = 0.16             # the neuroretinal rim / peripapillary retina, raised a little
 VESSEL_H = 0.14          # a vessel's top
+CUP_GAMMA = 2.2          # one photo: depth against pallor (1 = the whole pale disc is the hollow)
 SOLVE_PX = 320           # render: side of the grid the visible surface is solved on
 MIN_PARALLAX_PX = 1.0    # stereo: less parallax than this (at the analysis width) is no depth
 LIGHT = (-0.45, -0.55, 0.70)     # the light in view space: from the upper left, towards the viewer
@@ -78,7 +79,9 @@ def height_from_photo(crop: np.ndarray, disc_frac: float, n: int = 256) -> np.nd
     lo = float(np.median(smooth[ring])) if ring.any() else float(smooth.mean())
     hi = float(np.percentile(smooth[inside], 99.0)) if inside.any() else lo
     if hi - lo > 6.0:                                           # a pale cup stands out from the rim
-        cup = _smoothstep((smooth - lo) / (hi - lo))
+        # the whole disc is paler than the retina, the cup paler still: deep only towards the palest
+        # part, so that the rim slopes in and the cup is not the disc cut out
+        cup = np.clip((smooth - lo) / (hi - lo), 0.0, 1.0) ** CUP_GAMMA
     else:                                                       # no cup to see: a shallow bowl
         cup = 0.35 * _smoothstep(1.0 - r / 0.45)
     window = 1.0 - _smoothstep((r - 0.9) / 0.25)                # only inside the disc
@@ -88,8 +91,8 @@ def height_from_photo(crop: np.ndarray, disc_frac: float, n: int = 256) -> np.nd
     vk = 2 * max(1, int(round(rd * 0.09))) + 1
     hat = cv2.morphologyEx(g, cv2.MORPH_BLACKHAT, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (vk, vk)))
     top = float(np.percentile(hat, 99.5))
-    if top > 4.0:
-        H = H + VESSEL_H * cv2.GaussianBlur(np.clip(hat / top, 0.0, 1.0), (0, 0), 0.8)
+    if top > 4.0:                                               # (below a third of the darkest: grain, not vessels)
+        H = H + VESSEL_H * cv2.GaussianBlur(np.clip((hat / top - 0.33) / 0.67, 0.0, 1.0), (0, 0), 1.2)
     H = cv2.GaussianBlur(H, (0, 0), max(0.8, rd * 0.035))
     return np.clip(H * _edge_taper(n), -1.0, 1.0).astype(np.float32)
 
@@ -97,7 +100,8 @@ def height_from_photo(crop: np.ndarray, disc_frac: float, n: int = 256) -> np.nd
 def height_from_stereo(a: np.ndarray, b: np.ndarray, disc_frac: float, n: int = 256,
                        flip: bool = False) -> tuple[np.ndarray, dict]:
     """Heights (``n``², -1…1) from the parallax between two registered pictures of one disc, and
-    ``{"parallax": px at the analysis width, "flipped": bool, "enough": bool}``.
+    ``{"parallax": px at the analysis width, "flipped", "enough" (parallax to speak of), "reliable"
+    (… and the retina around the disc came out flat: the two are a stereo pair)}``.
 
     Which photo was taken from the left is not known, so the sign is chosen so that the middle
     of the disc is the deep part (``flip`` turns it over). The level and tilt of the retina
@@ -125,7 +129,13 @@ def height_from_stereo(a: np.ndarray, b: np.ndarray, disc_frac: float, n: int = 
     parallax = float(np.percentile(np.abs(disp[core]), 99.5))     # (disparity is in pixels of its own 240 grid)
     H = disp / max(float(np.percentile(np.abs(disp[core]), 99.5)), 1e-6)
     H = cv2.GaussianBlur(H, (0, 0), n / 90.0)
-    info = {"parallax": parallax, "flipped": flipped, "enough": parallax >= MIN_PARALLAX_PX}
+    # a stereo pair of a disc: the retina around it is flat, the middle is the hollow. Two photos
+    # that are not such a pair (another gaze, another day's framing) give bumps everywhere instead.
+    noise = float(disp[around].std()) if around.sum() >= 50 else 0.0
+    signal = abs(float(disp[middle].mean())) if middle.any() else 0.0
+    enough = parallax >= MIN_PARALLAX_PX
+    info = {"parallax": parallax, "flipped": flipped, "enough": enough, "noise": noise, "signal": signal,
+            "reliable": enough and noise <= 0.5 * signal}
     return np.clip(H * _edge_taper(n), -1.0, 1.0).astype(np.float32), info
 
 

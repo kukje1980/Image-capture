@@ -58,14 +58,20 @@ def test_stereo_depth_follows_the_parallax():
     left, right = _stereo_pair()
     H, info = disc3d.height_from_stereo(left, right, 1 / 3.5)
     n = H.shape[0]
-    assert info["enough"] and info["parallax"] > 2
+    assert info["enough"] and info["reliable"] and info["parallax"] > 2
     assert H[n // 2, n // 2] < -0.5 and abs(H[n // 8, n // 8]) < 0.25
     H2, info2 = disc3d.height_from_stereo(right, left, 1 / 3.5)     # the other order: still a cup
     assert H2[n // 2, n // 2] < -0.5 and info2["flipped"] != info["flipped"]
     up, _ = disc3d.height_from_stereo(left, right, 1 / 3.5, flip=True)
     assert up[n // 2, n // 2] > 0.5
     _, none = disc3d.height_from_stereo(left, left, 1 / 3.5)        # the same photo twice: no depth
-    assert not none["enough"]
+    assert not none["enough"] and not none["reliable"]
+    other = cv2.flip(_disc_picture(), 0)                            # not a pair: bumps all over, no flat retina
+    rng = np.random.default_rng(3)
+    other = np.clip(other + cv2.GaussianBlur(rng.normal(0, 90, (N, N, 1)).astype(np.float32), (0, 0), 4)[..., None],
+                    0, 255).astype(np.uint8)
+    _, bad = disc3d.height_from_stereo(left, other, 1 / 3.5)
+    assert not bad["reliable"]
 
 
 def test_render_front_is_the_photo_and_turning_moves_the_deep_part():
@@ -175,6 +181,13 @@ def test_tab_with_two_photos_stereo_and_flicker(app):
     app.processEvents()
     assert not tab._timer.isActive()
     dlg.close()
+    stranger = cv2.GaussianBlur(np.random.default_rng(5).integers(0, 255, (N, N, 3)).astype(np.uint8), (0, 0), 3)
+    lone = GlaucomaDialog(_photo(1, left), _photo(2, stranger))     # two photos that are no stereo pair
+    lone.stereo._timer.stop()
+    lone.progress._timer.stop()
+    assert lone.surface.source == "a" and lone.surface.stereo_ok
+    lone.surface.set_source("stereo")
+    assert "맞지 않아" in lone.surface.status.text() or "부족" in lone.surface.status.text()
     odos = GlaucomaDialog(_photo(1, left, "OD"), _photo(2, right, "OS"))
     odos.stereo._timer.stop()
     odos.progress._timer.stop()
