@@ -713,6 +713,8 @@ class Surface3DTab(_Tab):
         self.view.moved.connect(self._move)
         self.view.released.connect(lambda: setattr(self, "_drag", None))
         self.set_field("normal")
+        if self.source == "stereo" and not self.info.get("reliable", True):
+            self.set_source("a")                         # not a stereo pair after all: one photo's estimate
 
     # -- the photos and the shape ----------------------------------------------------------------
     def _factor(self) -> float:
@@ -770,6 +772,9 @@ class Surface3DTab(_Tab):
                         "다시 찍거나 [사진 ①] 한 장 추정으로 보세요.")
             elif not self.stereo_ok:
                 text = "두 사진이 서로 다른 눈(OD · OS)입니다 — 스테레오 깊이는 같은 눈의 두 장에서만 맞습니다."
+            elif not self.info.get("reliable", True):
+                text = ("두 사진이 스테레오 쌍으로 맞지 않아 깊이가 믿을 만하지 않습니다 (유두 둘레가 고르게 나오지 않음). "
+                        "같은 곳을 보게 하고 카메라만 옆으로 조금 옮겨 찍은 두 장이 필요합니다 — [사진 ①] 한 장 추정으로 보세요.")
             self.status.setText(text)
         self._restart()
         self._draw()
