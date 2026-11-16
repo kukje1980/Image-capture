@@ -791,7 +791,10 @@ class MainWindow(QMainWindow):
         self.lbl_watch = QLabel("감시 꺼짐")
         self.lbl_info = QLabel("")
         self.lbl_info.setObjectName("imageInfo")
-        self.lbl_status = QLabel("")
+        # what just happened / what to do next: cut with … (the whole text in the tool tip) rather than
+        # making the window wider — a long hint must never set the window's smallest width
+        self.lbl_status = ElidedLabel("")
+        self.lbl_status.PAD = 4
         self.lbl_measure = QLabel("")
         self.lbl_measure.setObjectName("measure")
         self.lbl_measure.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
