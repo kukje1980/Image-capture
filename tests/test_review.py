@@ -148,11 +148,14 @@ def test_patient_list_is_a_window_of_its_own_and_comes_first(win):
     assert by_id["J003"] == ["J003", "정하늘", "", "", "", "", "0", "0"]
     assert by_id["★ 미분류"][5:] == ["2026-02-01", "1", "1"]
     assert pl.lbl_count.text() == "3명"
-    # nothing is selected yet: no patient, no information, nothing to open
-    assert pl.current() is None and not pl.btn_open.isEnabled() and not pl.lbl_name.isVisible()
-    assert not pl.info_box.isVisible() and pl.info() == {}
-    assert pl.lbl_detail_empty.isVisible() and "환자를 선택" in pl.lbl_detail_empty.text()
-    assert "정보" in pl.lbl_detail_empty.text() and "16장" not in pl.lbl_detail_empty.text()
+    # nothing is selected yet: no patient, no exams, nothing to open or edit
+    assert pl.current() is None and not pl.btn_open.isEnabled() and not pl.btn_edit.isVisible()
+    assert pl.lbl_exams.text() == "검사 목록" and pl.exams.rowCount() == 0
+    assert pl.exam_stack.currentWidget() is pl.lbl_exam_empty and pl.lbl_exam_empty.isVisible()
+    assert "환자를 선택" in pl.lbl_exam_empty.text() and "16장" not in pl.lbl_exam_empty.text()
+    # no patient information panel on the right: the table and its exams take the whole width
+    assert not hasattr(pl, "info_box") and not hasattr(pl, "detail") and not hasattr(pl, "info")
+    assert pl.left.width() > pl.width() - 60
 
     # a click on a column title sorts by it, a second click the other way; empty values stay last
     pl.sort_by(5)                                                  # 최근 검사: the latest first
@@ -219,7 +222,7 @@ def test_patient_list_is_a_window_of_its_own_and_comes_first(win):
     assert pl.isVisible() and w.btn_patients.text() == "환자 목록"
 
 
-def test_click_a_patient_shows_its_information_not_its_photos(win):
+def test_click_a_patient_shows_its_exams_not_its_photos(win):
     from PySide6.QtCore import QPoint, Qt
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QLabel
@@ -233,7 +236,7 @@ def test_click_a_patient_shows_its_information_not_its_photos(win):
         rows = table.selectionModel().selectedRows()
         return table.item(rows[0].row(), 0).data(Qt.ItemDataRole.UserRole) if rows else None
 
-    # one click: the patient in both windows — its information in the list (no photos there), its newest
+    # one click: the patient in both windows — its exams in the list (no photos there), its newest
     # OD | OS in the main window
     pl.table.selectRow(pl.row_of(refs["kim"]))
     app.processEvents()
@@ -243,16 +246,14 @@ def test_click_a_patient_shows_its_information_not_its_photos(win):
     # the main window: its newest OD | OS on 다중 보기 (설정 → 일반 → 환자를 열면: 최신 OD | OS)
     assert w._tab() == "multi" and w.picks() == [ids["od3"], ids["os3"]] and w.multi.count == 2
     assert len(newest_first) == 8
-    # no photo thumbnails in the list: only the patient's information
+    # no photo thumbnails in the list, and no patient information panel beside it (the table has it)
     assert not hasattr(pl, "photos") and not pl.findChildren(QLabel, "photoPic")
-    assert not hasattr(pl, "photoRequested")
-    # the patient: name, ID, then sex · birth date (age) · exams · photos · memo, 정보 수정 · 환자 삭제
-    assert pl.lbl_name.text() == "김영수" and pl.lbl_id.text() == "K001" and pl.info_box.isVisible()
-    age = date.today().year - 1958 - ((date.today().month, date.today().day) < (3, 12))
-    assert pl.info() == {"sex": "남", "birth": f"1958-03-12 ({age}세)", "last": "2026-03-02", "first": "2025-08-20",
-                         "exams": "3회", "images": "8장", "kinds": "컬러 6장 · Red-free 1장 · 디스크 2장 1장",
-                         "note": "—"}
-    assert not pl.lbl_detail_empty.isVisible() and pl.btn_edit.isVisible() and pl.btn_delete.isVisible()
+    assert not hasattr(pl, "photoRequested") and not hasattr(pl, "info_box") and not hasattr(pl, "lbl_name")
+    assert not pl.findChildren(QLabel, "patientName")
+    assert pl.left.width() > pl.width() - 60
+    # the patient: its exams, 정보 수정 · 환자 삭제 (with the buttons at the bottom)
+    assert pl.exam_stack.currentWidget() is pl.exams and not pl.lbl_exam_note.isVisible()
+    assert pl.btn_edit.isVisible() and pl.btn_delete.isVisible()
     assert pl.btn_open.isEnabled() and pl.btn_open.text() == "사진 보기"
     # its exams: newest first, one selected (the newest), what was taken
     assert pl.exam_dates() == ["2026-03-02", "2025-12-01", "2025-08-20"] and pl.current_exam() == "2026-03-02"
@@ -292,26 +293,27 @@ def test_click_a_patient_shows_its_information_not_its_photos(win):
     w.show_patient_list()
     assert pl.isVisible() and selected(pl.table) == refs["kim"]
     pl.table.selectRow(pl.row_of(refs["park"]))
-    assert w._patient_ref == refs["park"] and _grid_ids(w) == [ids["p_od"]] and pl.info()["images"] == "1장"
-    assert pl.lbl_name.text() == "박정희" and pl.info()["sex"] == "여"
+    assert w._patient_ref == refs["park"] and _grid_ids(w) == [ids["p_od"]] and pl.current() == refs["park"]
+    assert pl.lbl_exams.text() == "검사 목록 · 1회 · 사진 1장"
     pl.table.doubleClicked.emit(pl.table.model().index(pl.row_of(refs["park"]), 0))
     assert pl.isHidden() and w._tab() == "multi" and _grid_ids(w) == [ids["p_od"]]
 
-    # a patient without photos: its information, and says so; nothing to open
+    # a patient without photos: says so in place of its exams; nothing to open
     w.show_patient_list()
     pl.table.selectRow(pl.row_of(refs["jung"]))
     assert w._patient_ref == refs["jung"] and _grid_ids(w) == []
-    assert pl.info() == {"sex": "—", "birth": "—", "last": "—", "first": "—", "exams": "0회", "images": "0장",
-                         "kinds": "—", "note": "—"}
-    assert pl.lbl_detail_empty.isVisible() and "아직 가져온 사진이 없습니다" in pl.lbl_detail_empty.text()
+    assert pl.lbl_exams.text() == "검사 목록 · 0회 · 사진 0장" and pl.btn_edit.isVisible()
+    assert pl.exam_stack.currentWidget() is pl.lbl_exam_empty and pl.lbl_exam_empty.isVisible()
+    assert "아직 가져온 사진이 없습니다" in pl.lbl_exam_empty.text()
     assert not pl.btn_open.isEnabled() and not pl.btn_3d.isEnabled()
     pl.table.doubleClicked.emit(pl.table.model().index(pl.row_of(refs["jung"]), 0))
     assert pl.isVisible()
     # 미분류: its photos open as well, to be given a patient
     pl.table.selectRow(pl.row_of(UNASSIGNED))
-    assert pl.lbl_name.text() == "★ 미분류" and not pl.btn_edit.isVisible() and pl.btn_open.isEnabled()
-    assert set(pl.info()) == {"last", "first", "exams", "images", "kinds"} and pl.info()["images"] == "1장"
-    assert "환자 ID를 찾지 못한" in pl.lbl_detail_empty.text() and pl.lbl_detail_empty.isVisible()
+    assert pl.current() == UNASSIGNED and pl.btn_open.isEnabled()
+    assert not pl.btn_edit.isVisible() and not pl.btn_delete.isVisible()
+    assert pl.lbl_exams.text() == "검사 목록 · 1회 · 사진 1장" and pl.exam_stack.currentWidget() is pl.exams
+    assert "환자 ID를 찾지 못한" in pl.lbl_exam_note.text() and pl.lbl_exam_note.isVisible()
     pl.btn_open.click()                       # (no eye known: 모두 보기, to be given a patient)
     assert pl.isHidden() and w._tab() == "all" and w._patient_ref == UNASSIGNED and w.current["id"] == ids["un"]
 
@@ -321,7 +323,7 @@ def test_click_a_patient_shows_its_information_not_its_photos(win):
     pl.f_name.setText("박")
     pl.refresh()
     assert pl.refs() == [refs["park"]] and selected(pl.table) is None and w._patient_ref == refs["kim"]
-    assert pl.lbl_name.text() == "김영수"
+    assert pl.current() == refs["kim"] and pl.lbl_exams.text() == "검사 목록 · 3회 · 사진 8장"
     pl.btn_clear.click()
     assert selected(pl.table) == refs["kim"]
 
@@ -334,7 +336,7 @@ def test_click_a_patient_shows_its_information_not_its_photos(win):
     w.refresh_patients()
     assert pl.exam_dates()[0] == "2026-04-01" and pl.current_exam() == "2025-12-01"
     assert pl.table.item(pl.row_of(refs["kim"]), 7).text() == "9"
-    assert pl.info()["last"] == "2026-04-01" and pl.info()["images"] == "9장" and pl.info()["exams"] == "4회"
+    assert pl.lbl_exams.text() == "검사 목록 · 4회 · 사진 9장"
 
 
 def test_more_than_16_photos_page_by_16(win):
@@ -354,7 +356,7 @@ def test_more_than_16_photos_page_by_16(win):
     app.processEvents()
     order = [r["id"] for r in db.images_for_patient(refs["park"])]       # newest first
     assert len(order) == 33 and order[0] == ids["p_od"]
-    assert pl.info()["images"] == "33장" and pl.info()["exams"] == "33회" and pl.info()["first"] == "2024-01-01"
+    assert pl.lbl_exams.text() == "검사 목록 · 33회 · 사진 33장" and pl.exam_dates()[-1] == "2024-01-01"
     # the first way: the main window shows the newest OD | OS (the OS of an earlier exam)
     assert w._tab() == "multi" and w.picks()[0] == ids["p_od"] and len(w.picks()) == 2
     # an exam picked in the list
@@ -1341,7 +1343,7 @@ def test_one_patient_list_for_both_windows(win):
     assert "박정희" in w.banner.text() and w.thumbs.count() == 1
     w.acts["list"].trigger()
     app.processEvents()
-    assert pl.isVisible() and pl.current() == refs["park"] and pl.lbl_name.text() == "박정희"
+    assert pl.isVisible() and pl.current() == refs["park"] and pl.lbl_exams.text() == "검사 목록 · 1회 · 사진 1장"
     assert pl.refs()[pl.table.selectionModel().selectedRows()[0].row()] == refs["park"]
     # a deleted patient leaves both windows (its photos are 미분류 now)
     db.delete_patient(refs["park"])
