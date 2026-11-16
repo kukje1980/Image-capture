@@ -6,16 +6,14 @@ photos. This window is laid out the same way, from top to bottom:
 
 * 검색 조건 — 환자 ID · 이름 · 생년월일, 검사일 (전체 / 오늘 / 최근 7일 / 기간 from ~ to) and [지우기].
   Typing filters at once; Enter picks the only match.
-* left: the patient table — 환자 ID · 이름 · 성별 · 생년월일 · 나이 · 최근 검사 · 검사 수 · 영상, sorted
-  by 환자 ID. A click on a column header sorts by that column, a second click the other way.
-  ★ 미분류 (photos without a patient ID) stays on top. Under it the selected patient's 검사 목록:
-  one row per exam day, newest first — the selected row is the current exam.
-* right: the selected patient's information only — name and ID, then 성별 · 생년월일 (나이) · 최근 검사 ·
-  첫 검사 · 검사 수 · 사진 수 · 촬영 종류 · 메모, with [정보 수정] · [환자 삭제]. No photos here: they
-  are seen in the main window.
-* [사진 가져오기] · [3D] · [사진 보기] · [닫기].
+* the patient table, the whole width — 환자 ID · 이름 · 성별 · 생년월일 · 나이 · 최근 검사 · 검사 수 ·
+  영상, sorted by 환자 ID. A click on a column header sorts by that column, a second click the other
+  way. ★ 미분류 (photos without a patient ID) stays on top. Under it the selected patient's 검사 목록:
+  one row per exam day, newest first — the selected row is the current exam. No patient information
+  panel beside them (the table has it) and no photos: they are seen in the main window.
+* [정보 수정] · [환자 삭제] · [사진 가져오기] · [3D] · [사진 보기] · [닫기].
 
-One click on a patient selects it (here and in the main window) and shows its information; a double
+One click on a patient selects it (here and in the main window) and shows its exams; a double
 click, Enter or [사진 보기] opens its photos in the main window and puts this window away —
 환자 목록 (Ctrl+0) brings it back.
 
@@ -50,10 +48,6 @@ COL_ID, COL_NAME, COL_SEX, COL_BIRTH, COL_AGE, COL_LAST, COL_EXAMS, COL_IMAGES =
 NUMERIC = (COL_AGE, COL_EXAMS, COL_IMAGES)
 NEWEST_FIRST = (COL_LAST, COL_EXAMS, COL_IMAGES)     # the first click on these sorts the largest first
 EXAM_COLUMNS = ("검사일", "눈", "사진", "촬영")
-# the selected patient's information (right): key, label — no photos
-INFO_FIELDS = (("sex", "성별"), ("birth", "생년월일"), ("last", "최근 검사"), ("first", "첫 검사"),
-               ("exams", "검사 수"), ("images", "사진 수"), ("kinds", "촬영 종류"), ("note", "메모"))
-PERSONAL = ("sex", "birth", "note")                  # not for ★ 미분류
 SELECT_DELAY_MS = 150      # stepping through the table with the keys: the patient follows once it pauses
 
 EMPTY_LIBRARY = (
@@ -63,7 +57,7 @@ EMPTY_LIBRARY = (
     "파일에서 환자 ID·이름을 읽어 여기에 환자가 나타납니다.<br><br>"
     "아래 <b>[사진 가져오기]</b>로 파일을 고르거나, 이 창에 파일·폴더를 끌어다 놓아도 됩니다.")
 EMPTY_MATCH = "조건에 맞는 환자가 없습니다"
-NO_PATIENT = "환자를 선택하세요\n\n환자를 누르면 그 환자의 정보가 여기에 나옵니다."
+NO_PATIENT = "환자를 선택하세요\n\n환자를 누르면 그 환자의 검사 목록이 여기에 나옵니다."
 NO_PHOTOS = ("아직 가져온 사진이 없습니다.\n\n아래 [사진 가져오기]로 이 환자의 사진 파일을 넣거나,\n"
              "감시 폴더에 사진이 들어오기를 기다리세요.")
 UNASSIGNED_INFO = "환자 ID를 찾지 못한 사진 — 사진을 열어 [정보 수정]으로 환자를 지정하세요"
@@ -111,7 +105,7 @@ class PatientListWindow(QDialog):
         self.db = db
         self.today = date.today              # tests set another day
         self.select_delay = SELECT_DELAY_MS  # tests set 0: a selection goes through at once
-        self._ref = None                     # the patient shown on the right (the main window's current one)
+        self._ref = None                     # the selected patient (the main window's current one)
         self._exam: str | None = None        # selected exam date
         self._images: list = []
         self._exam_dates: list[str] = []
@@ -193,9 +187,7 @@ class PatientListWindow(QDialog):
         cl.setColumnStretch(7, 1)
         root.addWidget(cond)
 
-        # -- the patient table · the selected patient ---------------------------------------------
-        self.split = QSplitter(Qt.Orientation.Horizontal)
-        self.split.setChildrenCollapsible(False)
+        # -- the patient table · its exams (the whole width: no information panel beside them) -------
         self.table = QTableWidget(0, len(COLUMNS) + 1)       # + an empty column that takes the spare width
         self.table.setObjectName("patientTable")
         self.table.setHorizontalHeaderLabels(list(COLUMNS) + [""])
@@ -242,41 +234,13 @@ class PatientListWindow(QDialog):
         el = QVBoxLayout(exam_box)
         el.setContentsMargins(0, 6, 0, 0)
         el.setSpacing(4)
-        self.split.addWidget(self.left)
-
-        self.detail = QFrame()
-        self.detail.setObjectName("card")
-        dl = QVBoxLayout(self.detail)
-        dl.setContentsMargins(14, 12, 14, 12)
-        dl.setSpacing(8)
-        top = QHBoxLayout()
-        top.setSpacing(8)
-        names = QVBoxLayout()
-        names.setSpacing(1)
-        line = QHBoxLayout()
-        line.setSpacing(8)
-        self.lbl_name = QLabel("")
-        self.lbl_name.setObjectName("patientName")
-        self.lbl_id = QLabel("")
-        self.lbl_id.setObjectName("caption")
-        self.lbl_id.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        line.addWidget(self.lbl_name)
-        line.addWidget(self.lbl_id, 1, Qt.AlignmentFlag.AlignBottom)
-        names.addLayout(line)
-        top.addLayout(names, 1)
-        self.btn_edit = QPushButton("정보 수정")
-        self.btn_edit.setToolTip("환자 ID · 이름 · 생년월일 · 성별 · 메모 고치기")
-        self.btn_edit.clicked.connect(self.editRequested.emit)
-        self.btn_delete = QPushButton("환자 삭제")
-        self.btn_delete.setObjectName("plain")
-        self.btn_delete.setToolTip("이 환자를 목록에서 지웁니다 — 사진은 지워지지 않고 ★ 미분류로 옮겨집니다")
-        self.btn_delete.clicked.connect(self.deleteRequested.emit)
-        top.addWidget(self.btn_edit, 0, Qt.AlignmentFlag.AlignTop)
-        top.addWidget(self.btn_delete, 0, Qt.AlignmentFlag.AlignTop)
-        dl.addLayout(top)
         self.lbl_exams = QLabel("검사 목록")
         self.lbl_exams.setObjectName("cardTitle")
         el.addWidget(self.lbl_exams)
+        self.lbl_exam_note = QLabel(UNASSIGNED_INFO)       # ★ 미분류: what to do with its photos
+        self.lbl_exam_note.setObjectName("caption")
+        self.lbl_exam_note.setWordWrap(True)
+        el.addWidget(self.lbl_exam_note)
         self.exams = QTableWidget(0, len(EXAM_COLUMNS))
         self.exams.setObjectName("examTable")
         self.exams.setHorizontalHeaderLabels(list(EXAM_COLUMNS))
@@ -295,51 +259,35 @@ class PatientListWindow(QDialog):
         self.exams.setMinimumHeight(28 * 2 + 32)
         self.exams.itemSelectionChanged.connect(self._on_exam_selected)
         self.exams.doubleClicked.connect(lambda _: self._request("multi"))
-        el.addWidget(self.exams, 1)
+        # no patient / no photos yet: what to do, in place of the (empty) exams
+        self.lbl_exam_empty = QLabel(NO_PATIENT)
+        self.lbl_exam_empty.setObjectName("emptyState")
+        self.lbl_exam_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_exam_empty.setWordWrap(True)
+        self.exam_stack = QStackedWidget()
+        self.exam_stack.addWidget(self.exams)
+        self.exam_stack.addWidget(self.lbl_exam_empty)
+        el.addWidget(self.exam_stack, 1)
         self.left.addWidget(exam_box)
         self.left.setStretchFactor(0, 3)
         self.left.setStretchFactor(1, 1)
         self.left.setSizes([440, 170])
-        # the selected patient's information — no photos (they are seen in the main window)
-        self.info_box = QWidget()
-        il = QGridLayout(self.info_box)
-        il.setContentsMargins(0, 6, 0, 0)
-        il.setHorizontalSpacing(14)
-        il.setVerticalSpacing(8)
-        info_title = QLabel("환자 정보")
-        info_title.setObjectName("cardTitle")
-        il.addWidget(info_title, 0, 0, 1, 2)
-        self.info_rows: dict[str, tuple[QLabel, QLabel]] = {}
-        for i, (key, label) in enumerate(INFO_FIELDS, start=1):
-            k = QLabel(label)
-            k.setObjectName("kvKey")
-            v = QLabel("")
-            v.setWordWrap(True)
-            v.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            il.addWidget(k, i, 0, Qt.AlignmentFlag.AlignTop)
-            il.addWidget(v, i, 1, Qt.AlignmentFlag.AlignTop)
-            self.info_rows[key] = (k, v)
-        il.setColumnStretch(1, 1)
-        dl.addWidget(self.info_box)
-        self.lbl_detail_empty = QLabel(NO_PATIENT)
-        self.lbl_detail_empty.setObjectName("emptyState")
-        self.lbl_detail_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_detail_empty.setWordWrap(True)
-        dl.addWidget(self.lbl_detail_empty, 1)
-        dl.addStretch(0)                     # the space under the information when nothing is said there
-        self.split.addWidget(self.detail)
-        self.split.setStretchFactor(0, 1)
-        self.split.setStretchFactor(1, 1)
-        self.split.setSizes([860, 420])
-        root.addWidget(self.split, 1)
+        root.addWidget(self.left, 1)
 
         # -- buttons ---------------------------------------------------------------------------
         row = QHBoxLayout()
         row.setSpacing(8)
-        hint = QLabel("한 번 누르기: 환자 정보 · 두 번 누르기 / Enter: 사진 보기 · Esc: 닫기")
+        hint = QLabel("한 번 누르기: 검사 목록 · 두 번 누르기 / Enter: 사진 보기 · Esc: 닫기")
         hint.setObjectName("caption")
         hint.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)     # cut, not a wider window
         row.addWidget(hint, 1)
+        self.btn_edit = QPushButton("정보 수정")
+        self.btn_edit.setToolTip("환자 ID · 이름 · 생년월일 · 성별 · 메모 고치기")
+        self.btn_edit.clicked.connect(self.editRequested.emit)
+        self.btn_delete = QPushButton("환자 삭제")
+        self.btn_delete.setObjectName("plain")
+        self.btn_delete.setToolTip("이 환자를 목록에서 지웁니다 — 사진은 지워지지 않고 ★ 미분류로 옮겨집니다")
+        self.btn_delete.clicked.connect(self.deleteRequested.emit)
         self.btn_import = QPushButton("사진 가져오기")
         self.btn_import.setToolTip("사진 파일을 골라 가져옵니다 — 사진에서 읽은 환자 정보를 먼저 보여 주고,\n"
                                    "환자 정보가 없는 사진은 그 자리에서 환자를 지정할 수 있습니다\n"
@@ -356,7 +304,7 @@ class PatientListWindow(QDialog):
         self.btn_close = QPushButton("닫기")
         self.btn_close.setToolTip("환자 목록 창을 닫습니다 — 다시 열기: 환자 목록 (Ctrl+0)")
         self.btn_close.clicked.connect(self.hide)
-        for b in (self.btn_import, self.btn_3d, self.btn_open, self.btn_close):
+        for b in (self.btn_edit, self.btn_delete, self.btn_import, self.btn_3d, self.btn_open, self.btn_close):
             row.addWidget(b)
         root.addLayout(row)
         for b in self.findChildren(QPushButton):     # Enter belongs to the table (open), not to a button
@@ -506,7 +454,7 @@ class PatientListWindow(QDialog):
             library_empty = not searching and span is None and not total and not un["n_images"]
             self.lbl_empty.setText(EMPTY_LIBRARY if library_empty else EMPTY_MATCH)
             self.list_stack.setCurrentWidget(self.lbl_empty)
-        self._fill_detail()
+        self._fill_exams()
 
     # -- order -----------------------------------------------------------------------------------
     def sort_by(self, col: int, ascending: bool | None = None) -> None:
@@ -645,7 +593,7 @@ class PatientListWindow(QDialog):
         if exam is not None:
             self._exam = exam
         self._highlight()
-        self._fill_detail()
+        self._fill_exams()
 
     def set_exam(self, exam_date: str) -> None:
         """Select the exam of ``exam_date`` (사진 보기 · 3D open its photos)."""
@@ -661,18 +609,12 @@ class PatientListWindow(QDialog):
             self._exam = d
             self.examChecked.emit(d)
 
-    def info(self) -> dict[str, str]:
-        """The patient information on the right, as shown: ``{key: text}`` of the rows on screen."""
-        return {key: v.text() for key, (k, v) in self.info_rows.items() if not k.isHidden()}
-
-    def _fill_detail(self) -> None:
+    def _fill_exams(self) -> None:
         ref = self._ref
         patient = self.db.get_patient(ref) if ref not in (None, UNASSIGNED) else None
         if ref is not None and ref != UNASSIGNED and patient is None:
             ref = self._ref = None            # deleted or merged away
         have = ref is not None
-        for w in (self.lbl_name, self.lbl_id, self.info_box):
-            w.setVisible(have)
         self.btn_edit.setVisible(patient is not None)
         self.btn_delete.setVisible(patient is not None)
         self._images = self.db.images_for_patient(None if ref == UNASSIGNED else ref) if have else []
@@ -680,26 +622,6 @@ class PatientListWindow(QDialog):
         self._exam_dates = [d for d, _ in groups]
         if self._exam not in self._exam_dates:
             self._exam = self._exam_dates[0] if self._exam_dates else None
-        dated = [d for d in self._exam_dates if d]
-        values = {"last": dated[0] if dated else "—", "first": dated[-1] if dated else "—",
-                  "exams": f"{len(groups)}회", "images": f"{len(self._images)}장",
-                  "kinds": review.summary(self._images) or "—"}
-        if ref == UNASSIGNED:
-            self.lbl_name.setText("★ 미분류")
-            self.lbl_id.setText("")
-        elif patient is not None:
-            self.lbl_name.setText(patient["name"] or "(이름 없음)")
-            self.lbl_id.setText(patient["patient_id"])
-            age = age_on(patient["birth_date"])
-            values["sex"] = SEX_LABEL.get(patient["sex"] or "", "") or "—"
-            values["birth"] = ((patient["birth_date"] + (f" ({age}세)" if age is not None else ""))
-                               if patient["birth_date"] else "—")
-            values["note"] = patient["note"] or "—"
-        for key, (k, v) in self.info_rows.items():
-            shown = have and (patient is not None or key not in PERSONAL)
-            k.setVisible(shown)
-            v.setVisible(shown)
-            v.setText(values.get(key, "") if shown else "")
         self.lbl_exams.setText(f"검사 목록 · {len(groups)}회 · 사진 {len(self._images)}장" if have else "검사 목록")
         self.exams.blockSignals(True)
         self.exams.setRowCount(len(groups))
@@ -715,12 +637,10 @@ class PatientListWindow(QDialog):
         if self._exam in self._exam_dates:
             self.exams.selectRow(self._exam_dates.index(self._exam))
         self.exams.blockSignals(False)
-        # under the information: what to do — pick a patient, give 미분류 photos a patient, import photos
-        note = NO_PATIENT if not have else UNASSIGNED_INFO if ref == UNASSIGNED else "" if groups else NO_PHOTOS
-        self.lbl_detail_empty.setText(note)
-        self.lbl_detail_empty.setVisible(bool(note))
-        self.lbl_detail_empty.setAlignment(Qt.AlignmentFlag.AlignCenter if not have
-                                           else Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+        # in place of the exams when there are none: pick a patient, or import its photos
+        self.lbl_exam_empty.setText(NO_PATIENT if not have else NO_PHOTOS)
+        self.exam_stack.setCurrentWidget(self.exams if groups else self.lbl_exam_empty)
+        self.lbl_exam_note.setVisible(ref == UNASSIGNED)     # ★ 미분류: give its photos a patient
         for b in (self.btn_open, self.btn_3d):
             b.setEnabled(bool(groups))
 
