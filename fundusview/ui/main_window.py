@@ -702,9 +702,14 @@ class MainWindow(QMainWindow):
         self.review.status.connect(lambda t: self.lbl_status.setText(t))
         self.tabs.insertTab(0, self.review, "검토")
         self.tabs.addTab(self.grid, "16장 보기")
+        # 두 장 3D: the two photos of Simple (or two picked ones), each on its own 3D eye (pair3d.py)
+        from .pair3d import Pair3D
+        self.pair3d = Pair3D()
+        self.pair3d.glError.connect(lambda msg: self.lbl_status.setText(f"3D를 그릴 수 없습니다: {msg}"))
+        self.tabs.addTab(self.pair3d, "두 장 3D")
         self.tabs.setCurrentWidget(self.page_all)
         self._pages = {"review": self.review, "all": self.page_all, "2d": self.page2d, "3d": self.page3d,
-                       "multi": self.multi, "cmp": cmp_w, "grid": self.grid}
+                       "multi": self.multi, "cmp": cmp_w, "grid": self.grid, "3d2": self.pair3d}
         self._ov_on = False
         self._tab_fade = motion.Crossfade(self.tabs.findChild(QStackedWidget) or self.tabs)
         self.tabs.tabBar().tabBarClicked.connect(
@@ -2349,6 +2354,11 @@ class MainWindow(QMainWindow):
         self._fit_multi_count()
         if self._tab() == "multi":
             self._fill_multi()
+        elif self._tab() == "3d2" and self._pair3d_ids() != self.pair3d.image_ids:
+            # 두 장 3D: another photo was put in — the two eyes show the two photos of now
+            # (no longer two: back to the photos)
+            if not self._open_pair3d():
+                self.show_simple() if self._mode == SIMPLE else self.open_picks()
 
     def _on_multi_layout(self, _n: int) -> None:
         """화면 분할 chosen by hand: with nothing picked, consecutive photos from the shown one (VK-2)."""
@@ -2967,7 +2977,11 @@ class MainWindow(QMainWindow):
             else:
                 self.patient_list.hide()
         elif key == "view3d":                    # 3D, and again: back to the view before it
-            if self._tab() != "3d":
+            if self._tab() == "3d2":             # 두 장 3D: back to the two photos
+                self.show_simple() if self._mode == SIMPLE else self.open_picks()
+            elif self._tab() == "multi" and self._open_pair3d():
+                pass                             # two photos on screen: both in 3D, side by side
+            elif self._tab() != "3d":
                 self._go("3d")
             elif self._last_view == "multi":
                 self.show_simple() if self._mode == SIMPLE else self.open_picks()
@@ -3917,6 +3931,42 @@ class MainWindow(QMainWindow):
         self.lbl_status.setText("부드러운 움직임을 켰습니다" if on else
                                 "부드러운 움직임을 껐습니다 — 확대·회전·전환이 바로 바뀝니다")
 
+    def _pair3d_ids(self) -> list[int]:
+        """The two photos the two-photo view shows (Simple's OD | OS, or exactly two picked ones)."""
+        ids = [i for i in self._picks if self.db.get_image(i) is not None]
+        return ids if len(ids) == 2 else []
+
+    def _open_pair3d(self) -> bool:
+        """두 장 3D: each of the two photos on screen on its own 3D eye, side by side, with the look
+        of the 3D tab; turned and zoomed like it (together unless 함께 움직이기 is off). False when
+        the view does not show two photos (then the 3D icon opens the 3D tab as before)."""
+        ids = self._pair3d_ids()
+        if not ids:
+            return False
+        photos = []
+        for iid in ids:
+            row = self.db.get_image(iid)
+            rgb = self._load(row)
+            if rgb is None:
+                return False
+            prof = get_profile(row["profile"])
+            circle = ((row["circle_cx"], row["circle_cy"], row["circle_r"]) if row["circle_r"]
+                      else imaging.detect_circle(rgb))
+            disc, fovea = self._marks_for_3d(row)
+            photos.append({
+                "id": iid, "label": self._multi_label(row), "rgb": rgb,
+                "alpha": imaging.fundus_alpha(rgb, circle), "circle": circle,
+                "mapping": dict(fov_deg=row["fov_deg"] or prof.fov_deg, fov_type=row["fov_type"] or prof.fov_type,
+                                projection=row["projection"] or prof.projection, viewpoint=prof.viewpoint,
+                                roll_deg=0.0, radial_c=prof.radial_c),
+                "laterality": row["laterality"], "disc": disc, "fovea": fovea,
+                "mark_circle": self._marks_of(row)[0], "from_cover": row["modality"] == "montage"})
+        self.pair3d.copy_look(self.eye3d)
+        self.pair3d.set_photos(photos)
+        self._go("3d2")
+        self.lbl_status.setText("두 장 3D — 드래그: 회전 · 휠: 확대 · 축소 · [3D]를 다시 누르면 사진으로 돌아갑니다")
+        return True
+
     def _mark_3d_dirty(self) -> None:
         self._3d_dirty = True
         if self._tab() == "3d":
@@ -4050,7 +4100,7 @@ class MainWindow(QMainWindow):
         two modes); 화면 분할 and the picks are there on Multi only, ◀ ▶ at the cells' sides on Simple."""
         key = self._tab()
         on = {"grid": key == "grid", SIMPLE: key == "multi" and self._mode == SIMPLE,
-              MULTI: key == "multi" and self._mode == MULTI, "all": key == "all", "3d": key == "3d"}
+              MULTI: key == "multi" and self._mode == MULTI, "all": key == "all", "3d": key in ("3d", "3d2")}
         for k, b in self.view_buttons.items():
             b.setChecked(on[k])
         self.multi_bar.setVisible(on[MULTI])
@@ -4059,8 +4109,10 @@ class MainWindow(QMainWindow):
 
     def _on_tab(self, i: int) -> None:
         key = self._tab()
-        if key and key != "3d":
+        if key and key not in ("3d", "3d2"):
             self._last_view = key             # where the 3D icon goes back to
+        if key != "3d2" and self.pair3d.image_ids:
+            self.pair3d.clear()               # (its two photos are let go)
         self._sync_views()
         # 검토 has its own timeline: the photo strip and its filters are for the other tabs
         self.strip_w.setVisible(key != "review")
