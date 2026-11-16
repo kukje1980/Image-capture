@@ -439,7 +439,7 @@ class MainWindow(QMainWindow):
         self.act_thumb_kind = sub.addAction("종류 (컬러 · 몽타주 …)")
         self.act_thumb_kind.setToolTip("사진 목록의 사진 위(왼쪽 아래)에 촬영 종류를 씁니다")
         self.act_thumb_eyes = sub.addAction("눈별로 두 줄 (OD 위 · OS 아래)")
-        self.act_thumb_eyes.setToolTip("위 줄 OD · 아래 줄 OS, 눈은 줄 오른쪽 끝에 한 번만 표시 — 끄면 한 줄 (OD 다음 OS, 사진마다 눈 표시)")
+        self.act_thumb_eyes.setToolTip("위 줄 OD · 아래 줄 OS, 눈은 줄 왼쪽에 한 번만 표시 — 끄면 한 줄 (OD 다음 OS, 사진마다 눈 표시)")
         sub.setToolTipsVisible(True)
         for a, on in ((self.act_thumb_date, self.settings.thumb_date), (self.act_thumb_kind, self.settings.thumb_kind),
                       (self.act_thumb_eyes, self._thumb_rows != 1)):
@@ -589,7 +589,7 @@ class MainWindow(QMainWindow):
                                     "Ctrl+클릭: 두 번째 사진(②) 선택/해제 — 비교 · 디스크 2장 · "
                                     "오른쪽 클릭: 환자 지정·다시 분석"))
         self.thumbs.stepped.connect(self._step)
-        self.eye_rail = EyeRail(self.thumbs)                 # OD · OS, once per row, at the right end
+        self.eye_rail = EyeRail(self.thumbs)                 # OD · OS, once per row, at its left
         self.thumbs.viewport().installEventFilter(self)
         self.thumbs.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.thumbs.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
@@ -742,13 +742,13 @@ class MainWindow(QMainWindow):
         gb.addSpacing(18)
         gb.addWidget(lbl_hint, 1)
         self.grid_bar.hide()
-        # under the photos: the photo list over the whole width, the eye of each row at its right end
+        # under the photos: the photo list over the whole width, the eye of each row at its left
         # (both straight in this row: a box of their own around them made the photos above settle
         # one round of the event loop later whenever the list changed height)
         strip = QHBoxLayout()
         strip.setSpacing(0)
-        strip.addWidget(self.thumbs, 1)
         strip.addWidget(self.eye_rail)
+        strip.addWidget(self.thumbs, 1)
         strip.addWidget(self.grid_bar, 1)
         strip.setContentsMargins(0, 0, 0, 0)
         self.strip_w = QWidget()         # hidden on the 검토 tab (its timeline lists the photos there)
@@ -1457,7 +1457,7 @@ class MainWindow(QMainWindow):
             "잘못 찾았으면 큰 사진에서 오른쪽 클릭 → 황반 / 시신경 유두로 지정<br>"
             "<b>3D</b>: 보고 있는 사진을 3D 안구로 — 한 번 더 누르면 보던 화면으로<br><br>"
             "<b>사진 목록 (화면 아래)</b><br>"
-            "위 줄 OD · 아래 줄 OS (줄마다 최신 사진부터) — 눈은 줄 오른쪽 끝에 한 번만 표시하고, 사진 위에는 날짜만 씁니다<br>"
+            "위 줄 OD · 아래 줄 OS (줄마다 최신 사진부터) — 눈은 줄 왼쪽에 한 번만 표시하고, 사진 위에는 날짜만 씁니다<br>"
             "보기 → 사진 목록 표시: 날짜 · 종류(컬러 · 몽타주 …) · 눈별로 두 줄 (끄면 한 줄) · 미상 사진은 눈 고르기 → 미상<br><br>"
             "<b>16장 보기 (VK-2 방식)</b><br>"
             "설정 → 일반 → 환자를 열면: VK-2 방식을 고르면 환자를 열 때 사진 16장이 한 화면에 나옵니다<br>"
@@ -2177,7 +2177,7 @@ class MainWindow(QMainWindow):
     def _set_thumb_rows(self, n: int, save: bool = False) -> None:
         """The photo list: 1 = all photos in one scrolling line, the eye on every photo; otherwise
         by eye — OD in the top row, OS in the row under it (OU in a third row when there are any),
-        the eye said once at the right end of each row (``EyeRail``). 미상: see _fill_thumbs.
+        the eye said once at the left of each row (``EyeRail``). 미상: see _fill_thumbs.
         (보기 → 사진 목록 표시 → 눈별로 두 줄)"""
         n = 1 if n == 1 else 2
         self._thumb_rows = n

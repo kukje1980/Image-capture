@@ -102,7 +102,7 @@ class Settings:
     # (newest first in each; an older 3 means by eye too)
     thumb_rows: int = 2
     # … and what is written on its photos (보기 → 사진 목록 표시): the exam date, the kind of photo
-    # (컬러 · 몽타주 …). The eye is said once per row, at its right end.
+    # (컬러 · 몽타주 …). The eye is said once per row, at its left.
     thumb_date: bool = True
     thumb_kind: bool = False
     # 환자를 열면 (설정 → 일반): "odos" = Simple — 최신 OD | OS 두 장을 나란히 (처음 설정) ·

@@ -8,7 +8,7 @@ its pick number —, the second picked photo ②.
 
 ``ThumbStrip`` lays the photos out by eye: OD photos in the top row, OS photos in the row under
 it, and anything else (OU) in a third row only when there is any; the rows scroll sideways
-together. The eye is said once per row, at the right end of the rows (``EyeRail``), not on every
+together. The eye is said once per row, at the left of the rows (``EyeRail``), not on every
 photo. Or all photos in one line — then each has its eye badge (OD blue · OS orange · OU purple ·
 미상 grey). (The main window leaves 미상 photos out of the list.)
 """
@@ -266,7 +266,7 @@ class ThumbStrip(QListWidget):
 
 
 class EyeRail(QWidget):
-    """The eye of each row of the strip, said once at the right end of the rows — OD at the top
+    """The eye of each row of the strip, said once at the left of the rows — OD at the top
     row, OS at the one under it — rather than on every photo. (One line: nothing; each photo has
     its badge.)"""
 

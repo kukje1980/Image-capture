@@ -73,7 +73,7 @@ def test_strip_rows_by_eye(app):
     while time.time() < deadline:
         app.processEvents()
     check()
-    # the eye of each row, top to bottom — said once per row at the right end of the rows (EyeRail)
+    # the eye of each row, top to bottom — said once per row at the left of the rows (EyeRail)
     from fundusview.ui.thumbs import EyeRail
 
     assert t.row_eyes() == ["OD", "OS", ""]
@@ -212,7 +212,7 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
         assert all("°" not in w.thumbs.item(i).text() for i in range(3))     # the date and the kind, no angle
 
         # by eye: OD in the top row, OS in the row under it — low rows (the photo fills its cell, no
-        # caption under it), the eye said once per row at the right end; 보기 → 사진 목록 표시 → 눈별로 두 줄
+        # caption under it), the eye said once per row at its left; 보기 → 사진 목록 표시 → 눈별로 두 줄
         # switches to one line and back (remembered); one eye on the list = one row
         from fundusview.ui.main_window import THUMB_GRID
         from fundusview.ui.thumbs import DATE_ROLE, KIND_ROLE
@@ -232,7 +232,7 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
         assert rects[0].left() == rects[2].left() < rects[1].left()   # each row starts at the left
         assert w.act_thumb_eyes.isChecked() and w.thumbs.height() == 2 * grid_h + 10
         assert w.eye_rail.isVisible() and [e for e, _ in w.eye_rail.badge_rects()] == ["OD", "OS"]
-        assert w.eye_rail.x() >= w.thumbs.x() + w.thumbs.width() and not w.thumb_paint.show_eye
+        assert w.eye_rail.x() + w.eye_rail.width() <= w.thumbs.x() and not w.thumb_paint.show_eye
         w.act_thumb_eyes.setChecked(False)
         assert s.thumb_rows == 1 and w.thumbs.height() == THUMB_GRID[1] + 10
         assert len(set(tops())) == 1 and not w.eye_rail.isVisible() and w.thumb_paint.show_eye

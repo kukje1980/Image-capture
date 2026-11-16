@@ -75,9 +75,10 @@ def test_overview_is_the_photo_with_its_macula_and_disc(tmp_path, demo_dir, impo
         assert [k for k, b in w.view_buttons.items() if b.isChecked()] == ["all"]
         assert w.view_bar.mapTo(w, QPoint(0, 0)).y() + w.view_bar.height() <= w.view2d.mapTo(w, QPoint(0, 0)).y()
         assert not w.multi_bar.isVisible() and _inside(w.multi.combo, w.view_bar)
-        # under the photos: the photo list alone, over the whole width (the eye of each row at its right end)
+        # under the photos: the photo list alone, over the whole width (the eye of each row at its left)
         assert w.thumbs.mapTo(w, QPoint(0, 0)).y() > w.view2d.mapTo(w, QPoint(0, 0)).y() + w.view2d.height() - 5
-        assert w.thumbs.mapTo(w.strip_w, QPoint(0, 0)).x() < 10
+        assert w.eye_rail.mapTo(w.strip_w, QPoint(0, 0)).x() < 10
+        assert abs(w.thumbs.x() - (w.eye_rail.x() + w.eye_rail.width())) <= 2
         assert w.thumbs.width() + w.eye_rail.width() >= w.strip_w.width() - 10 and w.eye_rail.isVisible()
         assert w.menuBar().cornerWidget(Qt.Corner.TopRightCorner) is w.top_w
         assert w.btn_patients.isVisible() and _inside(w.btn_patients, w.top_w)
