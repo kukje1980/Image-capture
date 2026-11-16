@@ -73,8 +73,9 @@ class Settings:
     # (opengl32sw.dll), for PCs whose GPU driver lacks OpenGL 2.1.
     opengl: str = "auto"
     # 3D eye: "detailed" (자세히, anatomical — as the web page) or "simple" (간단히, light-weight, for slow PCs;
-    # 설정 → 일반 → 3D 모형)
+    # 간단히 | 자세히 in the bar above the 3D eye)
     view3d_detail: str = "detailed"
+    panel3d: bool = False           # 3D: the settings beside the eye are open ([설정] in the bar; closed at first)
     # Motion and 3D effects (보기 → 부드러운 움직임; 3D 안구: 입체 조명, 자동 회전)
     smooth_motion: bool = True
     relief3d: bool = False          # 3D 입체 조명 (off: the photo keeps its own brightness, as taken)

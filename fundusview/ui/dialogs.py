@@ -292,9 +292,6 @@ class SettingsDialog(QDialog):
         self.opengl = _combo([("auto", "자동"), ("desktop", "그래픽카드 OpenGL"),
                               ("software", "소프트웨어 렌더링 (호환 모드)")], settings.opengl)
         f2.addRow("3D 렌더링 (재시작 필요)", self.opengl)
-        self.detail3d = _combo([("detailed", "자세히 (실제 해부 구조)"), ("simple", "간단히 (느린 PC용 가벼운 모형)")],
-                               settings.view3d_detail)
-        f2.addRow("3D 모형", self.detail3d)
         self.open_view = _combo(OPEN_VIEWS, settings.open_view)
         self.open_view.setToolTip("환자 목록에서 환자를 열 때 처음 나오는 화면\n"
                                   "Simple: 고른 검사의 최신 OD(왼쪽) · OS(오른쪽) 두 장 — 사진 목록을 클릭하면 그 눈의 사진이\n"
@@ -517,7 +514,6 @@ class SettingsDialog(QDialog):
         s.stable_seconds = self.stable.value()
         s.rescan_seconds = self.rescan.value()
         s.opengl = self.opengl.currentData()
-        s.view3d_detail = self.detail3d.currentData()
         s.open_view = self.open_view.currentData()
         s.thumb_date = self.thumb_date.isChecked()
         s.thumb_kind = self.thumb_kind.isChecked()
