@@ -157,11 +157,12 @@ def test_check_app_writes_the_version_for_the_download_page(tmp_path, capsys):
 
 
 def test_download_page_names_every_mac_build():
-    """The release notes have a @MAC_MIN_<label>@ for each Mac build the workflow makes, and
-    build_mac.sh names the dmg and the version file with the same labels."""
+    """The release notes have a @MAC_MIN_<label>@ for each Mac build the workflow makes (Apple
+    Silicon only: no Intel build is published), and build_mac.sh names the dmg and the version
+    file with the same labels."""
     workflow = (ROOT / ".github" / "workflows" / "fundus-viewer.yml").read_text(encoding="utf-8")
     labels = re.findall(r"^\s+label:\s*(\w+)\s*$", workflow, re.M)
-    assert sorted(labels) == ["AppleSilicon", "Intel"]
+    assert labels == ["AppleSilicon"]
     notes = (ROOT / "docs" / "release_notes.md").read_text(encoding="utf-8")
     assert sorted(re.findall(r"@MAC_MIN_(\w+)@", notes)) == sorted(labels)
     script = (ROOT / "build_mac.sh").read_text(encoding="utf-8")

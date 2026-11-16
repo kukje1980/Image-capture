@@ -6,10 +6,10 @@
 |---|---|---|
 | Windows | **FundusViewer-windows.zip** | Windows 10 / 11 |
 | Mac — Apple Silicon (M1 · M2 · M3 · M4 …) | **FundusViewer-mac-AppleSilicon.dmg** | @MAC_MIN_AppleSilicon@ 이상 |
-| Mac — Intel | **FundusViewer-mac-Intel.dmg** | @MAC_MIN_Intel@ 이상 |
 
-내 Mac의 칩과 macOS 버전은 화면 왼쪽 위  메뉴 → **이 Mac에 관하여**에 나옵니다 — "칩"(Apple M…) 또는
-"프로세서"(Intel …), 그리고 "macOS Sonoma 14.…" 같은 버전. 버전이 낮으면  메뉴 → **시스템 설정 → 일반 →
+Mac용은 **Apple Silicon**(M1 · M2 · M3 · M4 …)용만 있습니다 — Intel Mac용은 만들지 않습니다.
+내 Mac의 칩과 macOS 버전은 화면 왼쪽 위  메뉴 → **이 Mac에 관하여**에 나옵니다 — "칩"(Apple M…), 그리고
+"macOS Sonoma 14.…" 같은 버전. 버전이 낮으면  메뉴 → **시스템 설정 → 일반 →
 소프트웨어 업데이트**로 올립니다(그보다 낮은 macOS에서는 "이 버전의 macOS에서는 사용할 수 없습니다"라고 나옵니다).
 
 ### Windows 설치·실행
@@ -72,6 +72,9 @@
   환자로 서버에 들어갑니다. 다른 컴퓨터의 변경과 새 사진은 몇 초 안에 나타납니다.
 * **웹 브라우저로 접속**(`http://서버주소:8765`): 설치 없이 환자 검색 · 사진 보기(확대) · 환자 정보 수정 · 사진 메모.
 * 병원 내부망용입니다(접속 암호 하나, 암호화하지 않은 HTTP). 백업은 서버의 라이브러리 폴더 하나만 복사하면 됩니다.
+
+**내려받기**
+* Mac용은 **Apple Silicon**(M1 · M2 · M3 · M4 …)용만 만듭니다. Intel Mac용 dmg는 더 이상 없습니다.
 
 **고친 것 · 빨라진 것**
 * 다중 보기에서 보정한 사진은 다른 칸으로 옮겨 가도 그 보정을 그대로 지닙니다.
@@ -222,4 +225,3 @@ Mac은 터미널에서 `/Applications/FundusViewer.app/Contents/MacOS/FundusView
 ### 항상 최신 버전 주소
 * Windows: https://github.com/kukje1980/Image-capture/releases/download/fundus-viewer-latest/FundusViewer-windows.zip
 * Mac (Apple Silicon): https://github.com/kukje1980/Image-capture/releases/download/fundus-viewer-latest/FundusViewer-mac-AppleSilicon.dmg
-* Mac (Intel): https://github.com/kukje1980/Image-capture/releases/download/fundus-viewer-latest/FundusViewer-mac-Intel.dmg
