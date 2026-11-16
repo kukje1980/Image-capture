@@ -215,10 +215,6 @@ QLabel#pill { background: @FILL@; color: @TEXT2@; border-radius: 8px; padding: 1
 QDialog#patientWindow { background: @BG@; }
 QTableWidget#patientTable::item, QTableWidget#examTable::item { padding: 4px 6px; }
 QTableWidget#patientTable QHeaderView::section, QTableWidget#examTable QHeaderView::section { padding: 6px 6px; }
-QFrame#photoCell { background: @BLACK@; border: 1px solid @BLACK@; border-radius: 8px; }
-QFrame#photoCell[filled="true"]:hover { border: 1px solid @ACCENT@; }
-QLabel#photoCaption { color: @TEXT2@; font-size: 11px; }
-QLabel#photoPic { background: transparent; color: @TEXT4@; }
 QPushButton#back { background: transparent; color: @ACCENT_HI@; padding: 5px 10px; font-weight: 600; }
 QPushButton#back:hover { background: @CARD@; }
 QPushButton#back:pressed { color: @ACCENT_LO@; }

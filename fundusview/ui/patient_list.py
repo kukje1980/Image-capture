@@ -10,14 +10,14 @@ photos. This window is laid out the same way, from top to bottom:
   by 환자 ID. A click on a column header sorts by that column, a second click the other way.
   ★ 미분류 (photos without a patient ID) stays on top. Under it the selected patient's 검사 목록:
   one row per exam day, newest first — the selected row is the current exam.
-* right: the selected patient (name, ID, sex, birth date (age), memo, [정보 수정] · [환자 삭제]) and
-  its photos, **16 to a screen** (4 × 4, newest first, ◀ ▶ for more; an exam picked on the left
-  comes first). A click on a photo opens it large in the main window.
+* right: the selected patient's information only — name and ID, then 성별 · 생년월일 (나이) · 최근 검사 ·
+  첫 검사 · 검사 수 · 사진 수 · 촬영 종류 · 메모, with [정보 수정] · [환자 삭제]. No photos here: they
+  are seen in the main window.
 * [사진 가져오기] · [3D] · [사진 보기] · [닫기].
 
-One click on a patient selects it (here and in the main window) and shows its 16 photos; a double
-click, Enter or [사진 보기] opens them in the main window (16 to a screen there as well) and puts
-this window away — 환자 목록 (Ctrl+0) brings it back.
+One click on a patient selects it (here and in the main window) and shows its information; a double
+click, Enter or [사진 보기] opens its photos in the main window and puts this window away —
+환자 목록 (Ctrl+0) brings it back.
 
 The window holds no selection of its own: a click only *asks* the main window for a patient
 (``patientSelected``); the main window selects it and calls ``set_current`` back, so the list and
@@ -33,14 +33,12 @@ from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QDateEdit, QDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
     QLineEdit, QMenu, QPushButton, QSizePolicy, QSplitter, QStackedWidget, QTableWidget, QTableWidgetItem,
-    QToolButton, QVBoxLayout, QWidget,
+    QVBoxLayout, QWidget,
 )
 
 from .. import review
 from ..db import Database
-from ..models import MODALITY_LABELS
 from . import motion, theme
-from .thumbs import eye_badge, eye_badge_html, thumb_pixmap
 from .widgets import Segmented, filling, segment
 
 UNASSIGNED = -1
@@ -52,9 +50,11 @@ COL_ID, COL_NAME, COL_SEX, COL_BIRTH, COL_AGE, COL_LAST, COL_EXAMS, COL_IMAGES =
 NUMERIC = (COL_AGE, COL_EXAMS, COL_IMAGES)
 NEWEST_FIRST = (COL_LAST, COL_EXAMS, COL_IMAGES)     # the first click on these sorts the largest first
 EXAM_COLUMNS = ("검사일", "눈", "사진", "촬영")
-GRID = (4, 4)                                        # the photos of a patient: 16 to a screen
-GRID_N = GRID[0] * GRID[1]
-SELECT_DELAY_MS = 150      # stepping through the table with the keys: the photos follow once it pauses
+# the selected patient's information (right): key, label — no photos
+INFO_FIELDS = (("sex", "성별"), ("birth", "생년월일"), ("last", "최근 검사"), ("first", "첫 검사"),
+               ("exams", "검사 수"), ("images", "사진 수"), ("kinds", "촬영 종류"), ("note", "메모"))
+PERSONAL = ("sex", "birth", "note")                  # not for ★ 미분류
+SELECT_DELAY_MS = 150      # stepping through the table with the keys: the patient follows once it pauses
 
 EMPTY_LIBRARY = (
     "<b style='font-size:15px'>아직 환자가 없습니다</b><br><br>"
@@ -63,9 +63,10 @@ EMPTY_LIBRARY = (
     "파일에서 환자 ID·이름을 읽어 여기에 환자가 나타납니다.<br><br>"
     "아래 <b>[사진 가져오기]</b>로 파일을 고르거나, 이 창에 파일·폴더를 끌어다 놓아도 됩니다.")
 EMPTY_MATCH = "조건에 맞는 환자가 없습니다"
-NO_PATIENT = "환자를 선택하세요\n\n환자를 누르면 그 환자의 사진이 한 화면에 16장씩 나옵니다."
+NO_PATIENT = "환자를 선택하세요\n\n환자를 누르면 그 환자의 정보가 여기에 나옵니다."
 NO_PHOTOS = ("아직 가져온 사진이 없습니다.\n\n아래 [사진 가져오기]로 이 환자의 사진 파일을 넣거나,\n"
              "감시 폴더에 사진이 들어오기를 기다리세요.")
+UNASSIGNED_INFO = "환자 ID를 찾지 못한 사진 — 사진을 열어 [정보 수정]으로 환자를 지정하세요"
 
 
 def age_on(birth: str | None, on: str | None = None) -> int | None:
@@ -75,12 +76,6 @@ def age_on(birth: str | None, on: str | None = None) -> int | None:
     except (TypeError, ValueError):
         return None
     return d.year - b.year - ((d.month, d.day) < (b.month, b.day))
-
-
-def window_start(index: int, total: int, n: int) -> int:
-    """The first of ``n`` photos on screen when the ``index``-th of ``total`` should be on it:
-    that one first, but never fewer than ``n`` on screen (the main window's 다중 보기 does the same)."""
-    return max(0, min(index, total - n)) if total > n else 0
 
 
 def _natural(text: str) -> tuple:
@@ -94,157 +89,9 @@ def _exam_eyes(rows) -> str:
     return " · ".join(e for e in ("OD", "OS", "OU") if e in eyes) or "—"
 
 
-class _PhotoCell(QFrame):
-    """One photo of the 16: the stored thumbnail, its eye and day under it. A click opens it."""
-    clicked = Signal(int)
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setObjectName("photoCell")
-        self.image_id: int | None = None
-        self._path: str | None = None
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(3, 3, 3, 3)
-        lay.setSpacing(2)
-        self.pic = QLabel()
-        self.pic.setObjectName("photoPic")
-        self.pic.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.pic.setMinimumSize(40, 32)
-        self.pic.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
-        self.cap = QLabel()
-        self.cap.setObjectName("photoCaption")
-        self.cap.setTextFormat(Qt.TextFormat.RichText)
-        lay.addWidget(self.pic, 1)
-        lay.addWidget(self.cap)
-
-    def set_photo(self, row) -> None:
-        if row is None:
-            self.image_id, self._path = None, None
-            self.pic.clear()
-            self.cap.setText("")
-            self.setToolTip("")
-            self.setCursor(Qt.CursorShape.ArrowCursor)
-            self.setProperty("filled", False)
-        else:
-            self.image_id, self._path = row["id"], row["thumb_path"]
-            mod = MODALITY_LABELS.get(row["modality"] or "", "")
-            self.cap.setText(f"{eye_badge_html(row['laterality'])}&nbsp;{row['exam_date'] or '날짜 없음'}")
-            self.setToolTip(f"{eye_badge(row['laterality'])[0]} · {row['exam_date'] or ''} "
-                            f"{(row['exam_time'] or '')[:5]} · {mod}\n누르면 크게 봅니다".replace("  ", " "))
-            self.setCursor(Qt.CursorShape.PointingHandCursor)
-            self.setProperty("filled", True)
-            self._scale()
-        self.style().unpolish(self)
-        self.style().polish(self)
-
-    def _scale(self) -> None:
-        if self.image_id is None:
-            return
-        side = max(8, min(self.pic.width(), self.pic.height()))
-        pm = thumb_pixmap(self._path, 0)
-        if pm.isNull():
-            self.pic.setText("사진 없음")
-            return
-        self.pic.setPixmap(pm.scaled(side, side, Qt.AspectRatioMode.KeepAspectRatio,
-                                     Qt.TransformationMode.SmoothTransformation))
-
-    def resizeEvent(self, e) -> None:
-        super().resizeEvent(e)
-        self._scale()
-
-    def mousePressEvent(self, e) -> None:
-        if e.button() == Qt.MouseButton.LeftButton and self.image_id is not None:
-            self.clicked.emit(self.image_id)
-        super().mousePressEvent(e)
-
-
-class PhotoGrid(QWidget):
-    """The selected patient's photos, 16 to a screen (4 × 4), newest first; ◀ ▶ page through."""
-    photoClicked = Signal(int)
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.rows: list = []
-        self.start = 0
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(6)
-        head = QHBoxLayout()
-        head.setSpacing(6)
-        self.lbl_title = QLabel("사진 · 한 화면 16장")
-        self.lbl_title.setObjectName("cardTitle")
-        head.addWidget(self.lbl_title)
-        head.addStretch(1)
-        self.lbl_pos = QLabel("")
-        self.lbl_pos.setObjectName("caption")
-        self.btn_prev = QToolButton()
-        self.btn_prev.setText("◀")
-        self.btn_prev.setToolTip("앞의 16장")
-        self.btn_prev.clicked.connect(lambda: self.page(-1))
-        self.btn_next = QToolButton()
-        self.btn_next.setText("▶")
-        self.btn_next.setToolTip("다음 16장")
-        self.btn_next.clicked.connect(lambda: self.page(1))
-        for w in (self.lbl_pos, self.btn_prev, self.btn_next):
-            head.addWidget(w)
-        lay.addLayout(head)
-        grid = QGridLayout()
-        grid.setSpacing(4)
-        self.cells: list[_PhotoCell] = []
-        for i in range(GRID_N):
-            cell = _PhotoCell()
-            cell.clicked.connect(self.photoClicked.emit)
-            grid.addWidget(cell, i // GRID[1], i % GRID[1])
-            self.cells.append(cell)
-        for r in range(GRID[0]):
-            grid.setRowStretch(r, 1)
-        for c in range(GRID[1]):
-            grid.setColumnStretch(c, 1)
-        lay.addLayout(grid, 1)
-        self._show()
-
-    def set_photos(self, rows, start: int | None = None) -> None:
-        self.rows = list(rows)
-        self.start = window_start(self.start if start is None else start, len(self.rows), GRID_N)
-        self._show()
-
-    def show_photo(self, image_id: int) -> None:
-        """The screen of 16 that holds this photo (the first photo of an exam: that exam first)."""
-        ids = [r["id"] for r in self.rows]
-        if image_id in ids and not self.start <= ids.index(image_id) < self.start + GRID_N:
-            self.start = window_start(ids.index(image_id), len(ids), GRID_N)
-            self._show()
-
-    def page(self, d: int) -> None:
-        start = window_start(self.start + d * GRID_N, len(self.rows), GRID_N)
-        if start != self.start:
-            self.start = start
-            self._show()
-
-    def shown_ids(self) -> list[int]:
-        return [c.image_id for c in self.cells if c.image_id is not None]
-
-    def first_id(self) -> int | None:
-        ids = self.shown_ids()
-        return ids[0] if ids else None
-
-    def _show(self) -> None:
-        page = self.rows[self.start:self.start + GRID_N]
-        for i, cell in enumerate(self.cells):
-            cell.set_photo(page[i] if i < len(page) else None)
-        n = len(self.rows)
-        many = n > GRID_N
-        self.lbl_pos.setText(f"{self.start + 1}–{self.start + len(page)} / {n}장" if many else (f"{n}장" if n else ""))
-        self.btn_prev.setVisible(many)
-        self.btn_next.setVisible(many)
-        self.btn_prev.setEnabled(self.start > 0)
-        self.btn_next.setEnabled(self.start + GRID_N < n)
-
-
 class PatientListWindow(QDialog):
     patientSelected = Signal(object)        # UNASSIGNED / patients.id — asks the main window to select
-    openRequested = Signal(object, str)     # patient, where: "multi" (16 to a screen) / "3d"
-    photoRequested = Signal(int)            # a photo of the 16: open it large
+    openRequested = Signal(object, str)     # patient, where: "multi" (사진 보기) / "3d"
     examChecked = Signal(str)               # the exam date now selected
     editRequested = Signal()                # 정보 수정
     deleteRequested = Signal()              # 환자 삭제
@@ -416,9 +263,6 @@ class PatientListWindow(QDialog):
         line.addWidget(self.lbl_name)
         line.addWidget(self.lbl_id, 1, Qt.AlignmentFlag.AlignBottom)
         names.addLayout(line)
-        self.lbl_info = QLabel("")
-        self.lbl_info.setWordWrap(True)
-        names.addWidget(self.lbl_info)
         top.addLayout(names, 1)
         self.btn_edit = QPushButton("정보 수정")
         self.btn_edit.setToolTip("환자 ID · 이름 · 생년월일 · 성별 · 메모 고치기")
@@ -442,7 +286,7 @@ class PatientListWindow(QDialog):
         self.exams.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.exams.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.exams.setShowGrid(False)
-        self.exams.setToolTip("검사(촬영한 날)를 고르면 사진이 그 검사부터 나옵니다 — 두 번 누르면 엽니다")
+        self.exams.setToolTip("검사(촬영한 날)를 고르면 [사진 보기] · [3D]가 그 검사의 사진을 엽니다 — 두 번 누르면 엽니다")
         ehdr = self.exams.horizontalHeader()
         ehdr.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         for col in range(len(EXAM_COLUMNS) - 1):
@@ -456,24 +300,43 @@ class PatientListWindow(QDialog):
         self.left.setStretchFactor(0, 3)
         self.left.setStretchFactor(1, 1)
         self.left.setSizes([440, 170])
-        self.photos = PhotoGrid()
-        self.photos.photoClicked.connect(self._on_photo_clicked)
-        dl.addWidget(self.photos, 1)
+        # the selected patient's information — no photos (they are seen in the main window)
+        self.info_box = QWidget()
+        il = QGridLayout(self.info_box)
+        il.setContentsMargins(0, 6, 0, 0)
+        il.setHorizontalSpacing(14)
+        il.setVerticalSpacing(8)
+        info_title = QLabel("환자 정보")
+        info_title.setObjectName("cardTitle")
+        il.addWidget(info_title, 0, 0, 1, 2)
+        self.info_rows: dict[str, tuple[QLabel, QLabel]] = {}
+        for i, (key, label) in enumerate(INFO_FIELDS, start=1):
+            k = QLabel(label)
+            k.setObjectName("kvKey")
+            v = QLabel("")
+            v.setWordWrap(True)
+            v.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            il.addWidget(k, i, 0, Qt.AlignmentFlag.AlignTop)
+            il.addWidget(v, i, 1, Qt.AlignmentFlag.AlignTop)
+            self.info_rows[key] = (k, v)
+        il.setColumnStretch(1, 1)
+        dl.addWidget(self.info_box)
         self.lbl_detail_empty = QLabel(NO_PATIENT)
         self.lbl_detail_empty.setObjectName("emptyState")
         self.lbl_detail_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_detail_empty.setWordWrap(True)
         dl.addWidget(self.lbl_detail_empty, 1)
+        dl.addStretch(0)                     # the space under the information when nothing is said there
         self.split.addWidget(self.detail)
         self.split.setStretchFactor(0, 1)
         self.split.setStretchFactor(1, 1)
-        self.split.setSizes([770, 510])
+        self.split.setSizes([860, 420])
         root.addWidget(self.split, 1)
 
         # -- buttons ---------------------------------------------------------------------------
         row = QHBoxLayout()
         row.setSpacing(8)
-        hint = QLabel("한 번 누르기: 사진 16장 · 두 번 누르기 / Enter: 열기 · 사진을 누르면 크게 · Esc: 닫기")
+        hint = QLabel("한 번 누르기: 환자 정보 · 두 번 누르기 / Enter: 사진 보기 · Esc: 닫기")
         hint.setObjectName("caption")
         hint.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)     # cut, not a wider window
         row.addWidget(hint, 1)
@@ -763,10 +626,6 @@ class PatientListWindow(QDialog):
             return
         self.openRequested.emit(self._ref, where)
 
-    def _on_photo_clicked(self, image_id: int) -> None:
-        if self._ref is not None:
-            self.photoRequested.emit(image_id)
-
     # -- the selected patient ------------------------------------------------------------------
     def current(self):
         return self._ref
@@ -782,7 +641,6 @@ class PatientListWindow(QDialog):
         is kept for the same patient while it still exists, else the newest one."""
         if ref != self._ref:
             self._exam = None
-            self.photos.start = 0
         self._ref = ref
         if exam is not None:
             self._exam = exam
@@ -790,7 +648,7 @@ class PatientListWindow(QDialog):
         self._fill_detail()
 
     def set_exam(self, exam_date: str) -> None:
-        """Select the exam of ``exam_date`` (its photos come first in the 16)."""
+        """Select the exam of ``exam_date`` (사진 보기 · 3D open its photos)."""
         if exam_date in self._exam_dates:
             self.exams.selectRow(self._exam_dates.index(exam_date))    # -> _on_exam_selected
 
@@ -799,16 +657,13 @@ class PatientListWindow(QDialog):
         if not rows:
             return
         d = self._exam_dates[rows[0].row()]
-        first = next((r["id"] for r in self._images if (r["exam_date"] or "") == d), None)
-        if first is not None:
-            self.photos.show_photo(first)
         if d != self._exam:
             self._exam = d
             self.examChecked.emit(d)
 
-    def first_shown_photo(self) -> int | None:
-        """The first of the 16 photos on screen (the main window opens its 16 from the same photo)."""
-        return self.photos.first_id()
+    def info(self) -> dict[str, str]:
+        """The patient information on the right, as shown: ``{key: text}`` of the rows on screen."""
+        return {key: v.text() for key, (k, v) in self.info_rows.items() if not k.isHidden()}
 
     def _fill_detail(self) -> None:
         ref = self._ref
@@ -816,7 +671,7 @@ class PatientListWindow(QDialog):
         if ref is not None and ref != UNASSIGNED and patient is None:
             ref = self._ref = None            # deleted or merged away
         have = ref is not None
-        for w in (self.lbl_name, self.lbl_id, self.lbl_info):
+        for w in (self.lbl_name, self.lbl_id, self.info_box):
             w.setVisible(have)
         self.btn_edit.setVisible(patient is not None)
         self.btn_delete.setVisible(patient is not None)
@@ -825,28 +680,33 @@ class PatientListWindow(QDialog):
         self._exam_dates = [d for d, _ in groups]
         if self._exam not in self._exam_dates:
             self._exam = self._exam_dates[0] if self._exam_dates else None
+        dated = [d for d in self._exam_dates if d]
+        values = {"last": dated[0] if dated else "—", "first": dated[-1] if dated else "—",
+                  "exams": f"{len(groups)}회", "images": f"{len(self._images)}장",
+                  "kinds": review.summary(self._images) or "—"}
         if ref == UNASSIGNED:
             self.lbl_name.setText("★ 미분류")
             self.lbl_id.setText("")
-            self.lbl_info.setText("환자 ID를 찾지 못한 사진 — 사진을 열어 [정보 수정]으로 환자를 지정하세요")
         elif patient is not None:
-            name = patient["name"] or ""
-            self.lbl_name.setText(name or "(이름 없음)")
+            self.lbl_name.setText(patient["name"] or "(이름 없음)")
             self.lbl_id.setText(patient["patient_id"])
             age = age_on(patient["birth_date"])
-            bits = [SEX_LABEL.get(patient["sex"] or "", ""),
-                    (patient["birth_date"] or "") + (f" ({age}세)" if age is not None else "")]
-            info = " · ".join(b for b in bits if b) or "성별 · 생년월일 없음"
-            if patient["note"]:
-                info += f"\n메모: {patient['note']}"
-            self.lbl_info.setText(info)
+            values["sex"] = SEX_LABEL.get(patient["sex"] or "", "") or "—"
+            values["birth"] = ((patient["birth_date"] + (f" ({age}세)" if age is not None else ""))
+                               if patient["birth_date"] else "—")
+            values["note"] = patient["note"] or "—"
+        for key, (k, v) in self.info_rows.items():
+            shown = have and (patient is not None or key not in PERSONAL)
+            k.setVisible(shown)
+            v.setVisible(shown)
+            v.setText(values.get(key, "") if shown else "")
         self.lbl_exams.setText(f"검사 목록 · {len(groups)}회 · 사진 {len(self._images)}장" if have else "검사 목록")
         self.exams.blockSignals(True)
         self.exams.setRowCount(len(groups))
         for i, (d, rows) in enumerate(groups):
-            values = (f"{d or '날짜 없음'}" + ("  · 최근" if i == 0 and d else ""), _exam_eyes(rows),
-                      str(len(rows)), review.summary(rows))
-            for j, v in enumerate(values):
+            row = (f"{d or '날짜 없음'}" + ("  · 최근" if i == 0 and d else ""), _exam_eyes(rows),
+                   str(len(rows)), review.summary(rows))
+            for j, v in enumerate(row):
                 it = QTableWidgetItem(v)
                 if j == 2:
                     it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -855,10 +715,12 @@ class PatientListWindow(QDialog):
         if self._exam in self._exam_dates:
             self.exams.selectRow(self._exam_dates.index(self._exam))
         self.exams.blockSignals(False)
-        self.photos.set_photos(self._images)
-        self.photos.setVisible(bool(groups))
-        self.lbl_detail_empty.setVisible(not groups)
-        self.lbl_detail_empty.setText(NO_PATIENT if not have else NO_PHOTOS)
+        # under the information: what to do — pick a patient, give 미분류 photos a patient, import photos
+        note = NO_PATIENT if not have else UNASSIGNED_INFO if ref == UNASSIGNED else "" if groups else NO_PHOTOS
+        self.lbl_detail_empty.setText(note)
+        self.lbl_detail_empty.setVisible(bool(note))
+        self.lbl_detail_empty.setAlignment(Qt.AlignmentFlag.AlignCenter if not have
+                                           else Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
         for b in (self.btn_open, self.btn_3d):
             b.setEnabled(bool(groups))
 
