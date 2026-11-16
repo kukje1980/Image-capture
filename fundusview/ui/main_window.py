@@ -59,7 +59,7 @@ from ..profiles import get_profile
 from ..review import EYES, eye_series
 from .. import share
 from ..watcher import ImportService
-from .dialogs import ImageDialog, PatientDialog, SettingsDialog, source_label
+from .dialogs import WHEEL3D, ImageDialog, PatientDialog, SettingsDialog, source_label
 from .disc_pair import DiscPairDialog
 from .glaucoma_dialog import GlaucomaDialog, Photo
 from .eye3d import EyeView
@@ -1030,10 +1030,7 @@ class MainWindow(QMainWindow):
         self.b_full3d = QPushButton("크게 보기")
         self.b_full3d.setToolTip("3D 안구와 사진을 화면 전체로 (Esc: 돌아가기 · Space: 슬릿 스캔)")
         self.b_full3d.clicked.connect(self._toggle_full_3d)
-        self.eye3d = EyeView()
-        self.eye3d.setToolTip("드래그: 회전 · 휠: 자르는 깊이 (내부에서는 확대) · 확대: 위쪽 확대 바 · Ctrl+휠 · "
-                              "오른쪽 드래그 · +/− · 가운데/Shift+드래그: 이동 · 더블클릭·0: 처음 보기")
-        self.eye3d.wheel_depth = True         # the wheel sets 깊이; the bar above the eye zooms
+        self.eye3d = EyeView()                # (its tool tip and what the wheel does: _set_wheel3d)
         self.eye3d.depthWheel.connect(self._on_depth_wheel)
         self._depth_wheel = 0.0               # (the part of a slider step a fine wheel has not made up yet)
         self.lbl_zoom3d = QLabel("배율 ×1.0")
@@ -1122,6 +1119,22 @@ class MainWindow(QMainWindow):
         wr.addWidget(walk_note, 1)
         self.eye3d.walkChanged.connect(self._on_walk)
 
+        # 마우스 휠: what the wheel over the eye does — 깊이 · 확대 · 들어가기 (also 설정 → 일반)
+        self._wheel_buttons = {}
+        for key, name, what in WHEEL3D:
+            b = segment(name, what)
+            b.clicked.connect(lambda _=False, k=key: self._set_wheel3d(k))
+            self._wheel_buttons[key] = b
+        self.seg_wheel3d = Segmented(list(self._wheel_buttons.values()))
+        self.c_walkclick3d = Switch("각막을 누르면 휠로 들어가기")
+        self.c_walkclick3d.setToolTip("휠이 깊이 · 확대일 때: 3D 안구의 각막을 누르면 전안부가 선택되고, 선택한 동안에는 휠이 "
+                                      "각막부터 망막까지 들어가기 · 나오기가 됩니다 (Esc · 다른 곳을 누르면 해제)")
+        self.c_walkclick3d.setChecked(bool(self.settings.walk_click3d))
+        self.c_walkclick3d.toggled.connect(self._on_walkclick3d)
+        self.lbl_wheel3d = QLabel("")
+        self.lbl_wheel3d.setObjectName("caption")
+        self.lbl_wheel3d.setWordWrap(True)
+
         # 슬릿 스캔: which way the slit crosses the photo
         self._slit_buttons = {}
         for key, label, tip in (("down", "↓", "위에서 아래로 (세로 단면)"), ("up", "↑", "아래에서 위로 (세로 단면)"),
@@ -1209,6 +1222,7 @@ class MainWindow(QMainWindow):
         keys_label.setObjectName("caption")
         keys_label.setWordWrap(True)
         keys_label.setTextFormat(Qt.TextFormat.RichText)
+        self.keys3d = keys_label              # (its wheel part follows 마우스 휠: _wheel_texts)
 
         # -- the settings beside the eye: cards, in the web page's order -----------------------------
         body = QWidget()
@@ -1216,6 +1230,7 @@ class MainWindow(QMainWindow):
         bl = QVBoxLayout(body)
         bl.setContentsMargins(12, 10, 12, 12)
         bl.setSpacing(12)
+        bl.addWidget(card("마우스 휠", self.seg_wheel3d, self.lbl_wheel3d, self.c_walkclick3d))
         bl.addWidget(card("사진", self.lbl_photo3d, setting_row("장비", self.c_device3d), setting_row("눈", self.c_eye3d),
                           self.c_autofind3d, self.photo3d, self.lbl_found3d, fix_row, self.lbl_mark3d))
         bl.addWidget(card("망막 입체", self.c_surface3d, setting_row("높이", self.s_height3d), self.c_relief3d))
@@ -1260,6 +1275,7 @@ class MainWindow(QMainWindow):
         self._tween = ViewTween(self.eye3d, self)
         self._full3d: QWidget | None = None
         self._set_3d_detail(self.settings.view3d_detail, save=False)
+        self._set_wheel3d(self.settings.wheel3d, save=False)
         lay.addWidget(bar)
         self._lay3d = lay
         lay.addWidget(self.split3d, 1)
@@ -1291,6 +1307,64 @@ class MainWindow(QMainWindow):
         self.s_cut.setValue(v)
         lo, hi = self.s_cut.minimum(), self.s_cut.maximum()
         self._where.say("깊이 — 닫힌 안구" if v >= hi else f"깊이 {round(100 * (hi - v) / (hi - lo))}%", hold=1.0)
+
+    WHEEL_TEXTS = {   # (on the eye's tool tip, in 조작, under the choice)
+        "depth": ("휠: 자르는 깊이 (내부에서는 확대) · 확대: 위쪽 확대 바 · Ctrl+휠",
+                  "<b>휠</b> 자르는 깊이 (내부: 확대) · <b>확대 바</b> · <b>Ctrl+휠</b>",
+                  "앞으로 굴리면 깊게 자르고, 뒤로 굴리면 닫힙니다 (내부에서는 확대) · Ctrl+휠: 확대"),
+        "zoom": ("휠: 커서 쪽으로 확대 · 확대 바",
+                 "<b>휠</b> 커서 쪽으로 확대 · <b>확대 바</b>",
+                 "커서가 가리키는 곳으로 확대 · 축소합니다 — 자르는 깊이는 안구 열기의 깊이 막대로"),
+        "walk": ("휠: 각막부터 망막까지 들어가기 · 나오기 · 확대: 위쪽 확대 바 · Ctrl+휠",
+                 "<b>휠</b> 각막부터 망막까지 들어가기 · 나오기 · <b>확대 바</b> · <b>Ctrl+휠</b>",
+                 "앞으로 굴리면 각막 → 앞방 → 동공 → 수정체 → 유리체 → 망막으로 들어가고, 뒤로 굴리면 나옵니다 · "
+                 "Ctrl+휠: 확대"),
+    }
+
+    def _set_wheel3d(self, mode: str, save: bool = True) -> None:
+        """마우스 휠 (3D 설정 · 설정 → 일반): what the wheel over the eye does — 깊이 (the cut's depth),
+        확대, or 들어가기 (in from the cornea; the wheel picks the anterior segment itself)."""
+        mode = mode if mode in self.WHEEL_TEXTS else "depth"
+        eye = self.eye3d
+        was, eye.wheel_mode = eye.wheel_mode, mode
+        eye.pick_walk = mode == "walk" or bool(self.settings.walk_click3d)
+        if was == "walk" != mode and eye.walk and not eye.on_the_way():
+            eye.set_walk(False)               # (picked by the wheel itself: the wheel does something else now)
+        b = self._wheel_buttons[mode]
+        if not b.isChecked():
+            b.setChecked(True)
+        self.c_walkclick3d.setEnabled(mode != "walk")      # (들어가기: the wheel goes in anyway)
+        self._wheel_texts()
+        if save and self.settings.wheel3d != mode:
+            self.settings.wheel3d = mode
+            self.settings.save()
+
+    def _on_walkclick3d(self, on: bool) -> None:
+        """각막을 누르면 휠로 들어가기 — on or off (remembered)."""
+        eye = self.eye3d
+        eye.pick_walk = eye.wheel_mode == "walk" or bool(on)
+        if not eye.pick_walk and eye.walk and not eye.on_the_way():
+            eye.set_walk(False)
+        self._wheel_texts()
+        if self.settings.walk_click3d != bool(on):
+            self.settings.walk_click3d = bool(on)
+            self.settings.save()
+
+    def _wheel_texts(self) -> None:
+        """The eye's tool tip, the 조작 card and the line under 마우스 휠 say what the wheel does now."""
+        mode = self.eye3d.wheel_mode
+        tip, keys_part, line = self.WHEEL_TEXTS[mode]
+        click = mode != "walk" and self.eye3d.pick_walk
+        self.lbl_wheel3d.setText(line)
+        self.eye3d.setToolTip(f"드래그: 회전 · {tip} · 오른쪽 드래그 · +/− · 가운데/Shift+드래그: 이동 · "
+                              "더블클릭·0: 처음 보기" + (" · 각막 클릭: 전안부 선택 (그동안 휠로 들어가기)" if click else ""))
+        walk = ("<br><b>각막 클릭</b> 전안부 선택 → <b>휠</b> 각막부터 망막까지 들어가기·나오기 · " if click else
+                "<br>들어가는 중 " if mode == "walk" else "")
+        if walk:
+            walk += "<b>왼쪽 드래그</b> 둘러보기 · <b>왼쪽 클릭</b> 그곳을 가운데로 · <b>Esc</b> 해제"
+        self.keys3d.setText(f"<b>드래그</b> 회전 (놓으면 관성으로 더 돕니다) · {keys_part} · <b>오른쪽 드래그</b> 확대<br>"
+                            "<b>Shift+드래그</b> 또는 <b>가운데 버튼</b> 이동 · <b>더블클릭</b> 처음 보기 · "
+                            "<b>←↑→↓ + − 0</b><br><b>트랙패드</b> 두 손가락 벌리기·오므리기 확대" + walk)
 
     def _on_panel3d(self, on: bool) -> None:
         self.inspector.setVisible(on)
@@ -1333,9 +1407,10 @@ class MainWindow(QMainWindow):
             "<b>3D 안구</b><br>"
             "위 막대: 간단히 / 자세히 (가벼운 기본 모형 / 실제 해부 구조) · 외부 / 내부 · 확대 바 · ▶ 슬릿 스캔 · "
             "크게 보기 · 설정 (나머지 설정을 여닫기 — 설정 메뉴 → 3D 보기 설정… 으로도 엽니다)<br>"
-            "마우스 휠: 자르는 깊이 (앞으로 굴리면 깊게, 뒤로 굴리면 닫힘 · 내부에서는 확대 · 전안부를 선택하면 들어가기) · "
-            "확대: 확대 바, Ctrl+휠, 오른쪽 드래그, +/−<br>"
-            "설정 — <b>망막 입체</b>: 표면 높낮이 · 높이 · 입체 조명 / <b>시점</b>: 정면 · 처음 시점 · 화면 저장 / "
+            "마우스 휠 — 설정 패널의 <b>마우스 휠</b>(또는 설정 → 일반 → 3D 마우스 휠)에서 고릅니다: <b>깊이</b> 자르는 깊이 "
+            "(앞으로 굴리면 깊게, 뒤로 굴리면 닫힘 · 내부에서는 확대) / <b>확대</b> 커서 쪽으로 / <b>들어가기</b> 각막부터 망막까지 · "
+            "각막을 누르면 그동안 휠로 들어가기(끌 수 있음) · 확대는 언제나: 확대 바, Ctrl+휠, 오른쪽 드래그, +/−<br>"
+            "설정 — <b>마우스 휠</b>: 깊이 · 확대 · 들어가기, 각막을 누르면 휠로 들어가기 / <b>망막 입체</b>: 표면 높낮이 · 높이 · 입체 조명 / <b>시점</b>: 정면 · 처음 시점 · 화면 저장 / "
             "<b>들어가며 보기</b>: ▶ 들어가기 · 위치 · 전안부 선택 / <b>안구 열기</b>: 앞쪽 절개 · 세로 단면, 깊이, 공막 투명도, "
             "망막 투시 / <b>슬릿 스캔</b>: 방향 ↓ ↑ → ← · 상하좌우 / <b>효과</b>: 자동 회전 · 화각 표시 · 사진 나란히 / "
             "<b>표시</b>: 단순하게 보기 · 시신경 · 외안근 · 각도 격자 / <b>사진 맞춤</b>: 실제 위치에 맞춤 · 화각 · "
@@ -1354,7 +1429,8 @@ class MainWindow(QMainWindow):
             "자동 회전: 손을 떼고 있으면 천천히 돕니다<br>"
             "들어가며 보기 · 내부: 안구 전체에서 각막 → 앞방 → 동공 → 수정체 → 유리체 → 망막까지 끊김 없이 들어갑니다 "
             "(위치 막대로 원하는 곳에서 멈춤)<br>"
-            "휠로 들어가기: 3D 안구의 각막을 누르거나 [전안부 선택] → 휠 앞으로: 각막 → 앞방 → 동공 → 수정체 → 유리체 → 망막, "
+            "휠로 들어가기: 마우스 휠이 <b>들어가기</b>이면 그냥, 아니면 3D 안구의 각막을 누르거나 [전안부 선택] → "
+            "휠 앞으로: 각막 → 앞방 → 동공 → 수정체 → 유리체 → 망막, "
             "뒤로: 나오기 (망막에서는 휠이 커서 쪽으로 더 가까이) · 들어가는 중 왼쪽 드래그: 둘러보기, 왼쪽 클릭: 그곳을 가운데로 · "
             "Esc 또는 다른 곳을 누르면 해제<br>"
             "보기 → 부드러운 움직임: 끄면 확대·회전·전환이 바로 바뀝니다 (원격 접속 등 느린 화면)<br><br>"
@@ -1581,6 +1657,8 @@ class MainWindow(QMainWindow):
             old_view = self.settings.open_view
             dlg.apply()
             self._set_3d_detail(self.settings.view3d_detail, save=False)
+            self.c_walkclick3d.setChecked(bool(self.settings.walk_click3d))   # 3D 마우스 휠
+            self._set_wheel3d(self.settings.wheel3d, save=False)
             self._apply_open_view()
             self.act_thumb_date.setChecked(bool(self.settings.thumb_date))   # 사진 목록: 날짜 · 종류
             self.act_thumb_kind.setChecked(bool(self.settings.thumb_kind))
@@ -3523,7 +3601,7 @@ class MainWindow(QMainWindow):
     WALK_HINT = "전안부 선택 — 휠을 앞으로 돌리면 각막부터 망막까지 들어갑니다"
 
     def _toggle_walk(self, on: bool) -> None:
-        """[전안부 선택]: the wheel walks in from the cornea (or, let go, sets the cut's depth again)."""
+        """[전안부 선택]: the wheel walks in from the cornea (or, let go, does what 마우스 휠 says again)."""
         self.eye3d.set_walk(on)
         self.eye3d.setFocus()
 

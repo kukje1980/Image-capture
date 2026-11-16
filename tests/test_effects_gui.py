@@ -270,3 +270,125 @@ def test_3d_shows_the_original_photo_until_relief_is_switched_on(app, tmp_path):
     new = Settings(library_dir=str(tmp_path / "lib"), watch_on_startup=False, auto_detect=False)
     assert open_window(new) == (False, False, False, 0.0, False)
     assert (new.view3d_detail, new.auto_rotate3d, new.glass3d, new.autofind3d) == ("detailed", True, 80, True)
+
+
+def test_3d_wheel_mode_is_chosen_in_the_settings(app, tmp_path, demo_dir, import_and_wait, monkeypatch):
+    """마우스 휠 (3D 설정 · 설정 → 일반): what the wheel over the eye does — 깊이 (the cut's depth, the
+    first setting), 확대 (toward the cursor) or 들어가기 (in from the cornea, without picking it first);
+    Ctrl+wheel zooms in all of them. Whether a click on the cornea picks the way in (the wheel then walks
+    in meanwhile) is a switch of its own. Both are remembered."""
+    from PySide6.QtCore import QPoint, QPointF, Qt
+    from PySide6.QtGui import QWheelEvent
+
+    from fundusview.config import Settings, config_dir
+    from fundusview.db import Database
+    from fundusview.ui.dialogs import SettingsDialog
+    from fundusview.ui.main_window import MainWindow
+    from test_motion import _screen
+
+    s = Settings(library_dir=str(tmp_path / "lib"), stable_seconds=0.05, rescan_seconds=0, watch_on_startup=False,
+                 auto_detect=False)
+    db = Database(tmp_path / "lib" / "fundus.db")
+    w = MainWindow(s, db)
+    try:
+        w.resize(1500, 950)
+        w.show()
+        import_and_wait(app, w, [demo_dir / "RetiCam"])
+        w._select_patient_ref(db.find_patient("PID20260310-0A1B2C3D")["id"])
+        w.patient_list.hide()
+        w._go("3d")
+        app.processEvents()
+        eye = w.eye3d
+
+        def wheel(notches, mods=Qt.KeyboardModifier.NoModifier):
+            pos = QPointF(eye.width() / 2, eye.height() / 2)
+            eye.wheelEvent(QWheelEvent(pos, QPointF(eye.mapToGlobal(pos.toPoint())), QPoint(0, 0),
+                                       QPoint(0, int(notches * 120)), Qt.MouseButton.NoButton, mods,
+                                       Qt.ScrollPhase.NoScrollPhase, False))
+
+        # 깊이: the first setting — the wheel cuts deeper, Ctrl+wheel zooms
+        assert s.wheel3d == "depth" and s.walk_click3d is True
+        assert eye.wheel_mode == "depth" and eye.pick_walk and w._wheel_buttons["depth"].isChecked()
+        assert w.c_walkclick3d.isEnabled() and w.c_walkclick3d.isChecked()
+        assert "자르는 깊이" in eye.toolTip() and "각막 클릭" in eye.toolTip() and "자르는 깊이" in w.keys3d.text()
+        eye.reset_view()
+        cut0, mag0 = w.s_cut.value(), eye.magnification
+        wheel(2)
+        assert w.s_cut.value() == cut0 - 8 and eye.magnification == pytest.approx(mag0)
+        wheel(2, Qt.KeyboardModifier.ControlModifier)
+        assert w.s_cut.value() == cut0 - 8 and eye.magnification > mag0
+        w.s_cut.setValue(cut0)
+        eye.reset_view()
+
+        # 확대: the wheel zooms toward the cursor and leaves the depth alone
+        w._wheel_buttons["zoom"].click()
+        assert s.wheel3d == "zoom" and eye.wheel_mode == "zoom" and w._wheel_buttons["zoom"].isChecked()
+        assert "확대" in w.lbl_wheel3d.text() and "휠</b> 커서 쪽으로 확대" in w.keys3d.text()
+        mag0 = eye.magnification
+        wheel(2)
+        assert w.s_cut.value() == cut0 and eye.magnification > mag0
+        eye.reset_view()
+
+        # 들어가기: the wheel goes in from the cornea at once (no pick first), and back out; Ctrl+wheel zooms
+        w._wheel_buttons["walk"].click()
+        assert s.wheel3d == "walk" and eye.wheel_mode == "walk" and eye.pick_walk
+        assert not w.c_walkclick3d.isEnabled() and not eye.walk          # (the switch does not matter here)
+        assert "들어가기" in eye.toolTip() and "각막 클릭" not in eye.toolTip()
+        mag0 = eye.magnification
+        wheel(2, Qt.KeyboardModifier.ControlModifier)                     # Ctrl+wheel: zoom, no way in
+        assert eye.magnification > mag0 and not eye.walk
+        eye.reset_view()
+        wheel(3)
+        assert eye.walk and w.b_walk.isChecked() and eye.journey_j == pytest.approx(3 * eye.WALK_STEP)
+        assert w.s_cut.value() == cut0                                    # (not the depth slider)
+        wheel(-3)
+        assert eye.journey_j == pytest.approx(0.0, abs=1e-6)
+        # back to 깊이: the way picked by the wheel itself is let go — the wheel cuts again
+        w._wheel_buttons["depth"].click()
+        assert not eye.walk and not w.b_walk.isChecked() and eye.wheel_mode == "depth"
+        eye.reset_view(animate=True)
+
+        # 각막을 누르면 휠로 들어가기 — off: a click on the cornea picks nothing; on: it picks the way in
+        front = _screen(eye, (0.0, 0.0, 0.6))
+        assert eye.anterior_at(front)
+        w.c_walkclick3d.setChecked(False)
+        assert s.walk_click3d is False and not eye.pick_walk and "각막 클릭" not in eye.toolTip()
+        eye._clicked(front)
+        assert not eye.walk
+        w.c_walkclick3d.setChecked(True)
+        assert s.walk_click3d is True and eye.pick_walk
+        eye._clicked(front)
+        assert eye.walk and w.b_walk.isChecked()
+        w.c_walkclick3d.setChecked(False)                                 # off while picked: let go
+        assert not eye.walk
+
+        # remembered — and 설정 → 일반 has the same two
+        saved = Settings.load(config_dir() / "settings.json")
+        assert saved.wheel3d == "depth" and saved.walk_click3d is False
+        dlg = SettingsDialog(s, w)
+        assert dlg.wheel3d.currentData() == "depth" and not dlg.walk_click3d.isChecked()
+        assert [dlg.wheel3d.itemData(k) for k in range(dlg.wheel3d.count())] == ["depth", "zoom", "walk"]
+        dlg.wheel3d.setCurrentIndex(dlg.wheel3d.findData("walk"))         # (들어가기: the switch does not matter)
+        assert not dlg.walk_click3d.isEnabled()
+        dlg.wheel3d.setCurrentIndex(dlg.wheel3d.findData("depth"))
+        assert dlg.walk_click3d.isEnabled()
+
+        def choose(self):
+            self.wheel3d.setCurrentIndex(self.wheel3d.findData("zoom"))
+            self.walk_click3d.setChecked(True)
+            return 1
+
+        monkeypatch.setattr(SettingsDialog, "exec", choose)
+        w._open_settings()
+        assert s.wheel3d == "zoom" and s.walk_click3d is True
+        assert eye.wheel_mode == "zoom" and eye.pick_walk and w._wheel_buttons["zoom"].isChecked()
+        assert w.c_walkclick3d.isChecked()
+        # a window opened later starts with them
+        w2 = MainWindow(Settings.load(config_dir() / "settings.json"), db)
+        try:
+            assert w2.eye3d.wheel_mode == "zoom" and w2._wheel_buttons["zoom"].isChecked()
+        finally:
+            w2.close()
+    finally:
+        w.close()
+        db.close()

@@ -41,6 +41,12 @@ OPEN_VIEWS = (("odos", "Simple — 최신 OD | OS 두 장을 나란히, 사진 �
               ("grid", "VK-2 방식 — 사진 16장을 한 화면에, 골라서 [Multi]로 모아 보기"))
 
 
+# 3D 안구의 마우스 휠 (Settings.wheel3d): (key, short name, what it does)
+WHEEL3D = (("depth", "깊이", "자르는 깊이 — 앞으로 굴리면 깊게, 뒤로 굴리면 닫힘 (내부에서는 확대)"),
+           ("zoom", "확대", "커서가 가리키는 곳으로 확대 · 축소 (깊이는 안구 열기의 깊이 막대로)"),
+           ("walk", "들어가기", "각막 → 앞방 → 동공 → 수정체 → 유리체 → 망막, 뒤로 굴리면 나오기"))
+
+
 def _combo(items, current) -> QComboBox:
     cb = QComboBox()
     for key, label in items:
@@ -292,6 +298,18 @@ class SettingsDialog(QDialog):
         self.opengl = _combo([("auto", "자동"), ("desktop", "그래픽카드 OpenGL"),
                               ("software", "소프트웨어 렌더링 (호환 모드)")], settings.opengl)
         f2.addRow("3D 렌더링 (재시작 필요)", self.opengl)
+        self.wheel3d = _combo([(k, f"{name} — {what}") for k, name, what in WHEEL3D], settings.wheel3d)
+        self.wheel3d.setToolTip("3D 안구 위에서 마우스 휠이 하는 일 (3D 탭의 설정 → 마우스 휠에서도 바꿉니다)\n"
+                                "어느 것이든 Ctrl+휠 · 확대 바 · 오른쪽 드래그 · + / − 는 확대입니다")
+        f2.addRow("3D 마우스 휠", self.wheel3d)
+        self.walk_click3d = QCheckBox("각막을 누르면 그동안 휠로 들어가기 (휠이 깊이 · 확대일 때)")
+        self.walk_click3d.setToolTip("3D 안구의 각막을 누르면 전안부가 선택되고, 선택한 동안에는 휠이 각막부터 망막까지 "
+                                     "들어가기 · 나오기가 됩니다 (Esc · 다른 곳을 누르면 해제)")
+        self.walk_click3d.setChecked(bool(settings.walk_click3d))
+        f2.addRow("", self.walk_click3d)
+        self.wheel3d.currentIndexChanged.connect(          # (들어가기: the wheel goes in anyway)
+            lambda _: self.walk_click3d.setEnabled(self.wheel3d.currentData() != "walk"))
+        self.walk_click3d.setEnabled(self.wheel3d.currentData() != "walk")
         self.open_view = _combo(OPEN_VIEWS, settings.open_view)
         self.open_view.setToolTip("환자 목록에서 환자를 열 때 처음 나오는 화면\n"
                                   "Simple: 고른 검사의 최신 OD(왼쪽) · OS(오른쪽) 두 장 — 사진 목록을 클릭하면 그 눈의 사진이\n"
@@ -514,6 +532,8 @@ class SettingsDialog(QDialog):
         s.stable_seconds = self.stable.value()
         s.rescan_seconds = self.rescan.value()
         s.opengl = self.opengl.currentData()
+        s.wheel3d = self.wheel3d.currentData()
+        s.walk_click3d = self.walk_click3d.isChecked()
         s.open_view = self.open_view.currentData()
         s.thumb_date = self.thumb_date.isChecked()
         s.thumb_kind = self.thumb_kind.isChecked()

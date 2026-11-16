@@ -1065,7 +1065,7 @@ class EyeView(QOpenGLWidget):
     glError = Signal(str)
     zoomChanged = Signal(float)        # magnification relative to the start view
     interacted = Signal()              # the user dragged, zoomed or pressed a view key
-    depthWheel = Signal(float)         # wheel notches over the eye seen from outside (``wheel_depth``)
+    depthWheel = Signal(float)         # wheel notches over the eye seen from outside (``wheel_mode`` "depth")
     journeyChanged = Signal(float)     # 들어가며 보기: where on the way (0 the whole eye … 1 the retina)
     walkChanged = Signal(bool)         # 휠로 들어가기: the anterior segment picked (the wheel walks in) or let go
 
@@ -1105,8 +1105,11 @@ class EyeView(QOpenGLWidget):
         self._marks: tuple = (None, None, None)        # disc, fovea (pixels), image circle
         # view
         self.detail = "simple"
-        self.wheel_depth = False       # the wheel sets the cut's depth (depthWheel) instead of zooming —
-                                       # outside only; Ctrl+wheel, the zoom bar, + / − and right drag zoom
+        # what the plain wheel does (설정 → 3D 마우스 휠): "zoom" — toward the cursor; "depth" — the cut's
+        # depth (depthWheel; outside only, inside it zooms); "walk" — in from the cornea to the retina and
+        # back out (휠로 들어가기, the anterior segment picked by the wheel itself). Ctrl+wheel zooms in all
+        self.wheel_mode = "zoom"
+        self.pick_walk = True          # a click on the cornea picks the anterior segment: then the wheel walks
         self.mode = "outside"
         self.cut = 0.25
         self.show_nerve = True
@@ -1712,10 +1715,11 @@ class EyeView(QOpenGLWidget):
 
     def _clicked(self, pos: QPointF) -> None:
         """A left click (no drag): on the way, that place comes to the middle; at the start of the way,
-        the anterior segment is picked (휠로 들어가기) — a click anywhere else lets it go."""
+        the anterior segment is picked (휠로 들어가기, while ``pick_walk``) — a click anywhere else lets
+        it go."""
         if self.on_the_way():
             self.look_toward(pos)
-        elif self.anterior_at(pos):
+        elif self.pick_walk and self.anterior_at(pos):
             self.set_walk(True)
         elif self.walk:
             self.set_walk(False)
@@ -2937,11 +2941,12 @@ class EyeView(QOpenGLWidget):
 
     # -- interaction -----------------------------------------------------------
     # left drag: rotate (inside: look around) · right drag up/down: zoom where the
-    # drag started · middle drag or Shift+left drag: move · wheel: zoom at the
-    # cursor (``wheel_depth``, outside: the cut's depth, and Ctrl+wheel zooms) ·
+    # drag started · middle drag or Shift+left drag: move · wheel: as ``wheel_mode`` says — zoom at
+    # the cursor, the cut's depth (outside) or the way in; Ctrl+wheel zooms ·
     # double click / 0: start view · + / -: zoom at the centre
-    # 휠로 들어가기 (a click on the cornea): the wheel, a right drag and + / - walk in and out;
-    # on the way a left drag looks around, a left click brings that place to the middle, Esc lets go
+    # 휠로 들어가기 (a click on the cornea while ``pick_walk``, or the wheel in the "walk" mode): the
+    # wheel, a right drag and + / - walk in and out; on the way a left drag looks around, a left click
+    # brings that place to the middle, Esc lets go
     CLICK_SLOP = 4.0                   # pixels a click may move and still be a click
 
     def mousePressEvent(self, e):
@@ -3001,14 +3006,16 @@ class EyeView(QOpenGLWidget):
         self._touched = time.perf_counter()
         self.interacted.emit()
         steps = e.angleDelta().y() / 120.0
-        if self.walk:                                     # 휠로 들어가기: forward in, back out
-            self._journey_tween.stop()
+        ctrl = bool(e.modifiers() & Qt.KeyboardModifier.ControlModifier)
+        if self.wheel_mode == "walk" and not self.walk and not ctrl and self.scan is None:
+            self.set_walk(True)                           # 들어가기: the wheel itself picks the way in
+        if self.walk and not (ctrl and not self.on_the_way()):   # (Ctrl+wheel at the start of the way: zoom)
+            self._journey_tween.stop()                    # 휠로 들어가기: forward in, back out
             self._gaze_tween.stop()
             self._walk_pos = e.position()
             self._walk_glide.add(steps)
             return
-        if (self.wheel_depth and self.mode == "outside" and not self.journey_on()
-                and not e.modifiers() & Qt.KeyboardModifier.ControlModifier):
+        if self.wheel_mode == "depth" and self.mode == "outside" and not self.journey_on() and not ctrl:
             self._zoom_glide.stop()
             self.depthWheel.emit(steps)                    # the cut's depth (the window moves the slider)
             return
