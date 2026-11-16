@@ -69,7 +69,8 @@ class MontageResult:
     """What 환자 기록에 저장 hands the main window."""
     rgb: np.ndarray
     geom: mt.MapGeometry
-    fov_deg: float                       # internal, equidistant: the 3D view's field of view
+    fov_deg: float                       # internal, equidistant: the 3D view's field of view (the map's circle)
+    span: tuple[float, float]            # what was photographed: degrees across and down (montage.coverage_span)
     disc: tuple[float, float] | None     # on the montage
     definition: dict
     image_ids: list
@@ -694,14 +695,14 @@ class MontageDialog(QDialog):
         self.c_gain.toggled.connect(self._changed)
         self.c_auto_fov = QCheckBox("몽타주 화각 자동")
         self.c_auto_fov.setChecked(True)
-        self.c_auto_fov.setToolTip("사진들이 덮은 범위에서 안구 중심각을 계산합니다 — 끄면 직접 정합니다")
+        self.c_auto_fov.setToolTip("사진들이 덮은 범위에 맞춰 3D 안구에 입힙니다 (사진의 화각 그대로) — 끄면 직접 정합니다")
         self.c_auto_fov.toggled.connect(self._on_fov_mode)
         self.sp_mfov = QDoubleSpinBox()
         self.sp_mfov.setRange(20.0, 340.0)
         self.sp_mfov.setDecimals(1)
         self.sp_mfov.setSuffix("°")
         self.sp_mfov.setEnabled(False)
-        self.sp_mfov.setToolTip("3D 안구에 입힐 때의 안구 중심각 (후극에서 가장자리까지 각도의 2배)")
+        self.sp_mfov.setToolTip("3D 안구에 입힐 때 몽타주 지도 전체의 안구 중심각 (가운데에서 가장 먼 곳까지 각도의 2배)")
         self.sp_mfov.valueChanged.connect(self._on_mfov)
         self.lbl_range = QLabel("")
         self.lbl_range.setWordWrap(True)
@@ -971,6 +972,17 @@ class MontageDialog(QDialog):
         act = self._active()
         return 2.0 * math.degrees(mt.coverage_angle(act)) if act else 0.0
 
+    def span(self) -> tuple[float, float]:
+        """What the photos cover across and down (degrees at the eye centre, roughly) — on the eye as
+        the 3D view shows it, so a field of view set by hand scales it."""
+        a = self.auto_fov_deg()
+        k = self.montage_fov() / a if a > 0 else 1.0
+        h, v = mt.shots_span(self._active())
+        return h * k, v * k
+
+    def span_text(self) -> str:
+        return mt.span_text(self.span())
+
     def montage_fov(self) -> float:
         return self.auto_fov_deg() if self.c_auto_fov.isChecked() else self.sp_mfov.value()
 
@@ -981,8 +993,8 @@ class MontageDialog(QDialog):
             self.sp_mfov.setValue(a)
             self.sp_mfov.blockSignals(False)
         f = self.montage_fov()
-        self.lbl_range.setText(f"덮은 범위: 후극에서 {a / 2:.0f}° (안구 중심각 {a:.0f}°)"
-                               + ("" if self.c_auto_fov.isChecked() else f"\n3D에는 {f:.0f}°로 입힙니다"))
+        self.lbl_range.setText(f"촬영 범위: {self.span_text()} (안구 중심각)"
+                               + ("" if self.c_auto_fov.isChecked() else f"\n3D에는 지도 전체를 {f:.0f}°로 입힙니다"))
 
     def _on_fov_mode(self, on: bool) -> None:
         self.sp_mfov.setEnabled(not on)
@@ -1118,8 +1130,7 @@ class MontageDialog(QDialog):
         self.done_view.set_rgb(rgb)
         self._push_3d()
         if gen == self._gen:
-            self._set_status(f"완성 미리보기 · {len(self._active())}장 · 덮은 범위 안구 중심각 "
-                             f"{2 * math.degrees(geom.angle):.0f}°")
+            self._set_status(f"완성 미리보기 · {len(self._active())}장 · 촬영 범위 {self.span_text()}")
 
     def _preview_finished(self) -> None:
         self._render_job = None
@@ -1137,6 +1148,7 @@ class MontageDialog(QDialog):
         self.eye.relief = 0.6 if self._relief3d else 0.0     # 입체 조명 · 표면 높낮이 (off: the montage as
         self.eye.relief_on = self._surface3d                 # stitched) and 유리 공막, as in the main window
         self.eye.glass = 0.8
+        self.eye.field_from_cover = True                     # the angle shown: what the photos cover
         self._lay3d.removeWidget(self._lbl3d)
         self._lbl3d.hide()
         self._lay3d.addWidget(self.eye, 1)
@@ -1191,8 +1203,10 @@ class MontageDialog(QDialog):
 
         def run(say):
             geom = mt.map_for(full, max_size=size)
-            rgb, _, geom = mt.render(full, geom, progress=lambda f: say(f"몽타주를 그리는 중 {int(f * 100)}%"))
-            return MontageResult(rgb=rgb, geom=geom, fov_deg=fov, disc=self._disc_on(geom, full, idx),
+            rgb, cover, geom = mt.render(full, geom, progress=lambda f: say(f"몽타주를 그리는 중 {int(f * 100)}%"))
+            span = tuple(round(x, 1) for x in mt.coverage_span(cover, math.radians(fov) / 2.0))
+            definition["span"] = list(span)
+            return MontageResult(rgb=rgb, geom=geom, fov_deg=fov, span=span, disc=self._disc_on(geom, full, idx),
                                  definition=definition, image_ids=ids, laterality=lat)
         return run
 
@@ -1216,7 +1230,7 @@ class MontageDialog(QDialog):
         def store(res: MontageResult):
             self.saved_id = self._save_record(res)
             self._set_status(f"환자 기록에 몽타주를 저장했습니다 ({res.geom.size}×{res.geom.size}, "
-                             f"안구 중심각 {res.fov_deg:g}°) — 3D 안구에서도 볼 수 있습니다")
+                             f"촬영 범위 {mt.span_text(res.span)}) — 3D 안구에서도 볼 수 있습니다")
 
         self._run_final(store)
 

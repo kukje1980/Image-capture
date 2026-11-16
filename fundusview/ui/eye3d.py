@@ -1117,6 +1117,7 @@ class EyeView(QOpenGLWidget):
         self.fov_sweep = 0.0           # 0 … 1: the field-of-view rays open from the posterior pole
         self.fov_alpha = 0.0           # opacity of the rays and the angle label (section view)
         self.fov_ring = 0.0            # the edge of the photographed field marked on the retina
+        self.field_from_cover = False  # a montage: its field is what it covers (alpha), not its map's circle
         self.black = False             # plain black background (presentation)
         # 효과
         self.relief = 0.0              # 입체 조명 0 … 1: vessels and the disc in relief under the light
@@ -1656,20 +1657,36 @@ class EyeView(QOpenGLWidget):
         lut = np.array([proj.rho(k / 256.0 * tmax, tmax, self.projection, self.viewpoint, c=self.radial_c)
                         for k in range(257)])
         rho = np.interp(np.minimum(theta, tmax), np.linspace(0.0, tmax, 257), lut)
-        row = rho * np.sin(np.arctan2(q[:, 1], q[:, 0]) + math.radians(self.roll_deg))
-        return t, row, theta <= tmax
+        ph = np.arctan2(q[:, 1], q[:, 0]) + math.radians(self.roll_deg)
+        row = rho * np.sin(ph)
+        inside = theta <= tmax
+        if self.field_from_cover and self._rgba is not None:     # only where the montage has a photo
+            h, w = self._rgba.shape[:2]
+            x = np.clip(np.rint((self._center[0] + rho * np.cos(ph) * self._radius[0]) * w), 0, w - 1).astype(int)
+            y = np.clip(np.rint((self._center[1] - row * self._radius[1]) * h), 0, h - 1).astype(int)
+            inside &= self._rgba[y, x, 3] > 127
+        return t, row, inside
 
     def _tilted(self) -> bool:
         return self.placement.offset_deg > 1e-6
 
     def field_on_meridian(self) -> tuple[float, float]:
         """Where the photo's field begins and ends on the section's meridian (angles from the pole)."""
-        if not self._tilted():
+        if not self._tilted() and not self.field_from_cover:
             return -self.theta_max, self.theta_max
         t, _, inside = self._meridian_rows()
         if not inside.any():
             return -self.theta_max, self.theta_max
         return float(t[inside][0]), float(t[inside][-1])
+
+    def cover_span(self) -> tuple[float, float] | None:
+        """A montage: the degrees (eye-centre angle) it covers across and down its map, roughly."""
+        if self._rgba is None:
+            return None
+        from .. import montage as mt
+        h, w = self._rgba.shape[:2]
+        circle = (self._center[0] * w, self._center[1] * h, self._radius[0] * w)
+        return mt.coverage_span(self._rgba[..., 3], self.theta_max, circle)
 
     def scan_theta(self, s: float) -> tuple[float, float]:
         """Retinal angle (from the posterior pole) and side (+1 superior, -1 inferior) that the
@@ -2089,7 +2106,8 @@ class EyeView(QOpenGLWidget):
                     proj=proj.PROJECTION_INDEX.get(self.projection, 0), d=self.viewpoint, c=self.radial_c,
                     center=self._center, radius=self._radius, roll=math.radians(self.roll_deg),
                     place=self.placement.matrix.T, grid=1.0 if self.show_grid else 0.0,
-                    has_tex=int(tex), scan=scan, scan_dir=self.scan_dir(), fovring=float(self.fov_ring),
+                    has_tex=int(tex), scan=scan, scan_dir=self.scan_dir(),
+                    fovring=0.0 if self.field_from_cover else float(self.fov_ring),   # no ring round a map
                     relief=float(self.relief) if tex else 0.0, texel=self._texel(),
                     rlight=self.placement.matrix.T @ self._rlight,
                     hmap_on=1.0 if self.relief_sheet_on() else 0.0)
@@ -2614,7 +2632,10 @@ class EyeView(QOpenGLWidget):
                 small = QFont(self.font())
                 small.setPixelSize(max(10, int(eye_px * 0.075)))
                 big = QPainterPath()
-                big.addText(0.0, 0.0, font, f"{math.degrees(2.0 * self.theta_max):.0f}°")
+                if self.field_from_cover:                 # a montage: what this section cuts of it, roughly
+                    big.addText(0.0, 0.0, font, f"약 {round(math.degrees(t1 - t0) / 5) * 5:.0f}°")
+                else:
+                    big.addText(0.0, 0.0, font, f"{math.degrees(2.0 * self.theta_max):.0f}°")
                 sub = QPainterPath()
                 sub.addText(0.0, 0.0, small, "안구 중심각")
                 bb, sb = big.boundingRect(), sub.boundingRect()

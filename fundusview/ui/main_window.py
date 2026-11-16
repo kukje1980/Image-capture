@@ -66,6 +66,7 @@ from .eye3d import EyeView
 from .histogram import HistogramDialog
 from . import motion, theme
 from .image_view import TOOL_HINTS, TOOLS, ImageView, from_qimage
+from ..montage import span_text as mt_span_text
 from .montage_dialog import MontageDialog, MontageSource, confirm_sources
 from .edge_nav import EdgeNav
 from .keys import IS_MAC, keys
@@ -2543,6 +2544,9 @@ class MainWindow(QMainWindow):
         device = row["device"] or get_profile(row["profile"]).name
         ftype = "안구 중심각" if row["fov_type"] == "internal" else "외부각"
         fov = f"{row['fov_deg']:g}°" if row["fov_deg"] else ""
+        span = (self._montage_definition(row) or {}).get("span")
+        if span:                                # a montage made here: what it covers, not its map's circle
+            fov = mt_span_text(span)
         name = Path(row["original_path"] or row["file_path"]).name
         # on the photo: only its number and the eye (the patient and the date are in the line above
         # the tabs and in the photo list — no patient data on the picture)
@@ -3127,6 +3131,9 @@ class MainWindow(QMainWindow):
         tmax = math.degrees(self.eye3d.theta_max)
         pl = self.eye3d.placement
         lines = [f"망막 범위: 사진 중심에서 {tmax:.0f}° (안구 중심각 {2 * tmax:.0f}°)"]
+        span = self.eye3d.cover_span() if self.eye3d.field_from_cover else None
+        if span:                                # a montage: the map is a circle around all its photos
+            lines = [f"촬영 범위: {mt_span_text(span)} (안구 중심각, 대략)"]
         where = {"fovea": "황반을 안구 뒤쪽 한가운데(후극)에 맞춤",
                  "disc": "황반이 사진에 없어 시신경 유두를 코쪽 제자리에 맞춤",
                  "centre": "황반·시신경 유두를 찾지 못해 사진 중심을 후극에 둠",
@@ -3712,6 +3719,7 @@ class MainWindow(QMainWindow):
         circle = (row["circle_cx"], row["circle_cy"], row["circle_r"]) if row["circle_r"] else imaging.detect_circle(rgb)
         tex = self._display_rgb(row) if self.c_adj3d.isChecked() else rgb
         alpha = imaging.fundus_alpha(rgb, circle)
+        self.eye3d.field_from_cover = row["modality"] == "montage"    # its angle: what it covers, not its map
         self.eye3d.set_image(tex, alpha, circle)
         self.scan_photo.set_image(tex, alpha, circle)
         self.photo3d.set_photo(tex, alpha)
@@ -4330,7 +4338,7 @@ class MainWindow(QMainWindow):
         meta.update(derived_from=ids, montage=res.definition)
         cx, cy, r = res.geom.circle()
         new_id = self.service.importer.add_derived(
-            base, res.rgb, f"몽타주 {len(ids)}장 (안구 중심각 {res.fov_deg:g}°)", suffix="몽타주", derived_from=ids,
+            base, res.rgb, f"몽타주 {len(ids)}장 ({mt_span_text(res.span)})", suffix="몽타주", derived_from=ids,
             laterality=res.laterality or base["laterality"], modality="montage", fov_deg=res.fov_deg,
             fov_type="internal", projection="equidistant", circle_cx=cx, circle_cy=cy, circle_r=r,
             disc_x=res.disc[0] if res.disc else None, disc_y=res.disc[1] if res.disc else None, meta_json=meta)

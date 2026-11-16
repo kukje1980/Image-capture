@@ -282,12 +282,44 @@ def test_the_lens_is_found_from_the_series_when_the_given_one_is_wrong():
     rep = mt.auto_align(wrong, 0, calibrate=False, mask=False)
     bad = max(rot_err(s.R, r) for s, r in zip(wrong, truth))
     shots = _wide_shots(photos, 176.0, "radial")
-    rep = mt.auto_align(shots, 0)
+    rep = mt.auto_align(shots, 0, keep_fov=False)                  # the field of view may be fitted too
     assert rep.lens and "렌즈 보정" in rep.text() and rep.placed == [0, 1, 2, 3]
     tmax = [math.degrees(s.tmax) * 2 for s in shots]
     assert all(95 < t < 125 for t in tmax) and abs(shots[0].radial_c) < 0.12      # near 110°, near equidistant
     good = max(rot_err(s.R, r) for s, r in zip(shots, truth))
     assert good < 1.5 and good < 0.5 * bad and rep.residual_deg < 0.3
+
+
+def test_a_176_degree_photo_stays_176_and_only_the_lens_curve_is_fitted():
+    """The camera's field of view is the standard (176°): 자동 fits the lens curve to the overlaps
+    and leaves the field alone, so the montage's angles are the camera's."""
+    photos = [demo.synth_fundus(eye="OD", fov_deg=176.0, fov_type="internal", projection="radial", radial_c=0.5,
+                                size=(SIDE, SIDE), seed=31, gaze=g) for g in WIDE_GAZES]
+    truth = [demo.gaze_rotation(*g) for g in WIDE_GAZES]
+    shots = _wide_shots(photos, 176.0, "radial")                   # told the usual curve (c = 0.2545)
+    rep = mt.auto_align(shots, 0)
+    assert rep.placed == [0, 1, 2, 3] and "화각 176° 그대로" in rep.lens
+    assert all(s.fov_deg == 176.0 and s.fov_scale == 1.0 for s in shots)
+    assert all(math.degrees(s.tmax) * 2 == pytest.approx(176.0) for s in shots)
+    assert 0.4 < shots[0].radial_c < 0.6
+    assert max(rot_err(s.R, r) for s, r in zip(shots, truth)) < 1.5
+    # what the montage covers: two 176° fields 43° apart across, one 20° up — not the map's circle
+    across, down = mt.shots_span(shots)
+    assert across == pytest.approx(176 + 43, abs=8) and down == pytest.approx(176 + 20, abs=8)
+    assert 2 * math.degrees(mt.coverage_angle(shots)) > across
+    assert mt.span_text((across, down)) == "가로 약 220° · 세로 약 195°"
+
+
+def test_the_span_of_a_montage_is_what_it_covers():
+    alpha = np.zeros((200, 200), np.uint8)
+    alpha[80:120, 50:200] = 255                                    # a band: wide across, narrow down
+    across, down = mt.coverage_span(alpha, math.radians(100.0))    # the map: 200° over 200 pixels
+    assert across == pytest.approx(150.0) and down == pytest.approx(40.0)
+    assert mt.coverage_span(np.zeros((50, 50), np.uint8), 1.0) == (0.0, 0.0)
+    # the map anywhere on a picture (a device's montage): its circle says where
+    wide = np.zeros((100, 300), np.uint8)
+    wide[:, 100:200] = 255
+    assert mt.coverage_span(wide, math.radians(50.0), (150.0, 50.0, 50.0)) == pytest.approx((100.0, 100.0))
 
 
 def test_a_right_lens_and_a_45_degree_camera_are_left_alone(series):
