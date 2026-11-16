@@ -3,11 +3,11 @@
 설정 → 일반 → **환자를 열면** 에서 VK-2 방식을 고르면 환자를 열 때 이 화면이 먼저 나옵니다. 아래 사진
 목록과 같은 사진 · 같은 순서이고(날짜 · 눈 · 촬영 종류 고르기도 같음) 고르는 방법도 같습니다:
 
-* 클릭 = 멀티로 고르기 (노란 테두리와 번호) · 다시 클릭 = 빼기
-* 더블클릭 = 그 사진을 모두 보기에서 크게
+* 클릭 = Multi로 고르기 (노란 테두리와 번호) · 다시 클릭 = 빼기
+* 더블클릭 = 그 사진을 크게 (Detail)
 * Ctrl+클릭 = 두 번째 사진(②) · 오른쪽 클릭 = 사진 메뉴
 
-[멀티]를 누르면 고른 사진이 다중 보기에 모입니다. 사진이 16장보다 많으면 쪽으로 나뉩니다
+[Multi]를 누르면 고른 사진만 모아 봅니다. 사진이 16장보다 많으면 쪽으로 나뉩니다
 (◀ ▶ 단추 · 휠). 지금 보고 있는 사진은 파란 테두리입니다.
 
 The window owns the photos and the picks (``main_window.py``); this widget only paints them and
@@ -23,9 +23,7 @@ from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from . import theme
-from .thumbs import PICK_COLOR, paint_eye_badge, thumb_pixmap
-
-SECOND_COLOR = "#a8681c"        # the second picked photo (②), as in the photo strip
+from .thumbs import PICK_COLOR, SECOND_COLOR, paint_eye_badge, thumb_pixmap
 
 
 @dataclass
@@ -213,7 +211,7 @@ class PhotoGrid(QWidget):
             text = ("② " if second else "") + it.caption
             text = p.fontMetrics().elidedText(text, Qt.TextElideMode.ElideRight, int(cap.width()) - 8)
             p.drawText(cap.adjusted(4, 0, -4, 0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, text)
-            if it.image_id == self._current:  # the photo shown in 모두 보기 / selected
+            if it.image_id == self._current:  # the photo shown in Detail / selected
                 p.setBrush(Qt.BrushStyle.NoBrush)
                 p.setPen(QPen(QColor(theme.ACCENT), 2))
                 p.drawRoundedRect(cell.adjusted(1, 1, -1, -1), 6, 6)

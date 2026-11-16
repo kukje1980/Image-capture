@@ -1,7 +1,8 @@
-"""VK-2 style picking: the strip shows the photos by eye (OD row on top, OS row under it, newest
-first) with the eye on every photo, a plain click puts the photo on the multi view at once
-(numbered; the layout fits the number picked), [멀티] goes back to the picked photos and a
-click on a cell lets the processing toolbar change that photo only."""
+"""The photo list and VK-2 style picking: the strip shows the photos by eye (OD row on top, OS row
+under it, newest first) — the photo filling its cell, the date on it, the eye said once at the right
+end of each row. On Multi a plain click puts the photo on the view at once (numbered; the layout
+fits the number picked), [Multi] goes back to the picked photos and a click on a cell lets the
+processing toolbar change that photo only."""
 import os
 
 import pytest
@@ -72,12 +73,99 @@ def test_strip_rows_by_eye(app):
     while time.time() < deadline:
         app.processEvents()
     check()
+    # the eye of each row, top to bottom — said once per row at the right end of the rows (EyeRail)
+    from fundusview.ui.thumbs import EyeRail
+
+    assert t.row_eyes() == ["OD", "OS", ""]
+    rail = EyeRail(t)
+    rail.resize(rail.WIDTH, t.height())
+    badges = rail.badge_rects()
+    assert [e for e, _ in badges] == ["OD", "OS", ""]
+    port_top = t.viewport().mapTo(t, t.viewport().rect().topLeft()).y()
+    for k, (_, rect) in enumerate(badges):                    # each at the middle of its row
+        assert abs(rect.center().y() - (port_top + k * 104 + 52)) <= 1 and 0 <= rect.left() < rect.right() <= rail.WIDTH
     t.set_by_eye(False)                                       # one line, in the same order
     app.processEvents()
-    assert t.grid_shape() == (1, len(eyes))
+    assert t.grid_shape() == (1, len(eyes)) and t.row_eyes() == [] and rail.badge_rects() == []
     assert len({t.visualItemRect(t.item(i)).top() for i in range(len(eyes))}) == 1
     lefts = [t.visualItemRect(t.item(i)).left() for i in range(len(eyes))]
     assert lefts == sorted(lefts)
+    t.close()
+
+
+def test_the_photo_fills_its_cell_with_the_date_on_it(app, tmp_path):
+    """No lines of caption under a photo of the list: the photo is as large as its cell, the date
+    lies on it (top left) and the kind of photo (bottom left) is an option; a photo shown above is
+    framed, on Multi with its number; one line: the eye badge on every photo."""
+    from PIL import Image
+    from PySide6.QtCore import QRect, QSize, Qt
+    from PySide6.QtGui import QIcon, QImage, QPainter, QPixmap
+    from PySide6.QtWidgets import QListWidgetItem, QStyleOptionViewItem
+
+    from fundusview.ui.thumbs import (DATE_ROLE, EYE_ROLE, KIND_ROLE, PICK_ROLE, SECOND_ROLE, SHOWN, ThumbDelegate,
+                                      ThumbStrip)
+
+    path = tmp_path / "t.png"
+    Image.new("RGB", (320, 240), (150, 70, 40)).save(path)        # a 4:3 thumbnail, one colour
+    t = ThumbStrip()
+    t.setGridSize(QSize(94, 72))
+    d = ThumbDelegate(t)
+    t.setItemDelegate(d)
+    it = QListWidgetItem(QIcon(QPixmap(str(path))), "2026-03-10\n컬러")
+    it.setSizeHint(QSize(90, 70))
+    for role, value in ((DATE_ROLE, "2026-03-10"), (KIND_ROLE, "컬러"), (EYE_ROLE, "OD")):
+        it.setData(role, value)
+    t.addItem(it)
+    index = t.model().index(0, 0)
+    cell = QRect(0, 0, 90, 70)
+
+    def paint():
+        img = QImage(cell.size(), QImage.Format.Format_RGB32)
+        img.fill(Qt.GlobalColor.black)
+        opt = QStyleOptionViewItem()
+        opt.initFrom(t)
+        opt.rect = cell
+        p = QPainter(img)
+        d.paint(p, opt, index)
+        p.end()
+        return img
+
+    def differs(a, b, rect):
+        return any(a.pixel(x, y) != b.pixel(x, y) for x in range(rect.left(), rect.right() + 1, 2)
+                   for y in range(rect.top(), rect.bottom() + 1, 2))
+
+    opt = QStyleOptionViewItem()
+    opt.rect = cell
+    photo = d.photo_rect(opt, index)
+    # the photo: as wide as the cell allows, its own shape, nothing left for a caption under it
+    assert photo.width() >= 82 and abs(photo.width() / photo.height() - 4 / 3) < 0.05
+    assert cell.bottom() - photo.bottom() <= 6 and photo.top() - cell.top() <= 6
+    assert d.show_date and not d.show_kind and not d.show_eye
+    top_left = QRect(photo.left(), photo.top(), 64, 16)
+    bottom_left = QRect(photo.left(), photo.bottom() - 16, 60, 16)
+    bottom_right = QRect(photo.right() - 20, photo.bottom() - 20, 14, 14)   # (inside the frame of a shown photo)
+    plain = paint()
+    assert plain.pixelColor(photo.center()).red() > 120            # the photo itself, in the middle
+    d.show_date = False
+    bare = paint()
+    assert differs(plain, bare, top_left) and not differs(plain, bare, bottom_left)   # the date: top left
+    assert not differs(bare, bare, top_left)
+    d.show_kind = True
+    assert differs(paint(), bare, bottom_left) and not differs(paint(), bare, top_left)   # the kind: bottom left
+    d.show_kind = False
+    d.show_eye = True                                               # one line: the eye badge
+    assert differs(paint(), bare, bottom_left)
+    d.show_eye = False
+    # shown above — Simple: framed; Multi: framed and numbered; the second photo: ②
+    it.setData(PICK_ROLE, SHOWN)
+    framed = paint()
+    edge = QRect(photo.left(), photo.center().y() - 4, 4, 8)
+    assert differs(framed, bare, edge) and not differs(framed, bare, bottom_right)
+    it.setData(PICK_ROLE, 3)
+    assert differs(paint(), framed, bottom_right)
+    it.setData(PICK_ROLE, 0)
+    it.setData(SECOND_ROLE, True)
+    assert differs(paint(), bare, bottom_right)
     t.close()
 
 
@@ -123,9 +211,18 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
         assert [w.thumbs.item(i).data(EYE_ROLE) for i in range(3)] == ["OD", "OD", "OS"]
         assert all("°" not in w.thumbs.item(i).text() for i in range(3))     # the date and the kind, no angle
 
-        # by eye: OD in the top row, OS in the row under it; the row button switches to one line and back
-        # (remembered); one eye on the list = one row
+        # by eye: OD in the top row, OS in the row under it — low rows (the photo fills its cell, no
+        # caption under it), the eye said once per row at the right end; 보기 → 사진 목록 표시 → 눈별로 두 줄
+        # switches to one line and back (remembered); one eye on the list = one row
+        from fundusview.ui.main_window import THUMB_GRID
+        from fundusview.ui.thumbs import DATE_ROLE, KIND_ROLE
+
         grid_h = w.thumbs.gridSize().height()
+        assert grid_h == THUMB_GRID[1] <= 80 and w.strip_w.height() <= 2 * 80 + 12
+        from fundusview.models import MODALITY_LABELS
+        assert w.thumbs.item(0).data(DATE_ROLE) == by_eye[0]["exam_date"]
+        assert w.thumbs.item(0).data(KIND_ROLE) == MODALITY_LABELS[by_eye[0]["modality"]]
+        assert w.thumbs.width() > w.width() - 200                    # the whole width: nothing beside the list
 
         def tops():
             return [w.thumbs.visualItemRect(w.thumbs.item(i)).top() for i in range(w.thumbs.count())]
@@ -133,13 +230,24 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
         rects = [w.thumbs.visualItemRect(w.thumbs.item(i)) for i in range(3)]
         assert tops()[0] == tops()[1] and tops()[2] - tops()[0] == grid_h
         assert rects[0].left() == rects[2].left() < rects[1].left()   # each row starts at the left
-        assert w.btn_rows.text().endswith("OD/OS") and w.thumbs.height() == 2 * grid_h + 10
-        w.btn_rows.click()
-        from fundusview.ui.main_window import THUMB_GRID
-        assert s.thumb_rows == 1 and w.btn_rows.text().endswith("1줄") and w.thumbs.height() == THUMB_GRID[1] + 10
-        assert len(set(tops())) == 1
-        w.btn_rows.click()
-        assert s.thumb_rows == 2 and tops()[2] - tops()[0] == grid_h
+        assert w.act_thumb_eyes.isChecked() and w.thumbs.height() == 2 * grid_h + 10
+        assert w.eye_rail.isVisible() and [e for e, _ in w.eye_rail.badge_rects()] == ["OD", "OS"]
+        assert w.eye_rail.x() >= w.thumbs.x() + w.thumbs.width() and not w.thumb_paint.show_eye
+        w.act_thumb_eyes.setChecked(False)
+        assert s.thumb_rows == 1 and w.thumbs.height() == THUMB_GRID[1] + 10
+        assert len(set(tops())) == 1 and not w.eye_rail.isVisible() and w.thumb_paint.show_eye
+        w.act_thumb_eyes.setChecked(True)
+        assert s.thumb_rows == 2 and tops()[2] - tops()[0] == grid_h and w.eye_rail.isVisible()
+        # the date on the photos, and the kind (컬러 · 몽타주 …): options, remembered
+        assert s.thumb_date and not s.thumb_kind and w.act_thumb_date.isChecked() and not w.act_thumb_kind.isChecked()
+        w.act_thumb_kind.setChecked(True)
+        w.act_thumb_date.setChecked(False)
+        assert s.thumb_kind and not s.thumb_date and w.thumb_paint.show_kind and not w.thumb_paint.show_date
+        from fundusview.config import Settings as _S, config_dir
+        saved = _S.load(config_dir() / "settings.json")
+        assert saved.thumb_kind and not saved.thumb_date
+        w.act_thumb_kind.setChecked(False)
+        w.act_thumb_date.setChecked(True)
         w.f_eye.setCurrentIndex(w.f_eye.findData("OS"))
         app.processEvents()
         assert w.thumbs.count() == 1 and w.thumbs.height() == grid_h + 10
@@ -177,9 +285,11 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
         app.processEvents()
         assert strip_ids() == ids
 
-        # 선택 해제 starts from nothing
-        w.clear_picks()
-        assert w.picks() == [] and not w.btn_clear_picks.isVisible()
+        # [Multi] starts from nothing picked: all the photos of the list
+        w.btn_multi.click()
+        app.processEvents()
+        assert w._tab() == "multi" and w._mode == "multi" and w.picks() == [] and not w.btn_clear_picks.isVisible()
+        assert [c.image_id for c in w.multi.cells if c.isVisible() and c.image_id] == ids and w.multi.count == 4
 
         # plain click = the photo on the multi view at once (numbered, selected); click again = it leaves
         _click(w, w.thumbs.item(2))
@@ -188,18 +298,18 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
         _click(w, w.thumbs.item(0))
         assert w.picks() == [ids[2], ids[0]] and w.multi.count == 2 and w.current["id"] == ids[0]
         assert w.thumbs.item(2).data(PICK_ROLE) == 1 and w.thumbs.item(0).data(PICK_ROLE) == 2
-        assert w.btn_multi.text() == "멀티 2" and w.btn_clear_picks.isVisible()
+        assert w.btn_multi.text() == "Multi" and w.lbl_picks.text() == "2장 선택" and w.btn_clear_picks.isVisible()
         _click(w, w.thumbs.item(2))
         assert w.picks() == [ids[0]] and w.thumbs.item(0).data(PICK_ROLE) == 1 and w.multi.count == 1
         _click(w, w.thumbs.item(1))
         assert w.picks() == [ids[0], ids[1]] and w.multi.count == 2
 
-        # double click = that photo large (모두 보기, whose big photo is the 2D view), the picks stay as they were
+        # double click = that photo large (Detail, whose big photo is the 2D view), the picks stay as they were
         _click(w, w.thumbs.item(2), double=True)
         assert w.current["id"] == ids[2] and w._tab() == "all"
         assert w.picks() == [ids[0], ids[1]]
 
-        # [멀티]: the picked photos, in pick order, the first one selected
+        # [Multi]: the picked photos, in pick order, the first one selected
         w.btn_multi.click()
         app.processEvents()
         assert w._tab() == "multi" and w.multi.count == 2
@@ -225,7 +335,7 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
         QTest.mouseClick(cells[0].view.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(20, 20))
         app.processEvents()
         assert w.current["id"] == ids[0] and w._channel == "redfree" and w._ops == []
-        # a photo opened large keeps its processing there, and back on [다중 보기] each has its own
+        # a photo opened large keeps its processing there, and back on [Multi] each has its own
         QTest.mouseDClick(cells[0].view.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(20, 20))
         app.processEvents()
         assert w._tab() == "all" and w.current["id"] == ids[0] and w._channel == "redfree"
@@ -238,21 +348,22 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
         assert w._channel == "rgb"
         assert w._per_photo[ids[1]]["state"]["ops"] == ["sharpen"]
 
-        # clearing the picks: the multi view says how to pick; 다중 ▾ N장 = VK-2's consecutive photos
+        # clearing the picks: all the photos of the list again; 다중 ▾ N장 = VK-2's consecutive photos
         w.btn_clear_picks.click()
         app.processEvents()
-        assert w.picks() == [] and w.multi.mode_text == "" and w.btn_multi.text() == "멀티"
-        assert not w.btn_clear_picks.isVisible() and w.multi.empty.isVisible()
+        assert w.picks() == [] and w.multi.mode_text == "" and w.lbl_picks.text() == ""
+        assert not w.btn_clear_picks.isVisible() and not w.multi.empty.isVisible()
+        assert [c.image_id for c in w.multi.cells if c.isVisible() and c.image_id] == ids
         w._on_action("multi:2")
         app.processEvents()
         assert not w.multi.empty.isVisible() and len([c for c in w.multi.cells if c.isVisible() and c.image_id]) == 2
 
-        # another patient: the picks belong to the previous one — that patient's own newest OD | OS
+        # another patient: the picks belong to the previous one — Simple again, that patient's own newest OD | OS
         _click(w, w.thumbs.item(0))
         assert w.picks() == [ids[0]]
         other = next(p["id"] for p in db.list_patients() if p["id"] != pid)
         w._select_patient_ref(other)
         theirs = {r["id"] for r in db.images_for_patient(other)}
-        assert set(w.picks()) <= theirs and w._per_photo == {}
+        assert set(w.picks()) <= theirs and w._per_photo == {} and w._mode == "simple" and w._stash == {}
     finally:
         w.close()

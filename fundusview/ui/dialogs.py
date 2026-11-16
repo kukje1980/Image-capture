@@ -37,8 +37,8 @@ def source_label(src: str | None) -> str:
 
 
 # 설정 → 일반 → 환자를 열면 (Settings.open_view)
-OPEN_VIEWS = (("odos", "최신 OD | OS 두 장 — 다중 보기에 나란히, 사진을 클릭하는 대로 더하고 빼기"),
-              ("grid", "VK-2 방식 — 사진 16장을 한 화면에, 골라서 [멀티]로 모아 보기"))
+OPEN_VIEWS = (("odos", "Simple — 최신 OD | OS 두 장을 나란히, 사진 목록을 클릭하면 그 눈의 사진이 바뀜"),
+              ("grid", "VK-2 방식 — 사진 16장을 한 화면에, 골라서 [Multi]로 모아 보기"))
 
 
 def _combo(items, current) -> QComboBox:
@@ -297,11 +297,21 @@ class SettingsDialog(QDialog):
         f2.addRow("3D 모형", self.detail3d)
         self.open_view = _combo(OPEN_VIEWS, settings.open_view)
         self.open_view.setToolTip("환자 목록에서 환자를 열 때 처음 나오는 화면\n"
-                                  "최신 OD | OS: 고른 검사의 최신 OD(왼쪽) · OS(오른쪽)가 다중 보기에 — 사진 목록을 클릭하면\n"
-                                  "바로 더해지고 다시 클릭하면 빠집니다.\n"
-                                  "VK-2 방식: 사진을 클릭해 고르고(번호) [멀티]를 누르면 고른 사진만 다중 보기로 모입니다.\n"
-                                  "더블클릭하면 그 사진을 크게 보고, 사진 아래 [16장]으로 돌아옵니다.")
+                                  "Simple: 고른 검사의 최신 OD(왼쪽) · OS(오른쪽) 두 장 — 사진 목록을 클릭하면 그 눈의 사진이\n"
+                                  "바뀌고, 여러 장을 함께 보려면 사진 위의 [Multi]를 누릅니다.\n"
+                                  "VK-2 방식: 사진을 클릭해 고르고(번호) [Multi]를 누르면 고른 사진만 모아 봅니다.\n"
+                                  "더블클릭하면 그 사진을 크게 보고(Detail), 사진 위의 [16장]으로 돌아옵니다.")
         f2.addRow("환자를 열면", self.open_view)
+        # what is written on the photos of the photo list (also 보기 → 사진 목록 표시)
+        self.thumb_date = QCheckBox("날짜")
+        self.thumb_date.setChecked(bool(settings.thumb_date))
+        self.thumb_kind = QCheckBox("종류 (컬러 · 몽타주 …)")
+        self.thumb_kind.setChecked(bool(settings.thumb_kind))
+        thumb_row = QHBoxLayout()
+        thumb_row.addWidget(self.thumb_date)
+        thumb_row.addWidget(self.thumb_kind)
+        thumb_row.addStretch(1)
+        f2.addRow("사진 목록의 사진 위에 표시", thumb_row)
         tabs.addTab(w2, "일반")
 
         # -- sharing (share.py) -----------------------------------------------------
@@ -509,6 +519,8 @@ class SettingsDialog(QDialog):
         s.opengl = self.opengl.currentData()
         s.view3d_detail = self.detail3d.currentData()
         s.open_view = self.open_view.currentData()
+        s.thumb_date = self.thumb_date.isChecked()
+        s.thumb_kind = self.thumb_kind.isChecked()
         s.custom_filename_patterns = [p for p in self.patterns.toPlainText().splitlines() if p.strip()]
         from .. import share
         s.share_mode = self.share_mode.currentData()

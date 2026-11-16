@@ -260,8 +260,8 @@ def test_click_a_patient_shows_its_photos_and_a_photo_large(win):
     # a photo of the list's 16: large in the main window, the list makes way for it
     pl.photos.cells[3].clicked.emit(pl.photos.cells[3].image_id)
     assert pl.isHidden() and w._tab() == "all" and w.current["id"] == ids["od3"] and w.view2d.has_image()
-    # [다중 보기] brings the multi view back as it was
-    w.view_buttons["multi"].click()
+    # [Simple] brings the two photos back as they were
+    w.view_buttons["simple"].click()
     assert w._tab() == "multi" and _grid_ids(w) == [ids["od2"], ids["os2"]]
     # a double click on a cell: that photo large
     cell = next(c for c in w.multi.cells if c.image_id == ids["os2"])

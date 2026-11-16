@@ -144,10 +144,10 @@ def test_vk2_way_grid_pick_multi_and_back(app, window):
     assert w.picks() == [a, c, b]
     assert w._tab() == "grid"                               # picking stays on the 16
 
-    # [멀티]: the picked photos, and only those, in the multi view
+    # [Multi]: the picked photos, and only those, in the multi view
     w.btn_multi.click()
     app.processEvents()
-    assert w._tab() == "multi" and w.multi.count == 4
+    assert w._tab() == "multi" and w._mode == "multi" and w.multi.count == 4 and w.lbl_picks.text() == "3장 선택"
     shown = [cell.image_id for cell in w.multi.cells if cell.isVisible() and cell.image_id is not None]
     assert shown == [a, c, b]
     # [16장]: back to the 16, the picks still there
@@ -206,9 +206,9 @@ def test_switching_the_way_in_settings(app, window):
     dlg.apply()
     assert w.settings.open_view == "grid"
     w._apply_open_view()
-    assert w.view_buttons["grid"].isVisible()
-    w._go(w._home())
-    assert w._tab() == "grid"
+    assert w.view_buttons["grid"].isVisible() and w.view_buttons["grid"].text() == "16장"
+    w.view_buttons["grid"].click()
+    assert w._tab() == "grid" and w.view_buttons["grid"].isChecked()
     w.settings.open_view = "odos"                          # back: 16장 보기 is gone, its screen too
     w._apply_open_view()
     assert w._tab() == "all" and w.view_buttons["grid"].isHidden()

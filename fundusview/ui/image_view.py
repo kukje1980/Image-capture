@@ -163,6 +163,7 @@ class ImageView(QGraphicsView):
     hovered = Signal(str)        # pixel / retinal position under the cursor
     clicked = Signal()           # any left press (multi-view selection, slideshow stop)
     activated = Signal()         # double click
+    stepped = Signal(int)        # ← (-1) / → (+1) while ``step_keys``: the photo before / after
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -220,6 +221,7 @@ class ImageView(QGraphicsView):
         self._loupe.hide()
         self.loupe_mag, self.loupe_size = 3.0, 260
         self.dblclick_loupe = False      # 확대/축소 · 이동: a double click turns a loupe on that follows the mouse
+        self.step_keys = False           # ← / → ask for the photo before / after (``stepped``) instead of scrolling
         self._loupe_on = False
         self._mouse_at = QPoint()        # last mouse position in the viewport (the loupe follows it)
         self.show_navigator = True
@@ -929,6 +931,9 @@ class ImageView(QGraphicsView):
             self.fit(animate=True)
         elif k == Qt.Key.Key_1:
             self.zoom_to(1.0, animate=True)
+        elif (k in (Qt.Key.Key_Left, Qt.Key.Key_Right) and self.step_keys
+              and not e.modifiers() & ~Qt.KeyboardModifier.KeypadModifier):
+            self.stepped.emit(-1 if k == Qt.Key.Key_Left else 1)
         else:
             super().keyPressEvent(e)
 

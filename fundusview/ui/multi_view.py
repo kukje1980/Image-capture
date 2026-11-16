@@ -1,15 +1,16 @@
-"""Multi-image view (VK-2 "Multiple Images": 1 / 2 / 4 / 6 / 9 / 16 on screen).
+"""Multi-image view (VK-2 "Multiple Images": 1 / 2 / 4 / 6 / 9 / 16 on screen) — the page of both
+Simple and Multi.
 
-Cells show the photos picked in the thumbnail strip (plain click, in pick order; a patient
-opens with its newest OD and OS photo picked) and the layout follows the number picked — or,
-with nothing picked, consecutive photos of the current patient starting at the shown one
-(down-scaled for speed). Once the photos picked were all clicked away a hint takes the cells'
-place. Click a cell to select it: the info panel, the other tabs and the
-image-processing toolbar follow, and with picked photos the processing applies to that photo
-only. Double-click opens it in the 2D tab. Each cell can be zoomed (wheel) and panned (drag)
-on its own.
+Simple: two cells, the patient's newest OD (left) and OS (right) photo — a click on the photo
+list puts a photo in its eye's place, and ◀ ▶ at the sides of a cell (``EdgeNav``; ← / →) step
+through that eye's photos. Multi: the cells show the photos picked in the photo list (plain
+click, in pick order) and the layout follows the number picked — or, with nothing picked,
+consecutive photos of the current patient starting at the shown one (down-scaled for speed).
+Click a cell to select it: the info panel, the other views and the image-processing toolbar
+follow, and the processing applies to that photo only. Double-click opens it large (Detail).
+Each cell can be zoomed (wheel) and panned (drag) on its own.
 
-``compact=True`` (모두 보기의 작은 화면): no layout row, always 4 photos (2 × 2).
+``compact=True`` (a small pane, no longer shown): no layout row, always 4 photos (2 × 2).
 """
 from __future__ import annotations
 
@@ -17,6 +18,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from . import theme
+from .edge_nav import EdgeNav
 from .image_view import ImageView
 
 LAYOUTS = {1: (1, 1), 2: (1, 2), 4: (2, 2), 6: (2, 3), 9: (3, 3), 16: (4, 4)}
@@ -33,6 +35,7 @@ class _Cell(QFrame):
         self.label = QLabel()
         self.label.setStyleSheet(f"background:{theme.CARD}; color:{theme.TEXT2}; padding:3px 6px; font-size:11px")
         self.view = ImageView()
+        self.nav = EdgeNav(self.view)       # ◀ ▶ at its sides (Simple; nowhere to go until told)
         lay.addWidget(self.label)
         lay.addWidget(self.view, 1)
         self.image_id: int | None = None
@@ -47,6 +50,7 @@ class MultiView(QWidget):
     selected = Signal(int)
     opened = Signal(int)
     layoutChanged = Signal(int)
+    stepped = Signal(int, int)          # (the photo of a cell, -1 / +1): ◀ ▶ at its sides · ← / →
 
     def __init__(self, parent=None, compact: bool = False):
         super().__init__(parent)
@@ -112,6 +116,7 @@ class MultiView(QWidget):
             cell = _Cell()
             cell.view.clicked.connect(lambda c=cell: self._select(c))
             cell.view.activated.connect(lambda c=cell: c.image_id is not None and self.opened.emit(c.image_id))
+            cell.nav.stepped.connect(lambda d, c=cell: c.image_id is not None and self.stepped.emit(c.image_id, d))
             self.cells.append(cell)
         for cell in self.cells:
             self.grid.removeWidget(cell)
@@ -122,15 +127,19 @@ class MultiView(QWidget):
             cell.setVisible(not hint)
             if i < len(items):
                 iid, label, rgb = items[i]
+                # the same photo in the same cell (another cell changed): its zoom and place stay
+                same = (cell.image_id == iid and cell.view._rgb is not None
+                        and cell.view._rgb.shape == rgb.shape)
                 cell.image_id = iid
                 cell.label.setText(label)
-                cell.view.set_rgb(rgb)
+                cell.view.set_rgb(rgb, keep_view=same)
                 cell.select(iid == current_id)
             else:
                 cell.image_id = None
                 cell.label.setText("")
                 cell.view.set_rgb(None)
                 cell.select(False)
+                cell.nav.set_available(False, False)
         for r in range(4):
             self.grid.setRowStretch(r, 1 if r < rows else 0)
         for c in range(4):

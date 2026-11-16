@@ -239,6 +239,21 @@ def _draw(name: str, p: QPainter) -> None:
         pts = [QPointF(44, 10), QPointF(44, 54), QPointF(12, 32)] if name == "prev" else \
               [QPointF(20, 10), QPointF(20, 54), QPointF(52, 32)]
         p.drawPolygon(QPolygonF(pts))
+    elif name == "simple":    # two photos side by side: OD | OS
+        for x, c in ((6.0, QColor(90, 169, 255)), (34.0, QColor(245, 165, 36))):
+            p.setPen(_pen(INK, 3))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawRoundedRect(QRectF(x, 12, 24, 40), 3, 3)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QBrush(c))
+            p.drawEllipse(QPointF(x + 12, 32), 6.5, 6.5)
+    elif name == "detail":    # one photo, large, looked at closely
+        p.setPen(_pen(INK, 3))
+        p.drawRoundedRect(QRectF(6, 8, 52, 46), 4, 4)
+        p.setPen(_pen(ACCENT, 3.5))
+        p.drawEllipse(QPointF(28, 28), 10.5, 10.5)
+        p.setPen(_pen(ACCENT, 5))
+        p.drawLine(QPointF(36.5, 36.5), QPointF(46, 46))
     elif name.startswith("multi"):
         n = {"multi": 2, "multi1": 1, "multi2": 2, "multi4": 2, "multi9": 3, "multi16": 4}.get(name, 2)
         p.setPen(_pen(INK, 3))

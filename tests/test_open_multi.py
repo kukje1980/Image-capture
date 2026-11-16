@@ -1,7 +1,8 @@
-"""A patient opens with its newest OD and OS photo side by side on 다중 보기 (OD left, OS right),
-and the multi view follows the clicks on the photo strip: a click adds a photo, a click on a
-picked one takes it away, the layout fits the number picked (1 · 2 · 4 · 6 · 9 · 16), a double
-click shows that photo large on 모두 보기."""
+"""A patient opens on Simple: its newest OD and OS photo side by side (OD left, OS right) — a click
+on the photo list puts a photo in its eye's place. Multi follows the clicks on the list: a click
+adds a photo, a click on a picked one takes it away, the layout fits the number picked (1 · 2 · 4 ·
+6 · 9 · 16; none picked: all the photos). A double click shows a photo large (Detail), where a
+click on the list shows that photo; Simple and Multi each keep their own photos meanwhile."""
 import os
 
 import pytest
@@ -68,23 +69,27 @@ def _cells(w):
     return [c.image_id for c in cells], (sel[0] if sel else None)
 
 
-def test_a_patient_opens_with_its_newest_od_and_os(win):
-    from fundusview.ui.thumbs import PICK_ROLE
+def test_a_patient_opens_on_simple_with_its_newest_od_and_os(win):
+    from fundusview.ui.thumbs import PICK_ROLE, SHOWN
 
     app, w, db, refs, ids = win
     _open(app, w, refs["kim"])
     # the newest exam's OD | OS, side by side — OD on the left (as the patient faces you), selected
-    assert w.patient_list.isHidden() and w._tab() == "multi" and w.view_buttons["multi"].isChecked()
+    assert w.patient_list.isHidden() and w._tab() == "multi" and w._mode == "simple"
+    assert w.view_buttons["simple"].isChecked() and not w.view_buttons["multi"].isChecked()
     assert w.picks() == [ids["od3"], ids["os3"]] and w.multi.count == 2
     assert _cells(w) == ([ids["od3"], ids["os3"]], ids["od3"]) and w.current["id"] == ids["od3"]
     left, right = (c for c in w.multi.cells if c.isVisible())
     assert left.x() < right.x() and abs(left.y() - right.y()) < 3
-    assert "OD" in left.label.text() and "OS" in right.label.text() and "고른 사진 2장" in w.multi.mode_text
+    assert "OD" in left.label.text() and "OS" in right.label.text() and "Simple" in w.multi.mode_text
     assert all(c.view.has_image() for c in (left, right)) and not w.multi.empty.isVisible()
-    # the strip lists the patient's photos of a known eye (미상 is under 눈 → 미상); the two are numbered there
+    # 화면 분할 and the picks are Multi's: not in the row above the photos here
+    assert not w.multi_bar.isVisible() and w.lbl_picks.text() == ""
+    # the strip lists the patient's photos of a known eye (미상 is under 눈 → 미상); the two shown are
+    # framed there, without numbers
     assert w.thumbs.count() == 7
-    assert _item(w, ids["od3"]).data(PICK_ROLE) == 1 and _item(w, ids["os3"]).data(PICK_ROLE) == 2
-    assert _item(w, ids["od2"]).data(PICK_ROLE) == 0 and w.btn_multi.text() == "멀티 2"
+    assert _item(w, ids["od3"]).data(PICK_ROLE) == SHOWN and _item(w, ids["os3"]).data(PICK_ROLE) == SHOWN
+    assert _item(w, ids["od2"]).data(PICK_ROLE) == 0
 
     # an earlier exam checked on the patient list: that exam's OD | OS
     w.show_patient_list()
@@ -98,19 +103,39 @@ def test_a_patient_opens_with_its_newest_od_and_os(win):
     w.patient_list.btn_open.click()
     app.processEvents()
     assert w.picks() == [ids["od1"]] and w.multi.count == 1 and _cells(w)[0] == [ids["od1"]]
-    # 3D: the checked exam's photo in 3D; the multi view is ready with the same two
+    # 3D: the checked exam's photo in 3D; Simple is ready with the same two …
     w.show_patient_list()
     w.patient_list.set_exam("2026-03-02")
     w.patient_list.btn_3d.click()
     app.processEvents()
     assert w._tab() == "3d" and w.current["id"] == ids["od3"] and w.picks() == [ids["od3"], ids["os3"]]
+    assert w.view_buttons["3d"].isChecked() and not w.view_buttons["simple"].isChecked()
+    # … a click on the list shows that photo in 3D (the two of Simple stay) and the 3D icon again goes back
+    _click(app, w, ids["os2"])
+    assert w._tab() == "3d" and w.current["id"] == ids["os2"] and w.picks() == [ids["od3"], ids["os3"]]
+    w.view_buttons["3d"].click()
+    assert w._tab() == "multi" and w._mode == "simple" and w.view_buttons["simple"].isChecked()
+    assert _cells(w) == ([ids["od3"], ids["os3"]], ids["od3"])
+    # from Simple the 3D icon goes straight to 3D with the selected photo, and back again
+    left, right = (c for c in w.multi.cells if c.isVisible())
+    QTest_click(right.view.viewport())
+    app.processEvents()
+    assert w.current["id"] == ids["os3"]
+    w.view_buttons["3d"].click()
+    assert w._tab() == "3d" and w.current["id"] == ids["os3"]
+    w.view_buttons["3d"].click()
+    assert w._tab() == "multi" and _cells(w) == ([ids["od3"], ids["os3"]], ids["os3"])
 
-    # a patient seen for one eye: that photo; 미분류: its photos on 모두 보기 to be assigned
+    # a patient seen for one eye: that photo; 미분류: its photos large (Detail), to be assigned
     _open(app, w, refs["park"])
     assert w._tab() == "multi" and w.picks() == [ids["p_od"]] and w.multi.count == 1
     from fundusview.ui.main_window import UNASSIGNED
     _open(app, w, UNASSIGNED)
     assert w._tab() == "all" and w.picks() == [] and w.current["id"] == ids["un"]
+    assert w.view_buttons["all"].isChecked()
+    # … [Simple] there: the photo on screen alone (no OD | OS to go by)
+    w.view_buttons["simple"].click()
+    assert w._tab() == "multi" and _cells(w) == ([ids["un"]], ids["un"])
 
     # the eye filter of the strip is kept: OD only
     w.f_eye.setCurrentIndex(w.f_eye.findData("OD"))
@@ -124,24 +149,111 @@ def test_a_patient_opens_with_its_newest_od_and_os(win):
     w.patient_list.table.selectRow(w.patient_list.row_of(refs["park"]))
     app.processEvents()
     assert w._patient_ref == refs["park"] and w._tab() == "multi" and w.picks() == [ids["p_od"]]
+    assert w._mode == "simple"
 
 
-def test_the_multi_view_follows_the_clicks(win):
-    from fundusview.ui.thumbs import PICK_ROLE
+def QTest_click(widget):
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+
+    QTest.mouseClick(widget, Qt.MouseButton.LeftButton, pos=QPoint(20, 20))
+
+
+def test_simple_a_click_puts_the_photo_in_its_eyes_place(win):
+    from fundusview.ui.thumbs import PICK_ROLE, SHOWN
 
     app, w, db, refs, ids = win
     _open(app, w, refs["kim"])
     od3, os3, rf3, od2, os2, od1 = (ids[k] for k in ("od3", "os3", "rf3", "od2", "os2", "od1"))
 
-    # a click adds the photo, as the selected cell; the layout grows with the photos: 2 → 4 → 4 → 6
+    # a click on an OD photo: it takes the left place, selected — still two photos, OS as it was
     _click(app, w, od2)
-    assert w.picks() == [od3, os3, od2] and w.multi.count == 4
-    assert _cells(w) == ([od3, os3, od2], od2) and w.current["id"] == od2
-    assert _item(w, od2).data(PICK_ROLE) == 3 and "고른 사진 3장" in w.multi.mode_text
+    assert w.picks() == [od2, os3] and w.multi.count == 2 and _cells(w) == ([od2, os3], od2)
+    assert w.current["id"] == od2 and w._tab() == "multi" and w._mode == "simple"
+    assert _item(w, od2).data(PICK_ROLE) == SHOWN and _item(w, od3).data(PICK_ROLE) == 0
+    # … on an OS photo: the right place
     _click(app, w, os2)
-    assert w.multi.count == 4 and _cells(w) == ([od3, os3, od2, os2], os2)
+    assert w.picks() == [od2, os2] and _cells(w) == ([od2, os2], os2)
+    # a click on a photo that is shown selects it (it does not leave)
+    _click(app, w, od2)
+    assert w.picks() == [od2, os2] and _cells(w) == ([od2, os2], od2)
+    # the other cell keeps its zoom while a photo changes beside it
+    right = next(c for c in w.multi.cells if c.image_id == os2)
+    right.view.zoom_to(3.0)
+    zoom = right.view.zoom
     _click(app, w, od1)
-    assert w.multi.count == 6 and _cells(w) == ([od3, os3, od2, os2, od1], od1)
+    assert _cells(w) == ([od1, os2], od1) and right.view.zoom == zoom
+    # each photo keeps its own processing: red-free on od1, not on the others — and again when it is back
+    w._on_action("chan:redfree")
+    assert w._channel == "redfree"
+    _click(app, w, od3)
+    assert _cells(w) == ([od3, os2], od3) and w._channel == "rgb"
+    _click(app, w, od1)
+    assert w._channel == "redfree"
+    w._on_action("chan:redfree", False)
+
+    # a double click: that photo large (Detail) — the two of Simple stay as they were …
+    _click(app, w, rf3, double=True)
+    assert w._tab() == "all" and w.current["id"] == rf3 and w.picks() == [od1, os2]
+    assert w.view_buttons["all"].isChecked() and not w.view_buttons["simple"].isChecked()
+    # … on Detail a click on the list shows that photo there
+    _click(app, w, od3)
+    assert w._tab() == "all" and w.current["id"] == od3 and w.picks() == [od1, os2]
+    # … and [Simple] brings the two back (the photo on screen is not one of them: OD selected)
+    w.view_buttons["simple"].click()
+    assert w._tab() == "multi" and _cells(w) == ([od1, os2], od1)
+    # a double click on a cell: large as well
+    cell = next(c for c in w.multi.cells if c.image_id == os2)
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+    QTest.mouseDClick(cell.view.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(20, 20))
+    app.processEvents()
+    assert w._tab() == "all" and w.current["id"] == os2
+
+    # a patient with one eye's photos: the one photo, replaced by the click
+    w.view_buttons["simple"].click()
+    w.f_eye.setCurrentIndex(w.f_eye.findData("OD"))
+    _open(app, w, refs["kim"])
+    assert w.picks() == [od3] and w.multi.count == 1
+    _click(app, w, od2)
+    assert w.picks() == [od2] and w.multi.count == 1 and _cells(w) == ([od2], od2)
+    w.f_eye.setCurrentIndex(0)
+
+    # a photo of neither eye (미상) has no place on OD | OS: it is shown large
+    w.f_eye.setCurrentIndex(w.f_eye.findData("?"))
+    app.processEvents()
+    w.view_buttons["simple"].click()
+    _click(app, w, ids["na3"])
+    assert w._tab() == "all" and w.current["id"] == ids["na3"] and ids["na3"] not in w.picks()
+    w.f_eye.setCurrentIndex(0)
+
+
+def test_multi_follows_the_clicks(win):
+    from fundusview.ui.thumbs import PICK_ROLE
+
+    app, w, db, refs, ids = win
+    _open(app, w, refs["kim"])
+    od3, os3, rf3, od2, os2, od1 = (ids[k] for k in ("od3", "os3", "rf3", "od2", "os2", "od1"))
+    strip = w._strip_ids()
+    assert len(strip) == 7
+
+    # [Multi] with nothing picked: all the photos of the list, the layout fit to them (7 → 9)
+    w.view_buttons["multi"].click()
+    app.processEvents()
+    assert w._tab() == "multi" and w._mode == "multi" and w.picks() == []
+    assert w.view_buttons["multi"].isChecked() and not w.view_buttons["simple"].isChecked()
+    assert w.multi.count == 9 and _cells(w) == (strip, od3) and w.multi_bar.isVisible()
+    assert not w.btn_clear_picks.isVisible() and w.lbl_picks.text() == "" and not w.btn_montage.isEnabled()
+    assert all(w.thumbs.item(i).data(PICK_ROLE) == 0 for i in range(w.thumbs.count()))
+
+    # a click picks the photo: only the picked ones are shown, the clicked one selected; the layout
+    # grows with them: 1 → 2 → 4 → 4 → 6
+    for k, (iid, count) in enumerate(((od3, 1), (os3, 2), (od2, 4), (os2, 4), (od1, 6))):
+        _click(app, w, iid)
+        assert w.multi.count == count and _cells(w) == ([od3, os3, od2, os2, od1][:k + 1], iid)
+        assert _item(w, iid).data(PICK_ROLE) == k + 1
+    assert w.current["id"] == od1 and "고른 사진 5장" in w.multi.mode_text
+    assert w.lbl_picks.text() == "5장 선택" and w.btn_clear_picks.isVisible() and w.btn_montage.isEnabled()
     # its processing is that photo's own: the cells of the others stay as they were
     before = {c.image_id: c.view._rgb.copy() for c in w.multi.cells if c.isVisible() and c.image_id}
     w._on_action("chan:redfree")
@@ -163,41 +275,58 @@ def test_the_multi_view_follows_the_clicks(win):
     _click(app, w, os2)
     assert w.picks() == [od3, od2] and w.multi.count == 2
 
-    # a double click: that photo large on 모두 보기 — the picks stay as they were
+    # a double click: that photo large (Detail) — the picks stay as they were
     _click(app, w, od2, double=True)
     assert w._tab() == "all" and w.current["id"] == od2 and w.picks() == [od3, od2]
     _click(app, w, rf3, double=True)                       # (one not picked, too)
     assert w._tab() == "all" and w.current["id"] == rf3 and w.picks() == [od3, od2]
-    # on 모두 보기 a click on a picked photo brings the multi view back with that photo selected …
-    _click(app, w, od3)
+    # [Multi] brings the picked photos back, the first one selected
+    w.view_buttons["multi"].click()
     assert w._tab() == "multi" and w.picks() == [od3, od2] and _cells(w) == ([od3, od2], od3)
-    # … and one not picked joins it (also from 3D)
-    w._go("3d")
-    _click(app, w, rf3)
-    assert w._tab() == "multi" and w.picks() == [od3, od2, rf3] and _cells(w) == ([od3, od2, rf3], rf3)
 
-    # all clicked away: the view says how to pick; the next click is the one photo on the view
-    for k in (od3, od2, rf3):
-        _click(app, w, k)
-    assert w.picks() == [] and w.multi.count == 1 and w.multi.empty.isVisible()
-    assert "클릭하면 여기에 모입니다" in w.multi.empty.text() and not any(c.isVisible() for c in w.multi.cells)
+    # Simple meanwhile has its own two photos — and Multi its picks when it is shown again
+    w.view_buttons["simple"].click()
+    assert w._mode == "simple" and _cells(w) == ([od3, os3], od3) and not w.multi_bar.isVisible()
+    assert w.btn_montage.isEnabled()                       # (몽타주 is made of Multi's picks)
     _click(app, w, os2)
-    assert w.picks() == [os2] and w.multi.count == 1 and _cells(w) == ([os2], os2) and not w.multi.empty.isVisible()
+    assert w.picks() == [od3, os2]
+    w.view_buttons["multi"].click()
+    assert w._mode == "multi" and w.picks() == [od3, od2] and _cells(w)[0] == [od3, od2]
+    w.view_buttons["simple"].click()
+    assert w.picks() == [od3, os2]                         # as it was left (changed by hand)
+    w.view_buttons["multi"].click()
+
+    # all clicked away: all the photos again; the next click is the one photo on the view
+    for k in (od3, od2):
+        _click(app, w, k)
+    assert w.picks() == [] and w.multi.count == 9 and _cells(w)[0] == strip and not w.multi.empty.isVisible()
+    _click(app, w, os2)
+    assert w.picks() == [os2] and w.multi.count == 1 and _cells(w) == ([os2], os2)
     _click(app, w, os3)
     assert w.multi.count == 2 and _cells(w) == ([os2, os3], os3)
     # 선택 해제: the same
     w.btn_clear_picks.click()
     app.processEvents()
-    assert w.picks() == [] and w.multi.empty.isVisible() and w.btn_multi.text() == "멀티"
-    # 다중 ▾ 4장 with nothing picked: VK-2's consecutive photos from the shown one
+    assert w.picks() == [] and _cells(w)[0] == strip and w.lbl_picks.text() == ""
+    assert not w.btn_clear_picks.isVisible()
+    # 화면 분할 chosen by hand (다중 ▾ 4장) with nothing picked: VK-2's consecutive photos from the shown
+    # one — and it stays so when Multi is shown again
     w._on_action("multi:4")
     app.processEvents()
-    assert w.multi.count == 4 and not w.multi.empty.isVisible() and len(_cells(w)[0]) == 4
+    assert w.multi.count == 4 and len(_cells(w)[0]) == 4
+    w.view_buttons["all"].click()
+    w.view_buttons["multi"].click()
+    assert w.multi.count == 4 and len(_cells(w)[0]) == 4
+    # the command toolbar's 다중: Multi, and again Simple
+    w._on_action("multi")
+    assert w._tab() == "multi" and w._mode == "simple"
+    w._on_action("multi")
+    assert w._mode == "multi"
 
 
 def test_a_new_photo_takes_its_eyes_place(win):
-    """새 영상 자동 표시 on 다중 보기: the newest OD | OS again, the new photo selected — unless the
-    picks were changed by hand, then the new photo is shown large."""
+    """새 영상 자동 표시 on Simple: the newest OD | OS again, the new photo selected — unless the two
+    photos were changed by hand, then the new photo is shown large."""
     from fundusview.importer import ImportResult
     from fundusview.models import ExtractedMeta
 
@@ -212,11 +341,157 @@ def test_a_new_photo_takes_its_eyes_place(win):
     w._flush_results()
     app.processEvents()
     assert w._tab() == "multi" and w.picks() == [ids["od3"], new] and _cells(w) == ([ids["od3"], new], new)
-    # picks changed by hand: they stay; the new photo is shown large
+    # while Multi is on screen (all the photos): the new one is among them, selected — and Simple's
+    # two are the newest again when it comes back
+    w.view_buttons["multi"].click()
+    new_od = db.insert_image(patient_ref=refs["kim"], exam_date="2026-04-01", exam_time="09:02:00", laterality="OD",
+                             modality="color", file_path=os.path.join(folder, "p3.png"), sha256="new_od")
+    w._results.append(ImportResult("imported", "new_od.png", "김영수", image_id=new_od, patient_ref=refs["kim"]))
+    w._flush_results()
+    app.processEvents()
+    assert w._tab() == "multi" and w.picks() == [] and w.multi.count == 9 and w.thumbs.count() == 9
+    assert _cells(w) == (w._strip_ids(), new_od)
+    w.view_buttons["simple"].click()
+    assert w.picks() == [new_od, new]
+    # the two changed by hand: they stay; the new photo is shown large
     _click(app, w, ids["od2"])
+    assert w.picks() == [ids["od2"], new]
     new2 = db.insert_image(patient_ref=refs["kim"], exam_date="2026-04-01", exam_time="09:05:00", laterality="OD",
                            modality="color", file_path=os.path.join(folder, "p3.png"), sha256="new2")
     w._results.append(ImportResult("imported", "new2.png", "김영수", image_id=new2, patient_ref=refs["kim"]))
     w._flush_results()
     app.processEvents()
-    assert w._tab() == "all" and w.current["id"] == new2 and w.picks() == [ids["od3"], new, ids["od2"]]
+    assert w._tab() == "all" and w.current["id"] == new2 and w.picks() == [ids["od2"], new]
+
+
+def test_arrows_at_the_sides_of_a_photo_and_the_arrow_keys(win):
+    """◀ ▶ come up at the left / right side of a photo under the mouse and go to the photo before /
+    after it, as ← / → do — Detail: of the photo list; Simple: of the same eye, in its place; Multi:
+    the picked photo before / after."""
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+
+    app, w, db, refs, ids = win
+    _open(app, w, refs["kim"])
+    od3, os3, rf3, od2, os2, od1, sheet = (ids[k] for k in ("od3", "os3", "rf3", "od2", "os2", "od1", "sheet"))
+    strip = w._strip_ids()
+    assert strip == [rf3, od3, od2, sheet, od1, os3, os2]          # OD newest first, then OS
+
+    def hover(view, side):
+        vp = view.viewport()
+        x = {"left": 20, "right": vp.width() - 20, "middle": vp.width() // 2}[side]
+        QTest.mouseMove(vp, QPoint(x, vp.height() // 2))
+
+    def press(button):
+        assert button.isVisible()
+        QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+        app.processEvents()
+
+    # -- Detail: through the photo list ----------------------------------------------------------------
+    _click(app, w, od3, double=True)
+    app.processEvents()
+    nav = w.nav2d
+    before, after = nav.buttons[-1], nav.buttons[1]
+    assert w._tab() == "all" and w.current["id"] == od3 and nav.available() == (True, True)
+    assert not before.isVisible() and not after.isVisible()      # not until the mouse is at a side
+    hover(w.view2d, "right")
+    assert after.isVisible() and not before.isVisible()
+    assert after.x() > w.view2d.viewport().width() * 0.8          # at the right edge, half way up
+    assert abs(after.geometry().center().y() - w.view2d.viewport().height() // 2) <= 2
+    hover(w.view2d, "middle")
+    assert not before.isVisible() and not after.isVisible()
+    hover(w.view2d, "left")
+    assert before.isVisible() and not after.isVisible() and before.x() < 40
+    press(before)                                                 # ◀: the photo before it
+    assert w._tab() == "all" and w.current["id"] == rf3 and w.thumbs.currentRow() == 0
+    assert nav.available() == (False, True) and not before.isVisible()   # the first one: nothing before it
+    hover(w.view2d, "left")
+    assert not before.isVisible()
+    hover(w.view2d, "right")
+    press(after)
+    press(after)
+    assert w.current["id"] == od2
+    # ← / → on the photo, and on the photo list
+    QTest.keyClick(w.view2d, Qt.Key.Key_Right)
+    assert w.current["id"] == sheet
+    QTest.keyClick(w.view2d, Qt.Key.Key_Left)
+    QTest.keyClick(w.view2d, Qt.Key.Key_Left)
+    assert w.current["id"] == od3
+    QTest.keyClick(w.thumbs, Qt.Key.Key_Right)
+    assert w.current["id"] == od2 and w._tab() == "all"
+    w._select_from_multi(os2)                                     # the last one: nothing after it
+    assert nav.available() == (True, False)
+    QTest.keyClick(w.view2d, Qt.Key.Key_Right)
+    assert w.current["id"] == os2
+    QTest.keyClick(w, Qt.Key.Key_Left)                            # (a key no control took: the window's)
+    assert w.current["id"] == os3
+    assert w.picks() == [od3, os3]                                # the two of Simple: as they were
+
+    # -- Simple: each photo's arrows go through its own eye's photos, in its place ------------------------
+    w.view_buttons["simple"].click()
+    app.processEvents()
+    left, right = (c for c in w.multi.cells if c.isVisible())
+    assert _cells(w) == ([od3, os3], os3)
+    assert left.nav.available() == (True, True) and right.nav.available() == (False, True)
+    hover(right.view, "left")
+    assert not right.nav.buttons[-1].isVisible()                  # os3 is the newest OS photo
+    hover(right.view, "right")
+    press(right.nav.buttons[1])                                   # ▶ on the OS photo: the OS photo after it
+    assert w.picks() == [od3, os2] and _cells(w) == ([od3, os2], os2)
+    assert right.nav.available() == (True, False) and left.nav.available() == (True, True)
+    hover(left.view, "left")
+    press(left.nav.buttons[-1])                                   # ◀ on the OD photo: selects it, the OD before it
+    assert w.picks() == [rf3, os2] and _cells(w) == ([rf3, os2], rf3) and left.nav.available() == (False, True)
+    QTest.keyClick(left.view, Qt.Key.Key_Right)
+    QTest.keyClick(left.view, Qt.Key.Key_Right)
+    assert w.picks() == [od2, os2] and w.current["id"] == od2
+    QTest.keyClick(w.thumbs, Qt.Key.Key_Left)                     # the keys on the photo list: the same
+    assert w.picks() == [od3, os2] and w.current["id"] == od3
+    w._on_action("next")                                          # 다음 (PageDown): the same
+    assert w.picks() == [od2, os2]
+    w._on_action("prev")
+    assert w.picks() == [od3, os2] and w._tab() == "multi" and w._mode == "simple"
+
+    # -- Multi: no arrows on the cells (the list picks); ← / → go through the picked photos ----------------
+    w.view_buttons["multi"].click()
+    for iid in (od3, os3, od2):
+        _click(app, w, iid)
+    assert _cells(w) == ([od3, os3, od2], od2)
+    cells = [c for c in w.multi.cells if c.isVisible() and c.image_id]
+    assert all(c.nav.available() == (False, False) for c in cells)
+    hover(cells[0].view, "right")
+    assert not cells[0].nav.buttons[1].isVisible()
+    QTest.keyClick(w.thumbs, Qt.Key.Key_Left)
+    assert _cells(w) == ([od3, os3, od2], os3)
+    QTest.keyClick(cells[1].view, Qt.Key.Key_Left)
+    QTest.keyClick(cells[0].view, Qt.Key.Key_Left)
+    assert _cells(w) == ([od3, os3, od2], od3) and w.picks() == [od3, os3, od2]
+
+
+def test_the_last_patient_comes_back_on_simple(tmp_path):
+    """At the start the patient of the last session is behind the patient list — on Simple, its
+    newest OD | OS, so that closing the list without picking a patient shows that first."""
+    import time
+
+    from PySide6.QtWidgets import QApplication
+
+    from fundusview.config import Settings
+    from fundusview.ui.main_window import MainWindow
+
+    app = QApplication.instance() or QApplication([])
+    db, refs, ids = _library(tmp_path)
+    s = Settings(library_dir=str(tmp_path / "lib"), watch_on_startup=False, auto_detect=False, last_patient="K001")
+    w = MainWindow(s, db)
+    try:
+        w.show()
+        end = time.time() + 5
+        while w._patient_ref is None and time.time() < end:      # (the start-up runs 200 ms after the window)
+            app.processEvents()
+            time.sleep(0.01)
+        app.processEvents()
+        assert w._patient_ref == refs["kim"] and w.patient_list.isVisible()
+        assert w._tab() == "multi" and w._mode == "simple" and w.view_buttons["simple"].isChecked()
+        assert _cells(w) == ([ids["od3"], ids["os3"]], ids["od3"])
+    finally:
+        w.close()
+        db.close()
