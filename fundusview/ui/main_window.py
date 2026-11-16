@@ -108,7 +108,7 @@ GRID_MODE = "grid"                           # Settings.open_view of the VK-2 wa
 # photo is the 2D view with all its tools
 GONE_VIEWS = {"review": "all", "2d": "all", "cmp": "all"}
 PATIENT_LIST_KEY = "Ctrl+0"                  # the 환자 목록 window
-THUMB_GRID = (94, 72)                        # 사진 목록(아래): a cell — the photo fills it (a 4:3 photo: 88 × 66),
+THUMB_GRID = (94, 72)                        # 사진 목록(아래): a cell — the photo fills it (a 4:3 photo: 84 × 63),
                                              # the date lies on the photo (thumbs.py)
 OV_ZOOM = 4.0                                # 확대 화면: 사진 전체 폭의 1/4 을 칸에 (×4)
 
