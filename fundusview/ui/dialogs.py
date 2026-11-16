@@ -36,6 +36,11 @@ def source_label(src: str | None) -> str:
     return SOURCE_LABELS.get(src, src.replace("sidecar", "부속 파일 "))
 
 
+# 설정 → 일반 → 환자를 열면 (Settings.open_view)
+OPEN_VIEWS = (("odos", "최신 OD | OS 두 장 — 다중 보기에 나란히, 사진을 클릭하는 대로 더하고 빼기"),
+              ("grid", "VK-2 방식 — 사진 16장을 한 화면에, 골라서 [멀티]로 모아 보기"))
+
+
 def _combo(items, current) -> QComboBox:
     cb = QComboBox()
     for key, label in items:
@@ -290,7 +295,44 @@ class SettingsDialog(QDialog):
         self.detail3d = _combo([("detailed", "자세히 (실제 해부 구조)"), ("simple", "간단히 (느린 PC용 가벼운 모형)")],
                                settings.view3d_detail)
         f2.addRow("3D 모형", self.detail3d)
+        self.open_view = _combo(OPEN_VIEWS, settings.open_view)
+        self.open_view.setToolTip("환자 목록에서 환자를 열 때 처음 나오는 화면\n"
+                                  "최신 OD | OS: 고른 검사의 최신 OD(왼쪽) · OS(오른쪽)가 다중 보기에 — 사진 목록을 클릭하면\n"
+                                  "바로 더해지고 다시 클릭하면 빠집니다.\n"
+                                  "VK-2 방식: 사진을 클릭해 고르고(번호) [멀티]를 누르면 고른 사진만 다중 보기로 모입니다.\n"
+                                  "더블클릭하면 그 사진을 크게 보고, 사진 아래 [16장]으로 돌아옵니다.")
+        f2.addRow("환자를 열면", self.open_view)
         tabs.addTab(w2, "일반")
+
+        # -- sharing (share.py) -----------------------------------------------------
+        from .. import share
+        w5 = QWidget()
+        f5 = QFormLayout(w5)
+        self.share_mode = _combo([
+            (share.MODE_OFF, "이 컴퓨터에서만 사용"),
+            (share.MODE_SERVER, "서버 — 이 컴퓨터의 자료를 다른 컴퓨터와 함께 사용"),
+            (share.MODE_CLIENT, "서버에 연결 — 서버 컴퓨터의 자료를 사용")], settings.share_mode)
+        f5.addRow("함께 쓰기", self.share_mode)
+        self.share_port = QSpinBox()
+        self.share_port.setRange(1024, 65535)
+        self.share_port.setValue(settings.share_port)
+        f5.addRow("포트 (서버)", self.share_port)
+        self.server_url = QLineEdit(settings.server_url)
+        self.server_url.setPlaceholderText(f"서버 컴퓨터의 주소 — 예: 192.168.0.10:{share.DEFAULT_PORT}")
+        f5.addRow("서버 주소 (연결)", self.server_url)
+        self.share_key = QLineEdit(settings.share_key)
+        self.share_key.setPlaceholderText("서버: 비워 두면 자동으로 만듭니다 · 연결: 서버의 접속 암호")
+        f5.addRow("접속 암호", self.share_key)
+        self.share_test = QPushButton("연결 시험")
+        self.share_test.clicked.connect(self._test_share)
+        f5.addRow("", self.share_test)
+        self.share_info = QLabel()
+        self.share_info.setWordWrap(True)
+        self.share_info.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        f5.addRow("", self.share_info)
+        self.share_mode.currentIndexChanged.connect(self._share_changed)
+        self._share_changed()
+        tabs.addTab(w5, "공유")
 
         # -- filename rules -------------------------------------------------------
         w3 = QWidget()
@@ -388,6 +430,43 @@ class SettingsDialog(QDialog):
             return
         super().accept()
 
+    def _share_changed(self) -> None:
+        from .. import share
+        mode = self.share_mode.currentData()
+        self.share_port.setEnabled(mode == share.MODE_SERVER)
+        self.server_url.setEnabled(mode == share.MODE_CLIENT)
+        self.share_key.setEnabled(mode != share.MODE_OFF)
+        self.share_test.setVisible(mode == share.MODE_CLIENT)
+        if mode == share.MODE_SERVER:
+            addr = f"{share.lan_address()}:{self.share_port.value()}"
+            text = (f"사진과 데이터베이스는 이 컴퓨터에만 저장됩니다. 다른 컴퓨터는\n"
+                    f" · 뷰어: 설정 → 공유 → '서버에 연결', 서버 주소 <b>{addr}</b>\n"
+                    f" · 웹 브라우저: 주소창에 <b>http://{addr}</b> (보기 · 메모 · 환자 정보)\n"
+                    "로 접속합니다. 이 컴퓨터의 뷰어가 켜져 있는 동안 접속할 수 있습니다.\n"
+                    "처음 켤 때 Windows 방화벽이 물으면 '액세스 허용'을 누르세요. 병원 안 네트워크에서만 쓰세요.")
+        elif mode == share.MODE_CLIENT:
+            text = ("이 컴퓨터는 서버 컴퓨터의 환자와 사진을 보여 줍니다. 편집한 내용(환자 정보 · 메모 · 몽타주 …)은\n"
+                    "서버에 저장되고, 사진 자동 가져오기는 서버 컴퓨터가 합니다. 이 컴퓨터의 감시 폴더 · 라이브러리\n"
+                    "설정은 쓰이지 않습니다. 바꾼 뒤 프로그램을 다시 시작하면 적용됩니다.")
+        else:
+            text = "환자와 사진을 이 컴퓨터에서만 봅니다."
+        self.share_info.setText(text.replace("\n", "<br>"))
+
+    def _test_share(self) -> None:
+        from .. import share
+        url = share.normalize_url(self.server_url.text())
+        if not url:
+            self.share_info.setText("서버 주소를 입력하세요 (예: 192.168.0.10:8765).")
+            return
+        remote = share.RemoteDatabase(url, self.share_key.text().strip(), timeout=5)
+        try:
+            info = remote.ping()
+            self.share_info.setText(f"<span style='color:#34d399'>연결되었습니다</span> — {url} (버전 {info.get('version', '?')})")
+        except share.ShareError as exc:
+            self.share_info.setText(f"<span style='color:#ff6961'>연결하지 못했습니다</span> — {exc}")
+        finally:
+            remote.close()
+
     def _pick_library(self) -> None:
         d = QFileDialog.getExistingDirectory(self, "라이브러리 폴더 선택", self.library.text())
         if d:
@@ -429,4 +508,14 @@ class SettingsDialog(QDialog):
         s.rescan_seconds = self.rescan.value()
         s.opengl = self.opengl.currentData()
         s.view3d_detail = self.detail3d.currentData()
+        s.open_view = self.open_view.currentData()
         s.custom_filename_patterns = [p for p in self.patterns.toPlainText().splitlines() if p.strip()]
+        from .. import share
+        s.share_mode = self.share_mode.currentData()
+        s.share_port = self.share_port.value()
+        s.server_url = share.normalize_url(self.server_url.text())
+        s.share_key = self.share_key.text().strip()
+        if s.share_mode == share.MODE_SERVER and not s.share_key:
+            s.share_key = share.new_key()
+        if s.share_mode == share.MODE_CLIENT and not s.server_url:
+            s.share_mode = share.MODE_OFF

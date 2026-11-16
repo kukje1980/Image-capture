@@ -162,6 +162,7 @@ def test_montage_from_the_main_window(app, tmp_path, montage_drop, import_and_wa
         app.processEvents()
         assert w.thumbs.count() == 5 and not w.btn_montage.isEnabled()
         ids = [w.thumbs.item(i).data(Qt.ItemDataRole.UserRole) for i in range(5)]
+        w.clear_picks()                                         # (the patient came with its newest OD picked)
         w._toggle_pick(ids[0])
         assert not w.btn_montage.isEnabled()                    # one photo is not a montage
         for i in ids[1:]:

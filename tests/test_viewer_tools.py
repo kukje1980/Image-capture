@@ -48,34 +48,96 @@ def _click(view, p, button=None):
     QTest.mouseClick(view.viewport(), button or Qt.MouseButton.LeftButton, pos=QPoint(*p))
 
 
-def test_right_drag_zooms(view):
-    from PySide6.QtCore import Qt
-    z0 = view.zoom
-    _drag(view, Qt.MouseButton.RightButton, (400, 300), (400, 200))   # up = zoom in
-    z1 = view.zoom
-    assert z1 > z0 * 1.5
-    _drag(view, Qt.MouseButton.RightButton, (400, 300), (400, 420))   # down = zoom out
-    assert view.zoom < z1
+def _wheel(view, pos, notches):
+    from PySide6.QtCore import QPoint, QPointF, Qt
+    from PySide6.QtGui import QWheelEvent
+    from PySide6.QtWidgets import QApplication
+    vp, p = view.viewport(), QPoint(*pos)
+    QApplication.sendEvent(vp, QWheelEvent(QPointF(p), QPointF(vp.mapToGlobal(p)), QPoint(0, 0),
+                                           QPoint(0, int(120 * notches)), Qt.MouseButton.NoButton,
+                                           Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False))
 
 
-def test_plain_left_drag_zooms(view):
-    """No tool to pick: a fresh view zooms on a plain left drag, anchored at the press point."""
+def test_only_the_wheel_zooms(view):
+    """No drag — left or right, up, down or sideways — changes the zoom; the wheel zooms at the cursor."""
     from PySide6.QtCore import QPoint, Qt
-    assert view.tool == "zoom"
     z0 = view.zoom
+    for button in (Qt.MouseButton.LeftButton, Qt.MouseButton.RightButton):
+        for end in ((400, 150), (400, 450), (550, 300)):
+            _drag(view, button, (400, 300), end)
+            view.stop_motion()
+            assert view.zoom == pytest.approx(z0)
+    _click(view, (300, 250))
+    assert view.zoom == pytest.approx(z0)
     anchor = view.mapToScene(QPoint(300, 250))
-    _drag(view, Qt.MouseButton.LeftButton, (300, 250), (300, 150))   # up = zoom in
+    _wheel(view, (300, 250), 4)                                      # up = larger, at the cursor
     z1 = view.zoom
     assert z1 > z0 * 1.5
     after = view.mapToScene(QPoint(300, 250))
     assert abs(after.x() - anchor.x()) < 3 and abs(after.y() - anchor.y()) < 3
-    _drag(view, Qt.MouseButton.LeftButton, (300, 250), (300, 330))   # down = zoom out
-    z2 = view.zoom
-    assert z2 < z1
-    _click(view, (300, 250))                                         # a click is not a zoom
-    assert view.zoom == pytest.approx(z2)
-    _drag(view, Qt.MouseButton.LeftButton, (300, 250), (420, 251))   # sideways: no zoom
-    assert view.zoom == pytest.approx(z2)
+    _wheel(view, (300, 250), -2)                                     # down = smaller again
+    assert z0 < view.zoom < z1
+
+
+def test_left_drag_moves_the_photo(view):
+    """확대/축소 (the starting tool): a left drag moves the photo, the hand shows it."""
+    from PySide6.QtCore import Qt
+    assert view.tool == "zoom"
+    assert view.viewport().cursor().shape() == Qt.CursorShape.OpenHandCursor
+    _wheel(view, (400, 300), 6)
+    z1 = view.zoom
+    assert view.zoomed_in()
+    view.stop_motion()
+    h0, v0 = view.horizontalScrollBar().value(), view.verticalScrollBar().value()
+    _drag(view, Qt.MouseButton.LeftButton, (400, 300), (340, 250))
+    view.stop_motion()                                               # no slide after the drag
+    assert view.zoom == pytest.approx(z1)
+    assert view.horizontalScrollBar().value() == h0 + 60
+    assert view.verticalScrollBar().value() == v0 + 50
+    assert view.viewport().cursor().shape() == Qt.CursorShape.OpenHandCursor
+    _drag(view, Qt.MouseButton.LeftButton, (400, 300), (400, 420))   # straight down: moves, no zoom out
+    assert view.zoom == pytest.approx(z1)
+
+
+def test_double_click_turns_on_a_loupe_that_follows_the_mouse(view):
+    """2D view / 비교 (``dblclick_loupe``): a double click shows the loupe, which follows the mouse —
+    through drags and zooms too — until the next double click or Esc. Other views: a double click fits."""
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+    vp, lab = view.viewport(), view._loupe
+
+    def at(p):
+        c = lab.geometry().center()
+        return abs(c.x() - p[0]) <= 2 and abs(c.y() - p[1]) <= 2
+
+    view.zoom_to(3.0)
+    QTest.mouseDClick(vp, Qt.MouseButton.LeftButton, pos=QPoint(300, 250))
+    assert not view.loupe_on and view.zoom == pytest.approx(view._fit_zoom())   # without it: fit
+    view.stop_motion()
+    view.fit()
+    view.dblclick_loupe = True
+    z0 = view.zoom
+    QTest.mouseDClick(vp, Qt.MouseButton.LeftButton, pos=QPoint(300, 250))
+    assert view.loupe_on and lab.isVisible() and at((300, 250))
+    assert view.zoom == pytest.approx(z0)                            # the double click is not a zoom
+    QTest.mouseMove(vp, QPoint(420, 330))
+    assert lab.isVisible() and at((420, 330))                        # it follows the mouse
+    _wheel(view, (400, 180), 4)                                      # a wheel zoom: still on, under the mouse
+    assert view.loupe_on and view.zoom > z0 * 1.5 and at((400, 180))
+    view.stop_motion()
+    h0 = view.horizontalScrollBar().value()
+    _drag(view, Qt.MouseButton.LeftButton, (400, 300), (340, 300))   # zoomed in: the drag moves the photo
+    view.stop_motion()
+    assert view.horizontalScrollBar().value() == h0 + 60 and view.loupe_on and at((340, 300))
+    QTest.mouseDClick(vp, Qt.MouseButton.LeftButton, pos=QPoint(340, 300))
+    assert not view.loupe_on and not lab.isVisible()                 # double click again: off
+    QTest.mouseDClick(vp, Qt.MouseButton.LeftButton, pos=QPoint(200, 200))
+    assert view.loupe_on
+    QTest.keyClick(view, Qt.Key.Key_Escape)
+    assert not view.loupe_on and not lab.isVisible()                 # Esc: off
+    QTest.mouseDClick(vp, Qt.MouseButton.LeftButton, pos=QPoint(200, 200))
+    view.set_tool("length")
+    assert not view.loupe_on                                         # another tool: off
 
 
 def test_pan_with_middle_button_or_pan_tool(view):
@@ -178,9 +240,11 @@ def test_main_window_tools(app, tmp_path, demo_dir, import_and_wait):
         assert w.thumbs.count() == 3
         w.f_mod.setCurrentIndex(w.f_mod.findData("color"))   # the two single shots (no montage)
         assert w.thumbs.count() == 2 and w.view2d.geometry is not None
-        # drag zoom is on from the start: 2D, compare and multi views, and the ZOOM button is lit
+        # 확대 is on from the start (wheel zoom, drag moves): 2D, compare and multi views, the ZOOM button lit
         assert w.view2d.tool == "zoom" and w.acts["tool:zoom"].isChecked()
         assert all(v.tool == "zoom" for v in w.cmp_views)
+        # a double click shows the loupe in the 2D view and 비교 (the multi view opens the photo instead)
+        assert w.view2d.dblclick_loupe and all(v.dblclick_loupe for v in w.cmp_views)
         first = w.current["id"]
         w._on_action("op:sharpen")
         w._on_action("op:enhance")

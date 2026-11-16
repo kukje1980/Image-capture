@@ -319,7 +319,7 @@ def test_main_window_flow(app, demo_dir, tmp_path, monkeypatch, import_and_wait)
     w = MainWindow(s, Database(tmp_path / "lib" / "fundus.db"))
     try:
         w.show()
-        assert w.btn_glaucoma.text() == "녹내장" and "glaucoma" in w.acts and "glaucoma" in MODALITY_LABELS
+        assert w.btn_glaucoma.text() == "Glaucoma" and "glaucoma" in w.acts and "glaucoma" in MODALITY_LABELS
         w.open_glaucoma()                                           # no photo yet
         assert said and said[-1] == ("녹내장 분석", "사진을 고르세요.")
         import_and_wait(app, w, [demo_dir / "PatientCapture", demo_dir / "RetiCam"])

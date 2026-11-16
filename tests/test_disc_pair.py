@@ -106,8 +106,9 @@ def test_disc_pair_from_two_picked_photos(app, tmp_path, demo_dir, import_and_wa
         assert w.thumbs.count() == 2
         dlg, why = w._build_disc_pair()
         assert dlg is None and keys("Ctrl+클릭") in why  # only one photo picked so far (⌘클릭 on macOS)
-        shown = w.current["id"]
-        other = w.thumbs.item(1)
+        shown = w.current["id"]                         # (the OD photo: a patient opens with OD | OS)
+        other, mine = sorted((w.thumbs.item(i) for i in range(2)),
+                             key=lambda it: it.data(Qt.ItemDataRole.UserRole) == shown)
         other_id = other.data(Qt.ItemDataRole.UserRole)
 
         def ctrl_click(item):
@@ -125,7 +126,7 @@ def test_disc_pair_from_two_picked_photos(app, tmp_path, demo_dir, import_and_wa
         w.thumbs.setCurrentItem(other)                  # clicking the ② photo swaps the two
         app.processEvents()
         assert w.current["id"] == other_id and w.compare["id"] == shown
-        assert w.thumbs.item(0).text().startswith("②")
+        assert mine.text().startswith("②")
 
         dlg, why = w._build_disc_pair()
         assert why == "" and [src.eye for src in dlg.sources] == ["OD", "OS"]   # OD left whatever was clicked

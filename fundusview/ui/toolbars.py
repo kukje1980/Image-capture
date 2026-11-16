@@ -35,7 +35,7 @@ from .image_view import TOOL_HINTS
 # (key, label, tooltip, icon, VK-2 name)
 COMMANDS = (
     ("search", "환자 검색", "환자 ID·이름으로 찾기 (Ctrl+F)", "search", "ID# SEARCH"),
-    ("list", "환자 창", "작업 화면 왼쪽의 환자 창 열기/닫기 (처음 화면인 환자 목록은 ‹ 환자 목록 · Ctrl+0)", "log",
+    ("list", "환자 목록", "환자 목록 창 열기/닫기 (Ctrl+0) — 환자를 누르면 사진이 한 화면에 16장씩", "log",
      "OPEN LIST"),
     ("prev", "이전", "이전 사진 (PageUp)", "prev", "PREV"),
     ("next", "다음", "다음 사진 (PageDown)", "next", "NEXT"),
@@ -49,7 +49,7 @@ COMMANDS = (
      "discpair", "—"),
     ("glaucoma", "녹내장", "녹내장 분석 — 디스크 C/D · 광각 RNFL · 스테레오 보기 · 경과 비교 (두 장은 Ctrl+클릭)",
      "glaucoma", "—"),
-    ("view3d", "3D", "광각 사진을 3D 안구 모형으로 보기 (다시 누르면 모두 보기)", "eye3d", "—"),
+    ("view3d", "3D", "광각 사진을 3D 안구 모형으로 보기 (다시 누르면 처음 보기 — 모두 보기, VK-2 방식은 16장 보기)", "eye3d", "—"),
     ("print", "인쇄", "화면 영상과 환자 정보를 인쇄", "print", "PRINT"),
     ("settings", "설정", "감시 폴더·라이브러리·파일 이름 규칙", "settings", "—"),
     ("exit", "종료", "프로그램 종료", "exit", "EXIT"),
