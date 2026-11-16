@@ -415,7 +415,7 @@ def test_patient_explanation_tab(tmp_path):
         dlg.show()
         app.processEvents()
         names = [dlg.tabs.tabText(i) for i in range(dlg.tabs.count())]
-        assert names == ["디스크 C/D", "광각 분석", "스테레오 보기", "경과 비교", "환자 설명"]
+        assert names == ["디스크 C/D", "3D 입체", "광각 분석", "스테레오 보기", "경과 비교", "환자 설명"]
         assert dlg.tabs.currentWidget() is dlg.disc                  # the analysis still comes first
         tab = dlg.explain
         dlg.tabs.setCurrentWidget(tab)

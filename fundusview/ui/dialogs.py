@@ -37,8 +37,14 @@ def source_label(src: str | None) -> str:
 
 
 # 설정 → 일반 → 환자를 열면 (Settings.open_view)
-OPEN_VIEWS = (("odos", "최신 OD | OS 두 장 — 다중 보기에 나란히, 사진을 클릭하는 대로 더하고 빼기"),
-              ("grid", "VK-2 방식 — 사진 16장을 한 화면에, 골라서 [멀티]로 모아 보기"))
+OPEN_VIEWS = (("odos", "Simple — 최신 OD | OS 두 장을 나란히, 사진 목록을 클릭하면 그 눈의 사진이 바뀜"),
+              ("grid", "VK-2 방식 — 사진 16장을 한 화면에, 골라서 [Multi]로 모아 보기"))
+
+
+# 3D 안구의 마우스 휠 (Settings.wheel3d): (key, short name, what it does)
+WHEEL3D = (("depth", "깊이", "자르는 깊이 — 앞으로 굴리면 깊게, 뒤로 굴리면 닫힘 (내부에서는 확대)"),
+           ("zoom", "확대", "커서가 가리키는 곳으로 확대 · 축소 (깊이는 안구 열기의 깊이 막대로)"),
+           ("walk", "들어가기", "각막 → 앞방 → 동공 → 수정체 → 유리체 → 망막, 뒤로 굴리면 나오기"))
 
 
 def _combo(items, current) -> QComboBox:
@@ -292,16 +298,35 @@ class SettingsDialog(QDialog):
         self.opengl = _combo([("auto", "자동"), ("desktop", "그래픽카드 OpenGL"),
                               ("software", "소프트웨어 렌더링 (호환 모드)")], settings.opengl)
         f2.addRow("3D 렌더링 (재시작 필요)", self.opengl)
-        self.detail3d = _combo([("detailed", "자세히 (실제 해부 구조)"), ("simple", "간단히 (느린 PC용 가벼운 모형)")],
-                               settings.view3d_detail)
-        f2.addRow("3D 모형", self.detail3d)
+        self.wheel3d = _combo([(k, f"{name} — {what}") for k, name, what in WHEEL3D], settings.wheel3d)
+        self.wheel3d.setToolTip("3D 안구 위에서 마우스 휠이 하는 일 (3D 탭의 설정 → 마우스 휠에서도 바꿉니다)\n"
+                                "어느 것이든 Ctrl+휠 · 확대 바 · 오른쪽 드래그 · + / − 는 확대입니다")
+        f2.addRow("3D 마우스 휠", self.wheel3d)
+        self.walk_click3d = QCheckBox("각막을 누르면 그동안 휠로 들어가기 (휠이 깊이 · 확대일 때)")
+        self.walk_click3d.setToolTip("3D 안구의 각막을 누르면 전안부가 선택되고, 선택한 동안에는 휠이 각막부터 망막까지 "
+                                     "들어가기 · 나오기가 됩니다 (Esc · 다른 곳을 누르면 해제)")
+        self.walk_click3d.setChecked(bool(settings.walk_click3d))
+        f2.addRow("", self.walk_click3d)
+        self.wheel3d.currentIndexChanged.connect(          # (들어가기: the wheel goes in anyway)
+            lambda _: self.walk_click3d.setEnabled(self.wheel3d.currentData() != "walk"))
+        self.walk_click3d.setEnabled(self.wheel3d.currentData() != "walk")
         self.open_view = _combo(OPEN_VIEWS, settings.open_view)
         self.open_view.setToolTip("환자 목록에서 환자를 열 때 처음 나오는 화면\n"
-                                  "최신 OD | OS: 고른 검사의 최신 OD(왼쪽) · OS(오른쪽)가 다중 보기에 — 사진 목록을 클릭하면\n"
-                                  "바로 더해지고 다시 클릭하면 빠집니다.\n"
-                                  "VK-2 방식: 사진을 클릭해 고르고(번호) [멀티]를 누르면 고른 사진만 다중 보기로 모입니다.\n"
-                                  "더블클릭하면 그 사진을 크게 보고, 사진 아래 [16장]으로 돌아옵니다.")
+                                  "Simple: 고른 검사의 최신 OD(왼쪽) · OS(오른쪽) 두 장 — 사진 목록을 클릭하면 그 눈의 사진이\n"
+                                  "바뀌고, 여러 장을 함께 보려면 사진 위의 [Multi]를 누릅니다.\n"
+                                  "VK-2 방식: 사진을 클릭해 고르고(번호) [Multi]를 누르면 고른 사진만 모아 봅니다.\n"
+                                  "더블클릭하면 그 사진을 크게 보고(Detail), 사진 위의 [16장]으로 돌아옵니다.")
         f2.addRow("환자를 열면", self.open_view)
+        # what is written on the photos of the photo list (also 보기 → 사진 목록 표시)
+        self.thumb_date = QCheckBox("날짜")
+        self.thumb_date.setChecked(bool(settings.thumb_date))
+        self.thumb_kind = QCheckBox("종류 (컬러 · 몽타주 …)")
+        self.thumb_kind.setChecked(bool(settings.thumb_kind))
+        thumb_row = QHBoxLayout()
+        thumb_row.addWidget(self.thumb_date)
+        thumb_row.addWidget(self.thumb_kind)
+        thumb_row.addStretch(1)
+        f2.addRow("사진 목록의 사진 위에 표시", thumb_row)
         tabs.addTab(w2, "일반")
 
         # -- sharing (share.py) -----------------------------------------------------
@@ -507,8 +532,11 @@ class SettingsDialog(QDialog):
         s.stable_seconds = self.stable.value()
         s.rescan_seconds = self.rescan.value()
         s.opengl = self.opengl.currentData()
-        s.view3d_detail = self.detail3d.currentData()
+        s.wheel3d = self.wheel3d.currentData()
+        s.walk_click3d = self.walk_click3d.isChecked()
         s.open_view = self.open_view.currentData()
+        s.thumb_date = self.thumb_date.isChecked()
+        s.thumb_kind = self.thumb_kind.isChecked()
         s.custom_filename_patterns = [p for p in self.patterns.toPlainText().splitlines() if p.strip()]
         from .. import share
         s.share_mode = self.share_mode.currentData()

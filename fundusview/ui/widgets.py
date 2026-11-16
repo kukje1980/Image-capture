@@ -148,17 +148,6 @@ class Segmented(QFrame):
             "QPushButton#segment:checked { background: transparent; color: #ffffff; font-weight: 600; }"
             f"QPushButton#segment:disabled {{ color: {theme.TEXT4}; background: transparent; }}")
 
-    def clear(self) -> None:
-        """No segment selected (the view shown is switched elsewhere, e.g. 3D at the top)."""
-        if self.group.checkedButton() is None:
-            return
-        self.group.setExclusive(False)
-        self.group.checkedButton().setChecked(False)
-        self.group.setExclusive(True)
-        self._anim.stop()
-        self._thumb = QRectF()
-        self.update()
-
     def _target(self) -> QRectF:
         b = self.group.checkedButton()
         return QRectF(b.geometry()) if b is not None else QRectF()

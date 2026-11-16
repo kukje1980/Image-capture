@@ -1,6 +1,6 @@
-"""모두 보기 (v0.3.0): the big 2D photo with its macula and optic disc enlarged beside it; no tab row —
-the views (모두 보기 · 다중 보기 · 3D) are switched in the line under the photos; the patient line is
-in the menu bar; the command toolbar at the left."""
+"""Detail (모두 보기, v0.3.0): the big 2D photo with its macula and optic disc enlarged beside it; no
+tab row — the views (Simple · Multi · Detail · 3D) are icons in the row above the photos, the photo
+list alone under them; the patient line is in the menu bar; the command toolbar at the left."""
 import os
 
 import pytest
@@ -60,19 +60,26 @@ def test_overview_is_the_photo_with_its_macula_and_disc(tmp_path, demo_dir, impo
         app.processEvents()
         assert w._tab() == "all"
 
-        # -- the frame: no tab row; the view switch under the photos; patient line in the menu bar --
+        # -- the frame: no tab row; the views are icons above the photos; patient line in the menu bar --
         assert w.tabs.tabBar().isHidden()
-        # (16장 보기 is in the switch only in the VK-2 way: 설정 → 일반 → 환자를 열면 — test_photo_grid.py)
-        assert [b.text() for b in w.seg_views.buttons if not b.isHidden()] == ["모두 보기", "다중 보기"]
-        assert w.view_buttons["grid"].isHidden() and not w.view_acts["grid"].isVisible()
-        assert w.view_buttons["all"].isChecked() and _inside(w.seg_views, w.strip_w) and w.seg_views.isVisible()
-        # 3D · Montage · Glaucoma: icon buttons in the row above the photos (화면 분할 there on 다중 보기 only)
-        top = (w.btn_3d, w.btn_montage, w.btn_glaucoma)
-        assert [b.text() for b in top] == ["3D", "Montage", "Glaucoma"] and w.view_buttons["3d"] is w.btn_3d
+        # Simple · Multi · Detail · 3D, then Montage · Glaucoma: icon buttons in the row above the photos,
+        # the view on screen lit (16장 is among them only in the VK-2 way: 설정 → 일반 → 환자를 열면 —
+        # test_photo_grid.py; 화면 분할 is there on Multi only)
+        top = (w.btn_simple, w.btn_multi, w.btn_detail, w.btn_3d, w.btn_montage, w.btn_glaucoma)
+        assert [b.text() for b in top] == ["Simple", "Multi", "Detail", "3D", "Montage", "Glaucoma"]
         assert all(_inside(b, w.view_bar) and b.isVisible() and not b.icon().isNull() for b in top)
+        xs = [b.mapTo(w, QPoint(0, 0)).x() for b in top]
+        assert xs == sorted(xs)
+        assert [w.view_buttons[k] for k in ("simple", "multi", "all", "3d")] == list(top[:4])
+        assert w.view_buttons["grid"].isHidden() and not w.view_acts["grid"].isVisible()
+        assert [k for k, b in w.view_buttons.items() if b.isChecked()] == ["all"]
         assert w.view_bar.mapTo(w, QPoint(0, 0)).y() + w.view_bar.height() <= w.view2d.mapTo(w, QPoint(0, 0)).y()
         assert not w.multi_bar.isVisible() and _inside(w.multi.combo, w.view_bar)
+        # under the photos: the photo list alone, over the whole width (the eye of each row at its left)
         assert w.thumbs.mapTo(w, QPoint(0, 0)).y() > w.view2d.mapTo(w, QPoint(0, 0)).y() + w.view2d.height() - 5
+        assert w.eye_rail.mapTo(w.strip_w, QPoint(0, 0)).x() < 10
+        assert abs(w.thumbs.x() - (w.eye_rail.x() + w.eye_rail.width())) <= 2
+        assert w.thumbs.width() + w.eye_rail.width() >= w.strip_w.width() - 10 and w.eye_rail.isVisible()
         assert w.menuBar().cornerWidget(Qt.Corner.TopRightCorner) is w.top_w
         assert w.btn_patients.isVisible() and _inside(w.btn_patients, w.top_w)
         assert "김민수" in w.banner.text() and "20260115001" in w.banner.text()
@@ -80,7 +87,7 @@ def test_overview_is_the_photo_with_its_macula_and_disc(tmp_path, demo_dir, impo
         # low rows of photos, one per eye on the list: OD on top, OS under it
         from fundusview.ui.thumbs import EYE_ROLE, eye_row
         eyes = {eye_row(w.thumbs.item(i).data(EYE_ROLE)) for i in range(w.thumbs.count())}
-        assert w.thumbs.grid_shape()[0] == len(eyes) and w.thumbs.height() < len(eyes) * 130
+        assert w.thumbs.grid_shape()[0] == len(eyes) and w.thumbs.height() <= len(eyes) * 80 + 12
 
         # -- 모두 보기: the big photo, 황반 and 시신경 유두 enlarged; no 다중 · 3D panes --
         assert _inside(w.view2d, w.page_all) and w.view2d.has_image()
@@ -135,24 +142,37 @@ def test_overview_is_the_photo_with_its_macula_and_disc(tmp_path, demo_dir, impo
         if row["fovea_x"] is not None:
             assert roi_m.rect().contains(QPointF(row["fovea_x"], row["fovea_y"]))
 
-        # -- the view switch: 다중 보기 · 3D · back --
+        # -- the icons: Multi · 3D · back --
+        def lit():
+            return [k for k, b in w.view_buttons.items() if b.isChecked()]
+
         w.view_buttons["multi"].click()
-        assert w._tab() == "multi" and w.view_buttons["multi"].isChecked() and w.multi_bar.isVisible()
+        assert w._tab() == "multi" and lit() == ["multi"] and w.multi_bar.isVisible()
+        w.view_buttons["multi"].click()                                  # (the lit icon again: it stays lit)
+        assert w._tab() == "multi" and lit() == ["multi"]
         w.view_buttons["3d"].click()
-        assert w._tab() == "3d" and w.view_buttons["3d"].isChecked() and not w.multi_bar.isVisible()
-        assert w.seg_views.group.checkedButton() is None                 # 3D is not a segment under the photos
-        w._on_action("view3d")                                           # the toolbar's 3D again: back
-        assert w._tab() == "all" and w.view_buttons["all"].isChecked()
+        assert w._tab() == "3d" and lit() == ["3d"] and not w.multi_bar.isVisible()
+        w._on_action("view3d")                                           # the toolbar's 3D again: back to Multi
+        assert w._tab() == "multi" and lit() == ["multi"]
+        w.view_buttons["simple"].click()
+        assert w._tab() == "multi" and lit() == ["simple"] and not w.multi_bar.isVisible()
+        w.view_buttons["all"].click()
+        assert w._tab() == "all" and lit() == ["all"]
+        w.view_buttons["3d"].click()
+        w.view_buttons["3d"].click()                                     # the 3D icon again: back to Detail
+        assert w._tab() == "all" and lit() == ["all"]
         assert _inside(w.view2d, w.page_all) and roi_d.isVisible()
-        # whatever led to 검토 · 2D 보기 · 비교 stays on 모두 보기
+        # whatever led to 검토 · 2D 보기 · 비교 stays on Detail
         for key in ("review", "2d", "cmp"):
             w._go(key)
             assert w._tab() == "all"
-        # 보기 menu: Ctrl+1~3 for the three views, Ctrl+0 the patient list
+        # 보기 menu: Ctrl+1 · 2 · 3 · 5 for the views, Ctrl+0 the patient list
         acts = {a.text(): a.shortcut().toString() for a in w.findChildren(type(w.acts["fit"]))
-                if a.text() in ("모두 보기", "다중 보기", "3D", "2D 보기", "비교", "검토", "3D 안구", "환자 목록")
+                if a.text() in ("Simple", "Multi", "Detail", "모두 보기", "다중 보기", "3D", "2D 보기", "비교", "검토",
+                                "3D 안구", "환자 목록")
                 and not a.shortcut().isEmpty()}
-        assert acts == {"모두 보기": "Ctrl+1", "다중 보기": "Ctrl+2", "3D": "Ctrl+3", "환자 목록": "Ctrl+0"}
+        assert acts == {"Simple": "Ctrl+1", "Multi": "Ctrl+2", "3D": "Ctrl+3", "Detail": "Ctrl+5",
+                        "환자 목록": "Ctrl+0"}
         assert w.acts["view3d"].text() == "3D"
     finally:
         w.close()

@@ -512,6 +512,9 @@ const E = {
   relief: 0, glass: 0, dark: 0, autoRotate: 0, outFov: 38,
   yaw: 38, pitch: 18, dist: MD.dist0, target: [0, 0, 0], inYaw: 0, inPitch: 0, inFov: MD.fov0, inZ: 0.35,
   drag: null, dragKind: '', touched: now(), entering: false, enterPlan: [], enterEnd: {}, viewEnds: null,
+  // 휠로 들어가기 (전안부 선택): the wheel walks the way in and back out; on the way a left drag looks around
+  // from where one is (as the inside view's yaw / pitch) and a left click brings that place to the middle
+  walk: false, walkYaw: 0, walkPitch: 0,
   rlight: [0, 0.6, 0.8],
 };
 E.thetaMax = () => thetaMax(E.fov, E.fovType, E.viewpoint);
@@ -711,19 +714,27 @@ function look(dx, dy) {
 }
 
 // motion of the eye
-const fling = new Decay((dx, dy) => (E.dragKind === 'pan' ? pan(dx, dy) : look(dx, dy)), 0.42, 4.0);
+const fling = new Decay((dx, dy) => dragMove(E.dragKind, dx, dy), 0.42, 4.0);
+function dragMove(kind, dx, dy) {   // on the way in: look around from where one is; otherwise turn (or move) the eye
+  if (onTheWay()) { walkLook(dx, dy); return; }
+  forgetWay();
+  if (kind === 'pan') pan(dx, dy); else look(dx, dy);
+}
 let zoomPos = null;
 const zoomGlide = new Chase((s) => zoomAt(s, zoomPos), 0.05);
 const turnX = new Chase((d) => keyTurn(d, 0), 0.045);
 const turnY = new Chase((d) => keyTurn(0, d), 0.045);
 let viewGlide = new Tween(() => {}, 0.45);
 function keyTurn(dx, dy) {
+  if (onTheWay()) { E.walkYaw = clamp(E.walkYaw - dx * 0.5, -150, 150); E.walkPitch = clamp(E.walkPitch + dy * 0.5, -85, 85); walkRefresh(); return; }
+  forgetWay();
   if (E.mode === 'inside') { E.inYaw = clamp(E.inYaw - dx * 0.5, -150, 150); E.inPitch = clamp(E.inPitch + dy * 0.5, -85, 85); }
   else { E.yaw = (((E.yaw - dx) % 360) + 360) % 360; E.pitch = clamp(E.pitch + dy, -89, 89); }
   redraw();
 }
-function stopMotion() { fling.stop(); zoomGlide.stop(); turnX.stop(); turnY.stop(); viewGlide.stop(); journey.stop(); }
-const moving = () => E.drag != null || fling.running() || zoomGlide.running() || turnX.running() || turnY.running() || viewGlide.running() || journey.running();
+function stopMotion() { fling.stop(); zoomGlide.stop(); turnX.stop(); turnY.stop(); viewGlide.stop(); journey.stop(); walkGlide.stop(); gazeTween.stop(); }
+const moving = () => E.drag != null || fling.running() || zoomGlide.running() || turnX.running() || turnY.running() || viewGlide.running() || journey.running()
+  || walkGlide.running() || gazeTween.running();
 function glideTo(goal = null, inside = null, duration = 0.45, extra = null, done = null, easing = ease) {
   fling.stop(); zoomGlide.stop(); viewGlide.stop();
   extra = extra || {};
@@ -763,20 +774,21 @@ function frontView(animate = true) {
 // 들어가며 보기: from the whole eye, in through the cornea, the anterior chamber, the pupil, the lens and
 // the vitreous to the retina — nothing goes dark on the way. j: 0 the whole eye … 1 the retina (내부).
 const JOURNEY_Z = 0.35;       // where it ends: the inside view's eye point (EyeView.in_z)
+const JOURNEY_FRONT = 0.32;   // … where it faces the cornea: from here on along the axis
 const journey = {
   j: 0, from: null, fromCut: 0.25, fromXray: 0, tween: null, playing: false,
   running() { return this.playing; },
   begin() {   // the path starts from the eye as it is now (or the start view)
     if (this.from) return;
-    if (E.mode === 'inside') { this.from = { ...home() }; this.j = 1; }
-    else { this.from = pose(); this.j = 0; }
+    if (E.mode === 'inside') { this.from = { ...home() }; this.j = 1; E.walkYaw = E.inYaw; E.walkPitch = E.inPitch; }
+    else { this.from = pose(); this.j = 0; E.walkYaw = 0; E.walkPitch = 0; }
     this.fromCut = E.cut < 0.999 ? E.cut : 0.25;
     this.fromXray = E.xray;
     if (vt.active()) vt.finish();
     E.half = 0;
   },
   pose(j) {   // the camera and the eye at j
-    const f = this.from, a = 0.32;
+    const f = this.from, a = JOURNEY_FRONT;
     const out = { mode: j >= 1 ? 'inside' : 'outside', cut: lerp(this.fromCut, 1, ease(j / 0.12)), xray: lerp(this.fromXray, 0, ease(j / 0.12)) };
     if (j <= a) {   // to the front of the closed eye, coming nearer
       const k = ease(j / a);
@@ -797,10 +809,11 @@ const journey = {
   },
   apply(j) {
     this.j = clamp(j, 0, 1);
+    if (this.j <= 0) { E.walkYaw = 0; E.walkPitch = 0; }   // back at the start: the way in goes straight again
     const p = this.pose(this.j);
     Object.assign(E, { cut: p.cut, xray: p.xray, yaw: p.yaw, pitch: p.pitch, dist: p.dist, target: p.target, outFov: p.outFov });
-    if (p.mode === 'inside') Object.assign(E, { mode: 'inside', inYaw: 0, inPitch: 0, inFov: E.FOV0, inZ: JOURNEY_Z });
-    else E.mode = 'outside';
+    if (p.mode === 'inside') Object.assign(E, { mode: 'inside', inYaw: E.walkYaw, inPitch: E.walkPitch, inFov: E.FOV0, inZ: JOURNEY_Z });
+    else { E.mode = 'outside'; if (E.walkYaw || E.walkPitch) turnGaze(); }
     ui.onJourney(this.j);
     viewChanged();
   },
@@ -813,17 +826,110 @@ const journey = {
     this.tween.start();
   },
   stop() { if (this.tween) this.tween.stop(); this.playing = false; },
-  end() {   // back to the ordinary views: the path is forgotten
-    this.stop(); this.from = null;
+  end() {   // back to the ordinary views: the path is forgotten, the wheel zooms again
+    this.stop(); gazeTween.stop(); this.from = null; E.walkYaw = 0; E.walkPitch = 0; setWalk(false);
   },
 };
+// 휠로 들어가기: the anterior segment picked (a click on the cornea, or 전안부 선택) — the wheel walks the way
+// in from the cornea to the retina and back out; on the way a left drag looks around, a left click centres
+const WALK_STEP = 0.04;       // one wheel notch along the way (25 from the whole eye to the retina)
+const onTheWay = () => journey.from != null && journey.j > 1e-6;
+function forgetWay() {   // turned or moved by hand at the start of the way: the next way in starts from there
+  if (journey.from && journey.j <= 1e-6 && !journey.running()) { journey.from = null; E.walkYaw = 0; E.walkPitch = 0; }
+}
+function setWalk(on) {
+  on = !!on;
+  if (on === E.walk) return;
+  E.walk = on; walkGlide.stop(); E.touched = now();
+  if (on && E.mode === 'inside') journey.begin();   // picked from inside: on the way, at the retina
+  ui.onWalk(on); redraw();
+}
+function wayBasis() {   // forward / right / up of the way at journey.j before one looks around
+  if (E.mode === 'inside') return [[0, 0, -1], [1, 0, 0], [0, 1, 0]];
+  const p = journey.pose(journey.j), ya = rad(p.yaw), pa = rad(p.pitch);
+  const f = [-Math.sin(ya) * Math.cos(pa), -Math.sin(pa), -Math.cos(ya) * Math.cos(pa)];
+  const r = unit(cross(f, Math.abs(p.pitch) < 89 ? [0, 1, 0] : [0, 0, -1]));
+  return [f, r, cross(r, f)];
+}
+// how much of where one looks shows: none at the start of the way, all from the cornea on
+const lookWeight = () => (E.mode === 'inside' ? 1 : ease(journey.j / JOURNEY_FRONT));
+function turnGaze() {   // outside on the way: the camera stays where the way has it and looks where one looks
+  const eye = viewBasis()[0], [f, r, u] = wayBasis(), w = lookWeight();
+  const cy = Math.cos(rad(E.walkYaw * w)), sy = Math.sin(rad(E.walkYaw * w)), cp = Math.cos(rad(E.walkPitch * w)), sp = Math.sin(rad(E.walkPitch * w));
+  let d = mul(unit(add(mul(add(mul(f, cy), mul(r, sy)), cp), mul(u, sp))), -1);
+  E.yaw = ((deg(Math.atan2(d[0], d[2])) % 360) + 360) % 360;
+  E.pitch = clamp(deg(Math.asin(clamp(d[1], -1, 1))), -89, 89);
+  const ya = rad(E.yaw), pa = rad(E.pitch);
+  d = [Math.sin(ya) * Math.cos(pa), Math.sin(pa), Math.cos(ya) * Math.cos(pa)];
+  E.target = sub(eye, mul(d, E.dist));
+}
+function frontZ() {   // the front of the eye: the limbus, or the rim of the front cut while it is open
+  return E.mode === 'outside' && !halfOn() && E.cut < 0.999 ? Math.min(E.cut, K.LIMBUS_Z) : K.LIMBUS_Z;
+}
+function anteriorAt(px, py) {   // the cornea and the limbus round it (the front cut open: the opening and its rim)
+  if (E.mode !== 'outside') return false;
+  const [o, d] = ray(px, py);
+  const first = (radius, cz = 0) => {
+    const oc = sub(o, [0, 0, cz]), b = dot(oc, d), disc = b * b - (dot(oc, oc) - radius * radius);
+    if (disc < 0) return null;
+    const t = -b - Math.sqrt(disc); return t > 0 ? t : null;
+  };
+  let best = null, t = first(1);
+  if (t != null && add(o, mul(d, t))[2] <= K.LIMBUS_Z) best = [t, add(o, mul(d, t))[2]];
+  t = first(K.CORNEA_R, K.CORNEA_CENTER_Z);
+  if (t != null && add(o, mul(d, t))[2] >= K.LIMBUS_Z && (!best || t < best[0])) best = [t, add(o, mul(d, t))[2]];
+  return !!best && best[1] >= frontZ() - 0.07;
+}
+function walkBy(steps, pos = null) {   // steps wheel notches in (+) or out (−); at the retina the wheel goes on as the inside view's
+  // (reaching the retina, or the whole field on the way back, ends that turn of the wheel there)
+  if (Math.abs(steps) < 1e-9) return;
+  journey.stop(); journey.begin();
+  if (E.mode === 'inside') {
+    let part = steps;
+    if (steps < 0) part = Math.max(steps, E.inFov < E.FOV0 ? Math.log(E.FOV0 / E.inFov) / Math.log(0.88) : 0);   // widen first
+    if (part) {
+      zoomAt(part, pos);
+      if (Math.abs(E.inFov - E.FOV0) < 1e-6) E.inFov = E.FOV0;
+      E.walkYaw = E.inYaw; E.walkPitch = E.inPitch;
+    }
+    if (Math.abs(steps - part) < 1e-9) return;
+    if (part) { walkGlide.stop(); return; }   // the whole field again: this turn of the wheel stops here
+  }
+  const arrive = E.mode !== 'inside' && journey.j + steps * WALK_STEP >= 1;
+  journey.apply(journey.j + steps * WALK_STEP);
+  if (arrive) walkGlide.stop();   // at the retina: this turn stops here (the next one comes nearer)
+}
+function walkLook(dx, dy) {   // on the way: look around from where one is
+  const [, h] = viewSize(), k = (E.mode === 'inside' ? E.inFov : E.outFov) / h / Math.max(0.25, lookWeight());
+  E.walkYaw = clamp(E.walkYaw - dx * k, -150, 150); E.walkPitch = clamp(E.walkPitch + dy * k, -85, 85);
+  walkRefresh();
+}
+function walkRefresh() {
+  if (!journey.from) return;   // (the way was left meanwhile)
+  if (E.mode === 'inside') { E.inYaw = E.walkYaw; E.inPitch = E.walkPitch; viewChanged(); } else journey.apply(journey.j);
+}
+function lookToward(px, py, animate = true) {   // on the way: what lies under (px, py) comes to the middle, gliding
+  const [, d] = ray(px, py), [f, r, u] = wayBasis(), w = Math.max(1e-3, lookWeight());
+  const y1 = clamp(deg(Math.atan2(dot(d, r), dot(d, f))) / w, -150, 150), p1 = clamp(deg(Math.asin(clamp(dot(d, u), -1, 1))) / w, -85, 85);
+  const y0 = E.walkYaw, p0 = E.walkPitch;
+  gazeTween.stop();
+  gazeTween = new Tween((k) => { E.walkYaw = lerp(y0, y1, k); E.walkPitch = lerp(p0, p1, k); walkRefresh(); }, animate ? 0.45 : 0, ease);
+  gazeTween.start();
+}
+function clicked(px, py) {   // a left click: on the way, that place to the middle; at the start, the anterior segment picked (or let go)
+  if (onTheWay()) lookToward(px, py);
+  else if (anteriorAt(px, py)) setWalk(true);
+  else if (E.walk) setWalk(false);
+}
+const walkGlide = new Chase((s) => walkBy(s, walkPos), 0.06);
+let walkPos = null, gazeTween = new Tween(() => {}, 0);
 // 자동 회전
 const spin = {
   yaw: null,
   step(dt) {
     const t = now();
     const busy = E.drag != null || fling.running() || zoomGlide.running() || viewGlide.running() || journey.running() || E.mode !== 'outside'
-      || E.scan != null || show.playing || len(viewBasis()[0]) < 1.1;   // (not inside the eye on the way in)
+      || E.scan != null || show.playing || E.walk || len(viewBasis()[0]) < 1.1;   // (not inside the eye on the way in; the picked cornea stays facing you)
     if (busy || this.yaw == null || Math.abs(E.yaw - this.yaw) > 1e-9) { E.touched = t; this.yaw = E.yaw; return E.autoRotate !== 0; }
     const k = clamp((t - E.touched - E.SPIN_WAIT) / 1.5, 0, 1);
     if (k > 0) { E.yaw = (E.yaw + E.autoRotate * k * k * (3 - 2 * k) * dt) % 360; this.yaw = E.yaw; redraw(); }
@@ -1112,11 +1218,13 @@ function drawDark() {
 }
 
 // the field of view and the slit beam over the section (EyeView._paint_overlay), on a 2D canvas
-const FOV_COLOR = [56, 200, 255], BEAM_COLOR = [255, 128, 64];
+const FOV_COLOR = [56, 200, 255], BEAM_COLOR = [255, 128, 64], WALK_COLOR = [100, 210, 255];
 function paintOverlay(mvp) {
   const ctx = overlay.getContext('2d'), [w, h] = viewSize(), dpr = overlay.width / w;
   ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, overlay.width, overlay.height);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const ringAlpha = E.walk && E.mode === 'outside' ? 1 - ease((journey.j / JOURNEY_FRONT - 0.6) / 0.35) : 0;
+  if (ringAlpha > 0) paintWalkRing(ctx, mvp, w, h, ringAlpha);
   const wanted = halfOn() && ((E.fovAlpha > 0.005 && E.fovSweep > 0) || (E.scan != null && E.scanBeam > 0.005));
   if (!wanted) return;
   const [k, off] = halfPlane(), eye = viewBasis()[0];
@@ -1164,6 +1272,33 @@ function paintOverlay(mvp) {
       }
     }
   }
+}
+
+// 휠로 들어가기: the picked anterior segment — a glowing ring on the limbus (the front cut open: on the rim of
+// the opening, closing onto the limbus as the way closes the eye), on the side that faces the camera
+function paintWalkRing(ctx, mvp, w, h, alpha) {
+  const toScreen = (p) => { const v = m4v(mvp, [p[0], p[1], p[2], 1]); return v[3] <= 1e-6 ? null : [(v[0] / v[3] + 1) * 0.5 * w, (1 - v[1] / v[3]) * 0.5 * h]; };
+  const eye = viewBasis()[0], z = frontZ(), r = Math.sqrt(Math.max(0, 1 - z * z));
+  const ring = []; for (let i = 0; i <= 144; i++) { const t = 2 * PI * i / 144; ring.push([r * Math.cos(t), r * Math.sin(t), z]); }
+  const centre = toScreen([0, 0, z]), edge = toScreen(ring[0]);
+  if (!centre || !edge) return;
+  const lw = clamp(Math.hypot(edge[0] - centre[0], edge[1] - centre[1]) / 45, 1.5, 4);
+  const open = z < K.LIMBUS_Z - 1e-3 && eye[2] > z;
+  const stroke = (pts) => {
+    pts = pts.filter(Boolean);
+    if (pts.length < 2) return;
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    for (const [wm, a] of [[4.5, 0.12], [2.4, 0.28], [1, 1]]) {
+      ctx.strokeStyle = `rgba(${WALK_COLOR.join(',')},${clamp(alpha * a, 0, 1)})`; ctx.lineWidth = lw * wm;
+      ctx.beginPath(); ctx.moveTo(...pts[0]); for (const q of pts.slice(1)) ctx.lineTo(...q); ctx.stroke();
+    }
+  };
+  let run = [];
+  for (const p of ring) {
+    if (open || dot(sub(eye, p), p) > 0) { run.push(toScreen(p)); continue; }
+    stroke(run); run = [];
+  }
+  stroke(run);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1806,6 +1941,7 @@ const ui = {
     // 들어가며 보기
     $('journey-play').addEventListener('click', () => this.playJourney());
     $('journey').addEventListener('input', () => { show.stop(); journey.scrub(+$('journey').value / 100); });
+    $('walk').addEventListener('click', () => { setWalk(!E.walk); canvas.focus(); });
     // 안구 열기
     for (const b of document.querySelectorAll('[name=view]')) b.addEventListener('change', () => this.setView(b.value));
     // 슬릿 스캔
@@ -2079,24 +2215,33 @@ const ui = {
     journey.play(to, () => { if (to === 0) this.leaveJourney(true); });
   },
   leaveJourney(glide = false) {   // back to the ordinary outside view (the front cut as the slider says)
+    setWalk(false);
     if (!journey.from) return;
     journey.end();
     if (E.mode === 'inside') return;
+    journey.j = 0; this.onJourney(0);   // (the slider, the button and the name chip back at the start)
     const cut = +$('cut').value;
     if (glide) glideTo(home(), null, 0.6, { cut: cut < 100 ? cut / 100 : 1, outFov: 38 });
     else { E.outFov = 38; E.cut = cut < 100 ? cut / 100 : 1; }
+  },
+  WALK_HINT: '전안부 선택 — 휠을 앞으로 돌리면 각막부터 망막까지 들어갑니다',
+  onWalk(on) {   // 휠로 들어가기 picked or let go (the button, a click on the cornea, Esc, another view)
+    $('walk').setAttribute('aria-pressed', String(on));
+    const tag = $('where');
+    if (on) { show.stop(); vt.finish(); if (!onTheWay()) { tag.textContent = this.WALK_HINT; tag.hidden = false; clearTimeout(this.whereTimer); } }
+    else if (!onTheWay()) tag.hidden = true;
   },
   onJourney(j) {   // the slider, the 외부 | 내부 switch and the name of the place passed
     $('journey').value = Math.round(j * 100);
     $('journey-play').textContent = journey.running() ? '■ 멈춤' : j >= 0.999 ? '◀ 나오기' : '▶ 들어가기';
     $(j >= 0.999 ? 'mode-in' : 'mode-out').checked = true;
     const z = len(viewBasis()[0]);
-    const where = j <= 0.001 ? '' : j >= 0.999 ? '망막 — 황반과 시신경 유두 (망막 시점)' : j < 0.32 ? '안구 전체 — 각막 쪽으로'
+    const where = j <= 0.001 ? (E.walk ? this.WALK_HINT : '') : j >= 0.999 ? '망막 — 황반과 시신경 유두 (망막 시점)' + (E.walk ? ' · 휠: 더 가까이' : '') : j < 0.32 ? '안구 전체 — 각막 쪽으로'
       : z > 1.09 ? '각막 앞' : z > 0.83 ? '앞방 — 각막과 홍채 사이 (방수)' : z > 0.785 ? '동공 — 홍채 가운데'
       : z > 0.46 ? '수정체' : '유리체 — 앞에 망막이 보입니다';
     const tag = $('where');
     if (where) { tag.textContent = where; tag.hidden = false; clearTimeout(this.whereTimer); }
-    if (j >= 0.999 || j <= 0.001) this.whereTimer = setTimeout(() => { tag.hidden = true; }, j >= 0.999 ? 2500 : 0);
+    if (j >= 0.999 || (j <= 0.001 && !E.walk)) this.whereTimer = setTimeout(() => { tag.hidden = true; }, j >= 0.999 ? 2500 : 0);
   },
   toggleFull() {
     if (document.fullscreenElement) { document.exitFullscreen().catch(() => {}); return; }
@@ -2106,20 +2251,24 @@ const ui = {
   bindEye() {
     const vel = new Velocity();
     const pointers = new Map();
-    let press = null, pinch = null;
+    let press = null, pinch = null, click = false;
     const interacted = () => { if (show.timerOn) show.stop(); if (vt.active()) vt.finish(); if (journey.running()) { journey.stop(); ui.onJourney(journey.j); } };
+    const CLICK_SLOP = 4;   // pixels a click may move and still be a click
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     canvas.addEventListener('pointerdown', (e) => {
       canvas.setPointerCapture(e.pointerId);
       pointers.set(e.pointerId, [e.offsetX, e.offsetY]);
+      // a click that only catches something (a flick, ▶ 들어가기, a view glide, the slit scan) picks nothing
+      const busy = fling.running() || viewGlide.running() || journey.running() || show.timerOn || vt.active();
       stopMotion(); E.touched = now(); interacted();
       if (pointers.size === 2) {   // two fingers: pinch to zoom, move to pan
         const [a, b] = [...pointers.values()];
         pinch = { d: Math.hypot(a[0] - b[0], a[1] - b[1]), c: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2] };
-        E.drag = null; return;
+        E.drag = null; click = false; return;
       }
       E.drag = press = [e.offsetX, e.offsetY];
       vel.reset(); vel.add(e.offsetX, e.offsetY);
+      click = e.button === 0 && !e.shiftKey && !busy;
       E.dragKind = e.button === 2 ? 'zoom' : (e.button === 1 || e.shiftKey) ? 'pan' : 'rotate';
     });
     canvas.addEventListener('pointermove', (e) => {
@@ -2127,21 +2276,26 @@ const ui = {
       pointers.set(e.pointerId, [e.offsetX, e.offsetY]);
       if (pinch && pointers.size === 2) {
         const [a, b] = [...pointers.values()], d = Math.hypot(a[0] - b[0], a[1] - b[1]), c = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
-        if (d > 0 && pinch.d > 0) zoomAt(Math.log(d / pinch.d) / -Math.log(0.88), c);
-        E.dragKind = 'pan'; pan(c[0] - pinch.c[0], c[1] - pinch.c[1]);
+        if (d > 0 && pinch.d > 0) { const st = Math.log(d / pinch.d) / -Math.log(0.88); if (E.walk) walkBy(st, c); else zoomAt(st, c); }
+        E.dragKind = 'pan'; dragMove('pan', c[0] - pinch.c[0], c[1] - pinch.c[1]);
         pinch = { d, c }; return;
       }
       if (!E.drag) return;
+      if (click) {   // still a click while it has not moved: the eye stays put
+        if (Math.hypot(e.offsetX - press[0], e.offsetY - press[1]) <= CLICK_SLOP) return;
+        click = false; E.drag = press;
+      }
       const dx = e.offsetX - E.drag[0], dy = e.offsetY - E.drag[1];
       E.drag = [e.offsetX, e.offsetY]; vel.add(e.offsetX, e.offsetY);
-      if (E.dragKind === 'zoom') zoomAt(-dy / 40, press);
-      else if (E.dragKind === 'pan') pan(dx, dy);
-      else look(dx, dy);
+      if (E.dragKind === 'zoom') { if (E.walk) walkBy(-dy / 40, press); else zoomAt(-dy / 40, press); }
+      else dragMove(E.dragKind, dx, dy);
     });
     const up = (e) => {
       pointers.delete(e.pointerId);
       if (pinch) { if (pointers.size < 2) pinch = null; E.drag = null; return; }
       const was = E.drag; E.drag = null; E.touched = now();
+      if (was && click && e.type === 'pointerup') { click = false; clicked(e.offsetX, e.offsetY); return; }
+      click = false;
       if (was && (E.dragKind === 'rotate' || E.dragKind === 'pan')) fling.start(...vel.get());
     };
     canvas.addEventListener('pointerup', up);
@@ -2149,11 +2303,12 @@ const ui = {
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
       fling.stop(); viewGlide.stop(); E.touched = now(); interacted();
-      zoomPos = [e.offsetX, e.offsetY];
       const px = e.deltaMode === 1 ? e.deltaY * 40 : e.deltaMode === 2 ? e.deltaY * 800 : e.deltaY;
+      if (E.walk) { journey.stop(); gazeTween.stop(); walkPos = [e.offsetX, e.offsetY]; walkGlide.add(clamp(-px / 100, -6, 6)); return; }   // 휠로 들어가기
+      zoomPos = [e.offsetX, e.offsetY];
       zoomGlide.add(clamp(-px / 100, -6, 6));
     }, { passive: false });
-    canvas.addEventListener('dblclick', () => { interacted(); E.drag = null; resetView(true); });
+    canvas.addEventListener('dblclick', () => { interacted(); E.drag = null; this.leaveJourney(); resetView(true); });
     canvas.addEventListener('keydown', (e) => {
       const k = e.key;
       if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', '+', '=', '-', '_', '0', 'Home'].includes(k)) {
@@ -2161,9 +2316,12 @@ const ui = {
       }
       if (k === 'ArrowLeft') turnX.add(-10); else if (k === 'ArrowRight') turnX.add(10);
       else if (k === 'ArrowUp') turnY.add(-10); else if (k === 'ArrowDown') turnY.add(10);
-      else if (k === '+' || k === '=') { zoomPos = null; zoomGlide.add(2); }
-      else if (k === '-' || k === '_') { zoomPos = null; zoomGlide.add(-2); }
-      else if (k === '0' || k === 'Home') resetView(true);
+      else if (k === '+' || k === '=' || k === '-' || k === '_') {
+        const st = k === '+' || k === '=' ? 2 : -2;
+        if (E.walk) { journey.stop(); walkPos = null; walkGlide.add(st); } else { zoomPos = null; zoomGlide.add(st); }
+      }
+      else if (k === '0' || k === 'Home') { this.leaveJourney(); resetView(true); }
+      else if (k === 'Escape' && E.walk && !document.fullscreenElement) { e.preventDefault(); setWalk(false); }
       else if (k === ' ' && document.fullscreenElement) { e.preventDefault(); this.toggleScan(); }
     });
   },

@@ -1,7 +1,9 @@
-"""녹내장 분석 — disc C/D, wide-field RNFL, stereo viewing and progression (``glaucoma.py``).
+"""녹내장 분석 — disc C/D, the disc in 3D, wide-field RNFL, stereo viewing and progression
+(``glaucoma.py``, ``disc3d.py``).
 
 Opened with the [Glaucoma] button above the photos (or [녹내장] in the command toolbar). The
-photo on screen goes to **디스크 C/D** (cut around its optic disc) and **광각 분석** (its disc and
+photo on screen goes to **디스크 C/D** (cut around its optic disc), **3D 입체** (the disc as a
+surface to turn — from one photo, or from the parallax of two) and **광각 분석** (its disc and
 fovea, found at import, are already marked); with a second photo picked (Ctrl+click, ②) the two
 go to **스테레오 보기** and **경과 비교**, cut around their discs to the same retinal field so
 that different cameras compare.
@@ -11,6 +13,7 @@ are), written to a file or copied.
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,6 +25,7 @@ from PySide6.QtWidgets import (
     QSlider, QTabWidget, QVBoxLayout, QWidget,
 )
 
+from .. import disc3d
 from .. import glaucoma as G
 from . import theme
 from .image_view import from_qimage, to_qimage
@@ -632,6 +636,233 @@ class DiscTab(_Tab):
         return self.eye_key
 
 
+# -- 3D ----------------------------------------------------------------------------------------------
+S3_ONE = "사진 한 장의 밝기로 추정한 모양입니다 (창백한 곳 = 깊은 곳). 실제 깊이를 잰 것이 아닙니다."
+S3_HINT = "사진을 끌면 돌아갑니다. 깊이는 과장해서 보여 주는 상대값입니다."
+
+
+class Surface3DTab(_Tab):
+    """The optic disc as a surface to turn (``disc3d.py``): its shape estimated from one photo's
+    brightness, or — with two photos of the same disc — from the parallax between them. The two
+    photos can also be flickered on the surface."""
+    ROCK_YAW, ROCK_PITCH, ROCK_S = 16.0, 6.0, 4.0        # 자동으로 흔들기: degrees each way, seconds a swing
+    LIMIT = 65.0                                         # how far the surface turns (degrees)
+
+    def __init__(self, photo: Photo | None, second: Photo | None = None, parent=None):
+        super().__init__(NEED_ONE, parent)
+        self.photos = [p for p in (photo, second) if p is not None]
+        eyes = {p.eye for p in self.photos if p.eye}
+        self.stereo_ok = len(self.photos) == 2 and len(eyes) < 2      # (OD with OS is no stereo pair)
+        self.source = "stereo" if self.stereo_ok else "a"
+        self.field = "normal"
+        self.yaw, self.pitch = -22.0, 14.0
+        self.info: dict = {}
+        self._tex: list = []
+        self._heights: dict = {}
+        self._phase = 0
+        self._t0 = time.monotonic()
+        self._drag = None
+        self._timer = QTimer(self)
+        self._timer.setInterval(50)
+        self._timer.timeout.connect(self._tick)
+        self.hint.setText(S3_HINT)
+
+        self.sources = None
+        self.sw_flip = Switch("깊이 뒤집기")
+        self.sw_flip.setToolTip("컵이 솟아 보이면 켭니다 (어느 사진이 왼쪽에서 찍혔는지는 알 수 없습니다)")
+        self.sw_flip.toggled.connect(lambda _on: self._shape_changed())
+        self.sw_flick = Switch("두 사진 깜빡임")
+        self.sw_flick.setToolTip("같은 표면 위에서 사진 ①과 ②를 번갈아 보여 줍니다")
+        self.sw_flick.toggled.connect(lambda _on: self._restart())
+        self.speed = _Slider("깜빡임 속도", 1, 6, 2, 1, lambda v: f"{v:.0f} Hz")
+        self.fields = _Choice(DISC_FIELDS)
+        self.fields.set("normal")
+        self.fields.changed.connect(self.set_field)
+        self.fields.setToolTip("화면에 담을 범위 — 유두 지름의 몇 배인지")
+        self.status = _note()
+        rows = [self.fields, self.status]
+        if len(self.photos) == 2:
+            self.sources = _Choice([("a", "사진 ①", "사진 ① 한 장으로 추정"), ("b", "사진 ②", "사진 ② 한 장으로 추정"),
+                                    ("stereo", "2장 스테레오", "두 사진의 시차로 깊이 계산")])
+            self.sources.set(self.source)
+            self.sources.changed.connect(self.set_source)
+            rows = [self.sources, self.fields, self.sw_flip, self.sw_flick, self.speed, self.status]
+        self.side.addWidget(card("모양 (깊이)", *rows, lines=False))
+
+        self.s_depth = _Slider("깊이 과장", 0, 200, 100, 5, lambda v: f"{v:.0f}%")
+        self.s_depth.changed.connect(lambda _v: self._draw())
+        self.sw_auto = Switch("자동으로 흔들기")
+        self.sw_auto.setChecked(True)
+        self.sw_auto.toggled.connect(lambda _on: self._restart())
+        self.sw_light = Switch("입체 조명")
+        self.sw_light.setChecked(True)
+        self.sw_contour = Switch("등고선")
+        self.sw_contour.setToolTip("같은 깊이를 잇는 선 — 파랑은 들어간 곳, 주황은 솟은 곳")
+        self.sw_ana = Switch("적청 안경")
+        self.sw_ana.setToolTip("적청 안경(왼쪽 빨강, 오른쪽 청록)으로 보는 입체 화면")
+        for sw in (self.sw_light, self.sw_contour, self.sw_ana):
+            sw.toggled.connect(lambda _on: self._draw())
+        self.b_front = _button("정면", tip="돌리기 전의 사진 그대로")
+        self.b_tilt = _button("비스듬히")
+        self.b_front.clicked.connect(lambda: self.set_view(0.0, 0.0))
+        self.b_tilt.clicked.connect(lambda: self.set_view(-22.0, 14.0))
+        self.side.addWidget(card("보기", self.s_depth, self.sw_auto, self.sw_light, self.sw_contour, self.sw_ana,
+                                 _pair_row(self.b_front, self.b_tilt)))
+        self.side.addStretch(1)
+        self.view.pressed.connect(self._press)
+        self.view.moved.connect(self._move)
+        self.view.released.connect(lambda: setattr(self, "_drag", None))
+        self.set_field("normal")
+
+    # -- the photos and the shape ----------------------------------------------------------------
+    def _factor(self) -> float:
+        return {k: f for k, _, f in DISC_FIELDS}[self.field]
+
+    def set_field(self, field: str) -> None:
+        """Cut each photo around its disc, ``field`` disc diameters wide; the second is moved
+        onto the first."""
+        self.field = field
+        self.fields.set(field)
+        self._tex, self._heights = [], {}
+        size = np.empty((disc3d.TEX_PX, disc3d.TEX_PX, 3), np.uint8)
+        for ph in self.photos:
+            crop, _, _ = G.crop_square(ph.rgb, *ph.disc, self._factor() * ph.disc_px)
+            self._tex.append(np.ascontiguousarray(G.match_size(crop, size)))
+        if len(self._tex) == 2:
+            self._tex[1] = G.shifted(self._tex[1], *G.find_shift(self._tex[0], self._tex[1]))
+        self._shape_changed()
+
+    def set_source(self, source: str) -> None:
+        if source == "stereo" and len(self.photos) < 2:
+            return
+        self.source = source
+        if self.sources is not None:
+            self.sources.set(source)
+        self._shape_changed()
+
+    def heights(self) -> np.ndarray | None:
+        if not self._tex:
+            return None
+        key = (self.source, self.sw_flip.isChecked())
+        if key not in self._heights:
+            frac = 1.0 / self._factor()
+            if self.source == "stereo":
+                self._heights[key] = disc3d.height_from_stereo(self._tex[0], self._tex[1], frac,
+                                                               flip=self.sw_flip.isChecked())
+            else:
+                self._heights[key] = (disc3d.height_from_photo(self._tex[self.source == "b"], frac), {})
+        H, self.info = self._heights[key]
+        return H
+
+    def _shape_changed(self) -> None:
+        stereo = self.source == "stereo"
+        self.sw_flip.setVisible(stereo)
+        self.heights()
+        if not self._tex:
+            self.status.setText("")
+        elif not stereo:
+            self.status.setText(S3_ONE)
+        else:
+            px = self.info.get("parallax", 0.0)
+            text = f"두 사진의 시차로 계산한 깊이입니다 (최대 시차 {px:.1f} px · 상대값, 길이 아님)."
+            if not self.info.get("enough", True):
+                text = (f"최대 시차 {px:.1f} px — 시차가 부족해 깊이가 믿을 만하지 않습니다. 두 사진 사이를 더 벌려 "
+                        "다시 찍거나 [사진 ①] 한 장 추정으로 보세요.")
+            elif not self.stereo_ok:
+                text = "두 사진이 서로 다른 눈(OD · OS)입니다 — 스테레오 깊이는 같은 눈의 두 장에서만 맞습니다."
+            self.status.setText(text)
+        self._restart()
+        self._draw()
+
+    # -- the view --------------------------------------------------------------------------------
+    def set_view(self, yaw: float, pitch: float) -> None:
+        self.sw_auto.setChecked(False)
+        self.yaw = max(-self.LIMIT, min(self.LIMIT, yaw))
+        self.pitch = max(-self.LIMIT, min(self.LIMIT, pitch))
+        self._draw()
+
+    def _press(self, x: float, y: float) -> None:
+        angles = self._angles()
+        self.sw_auto.setChecked(False)
+        self.yaw, self.pitch = angles
+        self._drag = (x, y, self.yaw, self.pitch)
+
+    def _move(self, x: float, y: float) -> None:
+        if self._drag is not None:
+            x0, y0, yaw, pitch = self._drag
+            self.set_view(yaw + (x - x0) * 0.3, pitch - (y - y0) * 0.3)
+
+    def _angles(self) -> tuple[float, float]:
+        if not self.sw_auto.isChecked():
+            return self.yaw, self.pitch
+        a = 2 * math.pi * (time.monotonic() - self._t0) / self.ROCK_S
+        return self.ROCK_YAW * math.sin(a), self.pitch * 0.5 + self.ROCK_PITCH * math.cos(a)
+
+    def _flickering(self) -> bool:
+        return len(self._tex) == 2 and self.sw_flick.isChecked()
+
+    def _restart(self) -> None:
+        self.speed.setVisible(self._flickering())
+        if self._tex and self.isVisible() and (self.sw_auto.isChecked() or self._flickering()):
+            self._timer.start()
+        else:
+            self._timer.stop()
+        self._draw()
+
+    def _tick(self) -> None:
+        if not self.isVisible():
+            self._timer.stop()
+            return
+        if self._flickering():
+            self._phase = int((time.monotonic() - self._t0) * self.speed.value() * 2) & 1
+        self._draw()
+
+    def showEvent(self, e) -> None:
+        super().showEvent(e)
+        self._restart()
+
+    def hideEvent(self, e) -> None:
+        super().hideEvent(e)
+        self._timer.stop()
+
+    def shown_photo(self) -> int:
+        """Index of the photo drawn on the surface now."""
+        if self._flickering():
+            return self._phase
+        return 1 if self.source == "b" else 0
+
+    def depth_px(self) -> float:
+        return self.s_depth.value() / 100.0 * disc3d.DEPTH_DD * disc3d.TEX_PX / self._factor()
+
+    def compose(self):
+        H = self.heights()
+        if H is None:
+            return None
+        yaw, pitch = self._angles()
+        kw = dict(light=1.0 if self.sw_light.isChecked() else 0.0, contours=self.sw_contour.isChecked())
+        draw = disc3d.anaglyph if self.sw_ana.isChecked() else disc3d.render
+        return draw(self._tex[self.shown_photo()], H, self.depth_px(), yaw, pitch, **kw)
+
+    def _draw(self) -> None:
+        self.view.set_rgb(self.compose())
+
+    def note(self) -> str:
+        return "녹내장 분석 — 유두 3D " + ("(2장 스테레오)" if self.source == "stereo" else "(1장 추정)")
+
+    def image_ids(self) -> list[int]:
+        if self.source == "stereo" or self._flickering():
+            return [p.image_id for p in self.photos]
+        return [self.photos[self.source == "b"].image_id] if self.photos else []
+
+    def eye(self) -> str | None:
+        if not self.photos:
+            return None
+        if self.source == "stereo":
+            eyes = {p.eye for p in self.photos}
+            return eyes.pop() if len(eyes) == 1 else None
+        return self.photos[self.source == "b"].eye
+
+
 # -- wide field ------------------------------------------------------------------------------------
 WD_KINDS = ["RNFL 결손", "디스크 출혈", "기타"]
 
@@ -901,11 +1132,12 @@ class GlaucomaDialog(QDialog):
         self.tabs.setObjectName("views")
         self.tabs.setDocumentMode(True)
         self.disc = DiscTab(current)
+        self.surface = Surface3DTab(current, second)
         self.wide = WideTab(current)
         self.stereo = StereoTab(pair)
         self.progress = ProgressTab(pair)
         self.explain = ExplainTab()
-        for tab, text in ((self.disc, "디스크 C/D"), (self.wide, "광각 분석"),
+        for tab, text in ((self.disc, "디스크 C/D"), (self.surface, "3D 입체"), (self.wide, "광각 분석"),
                           (self.stereo, "스테레오 보기"), (self.progress, "경과 비교"), (self.explain, "환자 설명")):
             self.tabs.addTab(tab, text)
         if pair is not None:        # two photos of one day: a stereo pair; of two days: a follow-up
@@ -913,7 +1145,7 @@ class GlaucomaDialog(QDialog):
             self.tabs.setCurrentWidget(self.stereo if same_day else self.progress)
         root.addWidget(self.tabs, 1)
         foot = _note("측정값은 참고용 추정값입니다. 진단은 의사가 사진을 보고 판단하세요. "
-                     "깊이 지도는 상대값이며 절대 길이가 아닙니다.")
+                     "깊이 지도와 3D 입체는 상대값이며 절대 길이가 아닙니다.")
         foot.setStyleSheet(f"color:{theme.TEXT3}")
         root.addWidget(foot)
         btns = QHBoxLayout()

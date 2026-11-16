@@ -93,6 +93,10 @@
         </div>
         <div class="row"><label class="row-label" for="journey">위치</label>
           <input type="range" id="journey" min="0" max="100" value="0" title="왼쪽 끝 = 안구 전체, 오른쪽 끝 = 망막 (끌어서 원하는 곳에서 멈춰 보세요)"></div>
+        <div class="row">
+          <button class="btn plain toggle small" id="walk" aria-pressed="false" title="누르거나 3D 안구의 각막을 누르면 전안부가 선택됩니다 — 마우스 휠을 앞으로 돌리면 각막 → 앞방 → 동공 → 수정체 → 유리체 → 망막으로 들어가고, 뒤로 돌리면 나옵니다. 들어가는 중에는 왼쪽 드래그로 둘러보고, 왼쪽 클릭한 곳이 가운데로 옵니다 (Esc · 다시 누르면 해제)">전안부 선택</button>
+          <span class="row-note">휠로 들어가기 · 드래그 둘러보기</span>
+        </div>
       </div>
     </div>
 
@@ -163,6 +167,7 @@
         <p><b>드래그</b> 회전 (놓으면 관성으로 더 돕니다) · <b>휠</b> 커서 쪽으로 확대 · <b>오른쪽 드래그</b> 확대</p>
         <p><b>Shift+드래그</b> 또는 <b>가운데 버튼</b> 이동 · <b>더블클릭</b> 처음 보기 · <b>←↑→↓ + − 0</b></p>
         <p><b>터치</b> 한 손가락 회전 · 두 손가락 벌리기·오므리기 확대, 끌기 이동</p>
+        <p><b>각막 클릭</b> 전안부 선택 → <b>휠</b> 각막부터 망막까지 들어가기·나오기 · <b>왼쪽 드래그</b> 둘러보기 · <b>왼쪽 클릭</b> 그곳을 가운데로 · <b>Esc</b> 해제</p>
       </div>
     </div>
   </aside>

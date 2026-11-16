@@ -59,7 +59,8 @@ def test_the_page_is_built_in_one_file(tmp_path):
     for p in photos.values():                                         # found as the program finds them on import
         assert p["src"].startswith("data:image/jpeg;base64,") and len(p["circle"]) == 3 and p["disc"] is not None
     assert photos["cam45_nasal"]["fovea"] is not None and photos["cam30_disc"]["fovea"] is None   # the macula off the photo
-    for control in ('id="autofind"', 'id="simple"', 'id="surface"', 'id="height"', 'name="slitdir"', 'id="journey"'):
+    for control in ('id="autofind"', 'id="simple"', 'id="surface"', 'id="height"', 'name="slitdir"', 'id="journey"',
+                    'id="walk"'):
         assert control in page, control
     assert 'id="autofind" checked' in page                             # finding the macula and disc is the default
     assert "사진 펼치기" not in page and 'id="unwrap"' not in page and "가로 단면" not in page

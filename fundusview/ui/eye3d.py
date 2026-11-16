@@ -1045,6 +1045,7 @@ class _Spin(motion._Anim):
         now = time.perf_counter()
         busy = (e._drag is not None or e._fling.running() or e._zoom_glide.running() or e._view_glide.running()
                 or e._entering or e.journey_running() or e.mode != "outside" or e.scan is not None
+                or e.walk                                             # (the picked cornea stays facing you)
                 or float(np.linalg.norm(e._view_basis()[0])) < 1.1)   # (not inside the eye on the way in)
         if busy or self._yaw is None or abs(e.yaw - self._yaw) > 1e-9:
             e._touched = now                   # someone else turned it: wait again
@@ -1064,13 +1065,16 @@ class EyeView(QOpenGLWidget):
     glError = Signal(str)
     zoomChanged = Signal(float)        # magnification relative to the start view
     interacted = Signal()              # the user dragged, zoomed or pressed a view key
+    depthWheel = Signal(float)         # wheel notches over the eye seen from outside (``wheel_mode`` "depth")
     journeyChanged = Signal(float)     # 들어가며 보기: where on the way (0 the whole eye … 1 the retina)
+    walkChanged = Signal(bool)         # 휠로 들어가기: the anterior segment picked (the wheel walks in) or let go
 
     DETAILS = ("simple", "detailed")
     SPIN_WAIT = 3.0                    # seconds left alone before 자동 회전 starts turning again
     DIST0, FOV0 = 3.3, 85.0            # start distance (outside) / field of view (inside)
     FOV_COLOR = QColor(56, 200, 255)   # field-of-view rays and label (세로 단면)
     BEAM_COLOR = QColor(255, 128, 64)  # slit light
+    WALK_COLOR = QColor(100, 210, 255) # the picked anterior segment (휠로 들어가기)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1101,6 +1105,11 @@ class EyeView(QOpenGLWidget):
         self._marks: tuple = (None, None, None)        # disc, fovea (pixels), image circle
         # view
         self.detail = "simple"
+        # what the plain wheel does (설정 → 3D 마우스 휠): "zoom" — toward the cursor; "depth" — the cut's
+        # depth (depthWheel; outside only, inside it zooms); "walk" — in from the cornea to the retina and
+        # back out (휠로 들어가기, the anterior segment picked by the wheel itself). Ctrl+wheel zooms in all
+        self.wheel_mode = "zoom"
+        self.pick_walk = True          # a click on the cornea picks the anterior segment: then the wheel walks
         self.mode = "outside"
         self.cut = 0.25
         self.show_nerve = True
@@ -1117,6 +1126,7 @@ class EyeView(QOpenGLWidget):
         self.fov_sweep = 0.0           # 0 … 1: the field-of-view rays open from the posterior pole
         self.fov_alpha = 0.0           # opacity of the rays and the angle label (section view)
         self.fov_ring = 0.0            # the edge of the photographed field marked on the retina
+        self.field_from_cover = False  # a montage: its field is what it covers (alpha), not its map's circle
         self.black = False             # plain black background (presentation)
         # 효과
         self.relief = 0.0              # 입체 조명 0 … 1: vessels and the disc in relief under the light
@@ -1136,6 +1146,15 @@ class EyeView(QOpenGLWidget):
         self._journey_from: dict | None = None
         self._journey_cut, self._journey_xray = 0.25, 0.0
         self._journey_tween = motion.Tween(lambda k: None, 0.0)
+        # 휠로 들어가기 (전안부 선택): the wheel walks the way in and back out; on the way a left drag looks
+        # around from where one is and a left click brings that place to the middle
+        self.walk = False
+        self.walk_yaw, self.walk_pitch = 0.0, 0.0    # where one looks on the way (as the inside view's yaw / pitch)
+        self._walk_pos: QPointF | None = None
+        self._walk_glide = motion.Chase(self._walk_part, half_life=0.06)
+        self._gaze_tween = motion.Tween(lambda k: None, 0.0)
+        self._click = False            # the press may still be a click (not moved, nothing was stopped by it)
+        self._grabbing = False
         self._drag: QPointF | None = None
         self._drag_kind = ""
         # motion: a flick keeps turning, the wheel's zoom glides, view changes ease (motion.py)
@@ -1343,6 +1362,8 @@ class EyeView(QOpenGLWidget):
         self._turn_x.stop()
         self._turn_y.stop()
         self._view_glide.stop()
+        self._walk_glide.stop()
+        self._gaze_tween.stop()
         self._finish_enter()
         if self._journey_tween.running():      # 들어가며 보기 stops where it is
             self._journey_tween.stop()
@@ -1351,7 +1372,8 @@ class EyeView(QOpenGLWidget):
     def moving(self) -> bool:
         return (self._drag is not None or self._fling.running() or self._zoom_glide.running()
                 or self._turn_x.running() or self._turn_y.running() or self._view_glide.running()
-                or self._entering or self._journey_tween.running())
+                or self._entering or self._journey_tween.running() or self._walk_glide.running()
+                or self._gaze_tween.running())
 
     def glide_to(self, pose: dict | None = None, inside: tuple | None = None, duration: float = 0.45,
                  extra: dict | None = None, done=None, easing=motion.ease_in_out) -> None:
@@ -1388,7 +1410,16 @@ class EyeView(QOpenGLWidget):
         self._view_changed()
 
     def _fling_move(self, dx: float, dy: float) -> None:
-        if self._drag_kind == "pan":
+        self._drag_move(self._drag_kind, dx, dy)
+
+    def _drag_move(self, kind: str, dx: float, dy: float) -> None:
+        """A left (or middle / Shift) drag: on the way in it looks around from where one is; otherwise
+        it turns the eye (or moves it)."""
+        if self.on_the_way():
+            self._walk_look(dx, dy)
+            return
+        self._forget_way()
+        if kind == "pan":
             self.pan(dx, dy)
         else:
             self._look(dx, dy)
@@ -1397,6 +1428,12 @@ class EyeView(QOpenGLWidget):
         self.zoom_at(steps, self._zoom_pos)
 
     def _key_turn(self, dx: float, dy: float) -> None:
+        if self.on_the_way():
+            self.walk_yaw = max(-150.0, min(150.0, self.walk_yaw - dx * 0.5))
+            self.walk_pitch = max(-85.0, min(85.0, self.walk_pitch + dy * 0.5))
+            self._walk_refresh()
+            return
+        self._forget_way()
         if self.mode == "inside":
             self.in_yaw = max(-150.0, min(150.0, self.in_yaw - dx * 0.5))
             self.in_pitch = max(-85.0, min(85.0, self.in_pitch + dy * 0.5))
@@ -1426,6 +1463,7 @@ class EyeView(QOpenGLWidget):
 
     # -- 들어가기: 들어가며 보기 (자세히), a fade through black (간단히) ------------------------------
     JOURNEY_Z = 0.35               # where the way in ends: the inside view's eye point (in_z)
+    JOURNEY_FRONT = 0.32           # … where it faces the cornea: from here on along the axis
 
     def enter(self, mode: str, animate: bool = True) -> None:
         """Go to 내부 ("inside") or 외부 ("outside"). 자세히: 들어가며 보기 — from the whole eye in through
@@ -1467,10 +1505,12 @@ class EyeView(QOpenGLWidget):
         if self._journey_from is not None:
             return
         self._finish_enter()
-        if self.mode == "inside":
+        if self.mode == "inside":                       # (looking where the inside view looks)
             self._journey_from, self.journey_j = dict(self.HOME), 1.0
+            self.walk_yaw, self.walk_pitch = self.in_yaw, self.in_pitch
         else:
             self._journey_from, self.journey_j = self.pose(), 0.0
+            self.walk_yaw = self.walk_pitch = 0.0
         self._journey_cut = self.cut if self.cut < 0.999 else 0.25
         self._journey_xray = self.xray
         self.half = 0.0
@@ -1478,7 +1518,7 @@ class EyeView(QOpenGLWidget):
     def journey_pose(self, j: float) -> dict:
         """The camera and the eye at ``j``: to the front of the closed eye coming nearer, then along the
         axis — the cornea, the chamber, the pupil, the lens (most of the time), the vitreous."""
-        f, a = self._journey_from or dict(self.HOME), 0.32
+        f, a = self._journey_from or dict(self.HOME), self.JOURNEY_FRONT
         out = {"mode": "inside" if j >= 1.0 else "outside",
                "cut": _lerp(self._journey_cut, 1.0, _ease(j / 0.12)), "xray": _lerp(self._journey_xray, 0.0, _ease(j / 0.12))}
         if j <= a:
@@ -1501,16 +1541,188 @@ class EyeView(QOpenGLWidget):
 
     def _journey_apply(self, j: float) -> None:
         self.journey_j = min(1.0, max(0.0, j))
+        if self.journey_j <= 0.0:                       # back at the start: the way in goes straight again
+            self.walk_yaw = self.walk_pitch = 0.0
         p = self.journey_pose(self.journey_j)
         self.cut, self.xray, self.out_fov = p["cut"], p["xray"], p["out_fov"]
         self.yaw, self.pitch, self.dist = p["yaw"], p["pitch"], p["dist"]
         self.target = np.asarray(p["target"], np.float64)
         if p["mode"] == "inside":
-            self.mode, self.in_yaw, self.in_pitch, self.in_fov, self.in_z = "inside", 0.0, 0.0, self.FOV0, self.JOURNEY_Z
+            self.mode, self.in_fov, self.in_z = "inside", self.FOV0, self.JOURNEY_Z
+            self.in_yaw, self.in_pitch = self.walk_yaw, self.walk_pitch
         else:
             self.mode = "outside"
+            if self.walk_yaw or self.walk_pitch:
+                self._turn_gaze()
         self.journeyChanged.emit(self.journey_j)
         self._view_changed()
+
+    def _way_basis(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Forward / right / up of the way at ``journey_j`` before one looks around (inside: down the axis)."""
+        if self.mode == "inside":
+            return np.array([0.0, 0.0, -1.0]), np.array([1.0, 0.0, 0.0]), np.array([0.0, 1.0, 0.0])
+        p = self.journey_pose(self.journey_j)
+        ya, pa = math.radians(p["yaw"]), math.radians(p["pitch"])
+        f = -np.array([math.sin(ya) * math.cos(pa), math.sin(pa), math.cos(ya) * math.cos(pa)])
+        r = _unit(np.cross(f, (0.0, 1.0, 0.0) if abs(p["pitch"]) < 89 else (0.0, 0.0, -1.0)))
+        return f, r, np.cross(r, f)
+
+    def _look_weight(self) -> float:
+        """How much of where one looks shows: none at the start of the way (the eye as it was), all
+        from the cornea on — so the way back out ends at the start view, however one looked around."""
+        return 1.0 if self.mode == "inside" else _ease(self.journey_j / self.JOURNEY_FRONT)
+
+    def _turn_gaze(self) -> None:
+        """Outside on the way: the camera stays where the way has it and looks where one looks."""
+        eye = self._view_basis()[0]
+        f, r, u = self._way_basis()
+        w = self._look_weight()
+        cy_, sy = math.cos(math.radians(self.walk_yaw * w)), math.sin(math.radians(self.walk_yaw * w))
+        cp, sp = math.cos(math.radians(self.walk_pitch * w)), math.sin(math.radians(self.walk_pitch * w))
+        d = -_unit(cp * (cy_ * f + sy * r) + sp * u)          # (as the inside view turns by its yaw / pitch)
+        self.yaw = math.degrees(math.atan2(d[0], d[2])) % 360.0
+        self.pitch = max(-89.0, min(89.0, math.degrees(math.asin(max(-1.0, min(1.0, float(d[1])))))))
+        ya, pa = math.radians(self.yaw), math.radians(self.pitch)
+        d = np.array([math.sin(ya) * math.cos(pa), math.sin(pa), math.cos(ya) * math.cos(pa)])
+        self.target = eye - self.dist * d
+
+    # -- 휠로 들어가기: the anterior segment picked, the wheel walks the way in --------------------------
+    WALK_STEP = 0.04               # one wheel notch along the way (25 from the whole eye to the retina)
+
+    def set_walk(self, on: bool) -> None:
+        """전안부 선택: on — the wheel goes in from the cornea through the chamber, the pupil, the lens and the
+        vitreous to the retina (back: out again), a left drag looks around on the way and a left click
+        brings that place to the middle; off — the wheel zooms again (the eye stays where it is)."""
+        on = bool(on)
+        if on == self.walk:
+            return
+        self.walk = on
+        self._walk_glide.stop()
+        self._touched = time.perf_counter()
+        if on and self.mode == "inside":                  # picked from inside: on the way, at the retina
+            self._journey_begin()
+        self.walkChanged.emit(on)
+        self.update()
+
+    def on_the_way(self) -> bool:
+        """Somewhere on the way in (not at its start): a drag looks around instead of turning the eye."""
+        return self._journey_from is not None and self.journey_j > 1e-6
+
+    def _forget_way(self) -> None:
+        """At the start of the way the eye is turned or moved by hand: the next way in starts from there."""
+        if self._journey_from is not None and self.journey_j <= 1e-6 and not self._journey_tween.running():
+            self._journey_from = None
+            self.walk_yaw = self.walk_pitch = 0.0
+
+    def _front_z(self) -> float:
+        """Where the front of the eye begins: the limbus round the cornea, or the rim of the front cut
+        while the eye is opened there (the opening is then its front)."""
+        if self.mode == "outside" and not self._half_on() and self.cut < 0.999:
+            return min(float(self.cut), em.LIMBUS_Z)
+        return em.LIMBUS_Z
+
+    def anterior_at(self, pos: QPointF) -> bool:
+        """Does ``pos`` point at the anterior segment — the cornea and the limbus round it (with the front
+        cut open: the opening and its rim)?"""
+        if self.mode != "outside":
+            return False
+        o, d = self._ray(pos)
+
+        def first(radius, cz=0.0):
+            oc = o - np.array([0.0, 0.0, cz])
+            b = float(oc @ d)
+            disc = b * b - (float(oc @ oc) - radius * radius)
+            if disc < 0:
+                return None
+            t = -b - math.sqrt(disc)
+            return t if t > 0 else None
+
+        best = None                                        # the closed eye: the globe behind the limbus …
+        t = first(1.0)
+        if t is not None and (o + d * t)[2] <= em.LIMBUS_Z:
+            best = (t, (o + d * t)[2])
+        t = first(em.CORNEA_R, em.CORNEA_CENTER_Z)         # … and the cornea in front of it
+        if t is not None and (o + d * t)[2] >= em.LIMBUS_Z and (best is None or t < best[0]):
+            best = (t, (o + d * t)[2])
+        return best is not None and best[1] >= self._front_z() - 0.07
+
+    def walk_by(self, steps: float, pos: QPointF | None = None) -> None:
+        """``steps`` wheel notches along the way in (+) or back out (−). At the retina the wheel goes on as
+        the inside view's (nearer toward ``pos``), and back out it first widens to the whole field. Reaching
+        the retina, or the whole field on the way back, ends that turn of the wheel there (a stop one
+        feels: the next turn goes on)."""
+        if abs(steps) < 1e-9:
+            return
+        self._journey_tween.stop()
+        self._journey_begin()
+        if self.mode == "inside":
+            part = steps
+            if steps < 0.0:                                 # widen back to the whole field first
+                need = math.log(self.FOV0 / self.in_fov) / math.log(0.88) if self.in_fov < self.FOV0 else 0.0
+                part = max(steps, need)
+            if part:
+                self.zoom_at(part, pos)
+                if abs(self.in_fov - self.FOV0) < 1e-6:
+                    self.in_fov = self.FOV0
+                self.walk_yaw, self.walk_pitch = self.in_yaw, self.in_pitch
+            if abs(steps - part) < 1e-9:
+                return
+            if part:                                        # the whole field again: this turn stops here
+                self._walk_glide.stop()
+                return
+        arrive = self.mode != "inside" and self.journey_j + steps * self.WALK_STEP >= 1.0
+        self._journey_apply(self.journey_j + steps * self.WALK_STEP)
+        if arrive:                                          # at the retina: this turn stops here
+            self._walk_glide.stop()
+
+    def _walk_part(self, steps: float) -> None:
+        self.walk_by(steps, self._walk_pos)
+
+    def _walk_look(self, dx: float, dy: float) -> None:
+        """On the way: look around from where one is (a left drag, by the widget's pixels)."""
+        k = (self.in_fov if self.mode == "inside" else self.out_fov) / max(self.height(), 1)
+        k /= max(0.25, self._look_weight())
+        self.walk_yaw = max(-150.0, min(150.0, self.walk_yaw - dx * k))
+        self.walk_pitch = max(-85.0, min(85.0, self.walk_pitch + dy * k))
+        self._walk_refresh()
+
+    def _walk_refresh(self) -> None:
+        if self._journey_from is None:                    # (the way was left meanwhile)
+            return
+        if self.mode == "inside":
+            self.in_yaw, self.in_pitch = self.walk_yaw, self.walk_pitch
+            self._view_changed()
+        else:
+            self._journey_apply(self.journey_j)
+
+    def look_toward(self, pos: QPointF, animate: bool = True) -> None:
+        """On the way: turn (gliding) so that what lies under ``pos`` comes to the middle of the view."""
+        _, d = self._ray(pos)
+        f, r, u = self._way_basis()
+        w = max(1e-3, self._look_weight())
+        yaw = math.degrees(math.atan2(float(d @ r), float(d @ f))) / w
+        pitch = math.degrees(math.asin(max(-1.0, min(1.0, float(d @ u))))) / w
+        y1, p1 = max(-150.0, min(150.0, yaw)), max(-85.0, min(85.0, pitch))
+        y0, p0 = self.walk_yaw, self.walk_pitch
+
+        def to(k: float) -> None:
+            self.walk_yaw, self.walk_pitch = _lerp(y0, y1, k), _lerp(p0, p1, k)
+            self._walk_refresh()
+
+        self._gaze_tween.stop()
+        self._gaze_tween = motion.Tween(to, 0.45 if animate and self.isVisible() else 0.0, motion.ease_in_out)
+        self._gaze_tween.start()
+
+    def _clicked(self, pos: QPointF) -> None:
+        """A left click (no drag): on the way, that place comes to the middle; at the start of the way,
+        the anterior segment is picked (휠로 들어가기, while ``pick_walk``) — a click anywhere else lets
+        it go."""
+        if self.on_the_way():
+            self.look_toward(pos)
+        elif self.pick_walk and self.anterior_at(pos):
+            self.set_walk(True)
+        elif self.walk:
+            self.set_walk(False)
 
     def journey_scrub(self, j: float) -> None:
         """Be at ``j`` on the way in at once (the 위치 slider)."""
@@ -1536,9 +1748,12 @@ class EyeView(QOpenGLWidget):
         return self._journey_tween.running()
 
     def journey_end(self) -> None:
-        """Back to the ordinary views: the way is forgotten (the eye stays as it is)."""
+        """Back to the ordinary views: the way is forgotten (the eye stays as it is), the wheel zooms again."""
         self._journey_tween.stop()
+        self._gaze_tween.stop()
         self._journey_from = None
+        self.walk_yaw = self.walk_pitch = 0.0
+        self.set_walk(False)
         if self.mode == "outside":
             self.out_fov = 38.0
             self.update()
@@ -1548,6 +1763,7 @@ class EyeView(QOpenGLWidget):
 
     def journey_leave(self) -> None:
         """A view of the closed or opened eye from outside takes over from 들어가며 보기."""
+        self.set_walk(False)
         if self._journey_from is None:
             return
         cut = self._journey_cut
@@ -1656,20 +1872,36 @@ class EyeView(QOpenGLWidget):
         lut = np.array([proj.rho(k / 256.0 * tmax, tmax, self.projection, self.viewpoint, c=self.radial_c)
                         for k in range(257)])
         rho = np.interp(np.minimum(theta, tmax), np.linspace(0.0, tmax, 257), lut)
-        row = rho * np.sin(np.arctan2(q[:, 1], q[:, 0]) + math.radians(self.roll_deg))
-        return t, row, theta <= tmax
+        ph = np.arctan2(q[:, 1], q[:, 0]) + math.radians(self.roll_deg)
+        row = rho * np.sin(ph)
+        inside = theta <= tmax
+        if self.field_from_cover and self._rgba is not None:     # only where the montage has a photo
+            h, w = self._rgba.shape[:2]
+            x = np.clip(np.rint((self._center[0] + rho * np.cos(ph) * self._radius[0]) * w), 0, w - 1).astype(int)
+            y = np.clip(np.rint((self._center[1] - row * self._radius[1]) * h), 0, h - 1).astype(int)
+            inside &= self._rgba[y, x, 3] > 127
+        return t, row, inside
 
     def _tilted(self) -> bool:
         return self.placement.offset_deg > 1e-6
 
     def field_on_meridian(self) -> tuple[float, float]:
         """Where the photo's field begins and ends on the section's meridian (angles from the pole)."""
-        if not self._tilted():
+        if not self._tilted() and not self.field_from_cover:
             return -self.theta_max, self.theta_max
         t, _, inside = self._meridian_rows()
         if not inside.any():
             return -self.theta_max, self.theta_max
         return float(t[inside][0]), float(t[inside][-1])
+
+    def cover_span(self) -> tuple[float, float] | None:
+        """A montage: the degrees (eye-centre angle) it covers across and down its map, roughly."""
+        if self._rgba is None:
+            return None
+        from .. import montage as mt
+        h, w = self._rgba.shape[:2]
+        circle = (self._center[0] * w, self._center[1] * h, self._radius[0] * w)
+        return mt.coverage_span(self._rgba[..., 3], self.theta_max, circle)
 
     def scan_theta(self, s: float) -> tuple[float, float]:
         """Retinal angle (from the posterior pole) and side (+1 superior, -1 inferior) that the
@@ -1696,6 +1928,24 @@ class EyeView(QOpenGLWidget):
     def _view_changed(self) -> None:
         self.zoomChanged.emit(self.magnification)
         self.update()
+
+    def set_magnification(self, m: float) -> None:
+        """Zoom about the centre of the view until things appear ``m`` times the start view's size
+        (the zoom bar); it stops where the wheel's zoom would."""
+        m = max(m, 1e-3)
+        self._fling.stop()
+        self._view_glide.stop()
+        self._zoom_glide.stop()
+        self._finish_enter()
+        self._touched = time.perf_counter()
+        self.interacted.emit()
+        if self.mode == "inside":
+            fov = math.degrees(2.0 * math.atan(math.tan(math.radians(self.FOV0) / 2) / m))
+            steps = math.log(self.in_fov / max(fov, 1e-6)) / -math.log(0.88)
+        else:
+            steps = math.log(m / self.magnification) / -math.log(0.88)
+        if abs(steps) > 1e-6:
+            self.zoom_at(steps)
 
     @property
     def theta_max(self) -> float:
@@ -2043,8 +2293,18 @@ class EyeView(QOpenGLWidget):
         self.update()
 
     def _overlay_wanted(self) -> bool:
+        return self._section_marks() or self._walk_ring_alpha() > 0.0
+
+    def _section_marks(self) -> bool:
         return self._half_on() and ((self.fov_alpha > 0.005 and self.fov_sweep > 0.0)
                                     or (self.scan is not None and self.scan_beam > 0.005))
+
+    def _walk_ring_alpha(self) -> float:
+        """휠로 들어가기: how strongly the picked cornea is ringed — until the way reaches it (not in a
+        saved picture)."""
+        if not self.walk or self.mode != "outside" or self._grabbing:
+            return 0.0
+        return 1.0 - _smooth(0.6, 0.95, self.journey_j / self.JOURNEY_FRONT)
 
     def paintGL(self) -> None:
         if not self._ok:
@@ -2062,7 +2322,10 @@ class EyeView(QOpenGLWidget):
         finally:
             painter.endNativePainting()
         try:
-            self._paint_overlay(painter, mvp)
+            if self._section_marks():
+                self._paint_overlay(painter, mvp)
+            if self._walk_ring_alpha() > 0.0:
+                self._paint_walk_ring(painter, mvp)
         finally:
             painter.end()
 
@@ -2089,7 +2352,8 @@ class EyeView(QOpenGLWidget):
                     proj=proj.PROJECTION_INDEX.get(self.projection, 0), d=self.viewpoint, c=self.radial_c,
                     center=self._center, radius=self._radius, roll=math.radians(self.roll_deg),
                     place=self.placement.matrix.T, grid=1.0 if self.show_grid else 0.0,
-                    has_tex=int(tex), scan=scan, scan_dir=self.scan_dir(), fovring=float(self.fov_ring),
+                    has_tex=int(tex), scan=scan, scan_dir=self.scan_dir(),
+                    fovring=0.0 if self.field_from_cover else float(self.fov_ring),   # no ring round a map
                     relief=float(self.relief) if tex else 0.0, texel=self._texel(),
                     rlight=self.placement.matrix.T @ self._rlight,
                     hmap_on=1.0 if self.relief_sheet_on() else 0.0)
@@ -2125,7 +2389,11 @@ class EyeView(QOpenGLWidget):
     # -- drawn smaller while moving (slow computers) ------------------------------------
     def grabFramebuffer(self):
         self._force_full = True                     # a saved picture is always sharp
-        return super().grabFramebuffer()
+        self._grabbing = True                       # … without the ring of the picked cornea
+        try:
+            return super().grabFramebuffer()
+        finally:
+            self._grabbing = False
 
     def _sharpen(self) -> None:
         """The motion is over: draw once more at full size."""
@@ -2563,21 +2831,7 @@ class EyeView(QOpenGLWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         def glow(points, color: QColor, alpha: float, width: float) -> None:
-            pts = [q for q in points if q is not None]
-            if len(pts) < 2 or alpha <= 0.0:
-                return
-            path = QPainterPath(pts[0])
-            for q in pts[1:]:
-                path.lineTo(q)
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            for wmul, a in ((4.5, 0.12), (2.4, 0.28), (1.0, 1.0)):
-                c = QColor(color)
-                c.setAlphaF(min(1.0, alpha * a))
-                pen = QPen(c, width * wmul)
-                pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-                pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-                painter.setPen(pen)
-                painter.drawPath(path)
+            self._glow(painter, points, color, alpha, width)
 
         def spot(p: QPointF, color: QColor, alpha: float, radius: float) -> None:
             painter.setPen(Qt.PenStyle.NoPen)
@@ -2614,7 +2868,10 @@ class EyeView(QOpenGLWidget):
                 small = QFont(self.font())
                 small.setPixelSize(max(10, int(eye_px * 0.075)))
                 big = QPainterPath()
-                big.addText(0.0, 0.0, font, f"{math.degrees(2.0 * self.theta_max):.0f}°")
+                if self.field_from_cover:                 # a montage: what this section cuts of it, roughly
+                    big.addText(0.0, 0.0, font, f"약 {round(math.degrees(t1 - t0) / 5) * 5:.0f}°")
+                else:
+                    big.addText(0.0, 0.0, font, f"{math.degrees(2.0 * self.theta_max):.0f}°")
                 sub = QPainterPath()
                 sub.addText(0.0, 0.0, small, "안구 중심각")
                 bb, sb = big.boundingRect(), sub.boundingRect()
@@ -2631,20 +2888,82 @@ class EyeView(QOpenGLWidget):
                                                   Qt.PenJoinStyle.RoundJoin))
                     painter.fillPath(path, fill)
 
+    @staticmethod
+    def _glow(painter: QPainter, points, color: QColor, alpha: float, width: float) -> None:
+        """A glowing line through ``points`` (None: not on screen)."""
+        pts = [q for q in points if q is not None]
+        if len(pts) < 2 or alpha <= 0.0:
+            return
+        path = QPainterPath(pts[0])
+        for q in pts[1:]:
+            path.lineTo(q)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        for wmul, a in ((4.5, 0.12), (2.4, 0.28), (1.0, 1.0)):
+            c = QColor(color)
+            c.setAlphaF(min(1.0, alpha * a))
+            pen = QPen(c, width * wmul)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(pen)
+            painter.drawPath(path)
+
+    def _paint_walk_ring(self, painter: QPainter, mvp: np.ndarray) -> None:
+        """휠로 들어가기: the picked anterior segment — a glowing ring on the limbus round the cornea (the
+        eye opened at the front: on the rim of the opening, closing onto the limbus as the way closes the
+        eye), on the side that faces the camera."""
+        alpha = self._walk_ring_alpha()
+        eye = self._view_basis()[0]
+        w, h = self.width(), self.height()
+
+        def to_screen(p):
+            v = mvp @ np.array([p[0], p[1], p[2], 1.0], np.float32)
+            if v[3] <= 1e-6:
+                return None
+            return QPointF((v[0] / v[3] + 1.0) * 0.5 * w, (1.0 - v[1] / v[3]) * 0.5 * h)
+
+        z = self._front_z()
+        r = math.sqrt(max(0.0, 1.0 - z * z))
+        ring = [np.array([r * math.cos(t), r * math.sin(t), z]) for t in np.linspace(0.0, 2 * math.pi, 145)]
+        centre, edge = to_screen((0.0, 0.0, z)), to_screen(ring[0])
+        if centre is None or edge is None:
+            return
+        lw = max(1.5, min(4.0, math.hypot(edge.x() - centre.x(), edge.y() - centre.y()) / 45.0))
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        open_ = z < em.LIMBUS_Z - 1e-3 and float(eye[2]) > z      # looking into the opening: all of its rim
+        run: list = []
+        for p in ring:                                     # (else the far side is hidden by the eye)
+            if open_ or float((eye - p) @ p) > 0.0:
+                run.append(to_screen(p))
+                continue
+            self._glow(painter, run, self.WALK_COLOR, alpha, lw)
+            run = []
+        self._glow(painter, run, self.WALK_COLOR, alpha, lw)
+
     # -- interaction -----------------------------------------------------------
     # left drag: rotate (inside: look around) · right drag up/down: zoom where the
-    # drag started · middle drag or Shift+left drag: move · wheel: zoom at the
-    # cursor · double click / 0: start view · + / -: zoom at the centre
+    # drag started · middle drag or Shift+left drag: move · wheel: as ``wheel_mode`` says — zoom at
+    # the cursor, the cut's depth (outside) or the way in; Ctrl+wheel zooms ·
+    # double click / 0: start view · + / -: zoom at the centre
+    # 휠로 들어가기 (a click on the cornea while ``pick_walk``, or the wheel in the "walk" mode): the
+    # wheel, a right drag and + / - walk in and out; on the way a left drag looks around, a left click
+    # brings that place to the middle, Esc lets go
+    CLICK_SLOP = 4.0                   # pixels a click may move and still be a click
+
     def mousePressEvent(self, e):
+        # a click that only catches something (a flick, ▶ 들어가기, a view glide, the slit scan) picks nothing
+        busy = (self._fling.running() or self._view_glide.running() or self._entering
+                or self._journey_tween.running() or self.scan is not None)
         self.stop_motion()                    # a touch stops whatever was gliding
         self._touched = time.perf_counter()
         self.interacted.emit()
         self._drag = self._press = e.position()
         self._vel.reset()
         self._vel.add(self._drag.x(), self._drag.y())
+        shift = bool(e.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+        self._click =e.button() == Qt.MouseButton.LeftButton and not shift and not busy
         if e.button() == Qt.MouseButton.RightButton:
             self._drag_kind = "zoom"
-        elif e.button() == Qt.MouseButton.MiddleButton or e.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+        elif e.button() == Qt.MouseButton.MiddleButton or shift:
             self._drag_kind = "pan"
         else:
             self._drag_kind = "rotate"
@@ -2652,7 +2971,10 @@ class EyeView(QOpenGLWidget):
     def mouseReleaseEvent(self, e):
         was, self._drag = self._drag, None
         self._touched = time.perf_counter()
-        if was is not None and self._drag_kind in ("rotate", "pan"):
+        click, self._click = self._click and was is not None, False
+        if click:
+            self._clicked(e.position())
+        elif was is not None and self._drag_kind in ("rotate", "pan"):
             self._fling.start(*self._vel.get())           # let go while moving: it turns on and settles
         if not self.moving():
             self._sharp.start(0)
@@ -2660,15 +2982,22 @@ class EyeView(QOpenGLWidget):
     def mouseMoveEvent(self, e):
         if self._drag is None:
             return
+        if self._click:
+            moved = e.position() - self._press
+            if math.hypot(moved.x(), moved.y()) <= self.CLICK_SLOP:
+                return                                    # (still a click: the eye stays put)
+            self._click = False
+            self._drag = self._press                      # the drag starts where the button went down
         d = e.position() - self._drag
         self._drag = e.position()
         self._vel.add(self._drag.x(), self._drag.y())
         if self._drag_kind == "zoom":
-            self.zoom_at(-d.y() / 40.0, self._press)
-        elif self._drag_kind == "pan":
-            self.pan(d.x(), d.y())
+            if self.walk:
+                self.walk_by(-d.y() / 40.0, self._press)
+            else:
+                self.zoom_at(-d.y() / 40.0, self._press)
         else:
-            self._look(d.x(), d.y())
+            self._drag_move(self._drag_kind, d.x(), d.y())
 
     def wheelEvent(self, e):
         self._fling.stop()
@@ -2676,15 +3005,33 @@ class EyeView(QOpenGLWidget):
         self._finish_enter()
         self._touched = time.perf_counter()
         self.interacted.emit()
+        steps = e.angleDelta().y() / 120.0
+        ctrl = bool(e.modifiers() & Qt.KeyboardModifier.ControlModifier)
+        if self.wheel_mode == "walk" and not self.walk and not ctrl and self.scan is None:
+            self.set_walk(True)                           # 들어가기: the wheel itself picks the way in
+        if self.walk and not (ctrl and not self.on_the_way()):   # (Ctrl+wheel at the start of the way: zoom)
+            self._journey_tween.stop()                    # 휠로 들어가기: forward in, back out
+            self._gaze_tween.stop()
+            self._walk_pos = e.position()
+            self._walk_glide.add(steps)
+            return
+        if self.wheel_mode == "depth" and self.mode == "outside" and not self.journey_on() and not ctrl:
+            self._zoom_glide.stop()
+            self.depthWheel.emit(steps)                    # the cut's depth (the window moves the slider)
+            return
         self._zoom_pos = e.position()
-        self._zoom_glide.add(e.angleDelta().y() / 120.0)   # the view glides after the notches
+        self._zoom_glide.add(steps)                        # the view glides after the notches
 
     def pinch(self, value: float, pos: QPointF) -> None:
         """Trackpad pinch (macOS): magnify by ``1 + value`` toward ``pos``
-        (one wheel notch magnifies by 1 / 0.88)."""
+        (one wheel notch magnifies by 1 / 0.88); 휠로 들어가기: walk in or out as far."""
         if value > -1.0:
             self.interacted.emit()
-            self.zoom_at(math.log1p(value) / -math.log(0.88), pos)
+            steps = math.log1p(value) / -math.log(0.88)
+            if self.walk:
+                self.walk_by(steps, pos)
+            else:
+                self.zoom_at(steps, pos)
 
     def event(self, e):
         if (e.type() == QEvent.Type.NativeGesture
@@ -2714,13 +3061,19 @@ class EyeView(QOpenGLWidget):
                 self._turn_x.add(dx)
             if dy:
                 self._turn_y.add(dy)
-        elif k in (Qt.Key.Key_Plus, Qt.Key.Key_Equal):
-            self._zoom_pos = None
-            self._zoom_glide.add(2.0)
-        elif k in (Qt.Key.Key_Minus, Qt.Key.Key_Underscore):
-            self._zoom_pos = None
-            self._zoom_glide.add(-2.0)
+        elif k in (Qt.Key.Key_Plus, Qt.Key.Key_Equal, Qt.Key.Key_Minus, Qt.Key.Key_Underscore):
+            steps = 2.0 if k in (Qt.Key.Key_Plus, Qt.Key.Key_Equal) else -2.0
+            if self.walk:                                 # 휠로 들어가기: in / out
+                self._journey_tween.stop()
+                self._walk_pos = None
+                self._walk_glide.add(steps)
+            else:
+                self._zoom_pos = None
+                self._zoom_glide.add(steps)
         elif k in (Qt.Key.Key_0, Qt.Key.Key_Home):
             self.reset_view(animate=True)
+        elif k == Qt.Key.Key_Escape and self.walk:        # let the anterior segment go (the eye stays)
+            self.interacted.emit()
+            self.set_walk(False)
         else:
             super().keyPressEvent(e)
