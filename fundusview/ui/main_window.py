@@ -1346,7 +1346,7 @@ class MainWindow(QMainWindow):
             "(0 = 흰 공막) — 안구를 돌리면 망막이 안구 속 어디에 있는지 보입니다<br>"
             "▶ 슬릿 스캔: 위아래는 단면에 화각 → 슬릿이 사진을 훑으며 빛이 동공을 지나 망막에, 좌우는 앞을 연 안구의 "
             "망막 위로 → 사진을 입힌 3D 안구 (누르면 멈춤) · 크게 보기: 화면 전체 (Space 재생, Esc 돌아가기)<br>"
-            "드래그: 회전 (돌리다 놓으면 관성으로 더 돕니다) · 휠: 커서가 가리키는 곳으로 확대 · "
+            "드래그: 회전 (돌리다 놓으면 관성으로 더 돕니다) · Ctrl+휠 (내부에서는 휠): 커서가 가리키는 곳으로 확대 · "
             "가운데 버튼 또는 Shift+드래그: 이동<br>"
             "+/−: 확대·축소 · 더블클릭 또는 0: 처음 보기<br>"
             "망막 입체: 표면 높낮이 — 혈관은 솟고 유두 함몰·황반 오목은 파여 보임, 입체 조명 — 그 높낮이에 비스듬한 빛 · "
@@ -3523,7 +3523,7 @@ class MainWindow(QMainWindow):
     WALK_HINT = "전안부 선택 — 휠을 앞으로 돌리면 각막부터 망막까지 들어갑니다"
 
     def _toggle_walk(self, on: bool) -> None:
-        """[전안부 선택]: the wheel walks in from the cornea (or zooms again)."""
+        """[전안부 선택]: the wheel walks in from the cornea (or, let go, sets the cut's depth again)."""
         self.eye3d.set_walk(on)
         self.eye3d.setFocus()
 
