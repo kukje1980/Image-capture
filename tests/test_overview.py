@@ -81,7 +81,11 @@ def test_overview_is_the_photo_with_its_macula_and_disc(tmp_path, demo_dir, impo
         assert abs(w.thumbs.x() - (w.eye_rail.x() + w.eye_rail.width())) <= 2
         assert w.thumbs.width() + w.eye_rail.width() >= w.strip_w.width() - 10 and w.eye_rail.isVisible()
         assert w.menuBar().cornerWidget(Qt.Corner.TopRightCorner) is w.top_w
-        assert w.btn_patients.isVisible() and _inside(w.btn_patients, w.top_w)
+        # … which holds the view icons, beside the menus; the patient is named in the status bar,
+        # and the [환자 목록] link, the photo filters, the pointer read-out and the magnification
+        # are no longer on screen
+        assert _inside(w.view_bar, w.top_w) and _inside(w.banner, w.statusBar()) and w.banner.isVisible()
+        assert not any(x.isVisible() for x in (w.btn_patients, w.f_date, w.f_eye, w.f_mod, w.lbl_hover, w.btn_zoom))
         assert "김민수" in w.banner.text() and "20260115001" in w.banner.text()
         assert w.toolBarArea(w.tb_cmd) == Qt.ToolBarArea.LeftToolBarArea
         # low rows of photos, one per eye on the list: OD on top, OS under it
@@ -229,13 +233,9 @@ def test_patient_line_in_a_narrow_window_settles(tmp_path, demo_dir):
             assert len(calls) < 20, f"{width}: the patient line kept laying the menu bar out"
             menus = mb.actionGeometry([a for a in mb.actions() if a.isVisible()][-1]).right()
             assert w.top_w.geometry().right() <= mb.width()        # never past the window's edge
-            if w.top_w.want <= mb.width() - menus - 40:
-                assert w.top_w.geometry().left() >= menus         # cut to the room beside the menus
-            else:   # not even the buttons fit beside the menus (wider fonts, 900 px): the line is at
-                shortest = w.top_w.want                           # its smallest, no room for the name;
-                w.banner.setText("")                              # the menus that do not fit go to »
-                w._fit_banner()
-                assert w.top_w.want == shortest
+            # the patient (status bar): cut with … at a third of the window, never wider
+            assert w.banner.width() <= max(160, w.width() // 3) + 2
+            assert w.statusBar().width() <= w.width()
     finally:
         w.close()
         db.close()
