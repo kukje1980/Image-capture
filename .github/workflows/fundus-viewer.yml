@@ -77,10 +77,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-15          # Apple Silicon (M1, M2, M3, M4 …)
+          # Apple Silicon (M1, M2, M3, M4 …) only: no build for Intel Macs
+          - runner: macos-15
             label: AppleSilicon
-          - runner: macos-15-intel    # Intel Macs
-            label: Intel
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
@@ -113,7 +112,7 @@ jobs:
       # render the 3D eye with Apple's OpenGL (the runner's window server
       # provides a context), which also checks that every shader compiles there
       - name: 3D eye on macOS OpenGL
-        timeout-minutes: 20       # Apple Silicon 4 min, Intel (software OpenGL) 7 min
+        timeout-minutes: 20       # Apple Silicon: about 4 min
         env:
           FUNDUSVIEW_REQUIRE_GL: "1"
         run: python -m pytest -q -rs tests/test_eye3d_gl.py
@@ -132,7 +131,6 @@ jobs:
   # Fixed download addresses for the newest builds:
   # https://github.com/<owner>/<repo>/releases/download/fundus-viewer-latest/FundusViewer-windows.zip
   # https://github.com/<owner>/<repo>/releases/download/fundus-viewer-latest/FundusViewer-mac-AppleSilicon.dmg
-  # https://github.com/<owner>/<repo>/releases/download/fundus-viewer-latest/FundusViewer-mac-Intel.dmg
   # Only the default branch publishes: pushes to other branches (and pull requests) still build
   # and test, but must not replace the public download with unmerged work. A manual run on the
   # default branch (workflow_dispatch) republishes.
