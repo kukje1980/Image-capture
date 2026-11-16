@@ -353,12 +353,12 @@ class _Handler(BaseHTTPRequestHandler):
                 self._body()
                 self._json({"error": "not found"}, 404)
                 return
-            self._json({"result": result, "before": before, "rev": self.share.rev()})
-            if changed:
-                try:
+            if changed:          # told before the answer goes out: once the other computer has its
+                try:             # answer, the server's window already knows (no race with a reply)
                     self.share.on_change()
                 except Exception:
                     pass
+            self._json({"result": result, "before": before, "rev": self.share.rev()})
         except (BrokenPipeError, ConnectionError):
             pass
         except Exception as exc:
