@@ -513,6 +513,7 @@ def _refine_fov(shot: Shot, own_uv: np.ndarray, targets: np.ndarray) -> None:
 WIDE = ("radial", "equidistant")      # wide-field lenses: angle ≈ a curve of the image radius
 CAL_FOVS = (0.45, 0.55, 0.65, 0.75, 0.85, 1.0, 1.15)     # × the field of view as given
 CAL_CS = (-0.15, 0.0, 0.15, 0.2545, 0.4)
+CAL_CS_KEPT = (0.0, 0.1, 0.2545, 0.4, 0.55, 0.7)        # the curve alone, the field of view as given
 CAL_GAIN = 1.3                        # that many times more agreeing points before the given lens is dropped
 
 
@@ -572,11 +573,11 @@ def _agree(shots, feats, matches, thresh_share: float = 0.003) -> tuple[int, flo
     return total, (float(np.median(np.concatenate(res))) if res else 0.0)
 
 
-def calibrate_lens(shots: list[Shot], feats, matches) -> str:
-    """Wide-field photos of one camera: try other fields of view and lens curves (``radial``) on the
-    matched vessels of the series and keep the one on which clearly more of them agree. The
-    camera's own numbers are a guess until it is calibrated; the overlap of a series measures them.
-    Returns a note for the report, "" when the given lens stays."""
+def calibrate_lens(shots: list[Shot], feats, matches, fit_fov: bool = False) -> str:
+    """Wide-field photos of one camera: try other lens curves (``radial``) on the matched vessels of
+    the series and keep the one on which clearly more of them agree. The field of view stays the
+    camera's own (a 176° photo is 176°: the angles of the montage follow from it); with ``fit_fov``
+    other fields of view are tried as well. Returns a note for the report, "" when the given lens stays."""
     first = shots[0]
     same = all((s.projection, s.fov_type, round(s.fov_deg, 3), round(s.radial_c, 4)) ==
                (first.projection, first.fov_type, round(first.fov_deg, 3), round(first.radial_c, 4)) for s in shots)
@@ -590,16 +591,18 @@ def calibrate_lens(shots: list[Shot], feats, matches) -> str:
 
     base, _ = _agree(shots, feats, matches)
     best = (base, given[1], given[2] if given[0] == "radial" else 0.0)
-    for k in CAL_FOVS:
-        for c in CAL_CS:
+    for k in (CAL_FOVS if fit_fov else (1.0,)):
+        for c in (CAL_CS if fit_fov else CAL_CS_KEPT):
             use(given[1] * k, c)
             n, _ = _agree(shots, feats, matches)
             if n > best[0]:
                 best = (n, given[1] * k, c)
     # a closer look around the best
     n0, f0, c0 = best
-    for df in (-0.08, -0.04, 0.04, 0.08):
+    for df in ((-0.08, -0.04, 0.04, 0.08) if fit_fov else (0.0,)):
         for dc in (-0.07, 0.0, 0.07):
+            if not fit_fov and not 0.0 <= c0 + dc <= 0.85:
+                continue
             use(f0 * (1 + df), c0 + dc)
             n, _ = _agree(shots, feats, matches)
             if n > best[0]:
@@ -610,6 +613,8 @@ def calibrate_lens(shots: list[Shot], feats, matches) -> str:
         return ""
     best = (best[0], round(best[1], 1), round(best[2], 3))
     use(best[1], best[2])
+    if not fit_fov:
+        return f"렌즈 곡선 보정 (화각 {given[1]:.0f}° 그대로, 일치점 {base} → {best[0]})"
     return f"렌즈 보정 {given[1]:.0f}° → {best[1]:.0f}° (일치점 {base} → {best[0]})"
 
 
@@ -713,8 +718,11 @@ def mask_artifacts(shots: list[Shot], placed: list[int]) -> int:
 
 
 def auto_align(shots: list[Shot], ref: int = 0, *, refine_fov: bool = True, progress=None,
-               calibrate: bool = True, mask: bool = True) -> AlignReport:
-    """Place every photo relative to ``shots[ref]`` (whose rotation is kept) from matched vessels."""
+               calibrate: bool = True, mask: bool = True, keep_fov: bool = True) -> AlignReport:
+    """Place every photo relative to ``shots[ref]`` (whose rotation is kept) from matched vessels.
+
+    ``keep_fov``: wide-field photos keep the field of view they came with (only the lens curve is
+    fitted), so the montage's angles are the camera's — 176° photos stay 176°."""
     n = len(shots)
     say = progress or (lambda *_: None)
     feats = []
@@ -725,7 +733,7 @@ def auto_align(shots: list[Shot], ref: int = 0, *, refine_fov: bool = True, prog
     if calibrate and n >= 2:
         say("렌즈 보정 확인 중")
         loose = {(i, j): match(feats[i], feats[j], 0.85) for i in range(n) for j in range(i + 1, n)}
-        lens = calibrate_lens(shots, feats, loose)
+        lens = calibrate_lens(shots, feats, loose, fit_fov=not keep_fov)
         if lens:
             for k, s in enumerate(shots):
                 feats[k].dirs = s.dirs(feats[k].uv)
@@ -779,7 +787,7 @@ def auto_align(shots: list[Shot], ref: int = 0, *, refine_fov: bool = True, prog
             uv, tgt = world_targets(k)
             if uv is None or len(uv) < MIN_INLIERS:
                 continue
-            if refine_fov and sweep < 2 and len(uv) >= 30:
+            if refine_fov and sweep < 2 and len(uv) >= 30 and not (keep_fov and shots[k].projection in WIDE):
                 _refine_fov(shots[k], uv, tgt)
             else:
                 shots[k].R = kabsch(shots[k].dirs(uv), tgt)
@@ -807,8 +815,8 @@ def align_points(moving: Shot, moving_uv, anchor: Shot, anchor_uv) -> float:
         raise ValueError("두 사진에서 같은 곳을 두 군데 이상 찍어 주세요")
     target = anchor.dirs(au) @ anchor.R.T
     src = moving.dirs(mu)
-    if len(mu) >= 4:                                      # enough points: the field of view may be corrected too
-        _refine_fov(moving, mu, target)
+    if len(mu) >= 4 and moving.projection not in WIDE:    # enough points: the field of view may be corrected
+        _refine_fov(moving, mu, target)                   # too (a wide-field photo keeps its own)
     else:
         moving.R = kabsch(src, target)
     return float(angle_deg(moving.dirs(mu) @ moving.R.T, target).max())
@@ -851,6 +859,46 @@ def coverage_angle(shots: list[Shot]) -> float:
         c = s.centre()
         far = max(far, math.acos(max(-1.0, min(1.0, -c[2]))) + s.tmax)
     return min(math.radians(170.0), far * 1.02)
+
+
+def coverage_span(alpha: np.ndarray, angle: float, circle=None) -> tuple[float, float]:
+    """What a montage really shows, roughly: the degrees (eye-centre angle) it covers along the
+    horizontal and along the vertical line through the centre of its map (``alpha``: the coverage of
+    the map, ``angle``: radians from its centre to its edge, ``circle``: the map on the picture —
+    the whole square when not given). The map itself is a circle around everything, so its own
+    diameter says more than was photographed."""
+    a = np.asarray(alpha)
+    h, w = a.shape[:2]
+    cx, cy, r = circle if circle is not None else (w / 2.0, h / 2.0, min(w, h) / 2.0)
+    if r < 1 or not a.any():
+        return 0.0, 0.0
+    on = a > 0.5 * float(a.max())
+    band = max(1, int(r / 50))
+    k = math.degrees(angle) / r
+    x, y = int(min(max(cx, 0), w - 1)), int(min(max(cy, 0), h - 1))
+
+    def span(line: np.ndarray) -> float:
+        idx = np.flatnonzero(line)
+        return float((idx[-1] - idx[0] + 1) * k) if len(idx) else 0.0
+
+    return (span(on[max(0, y - band):y + band + 1].any(axis=0)),
+            span(on[:, max(0, x - band):x + band + 1].any(axis=1)))
+
+
+def shots_span(shots: list[Shot], size: int = 160) -> tuple[float, float]:
+    """``coverage_span`` of the photos as they lie now (from a small map: quick enough while editing)."""
+    if not shots:
+        return 0.0, 0.0
+    geom = MapGeometry(size, coverage_angle(shots))
+    cover = np.zeros((size, size), np.float32)
+    for s in shots:
+        cover = np.maximum(cover, _sample(s, geom)[1])
+    return coverage_span(cover, geom.angle)
+
+
+def span_text(span: tuple[float, float]) -> str:
+    """``coverage_span`` as the user reads it — rounded: the angles of a montage are approximate."""
+    return f"가로 약 {round(span[0] / 5) * 5:.0f}° · 세로 약 {round(span[1] / 5) * 5:.0f}°"
 
 
 def map_for(shots: list[Shot], max_size: int = 4000, min_size: int = 400) -> MapGeometry:

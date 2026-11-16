@@ -111,6 +111,7 @@ def test_editor_tools(app):
         dlg.c_auto_fov.setChecked(False)
         dlg.sp_mfov.setValue(150.0)
         assert dlg.montage_fov() == 150.0 and "150°" in dlg.lbl_range.text()
+        assert "촬영 범위: 가로 약" in dlg.lbl_range.text()      # what the photos cover, roughly
         # 겹쳐 보기: the overlay follows the opacity / colour settings
         dlg.s_opacity.setValue(100)
         dlg.c_tint.setChecked(True)
@@ -178,6 +179,8 @@ def test_montage_from_the_main_window(app, tmp_path, montage_drop, import_and_wa
         assert new["circle_r"] == pytest.approx(new["width"] / 2) and new["width"] == new["height"]
         d = w._montage_definition(new)
         assert d is not None and sorted(x["image_id"] for x in d["shots"]) == sorted(ids)
+        assert all(60 < x < new["fov_deg"] for x in d["span"])  # what was photographed: less than the map's circle
+        assert "가로 약" in new["note"]
         assert w.thumbs.count() == 6
         # the montage in the 3D view and the measurements: its own eye geometry
         w._show_image(new["id"])
@@ -241,3 +244,21 @@ def test_fast_save_draws_a_smaller_picture_and_is_remembered(app):
         again.deleteLater()
         app.processEvents()
 
+
+
+def test_the_3d_field_of_a_montage_is_what_it_covers(app):
+    """세로 단면의 화각: a montage's rays and angle end where its photos end, not at the edge of its map."""
+    from fundusview.ui.eye3d import EyeView
+    eye = EyeView()
+    n = 400
+    alpha = np.zeros((n, n), np.uint8)
+    alpha[150:250, 40:400] = 255                                # the map: 250° over 400 pixels
+    eye.set_mapping(fov_deg=250.0, fov_type="internal", projection="equidistant", roll_deg=0.0)
+    eye.set_image(np.full((n, n, 3), 120, np.uint8), alpha, (n / 2, n / 2, n / 2))
+    t0, t1 = eye.field_on_meridian()
+    assert math.degrees(t1 - t0) == pytest.approx(250.0)        # a photo: its whole field
+    eye.field_from_cover = True
+    t0, t1 = eye.field_on_meridian()
+    assert math.degrees(t1 - t0) == pytest.approx(62.5, abs=2.0)        # the vertical section cuts the band
+    assert eye.cover_span() == pytest.approx((225.0, 62.5))
+    assert eye._mapping_uniforms()["fovring"] == 0.0            # no ring round the empty map
