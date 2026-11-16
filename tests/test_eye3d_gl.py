@@ -394,6 +394,49 @@ def test_walking_in_sees_the_retina_through_the_pupil(eye):
         v.set_mode("outside")
 
 
+def test_walking_in_by_the_wheel_looks_around(eye):
+    """휠로 들어가기: with the anterior segment picked its ring goes over the picture (on screen; a saved
+    picture is without it) and the next frames are drawn as before; on the way one looks around from where
+    one is; at the retina the inside view."""
+    import numpy as np
+
+    v, app, errors = eye
+    _render(eye, cut=0.25)
+    try:
+        v.set_walk(True)
+        v.update()
+        _settle(app, 0.2)                                       # (drawn with the ring)
+        v._last_img = v.grabFramebuffer()
+        saved = _frame(eye)
+        v.set_walk(False)
+        v._last_img = v.grabFramebuffer()
+        assert not errors and np.abs(_frame(eye) - saved).max() <= 2          # 화면 저장: no ring
+        v.set_walk(True)
+        v.walk_by(15)                                           # in the anterior chamber
+        v.update()
+        _settle(app, 0.2)
+        v._last_img = v.grabFramebuffer()
+        straight = _frame(eye)
+        r, g, b = v._last_img.pixelColor(v.width() // 2, v.height() // 2).getRgb()[:3]
+        assert v.mode == "outside" and r > 60 and r > b                       # the retina through the pupil
+        eye_point = v._view_basis()[0]
+        v._walk_look(-0.45 * v.height(), 0.0)                   # a left drag: look to the side
+        v.update()
+        _settle(app, 0.2)
+        v._last_img = v.grabFramebuffer()
+        assert not errors and np.allclose(v._view_basis()[0], eye_point)     # from the same place
+        assert np.abs(_frame(eye) - straight).mean() > 8.0                   # … something else in view
+        v.walk_by(25)
+        assert v.mode == "inside" and v.in_yaw == pytest.approx(v.walk_yaw)
+        v.update()
+        _settle(app, 0.2)
+        assert not errors
+    finally:
+        v.journey_end()
+        v.set_mode("outside")
+    assert not v.walk
+
+
 def test_dark_fades_the_picture_to_black(eye):
     """The simple model's way in goes through black."""
     px = _render(eye, "detailed", cut=0.25, yaw=38.0, pitch=18.0, dist=3.3)

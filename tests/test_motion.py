@@ -290,6 +290,182 @@ def test_3d_enters_through_the_pupil_and_back(app, live, monkeypatch):
     assert (s.mode, s.dark) == ("outside", 0.0) and not s.moving()
 
 
+def _screen(e, p):
+    """Widget position of eye point ``p`` in the current view."""
+    from PySide6.QtCore import QPointF
+
+    mvp, _ = e._camera(e.width() / e.height())
+    v = mvp @ np.array([p[0], p[1], p[2], 1.0])
+    return QPointF((v[0] / v[3] + 1.0) * 0.5 * e.width(), (1.0 - v[1] / v[3]) * 0.5 * e.height())
+
+
+def _mouse3d(e, kind, pos, button=None):
+    from PySide6.QtCore import QEvent, Qt
+    from PySide6.QtGui import QMouseEvent
+
+    button = button or Qt.MouseButton.LeftButton
+    t = {"press": QEvent.Type.MouseButtonPress, "move": QEvent.Type.MouseMove,
+         "release": QEvent.Type.MouseButtonRelease}[kind]
+    held = Qt.MouseButton.NoButton if kind == "release" else button
+    ev = QMouseEvent(t, pos, pos, button if kind != "move" else Qt.MouseButton.NoButton, held,
+                     Qt.KeyboardModifier.NoModifier)
+    {"press": e.mousePressEvent, "move": e.mouseMoveEvent, "release": e.mouseReleaseEvent}[kind](ev)
+
+
+def _click3d(e, pos):
+    _mouse3d(e, "press", pos)
+    _mouse3d(e, "release", pos)
+
+
+def _wheel3d(e, notches, pos=None):
+    from PySide6.QtCore import QPoint, QPointF, Qt
+    from PySide6.QtGui import QWheelEvent
+
+    pos = pos or QPointF(e.width() / 2, e.height() / 2)
+    e.wheelEvent(QWheelEvent(pos, pos, QPoint(0, 0), QPoint(0, int(round(120 * notches))), Qt.MouseButton.NoButton,
+                             Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False))
+
+
+def test_3d_wheel_walks_in_from_the_picked_cornea(app, live, monkeypatch):
+    """휠로 들어가기: a click on the cornea picks the anterior segment; the wheel then goes in through the
+    cornea, the chamber, the pupil and the lens to the retina (there it comes nearer) and back out to the
+    view it started from; on the way a left drag looks around from where one is and a left click brings
+    that place to the middle."""
+    from PySide6.QtCore import QPointF, Qt
+    from PySide6.QtGui import QKeyEvent
+
+    from fundusview.ui import eye_model as em
+    from fundusview.ui import motion
+
+    e = _eye(app, monkeypatch)
+    e.cut = 0.25                                                      # the front cut open, as the tab starts
+    e.reset_view()
+    start = e.pose()
+    seen = []
+    e.walkChanged.connect(seen.append)
+    # the front of the eye: with the front cut open its opening counts; the side of the globe does not
+    assert e.anterior_at(_screen(e, (0.0, 0.0, 0.6))) and e.anterior_at(_screen(e, (0.0, 0.0, 1.08)))
+    assert not e.anterior_at(_screen(e, (1.0, 0.0, 0.0))) and not e.anterior_at(QPointF(3.0, 3.0))
+    _click3d(e, _screen(e, (1.0, 0.0, -0.1)))                            # the side of the eye: nothing picked
+    assert not e.walk and seen == []
+    _click3d(e, _screen(e, (0.0, 0.0, 0.6)))                             # the front: picked
+    assert e.walk and seen == [True] and e._walk_ring_alpha() == 1.0 and e._overlay_wanted()
+    assert e.pose() == start and not e.journey_on()                   # (picking moves nothing)
+    # the wheel walks in: the eye closes and turns its cornea to you, then along the axis
+    _wheel3d(e, 8)
+    live(1.0)
+    assert e.journey_j == pytest.approx(8 * e.WALK_STEP) and e.mode == "outside" and e.cut == 1.0
+    assert (e.yaw, e.pitch, e.dist) == (pytest.approx(0.0, abs=1e-6), pytest.approx(0.0), pytest.approx(1.9))
+    assert e._walk_ring_alpha() == 0.0                                # the ring is gone once at the cornea
+    _wheel3d(e, 7)
+    live(1.0)
+    eye, f, *_ = e._view_basis()
+    assert em.IRIS_Z < float(np.linalg.norm(eye)) < 1.12              # in the anterior chamber
+    # left drag on the way: look around from where one is (the eye point stays)
+    _mouse3d(e, "press", QPointF(320, 210))
+    _mouse3d(e, "move", QPointF(322, 211))                               # (within a click's slop: nothing yet)
+    assert e.walk_yaw == 0.0
+    _mouse3d(e, "move", QPointF(260, 180))
+    e.stop_motion()
+    _mouse3d(e, "release", QPointF(260, 180))
+    e.stop_motion()                                                    # (no flick in the test)
+    eye2, f2, *_ = e._view_basis()
+    assert np.allclose(eye2, eye, atol=1e-9) and e.walk_yaw > 5.0 and e.walk_pitch < -2.0
+    assert f2[0] > 0.05 and f2[1] < -0.02 and e.mode == "outside"      # (dragged left and up: looks right and down)
+    # left click on the way: what lies under it comes to the middle
+    pos = QPointF(200, 300)
+    _, want = e._ray(pos)
+    _click3d(e, pos)
+    live(0.6)
+    assert np.allclose(e._view_basis()[1], want, atol=1e-3)
+    # on to the retina: the inside view, looking where one looked — a fast turn of the wheel stops there
+    _wheel3d(e, 20)
+    live(1.5)
+    assert e.mode == "inside" and e.journey_j == 1.0 and e.in_fov == pytest.approx(e.FOV0)
+    assert (e.in_yaw, e.in_pitch) == (pytest.approx(e.walk_yaw), pytest.approx(e.walk_pitch))
+    assert not e.moving()
+    _wheel3d(e, 4)                                                      # the next turn comes nearer
+    live(1.0)
+    assert e.journey_j == 1.0 and e.in_fov == pytest.approx(e.FOV0 * 0.88 ** 4, rel=1e-3)
+    _wheel3d(e, -6)                                                     # back: the whole field first (and stops)
+    live(1.5)
+    assert e.mode == "inside" and e.in_fov == pytest.approx(e.FOV0) and e.journey_j == 1.0
+    _wheel3d(e, -2)                                                     # … then out
+    live(1.0)
+    assert e.journey_j == pytest.approx(1.0 - 2 * e.WALK_STEP, abs=1e-6) and e.mode == "outside"
+    _wheel3d(e, -40)                                                    # all the way out: the view it started from
+    live(2.0)
+    assert e.journey_j == 0.0 and e.mode == "outside" and e.cut == pytest.approx(0.25)
+    p = e.pose()
+    assert (p["yaw"], p["pitch"], p["dist"]) == (pytest.approx(start["yaw"]), pytest.approx(start["pitch"]),
+                                                 pytest.approx(start["dist"]))
+    assert np.allclose(p["target"], start["target"]) and (e.walk_yaw, e.walk_pitch) == (0.0, 0.0)
+    assert e.walk and e._walk_ring_alpha() == 1.0                     # still picked: the wheel goes in again
+    # Esc lets go: the wheel zooms again
+    e.keyPressEvent(QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key.Key_Escape, Qt.KeyboardModifier.NoModifier))
+    assert not e.walk and seen == [True, False]
+    d0 = e.dist
+    _wheel3d(e, 2)
+    live(1.0)
+    assert e.dist < d0 and e.journey_j == 0.0
+    # picked from the inside view: already on the way (at the retina) — a click centres, the wheel goes out
+    e.set_mode("inside")
+    e.set_walk(True)
+    assert e.on_the_way() and e.journey_j == 1.0
+    _, want = e._ray(QPointF(500, 120))
+    _click3d(e, QPointF(500, 120))
+    live(0.6)
+    assert e.walk and e.mode == "inside" and np.allclose(e._view_basis()[1], want, atol=1e-3)
+    e.set_walk(False)
+    e.set_mode("outside")
+    e.reset_view()
+    # with 부드러운 움직임 off the wheel steps at once; another view lets the anterior segment go
+    motion.set_enabled(False)
+    try:
+        e.set_walk(True)
+        _wheel3d(e, 10)
+        assert e.journey_j == pytest.approx(10 * e.WALK_STEP) and not e.moving()
+        e.reset_view(animate=False)
+        assert not e.walk and not e.journey_on() and e.cut == pytest.approx(0.25)
+    finally:
+        motion.set_enabled(True)
+
+
+def test_3d_walk_ring_marks_the_picked_front(app, monkeypatch):
+    """The picked anterior segment is ringed — on the rim of the front opening while the eye is cut open,
+    on the limbus once it is closed — on screen only, not in a saved picture."""
+    from PySide6.QtGui import QColor, QImage, QPainter
+
+    from fundusview.ui import eye_model as em
+
+    e = _eye(app, monkeypatch)
+    e.reset_view()
+
+    def ring_at(cut, z):
+        e.cut = cut
+        img = QImage(e.width(), e.height(), QImage.Format.Format_ARGB32)
+        img.fill(QColor(0, 0, 0))
+        painter = QPainter(img)
+        e._paint_walk_ring(painter, e._camera(e.width() / e.height())[0])
+        painter.end()
+        r = math.sqrt(1.0 - z * z)
+        hits = 0
+        for t in np.linspace(0.0, 2 * math.pi, 12, endpoint=False):
+            q = _screen(e, (r * math.cos(t), r * math.sin(t), z))
+            c = img.pixelColor(int(round(q.x())), int(round(q.y())))
+            hits += c.blue() > 150 and c.blue() > c.red() + 60
+        return hits
+
+    e.set_walk(True)
+    assert ring_at(0.25, 0.25) >= 11                                  # the opening's rim, all round
+    assert ring_at(1.0, em.LIMBUS_Z) >= 8                             # the limbus, the side facing the camera
+    e._grabbing = True                                                # 화면 저장: without it
+    assert e._walk_ring_alpha() == 0.0
+    e._grabbing = False
+    e.set_walk(False)
+    assert e._walk_ring_alpha() == 0.0 and not e._overlay_wanted()
+
+
 def test_3d_auto_rotate_waits_for_idle_hands(app, live, monkeypatch):
     import time
 

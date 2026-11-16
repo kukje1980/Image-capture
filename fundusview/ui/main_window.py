@@ -1103,6 +1103,24 @@ class MainWindow(QMainWindow):
         self.s_journey.setMinimumWidth(120)
         self.s_journey.setToolTip("왼쪽 끝 = 안구 전체, 오른쪽 끝 = 망막 (끌어서 원하는 곳에서 멈춰 보세요)")
         self.s_journey.valueChanged.connect(self._scrub_journey)
+        # 휠로 들어가기: the anterior segment picked (this button, or a click on the cornea of the eye) —
+        # then the wheel walks in from the cornea to the retina and back out, a left drag looks around
+        self.b_walk = QPushButton("전안부 선택")
+        self.b_walk.setObjectName("toggle")
+        self.b_walk.setCheckable(True)
+        self.b_walk.setToolTip("누르거나 3D 안구의 각막을 누르면 전안부가 선택됩니다 — 마우스 휠을 앞으로 돌리면 각막 → 앞방 → "
+                               "동공 → 수정체 → 유리체 → 망막으로 들어가고, 뒤로 돌리면 나옵니다. 들어가는 중에는 왼쪽 "
+                               "드래그로 둘러보고, 왼쪽 클릭한 곳이 가운데로 옵니다 (Esc · 다시 누르면 해제)")
+        self.b_walk.toggled.connect(self._toggle_walk)
+        walk_note = QLabel("휠로 들어가기 · 드래그 둘러보기")
+        walk_note.setObjectName("caption")
+        walk_row = QWidget()
+        wr = QHBoxLayout(walk_row)
+        wr.setContentsMargins(0, 0, 0, 0)
+        wr.setSpacing(8)
+        wr.addWidget(self.b_walk)
+        wr.addWidget(walk_note, 1)
+        self.eye3d.walkChanged.connect(self._on_walk)
 
         # 슬릿 스캔: which way the slit crosses the photo
         self._slit_buttons = {}
@@ -1185,7 +1203,9 @@ class MainWindow(QMainWindow):
         keys_label = QLabel("<b>드래그</b> 회전 (놓으면 관성으로 더 돕니다) · <b>휠</b> 자르는 깊이 (내부: 확대) · "
                             "<b>확대 바</b> · <b>Ctrl+휠</b> · <b>오른쪽 드래그</b> 확대<br>"
                             "<b>Shift+드래그</b> 또는 <b>가운데 버튼</b> 이동 · "
-                            "<b>더블클릭</b> 처음 보기 · <b>←↑→↓ + − 0</b><br><b>트랙패드</b> 두 손가락 벌리기·오므리기 확대")
+                            "<b>더블클릭</b> 처음 보기 · <b>←↑→↓ + − 0</b><br><b>트랙패드</b> 두 손가락 벌리기·오므리기 확대"
+                            "<br><b>각막 클릭</b> 전안부 선택 → <b>휠</b> 각막부터 망막까지 들어가기·나오기 · "
+                            "<b>왼쪽 드래그</b> 둘러보기 · <b>왼쪽 클릭</b> 그곳을 가운데로 · <b>Esc</b> 해제")
         keys_label.setObjectName("caption")
         keys_label.setWordWrap(True)
         keys_label.setTextFormat(Qt.TextFormat.RichText)
@@ -1200,7 +1220,7 @@ class MainWindow(QMainWindow):
                           self.c_autofind3d, self.photo3d, self.lbl_found3d, fix_row, self.lbl_mark3d))
         bl.addWidget(card("망막 입체", self.c_surface3d, setting_row("높이", self.s_height3d), self.c_relief3d))
         bl.addWidget(card("시점", view_row))
-        bl.addWidget(card("들어가며 보기", journey_row, setting_row("위치", self.s_journey)))
+        bl.addWidget(card("들어가며 보기", journey_row, setting_row("위치", self.s_journey), walk_row))
         bl.addWidget(card("안구 열기", self.seg_view, setting_row("깊이", self.s_cut), setting_row("공막 투명도", self.s_glass),
                           self.c_xray3d))
         bl.addWidget(card("슬릿 스캔", self.seg_slit, self.lbl_slit, self.b_scan2))
@@ -1313,10 +1333,10 @@ class MainWindow(QMainWindow):
             "<b>3D 안구</b><br>"
             "위 막대: 간단히 / 자세히 (가벼운 기본 모형 / 실제 해부 구조) · 외부 / 내부 · 확대 바 · ▶ 슬릿 스캔 · "
             "크게 보기 · 설정 (나머지 설정을 여닫기 — 설정 메뉴 → 3D 보기 설정… 으로도 엽니다)<br>"
-            "마우스 휠: 자르는 깊이 (앞으로 굴리면 깊게, 뒤로 굴리면 닫힘 · 내부에서는 확대) · "
+            "마우스 휠: 자르는 깊이 (앞으로 굴리면 깊게, 뒤로 굴리면 닫힘 · 내부에서는 확대 · 전안부를 선택하면 들어가기) · "
             "확대: 확대 바, Ctrl+휠, 오른쪽 드래그, +/−<br>"
             "설정 — <b>망막 입체</b>: 표면 높낮이 · 높이 · 입체 조명 / <b>시점</b>: 정면 · 처음 시점 · 화면 저장 / "
-            "<b>들어가며 보기</b>: ▶ 들어가기 · 위치 / <b>안구 열기</b>: 앞쪽 절개 · 세로 단면, 깊이, 공막 투명도, "
+            "<b>들어가며 보기</b>: ▶ 들어가기 · 위치 · 전안부 선택 / <b>안구 열기</b>: 앞쪽 절개 · 세로 단면, 깊이, 공막 투명도, "
             "망막 투시 / <b>슬릿 스캔</b>: 방향 ↓ ↑ → ← · 상하좌우 / <b>효과</b>: 자동 회전 · 화각 표시 · 사진 나란히 / "
             "<b>표시</b>: 단순하게 보기 · 시신경 · 외안근 · 각도 격자 / <b>사진 맞춤</b>: 실제 위치에 맞춤 · 화각 · "
             "투영 · 회전<br>"
@@ -1334,6 +1354,9 @@ class MainWindow(QMainWindow):
             "자동 회전: 손을 떼고 있으면 천천히 돕니다<br>"
             "들어가며 보기 · 내부: 안구 전체에서 각막 → 앞방 → 동공 → 수정체 → 유리체 → 망막까지 끊김 없이 들어갑니다 "
             "(위치 막대로 원하는 곳에서 멈춤)<br>"
+            "휠로 들어가기: 3D 안구의 각막을 누르거나 [전안부 선택] → 휠 앞으로: 각막 → 앞방 → 동공 → 수정체 → 유리체 → 망막, "
+            "뒤로: 나오기 (망막에서는 휠이 커서 쪽으로 더 가까이) · 들어가는 중 왼쪽 드래그: 둘러보기, 왼쪽 클릭: 그곳을 가운데로 · "
+            "Esc 또는 다른 곳을 누르면 해제<br>"
             "보기 → 부드러운 움직임: 끄면 확대·회전·전환이 바로 바뀝니다 (원격 접속 등 느린 화면)<br><br>"
             "<b>단축키</b><br>"
             "← / → 또는 PageUp / PageDown: 이전 / 다음 사진 · Ctrl+1: Simple · Ctrl+2: Multi · Ctrl+3: 3D · "
@@ -3497,6 +3520,31 @@ class MainWindow(QMainWindow):
             self._set_3d_detail("detailed", save=False)
         eye.journey_scrub(v / 100.0)
 
+    WALK_HINT = "전안부 선택 — 휠을 앞으로 돌리면 각막부터 망막까지 들어갑니다"
+
+    def _toggle_walk(self, on: bool) -> None:
+        """[전안부 선택]: the wheel walks in from the cornea (or zooms again)."""
+        self.eye3d.set_walk(on)
+        self.eye3d.setFocus()
+
+    def _on_walk(self, on: bool) -> None:
+        """휠로 들어가기 picked or let go (here, by a click on the cornea, Esc or another view): the button
+        and the name chip follow; the way in shows the anatomical eye (not saved as the look)."""
+        if self.b_walk.isChecked() != on:
+            self.b_walk.blockSignals(True)
+            self.b_walk.setChecked(on)
+            self.b_walk.blockSignals(False)
+        eye = self.eye3d
+        if on:
+            self._show.stop()
+            self._tween._finish()
+            if eye.detail != "detailed":
+                self._set_3d_detail("detailed", save=False)
+            if not eye.on_the_way():
+                self._where.say(self.WALK_HINT)
+        elif not eye.on_the_way():
+            self._where.say("")
+
     def _on_journey(self, j: float) -> None:
         """The slider, the button, 외부 | 내부 and the name of the place passed follow the way."""
         eye = self.eye3d
@@ -3515,10 +3563,10 @@ class MainWindow(QMainWindow):
             self.c_view3d.setEnabled(not inside)
             self.seg_view.setEnabled(not inside)
         if j <= 0.001:
-            self._where.say("")
+            self._where.say(self.WALK_HINT if eye.walk else "")
             return
         if inside:
-            self._where.say("망막 — 황반과 시신경 유두 (망막 시점)", hold=2.5)
+            self._where.say("망막 — 황반과 시신경 유두 (망막 시점)" + (" · 휠: 더 가까이" if eye.walk else ""), hold=2.5)
             return
         z = float(np.linalg.norm(eye._view_basis()[0]))
         if j < self.WHERE[0][0]:
