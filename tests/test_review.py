@@ -148,10 +148,11 @@ def test_patient_list_is_a_window_of_its_own_and_comes_first(win):
     assert by_id["J003"] == ["J003", "정하늘", "", "", "", "", "0", "0"]
     assert by_id["★ 미분류"][5:] == ["2026-02-01", "1", "1"]
     assert pl.lbl_count.text() == "3명"
-    # nothing is selected yet: no patient, no photos, nothing to open
+    # nothing is selected yet: no patient, no information, nothing to open
     assert pl.current() is None and not pl.btn_open.isEnabled() and not pl.lbl_name.isVisible()
+    assert not pl.info_box.isVisible() and pl.info() == {}
     assert pl.lbl_detail_empty.isVisible() and "환자를 선택" in pl.lbl_detail_empty.text()
-    assert "16장" in pl.lbl_detail_empty.text()
+    assert "정보" in pl.lbl_detail_empty.text() and "16장" not in pl.lbl_detail_empty.text()
 
     # a click on a column title sorts by it, a second click the other way; empty values stay last
     pl.sort_by(5)                                                  # 최근 검사: the latest first
@@ -218,9 +219,10 @@ def test_patient_list_is_a_window_of_its_own_and_comes_first(win):
     assert pl.isVisible() and w.btn_patients.text() == "환자 목록"
 
 
-def test_click_a_patient_shows_its_photos_and_a_photo_large(win):
+def test_click_a_patient_shows_its_information_not_its_photos(win):
     from PySide6.QtCore import QPoint, Qt
     from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QLabel
 
     from fundusview.ui.main_window import UNASSIGNED
 
@@ -231,8 +233,8 @@ def test_click_a_patient_shows_its_photos_and_a_photo_large(win):
         rows = table.selectionModel().selectedRows()
         return table.item(rows[0].row(), 0).data(Qt.ItemDataRole.UserRole) if rows else None
 
-    # one click: the patient in both windows — its photos 16 to a screen in the list, its newest OD | OS
-    # in the main window
+    # one click: the patient in both windows — its information in the list (no photos there), its newest
+    # OD | OS in the main window
     pl.table.selectRow(pl.row_of(refs["kim"]))
     app.processEvents()
     assert w._patient_ref == refs["kim"] and pl.isVisible() and "김영수" in w.banner.text()
@@ -240,11 +242,17 @@ def test_click_a_patient_shows_its_photos_and_a_photo_large(win):
     assert w.thumbs.count() == 7 and ids["na3"] not in w._strip_ids()     # 8 photos, na3 (eye unknown) not listed
     # the main window: its newest OD | OS on 다중 보기 (설정 → 일반 → 환자를 열면: 최신 OD | OS)
     assert w._tab() == "multi" and w.picks() == [ids["od3"], ids["os3"]] and w.multi.count == 2
-    assert pl.photos.shown_ids() == newest_first and len(pl.photos.cells) == 16
-    assert not pl.photos.btn_next.isVisible() and pl.photos.lbl_pos.text() == "8장"
-    # the patient: name, ID, sex · birth date (age), 정보 수정 · 환자 삭제
-    assert pl.lbl_name.text() == "김영수" and pl.lbl_id.text() == "K001"
-    assert pl.lbl_info.text().startswith("남 · 1958-03-12 (") and pl.btn_edit.isVisible() and pl.btn_delete.isVisible()
+    assert len(newest_first) == 8
+    # no photo thumbnails in the list: only the patient's information
+    assert not hasattr(pl, "photos") and not pl.findChildren(QLabel, "photoPic")
+    assert not hasattr(pl, "photoRequested")
+    # the patient: name, ID, then sex · birth date (age) · exams · photos · memo, 정보 수정 · 환자 삭제
+    assert pl.lbl_name.text() == "김영수" and pl.lbl_id.text() == "K001" and pl.info_box.isVisible()
+    age = date.today().year - 1958 - ((date.today().month, date.today().day) < (3, 12))
+    assert pl.info() == {"sex": "남", "birth": f"1958-03-12 ({age}세)", "last": "2026-03-02", "first": "2025-08-20",
+                         "exams": "3회", "images": "8장", "kinds": "컬러 6장 · Red-free 1장 · 디스크 2장 1장",
+                         "note": "—"}
+    assert not pl.lbl_detail_empty.isVisible() and pl.btn_edit.isVisible() and pl.btn_delete.isVisible()
     assert pl.btn_open.isEnabled() and pl.btn_open.text() == "사진 보기"
     # its exams: newest first, one selected (the newest), what was taken
     assert pl.exam_dates() == ["2026-03-02", "2025-12-01", "2025-08-20"] and pl.current_exam() == "2026-03-02"
@@ -257,9 +265,10 @@ def test_click_a_patient_shows_its_photos_and_a_photo_large(win):
     assert pl.current_exam() == "2025-12-01" and pl.exams.selectionModel().selectedRows()[0].row() == 1
     assert w.picks() == [ids["od2"], ids["os2"]] and _grid_ids(w) == [ids["od2"], ids["os2"]]
 
-    # a photo of the list's 16: large in the main window, the list makes way for it
-    pl.photos.cells[3].clicked.emit(pl.photos.cells[3].image_id)
-    assert pl.isHidden() and w._tab() == "all" and w.current["id"] == ids["od3"] and w.view2d.has_image()
+    # a photo large in the main window (the list has none of its own)
+    pl.hide()
+    w.open_large(ids["od3"])
+    assert w._tab() == "all" and w.current["id"] == ids["od3"] and w.view2d.has_image()
     # [Simple] brings the two photos back as they were
     w.view_buttons["simple"].click()
     assert w._tab() == "multi" and _grid_ids(w) == [ids["od2"], ids["os2"]]
@@ -283,14 +292,17 @@ def test_click_a_patient_shows_its_photos_and_a_photo_large(win):
     w.show_patient_list()
     assert pl.isVisible() and selected(pl.table) == refs["kim"]
     pl.table.selectRow(pl.row_of(refs["park"]))
-    assert w._patient_ref == refs["park"] and _grid_ids(w) == [ids["p_od"]] and pl.photos.shown_ids() == [ids["p_od"]]
+    assert w._patient_ref == refs["park"] and _grid_ids(w) == [ids["p_od"]] and pl.info()["images"] == "1장"
+    assert pl.lbl_name.text() == "박정희" and pl.info()["sex"] == "여"
     pl.table.doubleClicked.emit(pl.table.model().index(pl.row_of(refs["park"]), 0))
     assert pl.isHidden() and w._tab() == "multi" and _grid_ids(w) == [ids["p_od"]]
 
-    # a patient without photos: says so, nothing to open
+    # a patient without photos: its information, and says so; nothing to open
     w.show_patient_list()
     pl.table.selectRow(pl.row_of(refs["jung"]))
-    assert w._patient_ref == refs["jung"] and _grid_ids(w) == [] and pl.photos.isHidden()
+    assert w._patient_ref == refs["jung"] and _grid_ids(w) == []
+    assert pl.info() == {"sex": "—", "birth": "—", "last": "—", "first": "—", "exams": "0회", "images": "0장",
+                         "kinds": "—", "note": "—"}
     assert pl.lbl_detail_empty.isVisible() and "아직 가져온 사진이 없습니다" in pl.lbl_detail_empty.text()
     assert not pl.btn_open.isEnabled() and not pl.btn_3d.isEnabled()
     pl.table.doubleClicked.emit(pl.table.model().index(pl.row_of(refs["jung"]), 0))
@@ -298,6 +310,8 @@ def test_click_a_patient_shows_its_photos_and_a_photo_large(win):
     # 미분류: its photos open as well, to be given a patient
     pl.table.selectRow(pl.row_of(UNASSIGNED))
     assert pl.lbl_name.text() == "★ 미분류" and not pl.btn_edit.isVisible() and pl.btn_open.isEnabled()
+    assert set(pl.info()) == {"last", "first", "exams", "images", "kinds"} and pl.info()["images"] == "1장"
+    assert "환자 ID를 찾지 못한" in pl.lbl_detail_empty.text() and pl.lbl_detail_empty.isVisible()
     pl.btn_open.click()                       # (no eye known: 모두 보기, to be given a patient)
     assert pl.isHidden() and w._tab() == "all" and w._patient_ref == UNASSIGNED and w.current["id"] == ids["un"]
 
@@ -320,12 +334,13 @@ def test_click_a_patient_shows_its_photos_and_a_photo_large(win):
     w.refresh_patients()
     assert pl.exam_dates()[0] == "2026-04-01" and pl.current_exam() == "2025-12-01"
     assert pl.table.item(pl.row_of(refs["kim"]), 7).text() == "9"
+    assert pl.info()["last"] == "2026-04-01" and pl.info()["images"] == "9장" and pl.info()["exams"] == "4회"
 
 
 def test_more_than_16_photos_page_by_16(win):
-    """A patient with 33 photos: 16 to a screen in the patient list, ◀ ▶ to the next 16, an exam picked
-    there comes up. The VK-2 way (설정 → 일반 → 환자를 열면) shows them 16 to a screen in the main window
-    as well (16장 보기), following the exam picked in the list."""
+    """A patient with 33 photos: the patient list tells how many (it shows no photos). The VK-2 way
+    (설정 → 일반 → 환자를 열면) shows them 16 to a screen in the main window (16장 보기), following the
+    exam picked in the list."""
     app, w, db, refs, ids = win
     pl = w.patient_list
     src = db.get_image(ids["od3"])["file_path"]
@@ -338,21 +353,14 @@ def test_more_than_16_photos_page_by_16(win):
     pl.table.selectRow(pl.row_of(refs["park"]))
     app.processEvents()
     order = [r["id"] for r in db.images_for_patient(refs["park"])]       # newest first
-    assert len(order) == 33 and order[0] == ids["p_od"] and pl.photos.shown_ids() == order[:16]
-    assert pl.photos.lbl_pos.text() == "1–16 / 33장" and pl.photos.btn_next.isEnabled()
+    assert len(order) == 33 and order[0] == ids["p_od"]
+    assert pl.info()["images"] == "33장" and pl.info()["exams"] == "33회" and pl.info()["first"] == "2024-01-01"
     # the first way: the main window shows the newest OD | OS (the OS of an earlier exam)
     assert w._tab() == "multi" and w.picks()[0] == ids["p_od"] and len(w.picks()) == 2
-    # ▶ in the list pages its own 16
-    pl.photos.btn_next.click()
-    assert pl.photos.shown_ids() == order[16:32]
-    pl.photos.btn_prev.click()
-    assert pl.photos.shown_ids() == order[:16]
-    # an exam in the list: the 16 with its photos
+    # an exam picked in the list
     first_of = {d: next(i for i in order if db.get_image(i)["exam_date"] == d) for d in pl.exam_dates()}
-    pl.set_exam("2024-06-01")                                   # on the screen already: nothing moves
-    assert pl.photos.shown_ids() == order[:16]
-    pl.set_exam("2024-02-01")                                   # further down: that screen (a full one)
-    assert order.index(first_of["2024-02-01"]) == 28 and pl.photos.shown_ids() == order[17:33]
+    pl.set_exam("2024-02-01")
+    assert pl.current_exam() == "2024-02-01" and order.index(first_of["2024-02-01"]) == 28
 
     # the VK-2 way: 사진 보기 opens 16장 보기 at the selected exam's photo, nothing picked
     w.settings.open_view = "grid"

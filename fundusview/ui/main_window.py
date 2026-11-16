@@ -759,7 +759,6 @@ class MainWindow(QMainWindow):
         self.patient_list = PatientListWindow(self.db, self)
         self.patient_list.patientSelected.connect(self._pick_patient)
         self.patient_list.openRequested.connect(self.open_patient)
-        self.patient_list.photoRequested.connect(self._open_listed_photo)
         self.patient_list.examChecked.connect(self._on_exam_checked)
         self.patient_list.editRequested.connect(self._edit_patient)
         self.patient_list.deleteRequested.connect(self._delete_patient)
@@ -1277,8 +1276,8 @@ class MainWindow(QMainWindow):
             "Ctrl+F: 환자 검색 · Ctrl+P: 인쇄<br><br>"
             "<b>환자 목록 (따로 뜨는 창, 처음에 나옴)</b><br>"
             "검색 조건: 환자 ID · 이름 · 생년월일 · 검사일(전체 · 오늘 · 최근 7일 · 기간) · 열 제목을 누르면 정렬<br>"
-            "환자를 한 번 누르면 오른쪽에 검사 목록과 사진 16장 · 두 번 누르거나 Enter: 사진 보기 "
-            "(설정 → 일반 → 환자를 열면: Simple — 최신 OD | OS 두 장 · VK-2 방식 16장) · 사진을 누르면 크게 · Esc: 닫기<br>"
+            "환자를 한 번 누르면 아래에 검사 목록, 오른쪽에 환자 정보 · 두 번 누르거나 Enter: 사진 보기 "
+            "(설정 → 일반 → 환자를 열면: Simple — 최신 OD | OS 두 장 · VK-2 방식 16장) · Esc: 닫기<br>"
             "다시 열기: 명령 툴바의 [환자 목록] · 메뉴 줄의 [환자 목록] · Ctrl+0 · 환자 검색(Ctrl+F)<br><br>"
             "<b>보기 고르기 — 사진 위 줄의 아이콘</b><br>"
             "[Simple] · [Multi] · [Detail] · [3D] 로 보기를 바꾸고(켜진 것이 지금 보기), 그 옆에 [Montage] · [Glaucoma]<br>"
@@ -1756,20 +1755,11 @@ class MainWindow(QMainWindow):
         return [self.thumbs.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.thumbs.count())]
 
     def open_large(self, image_id: int) -> None:
-        """That photo large (Detail) — a double click on a cell of Simple · Multi, a photo of the 16
-        in the patient list; [Simple] · [Multi] bring those back as they were."""
+        """That photo large (Detail) — a double click on a cell of Simple · Multi; [Simple] ·
+        [Multi] bring those back as they were."""
         self._select_from_multi(image_id)
         self._go("all")
         self.lbl_status.setText(self.DETAIL_HINT)
-
-    def _open_listed_photo(self, image_id: int) -> None:
-        """A photo of the 16 in the patient list: large here, the list makes way for it."""
-        ref = self.patient_list.current()
-        if ref != self._patient_ref:
-            self._select_patient_ref(ref)
-        self.patient_list.hide()
-        self._raise_main()
-        self.open_large(image_id)
 
     def _raise_main(self) -> None:
         if self.isMinimized():
@@ -1786,7 +1776,7 @@ class MainWindow(QMainWindow):
         else:
             self._review_dirty = True
         if self._grid_mode() and self.patient_list.current() == self._patient_ref:
-            # 16장 보기: the page with the exam's newest photo (as the patient list's 16)
+            # 16장 보기: the page with the exam's newest photo
             first = next((g.image_id for g in self.grid.items()
                           if (self.db.get_image(g.image_id) or {"exam_date": None})["exam_date"] == exam_date), None)
             if first is not None:
