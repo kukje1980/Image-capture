@@ -569,8 +569,8 @@ class MainWindow(QMainWindow):
                                             "합칩니다\n반투명 겹치기 · 기준점 맞추기 · 3D 안구에서 보기")
         self.btn_montage.clicked.connect(lambda: self.open_montage())
         self.btn_glaucoma = self._top_button("glaucoma", "Glaucoma",
-                                             keys("녹내장 분석 — 보고 있는 사진의 디스크 C/D · 광각 RNFL 분석,\n"
-                                                  "두 번째 사진을 Ctrl+클릭(②)하면 스테레오 보기 · 경과 비교"))
+                                             keys("녹내장 분석 — 보고 있는 사진의 디스크 C/D · 유두 3D 입체 · 광각 RNFL 분석,\n"
+                                                  "두 번째 사진을 Ctrl+클릭(②)하면 스테레오 보기 · 경과 비교(깜빡임)"))
         self.btn_glaucoma.clicked.connect(lambda: self.open_glaucoma())
         self.thumbs = ThumbStrip()                 # OD 위 줄 · OS 아래 줄 (or one line)
         self.thumbs.setObjectName("thumbStrip")
