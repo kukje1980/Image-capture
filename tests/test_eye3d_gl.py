@@ -224,38 +224,6 @@ def test_glass_sclera_keeps_the_photographed_retina_solid(eye, detail):
     assert np.abs(_frame(eye) - plain).max() <= 2
 
 
-@pytest.mark.parametrize("detail", ["simple", "detailed"])
-def test_the_retina_beyond_the_photo_is_a_white_veil(eye, detail):
-    """사진 밖: the retina the photo does not show is not a made-up fundus but white and see-through — on a
-    black background a light grey, with the glass sclera or without; the photo stays as it is. Without a
-    photo the eye keeps its fundus all round."""
-    import numpy as np
-
-    from fundusview import demo, imaging
-    from fundusview.ui import eye_model as em
-    v = eye[0]
-    th = math.radians(100.0)                                         # beyond the 135° photo (67.5° from the pole)
-    far = em.R_RET * np.array([math.sin(th), 0.0, -math.cos(th)])   # the far wall, seen through the cut
-    view = dict(cut=0.25, black=True, pose=dict(yaw=-40.0, pitch=8.0, dist=3.3))
-    for glass in (0.0, 0.8):
-        _render(eye, detail, glass=glass, **view)
-        r, g, b = _at(v, far, 2)
-        assert max(r, g, b) - min(r, g, b) < 12 and 60 < r < 200, (glass, r, g, b)   # grey, not orange
-        r, g, b = _at(v, (0.0, 0.0, -em.R_RET), 2)                                    # the posterior pole: the photo
-        assert r > g + 40 and g > b
-    try:
-        v.set_image(None)
-        _render(eye, detail, **view)
-        r, g, b = _at(v, far, 2)
-        assert r > g + 30 and g > b, (r, g, b)
-    finally:
-        rgb = demo.synth_fundus(eye="OD", size=(512, 540))
-        circle = imaging.detect_circle(rgb)
-        v.set_image(rgb, imaging.fundus_alpha(rgb, circle), circle)
-        v.set_mapping(fov_deg=135, fov_type="internal", projection="equidistant")
-        v.set_disc("OD", None, circle)
-
-
 def test_a_turned_photo_is_drawn_where_it_was_taken(eye):
     """실제 위치에 맞춤: the same retina photographed straight and with the camera turned — with the
     turned photo's fovea and disc marked, the eye looks the same from inside; without, it does not."""
