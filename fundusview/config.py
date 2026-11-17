@@ -102,12 +102,14 @@ class Settings:
     # Photo list under the views: 1 = one line; otherwise by eye — OD row on top, OS row under it
     # (newest first in each; an older 3 means by eye too)
     thumb_rows: int = 2
+    # where the command toolbar is (dragged by the handle at its top): "left", "right" or "top"
+    cmdbar_area: str = "left"
     # … and what is written on its photos (보기 → 사진 목록 표시): the exam date, the kind of photo
     # (컬러 · 몽타주 …). The eye is said once per row, at its left.
     thumb_date: bool = True
     thumb_kind: bool = False
     # 환자를 열면 (설정 → 일반): "odos" = Simple — 최신 OD | OS 두 장을 나란히 (처음 설정) ·
-    # "grid" = VK-2 방식 — 사진 16장을 한 화면에 (16장 보기), 골라서 [Multi]로 모아 보기.
+    # "grid" = Multi (VK-2 방식) — 사진 16장을 한 화면에, 골라서 [고른 사진 보기]로 모아 보기.
     # Anything else (an older "overview") is the first way.
     open_view: str = "odos"
     # 카메라 각도 보정 (calibrate.py): the lens curve measured from the photos, {camera profile: radial_c}

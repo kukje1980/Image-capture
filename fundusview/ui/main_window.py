@@ -1,23 +1,22 @@
 """Main window — the photos. The program opens with the 환자 목록 window over it (patient_list.py,
 VK-2 OPEN LIST): a patient picked there shows here, opened as 설정 → 일반 → 환자를 열면 says — on
-Simple, its newest OD | OS side by side (the first setting), or the VK-2 way: its photos 16 to a
-screen on 16장 보기 (photo_grid.py; a click picks, [Multi] shows the picked ones). The patient list
+Simple, its newest OD | OS side by side (the first setting), or the VK-2 way: Multi, its photos 16
+to a screen (photo_grid.py; a click picks, [고른 사진 보기] shows the picked ones). The patient list
 is the only one: the command toolbar's [환자 목록], the menu bar's 환자 목록 (Ctrl+0) and 환자 검색
 (Ctrl+F) bring that window up; the patient is the same in both windows.
 
 The photo screen is laid out like the Kowa VK-2 capture screen: the Command toolbar on the left
-edge, the Image Processing toolbar along the bottom (see toolbars.py), the photos between them.
-A row of icons above the photos picks the view — Simple · Multi · Detail, then 3D · Montage ·
-Glaucoma — and the photo list (thumbnails: OD row, OS row) lies under the photos, as low as its
-photos (thumbs.py).
+edge (it can be dragged by its top to the right edge or along the top — see toolbars.py for its
+order), the Image Processing toolbar along the bottom, the photos between them. The command
+toolbar picks the view — Simple · Multi · Detail, 3D — and has Montage and Glaucoma (▾ 디스크 2장);
+the photo list (thumbnails: OD row, OS row) lies under the photos, as low as its photos (thumbs.py).
 
-* **Simple** (what a patient opens on): two photos, the newest OD (left) and OS (right). A click
-  on the photo list puts that photo in its eye's place; ◀ ▶ at the sides of a photo and ← / →
-  step through that eye's photos (``_show_in_pair``, ``_step``).
-* **Multi**: the photos picked in the list, one cell each — a click adds a photo or takes it
-  away and the layout fits the number picked (``_click_pick``); with none picked, all the photos
-  of the list, as many to a screen as 화면 분할 says. Simple and Multi are one page
-  (multi_view.py), each with photos of its own (``_set_mode``).
+* **Simple** (what a patient opens on): [Simple] puts the newest OD (left) and OS (right) on it;
+  from there a click on the photo list adds a photo (numbered) or takes it away and the layout
+  fits the number picked (``_click_pick``); with none picked, all the photos of the list, as many
+  to a screen as 화면 분할 says (multi_view.py).
+* **Multi**: 16장 보기 (the VK-2 MULTI screen) — the patient's photos 16 to a screen; a click picks
+  one (numbered) or lets it go, [고른 사진 보기] shows the picked ones on Simple.
 * **Detail** (a double click on a photo anywhere): that photo large, with its 황반 and 시신경 유두
   enlarged on the right (where they are is shown by a frame on the big photo). ◀ ▶ at its sides
   and ← / → go through the photo list; a click on the list shows that photo.
@@ -77,10 +76,10 @@ from .photo_grid import GridPhoto, PhotoGrid
 from .review_view import ReviewPage
 from .landmarks_view import LandmarkPhoto
 from .slit_scan import SLIT, ScanPhotoView, SlitScanShow, ViewTween
-from .thumbs import (DATE_ROLE, EYE_ROLE, KIND_ROLE, PICK_ROLE, SECOND_COLOR, SECOND_ROLE, SHOWN, EyeRail,
+from .thumbs import (DATE_ROLE, EYE_ROLE, KIND_ROLE, PICK_ROLE, SECOND_COLOR, SECOND_ROLE, EyeRail,
                      ThumbDelegate, ThumbStrip, eye_badge_html, eye_row)
-from .toolbars import CHECKABLE, COMMANDS, MENUS, PROCESSING, SliderPopup, icon_for
-from .widgets import ElidedLabel, Segmented, Switch, card, segment, vline
+from .toolbars import CHECKABLE, CMDBAR, COMMANDS, MENUS, PROCESSING, SliderPopup, icon_for
+from .widgets import ElidedLabel, Segmented, Switch, card, segment
 from .widgets import row as setting_row
 
 THUMB_TEXT = Qt.ItemDataRole.UserRole + 1    # a thumbnail's text (date, kind) without the ② mark
@@ -91,21 +90,17 @@ MAX_PICKS = 16                               # photos picked for the multi view 
 # the views, as the icons above the photos (key, name, tool tip, 보기 menu shortcut, icon): Simple and
 # Multi are the two modes of one page (다중 보기, "multi"), Detail the page "all", 3D "3d". 16장 보기
 # (VK-2 방식: 사진 16장을 한 화면에) is there only when 설정 → 일반 → 환자를 열면 is the VK-2 way
+# The views (the 보기 menu; the command toolbar has the same as its Simple · Multi · Detail · 3D):
+# (key, menu label, shortcut). Simple is the 다중 보기 page — it opens on the newest OD | OS and takes
+# photos in and out as they are clicked; Multi is 16장 보기 (the VK-2 MULTI screen)
 VIEWS = (
-    ("grid", "16장", "16장 보기 (Ctrl+4) — 이 환자의 사진을 한 화면에 16장씩 (VK-2 방식)\n"
-                     "클릭해 고르고 [Multi]를 누르면 고른 사진만 모아 봅니다", "Ctrl+4", "multi16"),
-    ("simple", "Simple", "Simple (Ctrl+1) — 최신 OD | OS 두 장을 나란히 (OD 왼쪽 · OS 오른쪽)\n"
-                         "사진 목록을 클릭하면 그 눈의 사진이 바뀝니다 · 사진 좌우의 ◀ ▶ 또는 ← → 키: 그 눈의 이전 / 다음 사진\n"
-                         "더블클릭: 크게 보기 (Detail)", "Ctrl+1", "simple"),
-    ("multi", "Multi", "Multi (Ctrl+2) — 여러 장을 한 화면에: 사진 목록을 클릭하면 더하고(번호), 다시 클릭하면 뺍니다\n"
-                       "고른 장수에 맞게 화면이 나뉘고(1 · 2 · 4 · 6 · 9 · 16), 고른 사진이 없으면 모든 사진을 보여 줍니다\n"
-                       "칸을 누르면 그 사진만 보정 · 더블클릭: 크게 보기 (Detail)", "Ctrl+2", "multi"),
-    ("all", "Detail", "Detail (Ctrl+5) — 사진 한 장을 크게, 오른쪽에 황반과 시신경 유두를 확대해서\n"
-                      "사진 좌우의 ◀ ▶ 또는 ← → 키: 이전 / 다음 사진 · 사진 목록을 클릭하면 그 사진", "Ctrl+5", "detail"),
-    ("3d", "3D", "광각 사진을 3D 안구 모형으로 보기 (Ctrl+3)\n다시 누르면 보던 화면으로", "Ctrl+3", "eye3d"),
+    ("simple", "Simple", "Ctrl+1"),
+    ("multi", "Multi (16장 보기)", "Ctrl+2"),
+    ("all", "Detail", "Ctrl+5"),
+    ("3d", "3D", "Ctrl+3"),
 )
-SIMPLE, MULTI = "simple", "multi"            # what the 다중 보기 page shows (``MainWindow._mode``)
-GRID_MODE = "grid"                           # Settings.open_view of the VK-2 way (the other: "odos")
+SIMPLE, MULTI = "simple", "multi"            # the view keys of Simple (the 다중 보기 page) and Multi (16장 보기)
+GRID_MODE = "grid"                           # Settings.open_view: a patient opens on Multi (the other: "odos", Simple)
 # views no longer shown (검토 · 2D 보기 · 비교): whatever led there stays on Detail, whose big
 # photo is the 2D view with all its tools
 GONE_VIEWS = {"review": "all", "2d": "all", "cmp": "all"}
@@ -304,12 +299,11 @@ class MainWindow(QMainWindow):
         self._history: list[dict] = []       # undo snapshots
         self._multi_lock = False
         self._filling = False                # the photo list is being filled (its first photo is not a choice)
-        self._mode = SIMPLE                  # the 다중 보기 page: Simple (OD | OS) or Multi (the picked photos)
-        self._picks: list[int] = []          # the photos on that page: Simple's two, or Multi's picks in pick order
-        self._stash: dict[str, list[int] | None] = {}   # the photos of the mode not on screen (see _set_mode)
-        self._default_picks: list[int] = []  # what a patient opens with: its newest OD and OS (see _set_default_picks)
+        self._picks: list[int] = []          # the photos picked, in pick order: on the Simple page (the newest
+                                             # OD | OS when [Simple] is pressed), numbered on Multi (16장 보기)
+        self._default_picks: list[int] = []  # the newest OD | OS Simple was given last (see show_simple)
         self._default_exam: str | None = None   # … of this exam (None: the newest)
-        self._multi_auto = True              # Multi, nothing picked: 화면 분할 fits the photos of the list
+        self._multi_auto = True              # Simple, nothing picked: 화면 분할 fits the photos of the list
         self._last_view = "multi"            # the view before 3D (the 3D icon again goes back there)
         self._montage_dlg = None             # the open 몽타주 editor (tests reach it here)
         self._pick_pre: tuple | None = None  # (image id, picks, _multi_auto before the click) — a double click undoes it
@@ -345,19 +339,6 @@ class MainWindow(QMainWindow):
         a.setCheckable(checkable)
         a.triggered.connect(lambda checked=False, k=key: self._on_action(k, checked if a.isCheckable() else None))
         return a
-
-    def _top_button(self, icon: str, label: str, tip: str) -> QToolButton:
-        """An icon button of the row above the photos (Simple · Multi · Detail · 3D · Montage · Glaucoma)."""
-        b = QToolButton()
-        b.setObjectName("viewBarButton")
-        b.setIcon(icon_for(icon))
-        b.setIconSize(QSize(20, 20))
-        b.setText(label)
-        b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        b.setAutoRaise(True)
-        b.setCursor(Qt.CursorShape.PointingHandCursor)
-        b.setToolTip(tip)
-        return b
 
     def _make_actions(self) -> None:
         self.acts: dict[str, QAction] = {}
@@ -445,11 +426,11 @@ class MainWindow(QMainWindow):
         self.act_patients.setToolTip("환자 목록 창 — 환자를 찾아 누르면 그 환자의 사진이 한 화면에 16장씩 나옵니다")
         m.addSeparator()
         self.view_acts = {}
-        for key, label, _tip, shortcut, _icon in VIEWS:
-            a = m.addAction("16장 보기" if key == "grid" else label, lambda k=key: self._show_view(k))
+        for key, label, shortcut in VIEWS:
+            a = m.addAction(label, lambda k=key: self._show_view(k))
             a.setShortcut(QKeySequence(shortcut))
             self.view_acts[key] = a
-        sub = m.addMenu("Multi 장수 (화면 분할)")
+        sub = m.addMenu("Simple 화면 분할 (장수)")
         for a in self.menus["multi"].actions():
             sub.addAction(a)
         m.addSeparator()
@@ -581,26 +562,9 @@ class MainWindow(QMainWindow):
         self.btn_clear_picks = QToolButton()
         self.btn_clear_picks.setText("선택 해제")
         self.btn_clear_picks.setAutoRaise(True)
-        self.btn_clear_picks.setToolTip("Multi로 고른 사진을 모두 해제 — 고른 사진이 없으면 모든 사진을 보여 줍니다")
+        self.btn_clear_picks.setToolTip("고른 사진을 모두 해제 — 고른 사진이 없으면 모든 사진을 보여 줍니다")
         self.btn_clear_picks.clicked.connect(self.clear_picks)
-        # the views — Simple · Multi · Detail · 3D (and 16장 in the VK-2 way) — then Montage · Glaucoma:
-        # icon buttons in the row above the photos (see view_bar below); the view on screen is lit
-        self.view_buttons: dict[str, QToolButton] = {}
-        for key, label, tip, _shortcut, icon in VIEWS:
-            b = self._top_button(icon, label, keys(tip))
-            b.setCheckable(True)
-            b.clicked.connect(lambda _=False, k=key: self._show_view(k, toggle=True))
-            self.view_buttons[key] = b
-        self.btn_simple, self.btn_multi = self.view_buttons["simple"], self.view_buttons["multi"]
-        self.btn_detail, self.btn_3d = self.view_buttons["all"], self.view_buttons["3d"]
-        self.btn_montage = self._top_button("montage", "Montage",
-                                            "몽타주 — [Multi]에서 고른 사진(2장 이상, 같은 눈)을 자동·수동으로 맞춰 한 장으로 "
-                                            "합칩니다\n반투명 겹치기 · 기준점 맞추기 · 3D 안구에서 보기")
-        self.btn_montage.clicked.connect(lambda: self.open_montage())
-        self.btn_glaucoma = self._top_button("glaucoma", "Glaucoma",
-                                             keys("녹내장 분석 — 보고 있는 사진의 디스크 C/D · 유두 3D 입체 · 광각 RNFL 분석,\n"
-                                                  "두 번째 사진을 Ctrl+클릭(②)하면 스테레오 보기 · 경과 비교(깜빡임)"))
-        self.btn_glaucoma.clicked.connect(lambda: self.open_glaucoma())
+        # the views (Simple · Multi · Detail · 3D), Montage and Glaucoma are on the command toolbar
         self.thumbs = ThumbStrip()                 # OD 위 줄 · OS 아래 줄 (or one line)
         self.thumbs.setObjectName("thumbStrip")
         self.thumbs.setGridSize(QSize(*THUMB_GRID))          # low rows: the height saved goes to the photos
@@ -611,8 +575,7 @@ class MainWindow(QMainWindow):
         self.thumb_paint.show_date = bool(self.settings.thumb_date)
         self.thumb_paint.show_kind = bool(self.settings.thumb_kind)
         self.thumbs.setItemDelegate(self.thumb_paint)
-        self.thumbs.setToolTip(keys("클릭 — Simple: 그 눈의 사진을 이 사진으로 · Multi: 더하기(번호), 다시 클릭하면 빼기 · "
-                                    "Detail · 3D: 이 사진 보기\n"
+        self.thumbs.setToolTip(keys("클릭 — Simple: 더하기(번호), 다시 클릭하면 빼기 · Detail · 3D: 이 사진 보기\n"
                                     "더블클릭: 크게 보기 (Detail) · ← →: 이전 / 다음 사진\n"
                                     "Ctrl+클릭: 두 번째 사진(②) 선택/해제 — 비교 · 디스크 2장 · "
                                     "오른쪽 클릭: 환자 지정·다시 분석"))
@@ -627,8 +590,8 @@ class MainWindow(QMainWindow):
         self.thumbs.customContextMenuRequested.connect(self._thumb_menu)
         # 16장 보기 (VK-2 방식): the photos of the strip, 16 on one screen — picked the same way
         self.grid = PhotoGrid()
-        self.grid.setToolTip(keys("클릭: Multi로 고르기(번호) · 다시 클릭: 빼기 · 더블클릭: 크게 보기 (Detail) · "
-                                  "Ctrl+클릭: 두 번째 사진(②)\n골랐으면 [Multi]: 고른 사진만 모아 보기 · "
+        self.grid.setToolTip(keys("클릭: 고르기(번호) · 다시 클릭: 빼기 · 더블클릭: 크게 보기 (Detail) · "
+                                  "Ctrl+클릭: 두 번째 사진(②)\n골랐으면 아래 [고른 사진 보기]: 고른 사진만 모아 보기 · "
                                   "휠: 다음 / 이전 16장"))
         self.grid.pressed.connect(lambda iid: self._press_photo(iid, stay=True))
         self.grid.activated.connect(self._open_photo)
@@ -707,7 +670,7 @@ class MainWindow(QMainWindow):
         self.review.handOff.connect(self._review_hand_off)
         self.review.status.connect(lambda t: self.lbl_status.setText(t))
         self.tabs.insertTab(0, self.review, "검토")
-        self.tabs.addTab(self.grid, "16장 보기")
+        self.tabs.addTab(self.grid, "Multi (16장 보기)")
         # 두 장 3D: the two photos of Simple (or two picked ones), each on its own 3D eye (pair3d.py)
         from .pair3d import Pair3D
         self.pair3d = Pair3D()
@@ -721,31 +684,21 @@ class MainWindow(QMainWindow):
         self.tabs.tabBar().tabBarClicked.connect(
             lambda i: i != self.tabs.currentIndex() and self._tab_fade.snap())
         self.tabs.currentChanged.connect(self._on_tab)
-        # the row above the photos: the views (Simple · Multi · Detail · 3D), Montage · Glaucoma — and,
-        # on Multi only, 화면 분할 and the picks (at the end: the icons keep their places)
+        # the row right of the menus: on Simple, its 화면 분할 and the picks (the views themselves are on
+        # the command toolbar)
         self.view_bar = QWidget()
         self.view_bar.setObjectName("viewBar")
         vbar = QHBoxLayout(self.view_bar)
         vbar.setContentsMargins(4, 0, 4, 0)
         vbar.setSpacing(4)
-        for key in ("grid", "simple", "multi", "all"):
-            vbar.addWidget(self.view_buttons[key])
-        vbar.addSpacing(4)
-        vbar.addWidget(vline())
-        vbar.addSpacing(4)
-        for b in (self.btn_3d, self.btn_montage, self.btn_glaucoma):
-            vbar.addWidget(b)
         self.multi_bar = QWidget()
         mbar = QHBoxLayout(self.multi_bar)
         mbar.setContentsMargins(0, 0, 0, 0)
         mbar.setSpacing(4)
-        mbar.addSpacing(4)
-        mbar.addWidget(vline())
-        mbar.addSpacing(4)
         mbar.addWidget(self.multi.take_topbar())
         mbar.addWidget(self.lbl_picks)
         mbar.addWidget(self.btn_clear_picks)
-        self.multi_bar.hide()                # shown on Multi (_sync_views)
+        self.multi_bar.hide()                # shown on Simple (_sync_views)
         vbar.addWidget(self.multi_bar)
         vbar.addStretch(1)
         self._top_lay.addWidget(self.view_bar, 1)     # in the menu bar's row
@@ -765,9 +718,21 @@ class MainWindow(QMainWindow):
             b.clicked.connect(lambda _=False, d=d: self.grid.set_page(self.grid.page() + d))
         self.lbl_grid_page = QLabel("", self)     # the page count: kept up to date, not on screen
         self.lbl_grid_page.hide()
+        # the photos picked here, together on the Simple page — or let go
+        self.btn_grid_open = QPushButton("고른 사진 보기")
+        self.btn_grid_open.setObjectName("primary")
+        self.btn_grid_open.setToolTip("Multi에서 클릭해 고른 사진(번호)만 한 화면에 모아 봅니다 — 칸을 누르면 그 사진만 보정")
+        self.btn_grid_open.clicked.connect(self.open_picks)
+        self.btn_grid_clear = QToolButton()
+        self.btn_grid_clear.setText("선택 해제")
+        self.btn_grid_clear.setAutoRaise(True)
+        self.btn_grid_clear.setToolTip("고른 사진을 모두 해제")
+        self.btn_grid_clear.clicked.connect(self._clear_grid_picks)
         gb.addWidget(self.btn_grid_prev)
         gb.addWidget(self.btn_grid_next)
         gb.addStretch(1)
+        gb.addWidget(self.btn_grid_clear)
+        gb.addWidget(self.btn_grid_open)
         self.grid_bar.hide()
         # under the photos: the photo list over the whole width, the eye of each row at its left
         # (both straight in this row: a box of their own around them made the photos above settle
@@ -797,7 +762,19 @@ class MainWindow(QMainWindow):
         self.review.examPicked.connect(self.patient_list.set_exam)
 
         # -- VK-2 toolbars ---------------------------------------------------------------
-        self.tb_cmd = self._toolbar("cmdbar", "명령 툴바", Qt.ToolBarArea.LeftToolBarArea, COMMANDS, 26)
+        specs = {c[0]: c for c in COMMANDS}
+        self.tb_cmd = self._toolbar("cmdbar", "명령 툴바", self.CMDBAR_AREAS.get(self.settings.cmdbar_area,
+                                                                             Qt.ToolBarArea.LeftToolBarArea),
+                                    [specs[k] for k in CMDBAR], 26)
+        # it moves: dragged by the handle (dots) at its top to the right edge or along the top, or put
+        # there from its right-click menu; where it is, is remembered
+        self.tb_cmd.setMovable(True)
+        self.tb_cmd.setAllowedAreas(Qt.ToolBarArea.LeftToolBarArea | Qt.ToolBarArea.RightToolBarArea
+                                    | Qt.ToolBarArea.TopToolBarArea)
+        self.tb_cmd.setToolTip("명령 툴바 — 맨 위의 점 손잡이를 끌어 오른쪽이나 화면 위쪽으로 옮깁니다 "
+                               "(오른쪽 클릭: 위치 고르기)")
+        self.tb_cmd.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tb_cmd.customContextMenuRequested.connect(self._cmdbar_menu)
         self.tb_proc = self._toolbar("procbar", "영상 처리 툴바", Qt.ToolBarArea.BottomToolBarArea, PROCESSING, 28)
         self.tb_proc.visibilityChanged.connect(lambda v: self.acts["tools"].setChecked(v))
         self.acts["tools"].setChecked(True)
@@ -884,7 +861,6 @@ class MainWindow(QMainWindow):
         self._results: list[ImportResult] = []
         self._result_timer = QTimer(self, singleShot=True, timeout=self._flush_results)
         self._set_thumb_rows(self._thumb_rows)       # the photo list by eye, or one line
-        self._apply_open_view()                      # 설정 → 일반 → 환자를 열면 (16장 보기 or not)
 
     def _build_3d(self) -> QWidget:
         """3D tab: the eye, a slim bar with the main choices and actions above it, and the settings in
@@ -1423,6 +1399,40 @@ class MainWindow(QMainWindow):
                          (self.tb_proc, Qt.ToolBarArea.BottomToolBarArea)):
             self.addToolBar(area, tb)
             tb.setVisible(True)
+        self._remember_cmdbar()
+
+    # where the command toolbar can be (Settings.cmdbar_area)
+    CMDBAR_AREAS = {"left": Qt.ToolBarArea.LeftToolBarArea, "right": Qt.ToolBarArea.RightToolBarArea,
+                    "top": Qt.ToolBarArea.TopToolBarArea}
+
+    def move_cmdbar(self, where: str) -> None:
+        """The command toolbar on the left (as the VK-2), on the right or along the top."""
+        area = self.CMDBAR_AREAS.get(where)
+        if area is None:
+            return
+        self.addToolBar(area, self.tb_cmd)
+        self.tb_cmd.setVisible(True)
+        self._remember_cmdbar()
+
+    def _remember_cmdbar(self) -> None:
+        area = self.toolBarArea(self.tb_cmd)
+        where = next((k for k, a in self.CMDBAR_AREAS.items() if a == area), "left")
+        if self.settings.cmdbar_area != where:
+            self.settings.cmdbar_area = where
+            try:
+                self.settings.save()
+            except OSError:
+                pass
+
+    def _cmdbar_menu(self, pos) -> None:
+        """Right click on the command toolbar: where it goes."""
+        menu = QMenu(self)
+        here = self.toolBarArea(self.tb_cmd)
+        for where, label in (("left", "왼쪽에"), ("right", "오른쪽에"), ("top", "화면 위쪽에")):
+            a = menu.addAction(f"명령 툴바 {label}", lambda w=where: self.move_cmdbar(w))
+            a.setCheckable(True)
+            a.setChecked(self.CMDBAR_AREAS[where] == here)
+        menu.exec(self.tb_cmd.mapToGlobal(pos))
 
     def _show_help(self) -> None:
         QMessageBox.information(self, "마우스·단축키", keys(
@@ -1467,22 +1477,24 @@ class MainWindow(QMainWindow):
             "Esc 또는 다른 곳을 누르면 해제<br>"
             "보기 → 부드러운 움직임: 끄면 확대·회전·전환이 바로 바뀝니다 (원격 접속 등 느린 화면)<br><br>"
             "<b>단축키</b><br>"
-            "← / → 또는 PageUp / PageDown: 이전 / 다음 사진 · Ctrl+1: Simple · Ctrl+2: Multi · Ctrl+3: 3D · "
-            "Ctrl+5: Detail · Ctrl+4: 16장 보기 (VK-2 방식일 때) · Ctrl+0: 환자 목록<br>"
+            "← / → 또는 PageUp / PageDown: 이전 / 다음 사진 · Ctrl+1: Simple · Ctrl+2: Multi (16장) · Ctrl+3: 3D · "
+            "Ctrl+5: Detail · Ctrl+0: 환자 목록<br>"
             "Ctrl+Z: 처리 실행 취소 · Delete: 마지막 측정 지우기 · Ctrl+C: 화면 복사<br>"
             "Ctrl+F: 환자 검색 · Ctrl+P: 인쇄<br><br>"
             "<b>환자 목록 (따로 뜨는 창, 처음에 나옴)</b><br>"
             "검색 조건: 환자 ID · 이름 · 생년월일 · 검사일(전체 · 오늘 · 최근 7일 · 기간) · 열 제목을 누르면 정렬<br>"
             "환자를 한 번 누르면 아래에 검사 목록, 오른쪽에 환자 정보 · 두 번 누르거나 Enter: 사진 보기 "
-            "(설정 → 일반 → 환자를 열면: Simple — 최신 OD | OS 두 장 · VK-2 방식 16장) · Esc: 닫기<br>"
-            "다시 열기: 명령 툴바의 [환자 목록] · 메뉴 줄의 [환자 목록] · Ctrl+0 · 환자 검색(Ctrl+F)<br><br>"
-            "<b>보기 고르기 — 사진 위 줄의 아이콘</b><br>"
-            "[Simple] · [Multi] · [Detail] · [3D] 로 보기를 바꾸고(켜진 것이 지금 보기), 그 옆에 [Montage] · [Glaucoma]<br>"
-            "<b>Simple</b> (환자를 열면 처음 나오는 화면): 최신 OD | OS 두 장 — OD 왼쪽 · OS 오른쪽. 사진 목록을 클릭하면 "
-            "그 눈의 사진이 바뀌고, 사진 좌우 끝에 마우스를 대면 나오는 ◀ ▶ 또는 ← → 키로 그 눈의 이전 / 다음 사진<br>"
-            "<b>Multi</b>: 사진 목록을 클릭하면 더하고(번호) 다시 클릭하면 뺍니다 — 1장 · 2장 · 4칸 · 6칸 … 고른 장수에 맞게 "
-            "화면이 나뉘고, 고른 사진이 없으면 모든 사진 (화면 분할로 장수 고르기). 칸을 누르면 그 사진만 보정 "
-            "(밝기·대비·감마·Red-free·선명하게 …)<br>"
+            "(설정 → 일반 → 환자를 열면: Simple — 최신 OD | OS 두 장 · Multi — 16장) · Esc: 닫기<br>"
+            "다시 열기: 명령 툴바의 [환자 목록] · 보기 → 환자 목록 · Ctrl+0 · 환자 검색(Ctrl+F)<br><br>"
+            "<b>명령 툴바 (왼쪽)</b><br>"
+            "환자 목록 · 이전 · 다음 · [Simple] · [Multi] · [Detail] (켜진 것이 지금 보기) · 화면 맞춤 · 도구 · [3D] · "
+            "[Montage] · [Glaucoma] (▾ 디스크 2장) · 인쇄 · 설정 · 종료<br>"
+            "맨 위의 점 손잡이를 끌면 오른쪽이나 화면 위쪽으로 옮겨집니다 (툴바를 오른쪽 클릭: 위치 고르기, 다음에도 그 자리)<br>"
+            "<b>Simple</b> (환자를 열면 처음 나오는 화면): 누를 때마다 최신 OD | OS 두 장 — OD 왼쪽 · OS 오른쪽. 사진 목록을 "
+            "클릭하면 더하고(번호) 다시 클릭하면 뺍니다 — 1장 · 2장 · 4칸 · 6칸 … 고른 장수에 맞게 화면이 나뉘고, 모두 빼면 "
+            "모든 사진 (화면 분할로 장수 고르기). 칸을 누르면 그 사진만 보정 (밝기·대비·감마·Red-free·선명하게 …)<br>"
+            "<b>Multi</b>: 이 환자의 사진 16장을 한 화면에 (VK-2 방식) — 클릭: 고르기(번호) · 아래 [고른 사진 보기]: "
+            "고른 사진만 모아 보기 · 휠 · ◀ ▶: 다음 / 이전 16장<br>"
             "<b>Detail</b> (어느 사진이든 더블클릭): 큰 사진 + 오른쪽에 황반과 시신경 유두 확대 (큰 사진 위 점선 틀이 그 자리). "
             "사진 좌우 끝의 ◀ ▶ 또는 ← → 키: 이전 / 다음 사진 · 사진 목록을 클릭하면 그 사진<br>"
             "칸 제목을 누르거나 칸을 더블클릭하면 큰 사진을 그 쪽으로 확대 · 큰 사진 전체로: 0 · "
@@ -1491,12 +1503,8 @@ class MainWindow(QMainWindow):
             "<b>사진 목록 (화면 아래)</b><br>"
             "위 줄 OD · 아래 줄 OS (줄마다 최신 사진부터) — 눈은 줄 왼쪽에 한 번만 표시하고, 사진 위에는 날짜만 씁니다<br>"
             "보기 → 사진 목록 표시: 날짜 · 종류(컬러 · 몽타주 …) · 눈별로 두 줄 (끄면 한 줄) · 미상 사진은 눈 고르기 → 미상<br><br>"
-            "<b>16장 보기 (VK-2 방식)</b><br>"
-            "설정 → 일반 → 환자를 열면: VK-2 방식을 고르면 환자를 열 때 사진 16장이 한 화면에 나옵니다<br>"
-            "클릭: 고르기(번호) · [Multi]: 고른 사진만 모아 보기 · 더블클릭: 크게 (Detail) · [16장]: 다시 16장으로 · "
-            "휠 · ◀ ▶: 다음 / 이전 16장<br><br>"
             "<b>두 사진 고르기 · 디스크 2장</b><br>"
-            "두 번째 사진을 Ctrl+클릭(②, 다시 Ctrl+클릭하면 해제) → [디스크 2장] · [녹내장](스테레오 · 경과 비교)<br>"
+            "두 번째 사진을 Ctrl+클릭(②, 다시 Ctrl+클릭하면 해제) → [Glaucoma] ▾ 디스크 2장 · [Glaucoma](스테레오 · 경과 비교)<br>"
             "[디스크 2장]: 두 사진의 시신경 유두만 확대해 한 장으로 (OD 왼쪽 · OS 오른쪽, 보험 청구용)<br><br>"
             "<b>여러 컴퓨터에서 함께 쓰기</b><br>"
             "설정 → 공유: 서버(이 컴퓨터의 자료를 함께 쓰기) · 서버에 연결(다른 컴퓨터의 자료 보기) · "
@@ -1703,7 +1711,6 @@ class MainWindow(QMainWindow):
             self._set_3d_detail(self.settings.view3d_detail, save=False)
             self.c_walkclick3d.setChecked(bool(self.settings.walk_click3d))   # 3D 마우스 휠
             self._set_wheel3d(self.settings.wheel3d, save=False)
-            self._apply_open_view()
             self.act_thumb_date.setChecked(bool(self.settings.thumb_date))   # 사진 목록: 날짜 · 종류
             self.act_thumb_kind.setChecked(bool(self.settings.thumb_kind))
             if self.settings.open_view != old_view and self.current is not None:
@@ -1788,18 +1795,18 @@ class MainWindow(QMainWindow):
                 self._hold_follow = self._hold_release = False
         if self.act_follow.isChecked() and live:
             self._select_patient_ref(target)
-            if self._mode == SIMPLE and self._picks == self._default_picks:
+            if self._picks == self._default_picks:
                 self._set_default_picks()           # not changed by hand: the newest OD | OS, the new one in
-            elif self._mode == MULTI and self._stash.get(SIMPLE) is None:
-                self._default_exam = None           # … when Simple is shown again
+            else:
+                self._default_exam = None           # … when [Simple] is pressed again
             self._fill_thumbs(select_id=last.image_id)
             # the new photo is shown, wherever the windows were: the patient list makes way for it
             self.patient_list.hide()
             self._raise_main()
             if self._tab() == "review" and last.image_id not in self.review.slot_ids():
                 self._go("all")                    # not one of the two photos under review: the big view
-            elif self._tab() == "multi" and last.image_id not in self._picks and (self._picks or self._mode == SIMPLE):
-                self._go("all")                    # not on Simple · Multi (changed by hand, unknown eye …): Detail
+            elif self._tab() == "multi" and last.image_id not in self._picks and self._picks:
+                self._go("all")                    # not among Simple's photos (changed by hand, unknown eye …): Detail
         elif any((r.patient_ref if r.patient_ref is not None else UNASSIGNED) == self._patient_ref
                  for r in imported):
             self._fill_dates()
@@ -1867,13 +1874,14 @@ class MainWindow(QMainWindow):
             self._select_from_multi(row["id"])
         self._go("grid" if self._grid_mode() else "all")
         if self._grid_mode():
-            self.lbl_status.setText("16장 보기 — 사진을 클릭해 고르고(번호) [Multi]를 누르면 고른 사진만 모아 봅니다 · "
-                                    "더블클릭: 크게 보기 (Detail)")
+            self.lbl_status.setText(self.MULTI_HINT)
 
-    SIMPLE_HINT = ("Simple — 최신 OD | OS · 사진 목록을 클릭하면 그 눈의 사진이 바뀝니다 · "
-                   "사진 좌우의 ◀ ▶ 또는 ← → 키: 이전 / 다음 사진 · 더블클릭: 크게 보기 (Detail)")
+    SIMPLE_HINT = ("Simple — 최신 OD | OS · 사진 목록을 클릭하면 더하고(번호), 다시 클릭하면 뺍니다 · "
+                   "더블클릭: 크게 보기 (Detail)")
+    MULTI_HINT = ("Multi (16장) — 사진을 클릭해 고르고(번호) 아래 [고른 사진 보기]를 누르면 고른 사진만 모아 봅니다 · "
+                  "더블클릭: 크게 보기 (Detail) · 휠: 다음 / 이전 16장")
     DETAIL_HINT = ("Detail — 사진 좌우의 ◀ ▶ 또는 ← → 키: 이전 / 다음 사진 · 사진 목록을 클릭하면 그 사진 · "
-                   "[Simple] · [Multi]: 보던 화면으로")
+                   "[Simple]: 최신 OD | OS · [Multi]: 16장")
 
     def _newest_pair(self, exam: str | None = None) -> list[int]:
         """The patient's newest OD and newest OS photo, OD first (on the left, as the patient
@@ -1892,53 +1900,28 @@ class MainWindow(QMainWindow):
         return pair
 
     def _set_default_picks(self, exam: str | None = None) -> None:
-        """What a patient opens with — Simple: its newest OD | OS (``_newest_pair``; Multi keeps the
-        photos picked there for when it is shown again). The VK-2 way (설정 → 일반 → 환자를 열면)
-        opens on 16장 보기 with nothing picked: there the photos are picked by hand, for Multi."""
-        grid = self._grid_mode()
-        if self._mode == MULTI and not grid:
-            self._stash[MULTI] = list(self._picks)
-        self._mode = MULTI if grid else SIMPLE
-        self._stash.pop(self._mode, None)
-        picks = [] if grid else self._newest_pair(exam)
+        """What a patient opens with (설정 → 일반 → 환자를 열면) — Simple: its newest OD | OS
+        (``_newest_pair``) of the exam ``exam``; Multi (16장 보기, the VK-2 way): nothing picked, the
+        photos are picked there by hand. [Simple] shows the newest OD | OS of ``exam`` either way."""
+        picks = [] if self._grid_mode() else self._newest_pair(exam)
         self._picks, self._pick_pre, self._multi_auto = picks, None, True
         self._default_picks, self._default_exam = list(picks), exam
         self._mark_picks()
         self._fit_multi_count()
         self._sync_views()
 
-    def _set_mode(self, mode: str) -> None:
-        """Simple ↔ Multi on the 다중 보기 page. Each keeps photos of its own while the other is on
-        screen — Simple the two it shows (the newest OD | OS again when they were not changed by
-        hand: a photo taken meanwhile is in), Multi the picked ones (none: all the photos)."""
-        if mode == self._mode:
-            return
-        keep = list(self._picks)
-        if self._mode == SIMPLE and keep == self._default_picks:
-            keep = None
-        self._stash[self._mode] = keep
-        self._mode = mode
-        picks = self._stash.pop(mode, None)
-        if picks is None:
-            picks = []
-            if mode == SIMPLE:
-                picks = self._newest_pair(self._default_exam)
-                self._default_picks = list(picks)
-            else:
-                self._multi_auto = True
-        known = {r["id"] for r in self._images()}
-        self._picks, self._pick_pre = [i for i in picks if i in known], None
-        self._mark_picks()
-        self._sync_views()
-
     def show_simple(self) -> None:
-        """[Simple]: the newest OD | OS side by side (or the two photos last shown there) — OD on
-        the left, selected unless the photo on screen is one of the two. A patient without photos
-        of a known eye (미분류 …): the photo on screen alone."""
-        self._set_mode(SIMPLE)
-        if not self._picks and self.current is not None:
-            self._picks = [self.current["id"]]
-            self._mark_picks()
+        """[Simple]: the newest OD | OS side by side — OD on the left, of the exam selected in the
+        patient list — whatever was picked before, selected unless the photo on screen is one of
+        the two. From there a click on the photo list takes a photo in (numbered) or out again and
+        the page is split for them (1 · 2 · 4 · 6 · 9 · 16; none: all the photos). A patient without
+        photos of a known eye (미분류 …): the photo on screen alone."""
+        picks = self._newest_pair(self._default_exam)
+        if not picks and self.current is not None:
+            picks = [self.current["id"]]
+        self._picks, self._pick_pre, self._multi_auto = picks, None, True
+        self._default_picks = list(picks)
+        self._mark_picks()
         if self._picks and (self.current is None or self.current["id"] not in self._picks):
             self._select_from_multi(self._picks[0])
         self._refill_multis()
@@ -1946,13 +1929,25 @@ class MainWindow(QMainWindow):
         self._sync_views()
         self.lbl_status.setText(self.SIMPLE_HINT)
 
+    def show_grid(self) -> None:
+        """[Multi]: 16장 보기 — the patient's photos, 16 to a screen, from the page with the photo on
+        screen; the photos picked are numbered there, and picked or let go with a click. Simple's
+        newest OD | OS as [Simple] put them are not picks of one's own: Multi starts with none."""
+        if self._picks and self._picks == self._default_picks:
+            self._picks, self._pick_pre, self._multi_auto = [], None, True
+            self._mark_picks()
+            self._fit_multi_count()
+        self._go("grid")
+        self._sync_views()
+        self.lbl_status.setText(self.MULTI_HINT)
+
     def _show_view(self, key: str, toggle: bool = False) -> None:
-        """An icon above the photos or an entry of the 보기 menu: Simple · Multi · Detail · 3D · 16장.
-        ``toggle`` (the icons): 3D again goes back to the view before it."""
+        """A view of the command toolbar or of the 보기 menu: Simple · Multi (16장) · Detail · 3D.
+        ``toggle`` (the toolbar): 3D again goes back to the view before it."""
         if key == SIMPLE:
             self.show_simple()
         elif key == MULTI:
-            self.open_picks()
+            self.show_grid()
         elif key == "3d" and toggle:
             self._on_action("view3d")
         else:
@@ -1966,8 +1961,7 @@ class MainWindow(QMainWindow):
         return [self.thumbs.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.thumbs.count())]
 
     def open_large(self, image_id: int) -> None:
-        """That photo large (Detail) — a double click on a cell of Simple · Multi; [Simple] ·
-        [Multi] bring those back as they were."""
+        """That photo large (Detail) — a double click on a cell of Simple or a photo of Multi."""
         self._select_from_multi(image_id)
         self._go("all")
         self.lbl_status.setText(self.DETAIL_HINT)
@@ -1986,20 +1980,24 @@ class MainWindow(QMainWindow):
             self.review.set_current_exam(exam_date)
         else:
             self._review_dirty = True
-        if self._grid_mode() and self.patient_list.current() == self._patient_ref:
-            # 16장 보기: the page with the exam's newest photo
+        if self.patient_list.current() != self._patient_ref:
+            return
+        self._default_exam = exam_date                 # [Simple]: this exam's newest OD | OS
+        if self._tab() == "grid" or (self._grid_mode() and not self._picks):
+            # Multi (16장 보기): the page with the exam's newest photo
             first = next((g.image_id for g in self.grid.items()
                           if (self.db.get_image(g.image_id) or {"exam_date": None})["exam_date"] == exam_date), None)
             if first is not None:
                 self.grid.show_photo(first)
-        elif self.patient_list.current() == self._patient_ref and self._patient_ref not in (None, UNASSIGNED):
-            if self._mode == SIMPLE and self._picks == self._default_picks:
-                self._set_default_picks(exam_date)
-                if self._picks:
-                    self._select_from_multi(self._picks[0])
-                self._refill_multis()
-            elif self._mode == MULTI and self._stash.get(SIMPLE) is None:
-                self._default_exam = exam_date     # … when Simple is shown again
+        elif (self._patient_ref not in (None, UNASSIGNED) and self._picks
+              and self._picks == self._default_picks):
+            # Simple, not changed by hand: the newest OD | OS of that exam
+            self._picks = self._newest_pair(exam_date)
+            self._default_picks, self._pick_pre = list(self._picks), None
+            self._mark_picks()
+            if self._picks:
+                self._select_from_multi(self._picks[0])
+            self._refill_multis()
 
     def _fill_review(self) -> None:
         if self._review_dirty:
@@ -2055,8 +2053,7 @@ class MainWindow(QMainWindow):
         changed = ref != self._patient_ref
         if changed:
             self.compare = None                # the second pick belongs to the previous patient
-            self._picks, self._per_photo, self._pick_pre = [], {}, None   # so do the photos of Simple
-            self._stash, self._mode = {}, SIMPLE                          # … and of Multi
+            self._picks, self._per_photo, self._pick_pre = [], {}, None   # so do the photos picked
         self._patient_ref = ref
         self.patient_list.set_current(ref)     # the patient list shows the same patient
         if ref is None:
@@ -2177,7 +2174,6 @@ class MainWindow(QMainWindow):
         if any(i not in left for i in self._picks):
             self._picks = [i for i in self._picks if i in left]
             self._per_photo = {k: v for k, v in self._per_photo.items() if k in left}
-        self._stash = {k: v if v is None else [i for i in v if i in left] for k, v in self._stash.items()}
         self._fit_multi_count()                # (Multi, nothing picked: split for the photos now listed)
         # 16장 보기: the strip's photos newest first, both eyes together (the strip is by eye)
         newest = {r["id"]: k for k, r in enumerate(self._images())}
@@ -2201,21 +2197,14 @@ class MainWindow(QMainWindow):
         self._sync_navs()
 
     def _on_thumb_current(self, cur, _prev=None) -> None:
-        """Another photo of the list is the current one: it is shown. On Simple a photo that is not
-        one of the two — the keys on the list (↑ ↓ Home End), 이전 / 다음 from a photo the filters
-        hide — takes its eye's place rather than being on screen nowhere."""
+        """Another photo of the list is the current one: it is shown."""
         if cur is None:
             return
-        iid = cur.data(Qt.ItemDataRole.UserRole)
-        if (not self._multi_lock and not self._filling and self._tab() == "multi" and self._mode == SIMPLE
-                and iid not in self._picks):
-            self._show_in_pair(iid)
-        else:
-            self._show_image(iid)
+        self._show_image(cur.data(Qt.ItemDataRole.UserRole))
 
-    # -- Simple's two photos · Multi's picks (VK-2: click the photos, then MULTI) ---------------
+    # -- the photos picked: on Simple (the 다중 보기 page), numbered on Multi (16장 보기) -------------
     def picks(self) -> list[int]:
-        """The photos on the 다중 보기 page: Simple's two (OD, OS) or the ones picked for Multi."""
+        """The photos picked, in pick order: those on the Simple page (none: all the photos)."""
         return list(self._picks)
 
     def _set_thumb_rows(self, n: int, save: bool = False) -> None:
@@ -2274,40 +2263,34 @@ class MainWindow(QMainWindow):
         t.setFixedHeight(h)
 
     def _multi_picks(self) -> list[int]:
-        """The photos picked for Multi, whichever of Simple · Multi is on screen (몽타주 is made of these)."""
-        return list(self._picks if self._mode == MULTI else self._stash.get(MULTI) or [])
+        """The photos picked on Simple or Multi (몽타주 is made of these)."""
+        return list(self._picks)
 
     def _toggle_pick(self, image_id: int) -> bool:
-        """Multi: ``image_id`` joins the picked photos, or leaves them (from Simple: Multi's photos
-        are the ones on the page from here on)."""
-        self._set_mode(MULTI)
+        """``image_id`` joins the picked photos (Simple's), or leaves them."""
         if image_id in self._picks:
             self._picks.remove(image_id)
             if not self._picks:
                 self._multi_auto = True                # all clicked away: all the photos again
         elif len(self._picks) >= MAX_PICKS:
-            self.lbl_status.setText(f"Multi는 한 번에 {MAX_PICKS}장까지 고를 수 있습니다")
+            self.lbl_status.setText(f"한 번에 {MAX_PICKS}장까지 고를 수 있습니다")
             return False
         else:
             self._picks.append(image_id)
         self._mark_picks()
         if self._picks:
-            self.lbl_status.setText(f"{len(self._picks)}장 골랐습니다 — Multi에 고른 차례대로 나옵니다 "
+            self.lbl_status.setText(f"{len(self._picks)}장 골랐습니다 — Simple에 고른 차례대로 나옵니다 "
                                     "(다시 클릭하면 빠집니다)")
         self._refill_multis()
         return True
 
     def _click_pick(self, image_id: int) -> None:
-        """A plain click on a photo of the strip. On Simple the photo takes its eye's place (OD
-        left · OS right, ``_show_in_pair``). On Multi the view follows the clicks: a photo not
-        picked joins it as the selected cell, a picked one leaves it, and the layout fits the
+        """A plain click on a photo of the strip. On Simple the view follows the clicks: a photo
+        not picked joins it as the selected cell, a picked one leaves it, and the layout fits the
         number picked (1 · 2 · 4 · 6 · 9 · 16; none: all the photos). On Detail · 3D the photo is
-        shown there — the photos of Simple and Multi stay as they are."""
+        shown there — the photos of Simple stay as they are."""
         if self._tab() != "multi":
             self._select_from_multi(image_id)
-            return
-        if self._mode == SIMPLE:
-            self._show_in_pair(image_id)
             return
         before = list(self._picks)
         if not self._toggle_pick(image_id):
@@ -2323,52 +2306,33 @@ class MainWindow(QMainWindow):
         if target is not None and (self.current is None or self.current["id"] != target):
             self._select_from_multi(target)
         n = len(self._picks)
-        self.lbl_status.setText(f"Multi {n}장 — 사진을 클릭하면 더하고, 다시 클릭하면 뺍니다 · 더블클릭: 크게 보기 (Detail)"
+        self.lbl_status.setText(f"Simple {n}장 — 사진을 클릭하면 더하고, 다시 클릭하면 뺍니다 · 더블클릭: 크게 보기 (Detail)"
                                 if n else self.MULTI_ALL_HINT)
 
-    MULTI_ALL_HINT = "Multi — 모든 사진 · 사진 목록에서 사진을 클릭하면 고른 사진만 모아 봅니다 (다시 클릭하면 빠집니다)"
-
-    def _show_in_pair(self, image_id: int) -> None:
-        """Simple: ``image_id`` in its eye's place — OD on the left, OS on the right; the photo that
-        was there leaves — and selected. A photo of neither eye (OU · 미상) has no place of its own
-        there: it is shown large (Detail)."""
-        row = self.db.get_image(image_id)
-        if row is None:
-            return
-        eye = row["laterality"]
-        if eye not in EYES:
-            self._select_from_multi(image_id)
-            self._go("all")
-            self.lbl_status.setText("눈(OD · OS)을 알 수 없는 사진은 크게 보기(Detail)로 엽니다 — "
-                                    "[정보 수정]에서 눈을 지정하면 Simple에 나옵니다")
-            return
-        if image_id not in self._picks:
-            eyes = {i: (self.db.get_image(i) or {"laterality": None})["laterality"] for i in self._picks}
-            picks = [i for i in self._picks if eyes[i] in EYES and eyes[i] != eye] + [image_id]
-            eyes[image_id] = eye
-            self._picks = sorted(picks, key=lambda i: EYES.index(eyes[i]))
-            self._mark_picks()
-            self._fit_multi_count()
-        self._select_from_multi(image_id)              # (its own processing, if it was here before)
-        if self._tab() == "multi":
-            self._fill_multi()
+    MULTI_ALL_HINT = "Simple — 모든 사진 · 사진 목록에서 사진을 클릭하면 고른 사진만 모아 봅니다 (다시 클릭하면 빠집니다)"
 
     def clear_picks(self) -> None:
-        """[선택 해제] (Multi): nothing picked — all the photos of the list again."""
-        self._set_mode(MULTI)
+        """[선택 해제] (Simple): nothing picked — all the photos of the list again."""
         self._picks, self._per_photo, self._pick_pre = [], {}, None
         self._multi_auto = True
         self._mark_picks()
         self._refill_multis()
         self.lbl_status.setText(self.MULTI_ALL_HINT)
 
+    def _clear_grid_picks(self) -> None:
+        """[선택 해제] on Multi (16장 보기): nothing picked; Multi stays on screen."""
+        self._picks, self._per_photo, self._pick_pre = [], {}, None
+        self._multi_auto = True
+        self._mark_picks()
+        self._fit_multi_count()
+        self.lbl_status.setText("고른 사진을 모두 해제했습니다")
+
     def _fit_multi_count(self) -> None:
-        """The page is split for its photos — Simple: one or two; Multi: for the photos picked
-        (1 · 2 · 4 · 6 · 9 · 16), with none picked for the photos of the list unless 화면 분할 was
-        chosen by hand — without refilling it."""
+        """The Simple page is split for the photos picked (1 · 2 · 4 · 6 · 9 · 16), with none picked
+        for the photos of the list unless 화면 분할 was chosen by hand — without refilling it."""
         if self._picks:
             self.multi.set_count(MultiView.fit(len(self._picks)), quiet=True)
-        elif self._mode == MULTI and self._multi_auto:
+        elif self._multi_auto:
             self.multi.set_count(MultiView.fit(max(1, self.thumbs.count())), quiet=True)
 
     def _refill_multis(self) -> None:
@@ -2380,7 +2344,7 @@ class MainWindow(QMainWindow):
             # 두 장 3D: another photo was put in — the two eyes show the two photos of now
             # (no longer two: back to the photos)
             if not self._open_pair3d():
-                self.show_simple() if self._mode == SIMPLE else self.open_picks()
+                self.open_picks()
 
     def _on_multi_layout(self, _n: int) -> None:
         """화면 분할 chosen by hand: with nothing picked, consecutive photos from the shown one (VK-2)."""
@@ -2389,10 +2353,10 @@ class MainWindow(QMainWindow):
         self._fill_multi()
 
     def open_picks(self) -> None:
-        """[Multi]: the photos picked for it, one cell each (the photo on screen selected if it is
-        one of them, else the first) — with none picked all the photos of the list, as many to a
-        screen as 화면 분할 says. Each cell's photo is processed on its own."""
-        self._set_mode(MULTI)
+        """The Simple page with the photos picked as they are ([고른 사진 보기] on Multi, back from
+        3D …), one cell each (the photo on screen selected if it is one of them, else the first) —
+        with none picked all the photos of the list, as many to a screen as 화면 분할 says. Each
+        cell's photo is processed on its own."""
         n = len(self._picks)
         if n and (self.current is None or self.current["id"] not in self._picks):
             self._select_from_multi(self._picks[0])
@@ -2403,21 +2367,23 @@ class MainWindow(QMainWindow):
                                 if n else self.MULTI_ALL_HINT)
 
     def _mark_picks(self) -> None:
-        """The photos shown on Simple · Multi are framed in the list — on Multi with their pick number."""
-        simple = self._mode == SIMPLE
+        """The photos picked are framed in the photo list and on Multi, with their pick number."""
         for i in range(self.thumbs.count()):
             it = self.thumbs.item(i)
             iid = it.data(Qt.ItemDataRole.UserRole)
-            rank = self._picks.index(iid) + 1 if iid in self._picks else 0
-            it.setData(PICK_ROLE, SHOWN if rank and simple else rank)
-        self.grid.set_picks([] if simple else self._picks)
+            it.setData(PICK_ROLE, self._picks.index(iid) + 1 if iid in self._picks else 0)
+        self.grid.set_picks(self._picks)
         self._sync_picks_ui()
 
     def _sync_picks_ui(self) -> None:
-        n = len(self._picks) if self._mode == MULTI else 0
+        n = len(self._picks)
         self.lbl_picks.setText(f"{n}장 선택" if n else "")
         self.btn_clear_picks.setVisible(n > 0)
-        self.btn_montage.setEnabled(len(self._multi_picks()) >= 2)
+        self.acts["montage"].setEnabled(n >= 2)
+        if hasattr(self, "btn_grid_open"):     # (built after the first call)
+            self.btn_grid_open.setText(f"고른 사진 보기 ({n}장)")
+            self.btn_grid_open.setVisible(n > 0)
+            self.btn_grid_clear.setVisible(n > 0)
 
     @staticmethod
     def _adjusted_with(rgb: np.ndarray, st: dict) -> np.ndarray:
@@ -2525,12 +2491,10 @@ class MainWindow(QMainWindow):
         return super().eventFilter(obj, e)
 
     def _press_photo(self, image_id: int, stay: bool = False) -> None:
-        """A plain click on a photo of the strip (``_click_pick``) — on 16장 보기 (``stay``) it is
-        picked for Multi or taken out there. The double click it may begin takes it back
+        """A plain click on a photo of the strip (``_click_pick``) — on Multi (16장 보기, ``stay``)
+        it is picked or taken out there. The double click it may begin takes it back
         (``_open_photo``)."""
         self._stop_slideshow()
-        if stay:
-            self._set_mode(MULTI)             # (before the picks are remembered: they are Multi's)
         self._pick_pre = (image_id, list(self._picks), self._multi_auto)
         if stay:
             self._toggle_pick(image_id)
@@ -2581,9 +2545,9 @@ class MainWindow(QMainWindow):
         """Right click on a photo of the strip or of 16장 보기."""
         menu = QMenu(self)
         multi = self._multi_picks()
-        menu.addAction("Multi에서 빼기" if iid in multi else "Multi로 고르기", lambda: self._toggle_pick(iid))
+        menu.addAction("고른 사진에서 빼기" if iid in multi else "고르기 (번호)", lambda: self._toggle_pick(iid))
         if multi:
-            menu.addAction(f"Multi로 보기 ({len(multi)}장)", self.open_picks)
+            menu.addAction(f"고른 사진 보기 ({len(multi)}장)", self.open_picks)
         if len(multi) >= 2:
             menu.addAction(f"몽타주 만들기 ({len(multi)}장)…", lambda: self.open_montage())
         row = self.db.get_image(iid)
@@ -3000,21 +2964,20 @@ class MainWindow(QMainWindow):
                 self.patient_list.hide()
         elif key == "view3d":                    # 3D, and again: back to the view before it
             if self._tab() == "3d2":             # 두 장 3D: back to the two photos
-                self.show_simple() if self._mode == SIMPLE else self.open_picks()
+                self.open_picks()
             elif self._tab() == "multi" and self._open_pair3d():
                 pass                             # two photos on screen: both in 3D, side by side
             elif self._tab() != "3d":
                 self._go("3d")
             elif self._last_view == "multi":
-                self.show_simple() if self._mode == SIMPLE else self.open_picks()
+                self.open_picks()
             else:
                 self._go(self._last_view)
-        elif key == "multi":                     # 다중 (VK-2 MULTI): Multi, and again: back to the first view
-            if self._tab() == "multi" and self._mode == MULTI:
-                self._go("grid") if self._grid_mode() else self.show_simple()
-            else:
-                self.open_picks()
-        elif key.startswith("multi:"):           # 다중 ▾ N장: Multi with that many to a screen
+        elif key.startswith("view:"):            # Simple · Multi (16장) · Detail
+            self._show_view(key[5:], toggle=True)
+        elif key == "montage":
+            self.open_montage()
+        elif key.startswith("multi:"):           # 보기 → Simple 화면 분할: Simple with that many to a screen
             self.open_picks()
             self.multi.set_count(int(key[6:]))   # -> _on_multi_layout (nothing picked: consecutive photos)
         elif key == "tools":
@@ -3078,19 +3041,17 @@ class MainWindow(QMainWindow):
     # -- navigation / slideshow (VK-2 previous / next / loop) ------------------------------
     def _step(self, d: int, wrap: bool = False) -> None:
         """이전 / 다음 (PageUp · PageDown, ← · →, ◀ ▶ at the sides of a photo, 연속): the photo before
-        / after the one shown — of the photo list; on Simple of the same eye, in its place (OD
-        left · OS right); on Multi with picked photos the picked one before / after."""
+        / after the one shown — of the photo list; on Simple with picked photos the picked one
+        before / after."""
         cur = self.current["id"] if self.current is not None else None
         if self._tab() == "multi" and cur in self._picks:
-            simple = self._mode == SIMPLE
-            ids = self._eye_ids(cur) if simple else list(self._picks)
-            if cur in ids:                         # (not a photo hidden by the list's filters)
-                k = ids.index(cur) + d
-                if wrap:
-                    k %= len(ids)
-                if 0 <= k < len(ids) and ids[k] != cur:
-                    self._show_in_pair(ids[k]) if simple else self._select_from_multi(ids[k])
-                return
+            ids = list(self._picks)
+            k = ids.index(cur) + d
+            if wrap:
+                k %= len(ids)
+            if 0 <= k < len(ids) and ids[k] != cur:
+                self._select_from_multi(ids[k])
+            return
         n = self.thumbs.count()
         if n == 0:
             return
@@ -3106,24 +3067,13 @@ class MainWindow(QMainWindow):
             self._select_from_multi(image_id)
         self._step(d)
 
-    def _eye_ids(self, image_id: int) -> list[int]:
-        """The photos of the list of the same eye as ``image_id`` (OD · OS), in the list's order
-        (newest first); [] for a photo that is not in the list or of neither eye."""
-        photos = [(self.thumbs.item(i).data(Qt.ItemDataRole.UserRole), self.thumbs.item(i).data(EYE_ROLE))
-                  for i in range(self.thumbs.count())]
-        eye = next((e for i, e in photos if i == image_id), None)
-        return [i for i, e in photos if e == eye] if eye in EYES else []
-
     def _sync_navs(self) -> None:
         """◀ ▶ are at a photo's sides only where there is a photo to go to: Detail — before / after
-        it in the photo list; Simple — of its eye. (Multi's cells have none: the list picks.)"""
+        it in the photo list. (Simple's cells have none: the list picks.)"""
         i, n = self.thumbs.currentRow(), self.thumbs.count()
         self.nav2d.set_available(i > 0, 0 <= i < n - 1)
-        simple = self._tab() == "multi" and self._mode == SIMPLE
         for cell in self.multi.cells:
-            ids = self._eye_ids(cell.image_id) if simple and cell.image_id is not None else []
-            k = ids.index(cell.image_id) if cell.image_id in ids else -1
-            cell.nav.set_available(k > 0, 0 <= k < len(ids) - 1)
+            cell.nav.set_available(False, False)
 
     def keyPressEvent(self, e) -> None:
         """← / → not taken by the control with the keyboard: the photo before / after (as PageUp · PageDown)."""
@@ -3264,17 +3214,17 @@ class MainWindow(QMainWindow):
         for Multi, each with its own processing; with none, consecutive photos from the shown one
         (VK-2: all of them when 화면 분할 fits the list)."""
         mv = target or self.multi
-        if self._picks:                       # Simple's two · the photos picked in the strip
+        if self._picks:                       # the newest OD | OS · the photos picked
             n = mv.count
-            simple = self._mode == SIMPLE
             items = []
             for k, iid in enumerate(self._picks[:n]):
                 row = self.db.get_image(iid)
                 small = self._multi_small(row, self._photo_state(iid), n) if row else None
                 if small is not None:
-                    items.append((iid, self._multi_label(row, 0 if simple else k + 1), small))
+                    items.append((iid, self._multi_label(row, k + 1), small))
             more = f" (화면에 {n}장 — 화면 분할을 늘리세요)" if len(self._picks) > n else ""
-            mv.set_mode_text("Simple — OD | OS" if simple else f"고른 사진 {len(self._picks)}장{more}")
+            pair = self._picks == self._default_picks and len(self._picks) == 2
+            mv.set_mode_text("Simple — 최신 OD | OS" if pair else f"고른 사진 {len(self._picks)}장{more}")
             mv.populate(items, self.current["id"] if self.current else None)
             if target is None:
                 self._sync_navs()
@@ -4086,15 +4036,6 @@ class MainWindow(QMainWindow):
     def _grid_mode(self) -> bool:
         return self.settings.open_view == GRID_MODE
 
-    def _apply_open_view(self) -> None:
-        """The VK-2 way has 16장 among the icons above the photos and in the 보기 menu; the other way has not."""
-        on = self._grid_mode()
-        self.view_buttons["grid"].setVisible(on)
-        self.view_acts["grid"].setVisible(on)
-        self.view_acts["grid"].setEnabled(on)
-        if not on and self._tab() == "grid":   # (not _go: the patient list stays if it is on screen)
-            self.tabs.setCurrentWidget(self._pages["all"])
-
     def _sync_grid_bar(self) -> None:
         """16장 보기's line: how many photos, which of them are on screen, the page buttons."""
         g = self.grid
@@ -4113,21 +4054,19 @@ class MainWindow(QMainWindow):
 
     def _go(self, key: str) -> None:
         key = GONE_VIEWS.get(key, key)
-        if key == "grid" and not self._grid_mode():
-            key = "all"                       # 16장 보기 belongs to the VK-2 way (설정 → 일반 → 환자를 열면)
         if self.tabs.currentWidget() is not self._pages[key]:
             self._tab_fade.snap()             # the page on screen fades into the next
         self.tabs.setCurrentWidget(self._pages[key])
 
     def _sync_views(self) -> None:
-        """The icons above the photos: the view on screen is lit (Simple and Multi are one page, in
-        two modes); 화면 분할 and the picks are there on Multi only, ◀ ▶ at the cells' sides on Simple."""
+        """The views of the command toolbar: the one on screen is lit (Simple: the 다중 보기 page,
+        Multi: 16장 보기); 화면 분할 and the picks are in the menu bar's row on Simple."""
         key = self._tab()
-        on = {"grid": key == "grid", SIMPLE: key == "multi" and self._mode == SIMPLE,
-              MULTI: key == "multi" and self._mode == MULTI, "all": key == "all", "3d": key in ("3d", "3d2")}
-        for k, b in self.view_buttons.items():
-            b.setChecked(on[k])
-        self.multi_bar.setVisible(on[MULTI])
+        on = {"view:simple": key == "multi", "view:multi": key == "grid", "view:all": key == "all",
+              "view3d": key in ("3d", "3d2")}
+        for k, lit in on.items():
+            self.acts[k].setChecked(lit)
+        self.multi_bar.setVisible(key == "multi")
         self._sync_picks_ui()
         self._sync_navs()
 
@@ -4558,7 +4497,7 @@ class MainWindow(QMainWindow):
     def _montage_sources(self, ids: list[int]):
         """``(sources, "")`` for the photos ``ids``, or ``(None, why not)``."""
         if len(ids) < 2:
-            return None, ("사진을 두 장 이상 고르세요.\n\n사진 위 줄의 [Multi]를 누르고 아래 사진 목록에서 같은 눈의 사진을 "
+            return None, ("사진을 두 장 이상 고르세요.\n\n[Simple]의 사진 목록이나 [Multi](16장)에서 같은 눈의 사진을 "
                           "차례로 클릭해 번호를 붙인 뒤 [Montage]를 누르세요.")
         rows = [self.db.get_image(i) for i in ids]
         if any(r is None for r in rows):
@@ -4715,6 +4654,8 @@ class MainWindow(QMainWindow):
         self._closing = True
         self._show.stop()
         self._exit_full_3d()
+        area = self.toolBarArea(self.tb_cmd)          # the command toolbar where it was dragged to
+        self.settings.cmdbar_area = next((k for k, a in self.CMDBAR_AREAS.items() if a == area), "left")
         try:
             self.settings.save()
         except OSError:

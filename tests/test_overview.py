@@ -1,6 +1,6 @@
 """Detail (모두 보기, v0.3.0): the big 2D photo with its macula and optic disc enlarged beside it; no
-tab row — the views (Simple · Multi · Detail · 3D) are icons in the row above the photos, the photo
-list alone under them; the patient line is in the menu bar; the command toolbar at the left."""
+tab row — the views (Simple · Multi · Detail · 3D) are on the command toolbar at the left (it moves to
+the right or the top), the photo list alone under the photos; the patient is in the status bar."""
 import os
 
 import pytest
@@ -60,19 +60,20 @@ def test_overview_is_the_photo_with_its_macula_and_disc(tmp_path, demo_dir, impo
         app.processEvents()
         assert w._tab() == "all"
 
-        # -- the frame: no tab row; the views are icons above the photos; patient line in the menu bar --
+        # -- the frame: no tab row; the views are on the command toolbar (left), top to bottom: 환자 목록 ·
+        # 이전 · 다음 · Simple · Multi · Detail · 화면 맞춤 · 도구 · 3D · Montage · Glaucoma (▾ 디스크 2장) ·
+        # 인쇄 · 설정 · 종료 — the view on screen lit; 화면 분할 in the menu bar's row on Simple only --
         assert w.tabs.tabBar().isHidden()
-        # Simple · Multi · Detail · 3D, then Montage · Glaucoma: icon buttons in the row above the photos,
-        # the view on screen lit (16장 is among them only in the VK-2 way: 설정 → 일반 → 환자를 열면 —
-        # test_photo_grid.py; 화면 분할 is there on Multi only)
-        top = (w.btn_simple, w.btn_multi, w.btn_detail, w.btn_3d, w.btn_montage, w.btn_glaucoma)
-        assert [b.text() for b in top] == ["Simple", "Multi", "Detail", "3D", "Montage", "Glaucoma"]
-        assert all(_inside(b, w.view_bar) and b.isVisible() and not b.icon().isNull() for b in top)
-        xs = [b.mapTo(w, QPoint(0, 0)).x() for b in top]
-        assert xs == sorted(xs)
-        assert [w.view_buttons[k] for k in ("simple", "multi", "all", "3d")] == list(top[:4])
-        assert w.view_buttons["grid"].isHidden() and not w.view_acts["grid"].isVisible()
-        assert [k for k, b in w.view_buttons.items() if b.isChecked()] == ["all"]
+        from fundusview.ui.toolbars import CMDBAR
+        bar = [w.tb_cmd.widgetForAction(w.acts[k]) for k in CMDBAR]
+        assert [b.text() for b in bar] == ["환자 목록", "이전", "다음", "Simple", "Multi", "Detail", "화면 맞춤", "도구",
+                                           "3D", "Montage", "Glaucoma", "인쇄", "설정", "종료"]
+        assert all(not b.icon().isNull() for b in bar)
+        ys = [b.mapTo(w, QPoint(0, 0)).y() for b in bar if b.isVisible()]
+        assert len(ys) >= 11 and ys == sorted(ys)
+        for gone in ("search", "edit", "import", "save", "discpair"):       # (in the menus · under Glaucoma ▾)
+            assert w.tb_cmd.widgetForAction(w.acts[gone]) is None
+        assert [k for k in ("view:simple", "view:multi", "view:all", "view3d") if w.acts[k].isChecked()] == ["view:all"]
         assert w.view_bar.mapTo(w, QPoint(0, 0)).y() + w.view_bar.height() <= w.view2d.mapTo(w, QPoint(0, 0)).y()
         assert not w.multi_bar.isVisible() and _inside(w.multi.combo, w.view_bar)
         # under the photos: the photo list alone, over the whole width (the eye of each row at its left)
@@ -81,7 +82,7 @@ def test_overview_is_the_photo_with_its_macula_and_disc(tmp_path, demo_dir, impo
         assert abs(w.thumbs.x() - (w.eye_rail.x() + w.eye_rail.width())) <= 2
         assert w.thumbs.width() + w.eye_rail.width() >= w.strip_w.width() - 10 and w.eye_rail.isVisible()
         assert w.menuBar().cornerWidget(Qt.Corner.TopRightCorner) is w.top_w
-        # … which holds the view icons, beside the menus; the patient is named in the status bar,
+        # … which holds Simple's 화면 분할, beside the menus; the patient is named in the status bar,
         # and the [환자 목록] link, the photo filters, the pointer read-out and the magnification
         # are no longer on screen
         assert _inside(w.view_bar, w.top_w) and _inside(w.banner, w.statusBar()) and w.banner.isVisible()
@@ -146,25 +147,32 @@ def test_overview_is_the_photo_with_its_macula_and_disc(tmp_path, demo_dir, impo
         if row["fovea_x"] is not None:
             assert roi_m.rect().contains(QPointF(row["fovea_x"], row["fovea_y"]))
 
-        # -- the icons: Multi · 3D · back --
+        # -- the views of the command toolbar: Simple · Multi (16장) · 3D · back --
         def lit():
-            return [k for k, b in w.view_buttons.items() if b.isChecked()]
+            return [k for k in ("view:simple", "view:multi", "view:all", "view3d") if w.acts[k].isChecked()]
 
-        w.view_buttons["multi"].click()
-        assert w._tab() == "multi" and lit() == ["multi"] and w.multi_bar.isVisible()
-        w.view_buttons["multi"].click()                                  # (the lit icon again: it stays lit)
-        assert w._tab() == "multi" and lit() == ["multi"]
-        w.view_buttons["3d"].click()
-        assert w._tab() == "3d" and lit() == ["3d"] and not w.multi_bar.isVisible()
-        w._on_action("view3d")                                           # the toolbar's 3D again: back to Multi
-        assert w._tab() == "multi" and lit() == ["multi"]
-        w.view_buttons["simple"].click()
-        assert w._tab() == "multi" and lit() == ["simple"] and not w.multi_bar.isVisible()
-        w.view_buttons["all"].click()
-        assert w._tab() == "all" and lit() == ["all"]
-        w.view_buttons["3d"].click()
-        w.view_buttons["3d"].click()                                     # the 3D icon again: back to Detail
-        assert w._tab() == "all" and lit() == ["all"]
+        def press(key):
+            w.tb_cmd.widgetForAction(w.acts[key]).click()
+
+        press("view:simple")
+        assert w._tab() == "multi" and lit() == ["view:simple"] and w.multi_bar.isVisible() and len(w.picks()) == 2
+        press("view:simple")                                             # (the lit one again: it stays lit)
+        assert w._tab() == "multi" and lit() == ["view:simple"]
+        press("view:multi")
+        assert w._tab() == "grid" and lit() == ["view:multi"] and not w.multi_bar.isVisible()
+        press("view:multi")
+        assert w._tab() == "grid" and lit() == ["view:multi"]
+        press("view:simple")
+        press("view3d")                                                  # Simple's two photos: both in 3D
+        assert w._tab() == "3d2" and lit() == ["view3d"] and not w.multi_bar.isVisible()
+        press("view3d")                                                  # 3D again: back to Simple
+        assert w._tab() == "multi" and lit() == ["view:simple"] and len(w.picks()) == 2
+        press("view:all")
+        assert w._tab() == "all" and lit() == ["view:all"]
+        press("view3d")
+        assert w._tab() == "3d" and lit() == ["view3d"]
+        press("view3d")                                                  # 3D again: back to Detail
+        assert w._tab() == "all" and lit() == ["view:all"]
         assert _inside(w.view2d, w.page_all) and roi_d.isVisible()
         # whatever led to 검토 · 2D 보기 · 비교 stays on Detail
         for key in ("review", "2d", "cmp"):
@@ -172,10 +180,10 @@ def test_overview_is_the_photo_with_its_macula_and_disc(tmp_path, demo_dir, impo
             assert w._tab() == "all"
         # 보기 menu: Ctrl+1 · 2 · 3 · 5 for the views, Ctrl+0 the patient list
         acts = {a.text(): a.shortcut().toString() for a in w.findChildren(type(w.acts["fit"]))
-                if a.text() in ("Simple", "Multi", "Detail", "모두 보기", "다중 보기", "3D", "2D 보기", "비교", "검토",
-                                "3D 안구", "환자 목록")
+                if a.text() in ("Simple", "Multi (16장 보기)", "Detail", "모두 보기", "다중 보기", "3D", "2D 보기", "비교",
+                                "검토", "3D 안구", "환자 목록", "16장 보기")
                 and not a.shortcut().isEmpty()}
-        assert acts == {"Simple": "Ctrl+1", "Multi": "Ctrl+2", "3D": "Ctrl+3", "Detail": "Ctrl+5",
+        assert acts == {"Simple": "Ctrl+1", "Multi (16장 보기)": "Ctrl+2", "3D": "Ctrl+3", "Detail": "Ctrl+5",
                         "환자 목록": "Ctrl+0"}
         assert w.acts["view3d"].text() == "3D"
     finally:
@@ -236,6 +244,55 @@ def test_patient_line_in_a_narrow_window_settles(tmp_path, demo_dir):
             # the patient (status bar): cut with … at a third of the window, never wider
             assert w.banner.width() <= max(160, w.width() // 3) + 2
             assert w.statusBar().width() <= w.width()
+    finally:
+        w.close()
+        db.close()
+
+
+def test_the_command_toolbar_moves_to_the_right_or_the_top(tmp_path, demo_dir):
+    """The command toolbar is dragged by the handle (dots) at its top — to the right edge or along the
+    top; its right-click menu puts it there too. Where it is, is remembered for the next start."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication
+
+    from fundusview.config import Settings, config_dir
+    from fundusview.db import Database
+    from fundusview.ui.main_window import MainWindow
+
+    app = QApplication.instance() or QApplication([])
+    w, db = _window(tmp_path, demo_dir)
+    try:
+        w.resize(1400, 900)
+        w.show()
+        app.processEvents()
+        tb = w.tb_cmd
+        assert w.toolBarArea(tb) == Qt.ToolBarArea.LeftToolBarArea and w.settings.cmdbar_area == "left"
+        assert tb.isMovable() and not tb.isFloatable()
+        assert tb.allowedAreas() == (Qt.ToolBarArea.LeftToolBarArea | Qt.ToolBarArea.RightToolBarArea
+                                     | Qt.ToolBarArea.TopToolBarArea)
+        assert "손잡이" in tb.toolTip()
+        w.move_cmdbar("top")
+        app.processEvents()
+        assert w.toolBarArea(tb) == Qt.ToolBarArea.TopToolBarArea and tb.orientation() == Qt.Orientation.Horizontal
+        assert w.settings.cmdbar_area == "top" and Settings.load(config_dir() / "settings.json").cmdbar_area == "top"
+        w.move_cmdbar("right")
+        app.processEvents()
+        assert w.toolBarArea(tb) == Qt.ToolBarArea.RightToolBarArea and tb.orientation() == Qt.Orientation.Vertical
+        assert tb.x() > w.width() // 2 and w.settings.cmdbar_area == "right"
+        w.move_cmdbar("bottom")                                  # (not a place for it: nothing happens)
+        assert w.toolBarArea(tb) == Qt.ToolBarArea.RightToolBarArea
+        # a window opened later starts with it there; 보기 → 툴바 기본 위치로: the left again
+        w2 = MainWindow(Settings.load(config_dir() / "settings.json"), db)
+        try:
+            assert w2.toolBarArea(w2.tb_cmd) == Qt.ToolBarArea.RightToolBarArea
+            w2._reset_toolbars()
+            assert w2.toolBarArea(w2.tb_cmd) == Qt.ToolBarArea.LeftToolBarArea and w2.settings.cmdbar_area == "left"
+        finally:
+            w2.close()
+        # dragged there by hand (no signal says so): remembered on closing
+        w.addToolBar(Qt.ToolBarArea.TopToolBarArea, tb)
+        w.close()
+        assert w.settings.cmdbar_area == "top"
     finally:
         w.close()
         db.close()

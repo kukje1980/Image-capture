@@ -285,10 +285,15 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
         app.processEvents()
         assert strip_ids() == ids
 
-        # [Multi] starts from nothing picked: all the photos of the list
-        w.btn_multi.click()
+        # [Simple]: the newest OD | OS; [선택 해제]: nothing picked — all the photos of the list
+        w.acts["view:simple"].trigger()
         app.processEvents()
-        assert w._tab() == "multi" and w._mode == "multi" and w.picks() == [] and not w.btn_clear_picks.isVisible()
+        pair = w._newest_pair()
+        assert w._tab() == "multi" and len(pair) == 2 and w.picks() == pair and w.acts["view:simple"].isChecked()
+        assert "최신 OD | OS" in w.multi.mode_text and w.btn_clear_picks.isVisible()
+        w.btn_clear_picks.click()
+        app.processEvents()
+        assert w._tab() == "multi" and w.picks() == [] and not w.btn_clear_picks.isVisible()
         assert [c.image_id for c in w.multi.cells if c.isVisible() and c.image_id] == ids and w.multi.count == 4
 
         # plain click = the photo on the multi view at once (numbered, selected); click again = it leaves
@@ -298,7 +303,7 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
         _click(w, w.thumbs.item(0))
         assert w.picks() == [ids[2], ids[0]] and w.multi.count == 2 and w.current["id"] == ids[0]
         assert w.thumbs.item(2).data(PICK_ROLE) == 1 and w.thumbs.item(0).data(PICK_ROLE) == 2
-        assert w.btn_multi.text() == "Multi" and w.lbl_picks.text() == "2장 선택" and w.btn_clear_picks.isVisible()
+        assert w.lbl_picks.text() == "2장 선택" and w.btn_clear_picks.isVisible()
         _click(w, w.thumbs.item(2))
         assert w.picks() == [ids[0]] and w.thumbs.item(0).data(PICK_ROLE) == 1 and w.multi.count == 1
         _click(w, w.thumbs.item(1))
@@ -309,8 +314,13 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
         assert w.current["id"] == ids[2] and w._tab() == "all"
         assert w.picks() == [ids[0], ids[1]]
 
-        # [Multi]: the picked photos, in pick order, the first one selected
-        w.btn_multi.click()
+        # back to the picked photos: Multi (16장) has them numbered, [고른 사진 보기] shows them on Simple
+        # in pick order, the first one selected
+        w.acts["view:multi"].trigger()
+        app.processEvents()
+        assert w._tab() == "grid" and w.grid._picks == {ids[0]: 1, ids[1]: 2} and w.btn_grid_open.isVisible()
+        assert w.btn_grid_open.text() == "고른 사진 보기 (2장)"
+        w.btn_grid_open.click()
         app.processEvents()
         assert w._tab() == "multi" and w.multi.count == 2
         cells = [c for c in w.multi.cells if c.isVisible()]
@@ -335,11 +345,12 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
         QTest.mouseClick(cells[0].view.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(20, 20))
         app.processEvents()
         assert w.current["id"] == ids[0] and w._channel == "redfree" and w._ops == []
-        # a photo opened large keeps its processing there, and back on [Multi] each has its own
+        # a photo opened large keeps its processing there, and back with the picked photos each has its own
         QTest.mouseDClick(cells[0].view.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(20, 20))
         app.processEvents()
         assert w._tab() == "all" and w.current["id"] == ids[0] and w._channel == "redfree"
-        w.view_buttons["multi"].click()
+        w.acts["view:multi"].trigger()
+        w.btn_grid_open.click()
         app.processEvents()
         cells = [c for c in w.multi.cells if c.isVisible()]
         assert w._tab() == "multi" and [c.image_id for c in cells] == [ids[0], ids[1]]
@@ -348,7 +359,8 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
         assert w._channel == "rgb"
         assert w._per_photo[ids[1]]["state"]["ops"] == ["sharpen"]
 
-        # clearing the picks: all the photos of the list again; 다중 ▾ N장 = VK-2's consecutive photos
+        # clearing the picks: all the photos of the list again; 보기 → Simple 화면 분할 N장 = VK-2's
+        # consecutive photos
         w.btn_clear_picks.click()
         app.processEvents()
         assert w.picks() == [] and w.multi.mode_text == "" and w.lbl_picks.text() == ""
@@ -364,6 +376,6 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
         other = next(p["id"] for p in db.list_patients() if p["id"] != pid)
         w._select_patient_ref(other)
         theirs = {r["id"] for r in db.images_for_patient(other)}
-        assert set(w.picks()) <= theirs and w._per_photo == {} and w._mode == "simple" and w._stash == {}
+        assert set(w.picks()) <= theirs and w._per_photo == {}
     finally:
         w.close()

@@ -32,15 +32,22 @@ from .. import imaging
 from .icons import icon as line_icon
 from .image_view import TOOL_HINTS
 
-# (key, label, tooltip, icon, VK-2 name)
+# (key, label, tooltip, icon, VK-2 name) — every command; CMDBAR says which are on the command toolbar
 COMMANDS = (
     ("search", "환자 검색", "환자 ID·이름으로 찾기 (Ctrl+F)", "search", "ID# SEARCH"),
-    ("list", "환자 목록", "환자 목록 창 열기/닫기 (Ctrl+0) — 환자를 누르면 사진이 한 화면에 16장씩", "log",
+    ("list", "환자 목록", "환자 목록 창 열기/닫기 (Ctrl+0) — 환자를 찾아 두 번 누르면 그 환자의 사진", "log",
      "OPEN LIST"),
-    ("prev", "이전", "이전 사진 (PageUp)", "prev", "PREV"),
-    ("next", "다음", "다음 사진 (PageDown)", "next", "NEXT"),
-    ("multi", "다중", "여러 장 함께 보기 (Multi) — ▾ 로 1·2·4·6·9·16장 · 다시 누르면 Simple (VK-2 방식은 16장 보기)",
-     "multi", "MULTI"),
+    ("prev", "이전", "이전 사진 (PageUp · ←)", "prev", "PREV"),
+    ("next", "다음", "다음 사진 (PageDown · →)", "next", "NEXT"),
+    ("view:simple", "Simple", "Simple (Ctrl+1) — 누르면 최신 OD | OS 두 장 (OD 왼쪽 · OS 오른쪽)\n"
+                              "사진 목록을 클릭하면 더하고(번호) 다시 클릭하면 뺍니다 — 고른 장수에 맞게 화면이 나뉩니다 "
+                              "(1 · 2 · 4 · 6 · 9 · 16)\n칸을 누르면 그 사진만 보정 · 더블클릭: 크게 보기 (Detail)",
+     "simple", "—"),
+    ("view:multi", "Multi", "Multi (Ctrl+2) — 이 환자의 사진을 한 화면에 16장씩 (VK-2 방식)\n"
+                            "클릭: 고르기(번호) · 다시 클릭: 빼기 · [고른 사진 보기]: 고른 사진만 모아서 · "
+                            "더블클릭: 크게 보기 (Detail) · 휠: 다음 / 이전 16장", "multi16", "MULTI"),
+    ("view:all", "Detail", "Detail (Ctrl+5) — 사진 한 장을 크게, 오른쪽에 황반과 시신경 유두를 확대해서\n"
+                           "사진 좌우의 ◀ ▶ 또는 ← → 키: 이전 / 다음 사진 · 사진 목록을 클릭하면 그 사진", "detail", "—"),
     ("fit", "화면 맞춤", "화면에 맞춤 — ▾ 로 배율(100~800%)과 확대 위치(후극부·주변부)", "fit", "SCALE"),
     ("tools", "도구", "영상 처리 툴바 보이기/숨기기", "tools", "TOOLS"),
     ("edit", "정보 수정", "이 사진의 환자·검사 정보 수정/환자 지정", "edit", "EDIT DATA"),
@@ -48,13 +55,23 @@ COMMANDS = (
     ("save", "저장", "편집 영상 저장 — ▾ 로 파일·환자 기록·클립보드", "save", "SAVE"),
     ("discpair", "디스크 2장", "고른 두 사진(Ctrl+클릭)의 시신경 유두만 확대해 한 장으로 — 보험 청구용",
      "discpair", "—"),
-    ("glaucoma", "녹내장", "녹내장 분석 — 디스크 C/D · 3D 입체 · 광각 RNFL · 스테레오 보기 · 경과 비교 (두 장은 Ctrl+클릭)",
-     "glaucoma", "—"),
-    ("view3d", "3D", "광각 사진을 3D 안구 모형으로 보기 (다시 누르면 보던 화면으로)", "eye3d", "—"),
+    ("view3d", "3D", "광각 사진을 3D 안구 모형으로 보기 (Ctrl+3) — 다시 누르면 보던 화면으로\n"
+                     "Simple에 사진이 두 장이면 두 장 모두 3D로 나란히", "eye3d", "—"),
+    ("montage", "Montage", "몽타주 — Simple · Multi에서 고른 사진(2장 이상, 같은 눈)을 자동·수동으로 맞춰 한 장으로 "
+                           "합칩니다\n반투명 겹치기 · 기준점 맞추기 · 3D 안구에서 보기", "montage", "—"),
+    ("glaucoma", "Glaucoma", "녹내장 분석 — 보고 있는 사진의 디스크 C/D · 유두 3D 입체 · 광각 RNFL 분석,\n"
+                             "두 번째 사진을 Ctrl+클릭(②)하면 스테레오 보기 · 경과 비교(깜빡임)\n"
+                             "▾ 디스크 2장: 두 사진의 시신경 유두만 확대해 한 장으로 (보험 청구용)", "glaucoma", "—"),
     ("print", "인쇄", "화면 영상과 환자 정보를 인쇄", "print", "PRINT"),
     ("settings", "설정", "감시 폴더·라이브러리·파일 이름 규칙", "settings", "—"),
     ("exit", "종료", "프로그램 종료", "exit", "EXIT"),
 )
+# the command toolbar, top to bottom (환자 검색 · 정보 수정 · 가져오기 · 저장 are in the menus; 디스크 2장 is
+# under Glaucoma ▾)
+CMDBAR = ("list", "prev", "next", "view:simple", "view:multi", "view:all", "fit", "tools", "view3d", "montage",
+          "glaucoma", "print", "settings", "exit")
+# the views among them: lit while on screen
+VIEW_COMMANDS = ("view:simple", "view:multi", "view:all", "view3d")
 
 # VK-2 order first, then this viewer's extras. icon "fundus:<effect>" = photo thumbnail.
 PROCESSING = (
@@ -98,7 +115,8 @@ MENUS = {
     "rot_cw": (("rot_cw", "오른쪽으로 90°"), ("rot_ccw", "왼쪽으로 90°")),
     "tool:text": (("tool:text", "글자"), ("tool:arrow", "화살표 + 글자")),
     "annot_undo": (("annot_undo", "마지막 측정 지우기"), ("annot_clear", "측정·글자 모두 지우기")),
-    "multi": tuple((f"multi:{n}", f"{n}장") for n in (1, 2, 4, 6, 9, 16)),
+    "multi": tuple((f"multi:{n}", f"{n}장") for n in (1, 2, 4, 6, 9, 16)),     # Simple's 화면 분할
+    "glaucoma": (("glaucoma", "녹내장 분석"), ("discpair", "디스크 2장 (보험 청구용)")),
     # None = separator; region:* zoom onto a part of an (ultra-)wide-field photo
     "fit": (("fit", "화면에 맞춤"), ("actual", "100% (실제 크기)"), ("zoom2", "200%"), ("zoom4", "400%"),
             ("zoom8", "800%"), None,
@@ -110,7 +128,7 @@ MENUS = {
     "save": (("save_file", "파일로 저장…"), ("save_record", "환자 기록에 새 사진으로 저장"),
              ("copy", "클립보드로 복사 (Ctrl+C)")),
 }
-CHECKABLE = ("negative", "auto", "slideshow", "list", "tools")
+CHECKABLE = ("negative", "auto", "slideshow", "list", "tools") + VIEW_COMMANDS
 
 
 # ---------------------------------------------------------------------------
