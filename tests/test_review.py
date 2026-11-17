@@ -270,8 +270,8 @@ def test_click_a_patient_shows_its_exams_not_its_photos(win):
     pl.hide()
     w.open_large(ids["od3"])
     assert w._tab() == "all" and w.current["id"] == ids["od3"] and w.view2d.has_image()
-    # [Simple] brings the two photos back as they were
-    w.view_buttons["simple"].click()
+    # [Simple]: the newest OD | OS of the exam selected in the list
+    w.tb_cmd.widgetForAction(w.acts["view:simple"]).click()
     assert w._tab() == "multi" and _grid_ids(w) == [ids["od2"], ids["os2"]]
     # a double click on a cell: that photo large
     cell = next(c for c in w.multi.cells if c.image_id == ids["os2"])
@@ -366,7 +366,6 @@ def test_more_than_16_photos_page_by_16(win):
 
     # the VK-2 way: 사진 보기 opens 16장 보기 at the selected exam's photo, nothing picked
     w.settings.open_view = "grid"
-    w._apply_open_view()
     pl.btn_open.click()
     app.processEvents()
     assert pl.isHidden() and w._tab() == "grid" and w.picks() == []
@@ -381,10 +380,10 @@ def test_more_than_16_photos_page_by_16(win):
     assert w.grid.visible_ids() == order[32:] and w.grid.page() == 2
     pl.set_exam(pl.exam_dates()[0])
     assert w.grid.visible_ids() == order[:16]
-    # a photo opened large, and back: 16장 보기 as it was
+    # a photo opened large, and back with [Multi]: 16장 보기 as it was
     w.open_large(order[5])
     assert w._tab() == "all" and w.current["id"] == order[5]
-    w.view_buttons["grid"].click()
+    w.tb_cmd.widgetForAction(w.acts["view:multi"]).click()
     assert w._tab() == "grid" and w.grid.visible_ids() == order[:16]
 
 

@@ -139,7 +139,21 @@ def glyphs() -> dict[str, str]:
         p.setBrush(QColor("#ffffff"))
         p.drawEllipse(QRectF(s * 0.3, s * 0.3, s * 0.4, s * 0.4))
 
+    def grip(cols, rows):
+        """The handle of a toolbar that can be moved: dots in a block (cols × rows)."""
+        def draw(p, s):
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(TEXT3))
+            step, r = s * 0.2, s * 0.065
+            x0, y0 = s / 2 - step * (cols - 1) / 2, s / 2 - step * (rows - 1) / 2
+            for i in range(cols):
+                for j in range(rows):
+                    p.drawEllipse(QPointF(x0 + i * step, y0 + j * step), r, r)
+        return draw
+
     return {
+        "IMG_GRIP_H": _glyph("grip-h", 24, grip(4, 2)),     # a vertical toolbar's handle, along its top
+        "IMG_GRIP_V": _glyph("grip-v", 24, grip(2, 4)),     # a horizontal toolbar's handle, at its left
         "IMG_DOWN": _glyph("chevron-down", 12, chevron(TEXT2)),
         "IMG_DOWN_OFF": _glyph("chevron-down-off", 12, chevron(TEXT4)),
         "IMG_UP": _glyph("chevron-up", 12, chevron(TEXT2, up=True)),

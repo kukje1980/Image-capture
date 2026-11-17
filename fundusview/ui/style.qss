@@ -154,6 +154,11 @@ QToolBar#cmdbar { border-left: 1px solid @CARD@; padding: 6px 4px; }
 QToolBar#procbar { border-top: 1px solid @CARD@; padding: 3px 6px; }
 QToolBar::separator { background: @SEP@; width: 1px; height: 1px; margin: 5px 6px; }
 QToolBar::handle { image: none; width: 0; height: 0; }
+/* the command toolbar moves (left · right · top): a handle of dots to drag it by */
+QToolBar#cmdbar::handle:vertical { image: url(@IMG_GRIP_H@); height: 18px; margin: 0 6px 4px 6px;
+    border-bottom: 1px solid @SEP@; }
+QToolBar#cmdbar::handle:horizontal { image: url(@IMG_GRIP_V@); width: 18px; margin: 6px 4px 6px 0;
+    border-right: 1px solid @SEP@; }
 QToolBar QToolButton { color: @TEXT2@; background: transparent; border: 0; border-radius: 9px;
     padding: 4px 2px 3px 2px; font-size: 11px; }
 QToolBar#cmdbar QToolButton { min-width: 62px; }
@@ -162,10 +167,7 @@ QToolBar QToolButton:hover { background: @CARD@; color: @TEXT@; }
 QToolBar QToolButton:pressed { background: @FILL@; }
 QToolBar QToolButton:checked { background: #17365c; color: #7fc0ff; }
 QToolBar QToolButton:disabled { color: @FILL2@; }
-/* the row above the photos: Simple · Multi · Detail (the one on screen lit), 3D · Montage · Glaucoma */
-QToolButton#viewBarButton { font-weight: 600; padding: 4px 10px 4px 6px; }
-QToolButton#viewBarButton:disabled { color: @TEXT4@; }
-QToolButton#viewBarButton:checked { background: #17365c; color: #7fc0ff; }
+/* the row right of the menus on Simple: 화면 분할 and how many photos are picked */
 QLabel#picksCount { color: @YELLOW@; font-weight: 600; padding: 0 2px 0 8px; }
 /* ◀ ▶ at the sides of a photo (edge_nav.py) */
 QToolButton#edgeNav { background: rgba(20, 20, 22, 190); border: 1px solid rgba(255, 255, 255, 70);

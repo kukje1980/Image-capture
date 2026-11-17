@@ -161,15 +161,16 @@ def test_montage_from_the_main_window(app, tmp_path, montage_drop, import_and_wa
         ref = db.find_patient("D0001240")["id"]
         w._select_patient_ref(ref)
         app.processEvents()
-        assert w.thumbs.count() == 5 and not w.btn_montage.isEnabled()
+        montage = w.tb_cmd.widgetForAction(w.acts["montage"])     # [Montage] on the command toolbar
+        assert w.thumbs.count() == 5 and not montage.isEnabled()
         ids = [w.thumbs.item(i).data(Qt.ItemDataRole.UserRole) for i in range(5)]
         w.clear_picks()                                         # (the patient came with its newest OD picked)
         w._toggle_pick(ids[0])
-        assert not w.btn_montage.isEnabled()                    # one photo is not a montage
+        assert not montage.isEnabled()                          # one photo is not a montage
         for i in ids[1:]:
             w._toggle_pick(i)
-        assert w.btn_montage.isEnabled()
-        w.btn_montage.click()
+        assert montage.isEnabled()
+        montage.click()
         dlg = seen[-1]
         assert len(dlg.shots) == 5 and dlg.laterality() == "OD"
         new = db.get_image(dlg.saved_id)

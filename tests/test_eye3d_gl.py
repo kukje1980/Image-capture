@@ -508,7 +508,7 @@ def test_3d_view_and_its_full_screen(tmp_path, demo_dir, import_and_wait):
         _settle(app, 0.5)
         # 모두 보기 has no 3D pane any more: the eye stays in the 3D view, made when it is first shown
         assert w._tab() == "all" and not w._ov_gl and inside(w.eye3d, w.page3d)
-        w.view_buttons["3d"].click()
+        w.tb_cmd.widgetForAction(w.acts["view3d"]).click()
         _settle(app)
         assert w._tab() == "3d" and inside(w.eye3d, w.page3d)
         assert w.eye3d._ok and not w._3d_dirty               # the photo is on the eye
@@ -518,7 +518,7 @@ def test_3d_view_and_its_full_screen(tmp_path, demo_dir, import_and_wait):
         w._exit_full_3d()                                     # ... comes back to the 3D view
         _settle(app)
         assert inside(w.eye3d, w.page3d) and w.eye3d._ok
-        w.view_buttons["all"].click()
+        w.tb_cmd.widgetForAction(w.acts["view:all"]).click()
         _settle(app)
         assert w._tab() == "all" and inside(w.eye3d, w.page3d)
     finally:

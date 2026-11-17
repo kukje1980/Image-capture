@@ -299,7 +299,7 @@ class PatientListWindow(QDialog):
         self.btn_open = QPushButton("사진 보기")
         self.btn_open.setObjectName("primary")
         self.btn_open.setToolTip("이 환자의 사진을 주 화면에 엽니다 (두 번 누르기 · Enter) — 고른 검사의 최신 OD | OS 두 장,\n"
-                                 "설정 → 일반 → 환자를 열면 이 VK-2 방식이면 사진 16장(16장 보기)")
+                                 "설정 → 일반 → 환자를 열면 이 Multi(VK-2 방식)이면 사진 16장")
         self.btn_open.clicked.connect(lambda: self._request("multi"))
         self.btn_close = QPushButton("닫기")
         self.btn_close.setToolTip("환자 목록 창을 닫습니다 — 다시 열기: 환자 목록 (Ctrl+0)")

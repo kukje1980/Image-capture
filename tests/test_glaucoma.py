@@ -319,7 +319,9 @@ def test_main_window_flow(app, demo_dir, tmp_path, monkeypatch, import_and_wait)
     w = MainWindow(s, Database(tmp_path / "lib" / "fundus.db"))
     try:
         w.show()
-        assert w.btn_glaucoma.text() == "Glaucoma" and "glaucoma" in w.acts and "glaucoma" in MODALITY_LABELS
+        btn = w.tb_cmd.widgetForAction(w.acts["glaucoma"])            # on the command toolbar, 디스크 2장 under ▾
+        assert btn.text() == "Glaucoma" and "glaucoma" in MODALITY_LABELS
+        assert [a.text() for a in btn.menu().actions()] == ["녹내장 분석", "디스크 2장 (보험 청구용)"]
         w.open_glaucoma()                                           # no photo yet
         assert said and said[-1] == ("녹내장 분석", "사진을 고르세요.")
         import_and_wait(app, w, [demo_dir / "PatientCapture", demo_dir / "RetiCam"])
