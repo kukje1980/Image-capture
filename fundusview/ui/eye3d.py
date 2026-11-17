@@ -251,6 +251,10 @@ uniform float u_relief;   // 입체 조명: vessels and the disc catch a raking 
 uniform vec2  u_texel;    // one texel of the photo (texture coordinates)
 uniform vec3  u_rlight;   // direction to that light (the photo's frame)
 
+// 사진 밖: with a photo, the retina it does not show is not made up — no orange fundus pattern there, but a
+// plain dark grey like the black surround of a fundus photo, drawn solid (nothing is laid over the photo)
+const vec3 UNSEEN = vec3(0.105, 0.10, 0.095);
+
 uniform sampler2D u_hmap;  // 망막 높낮이: the height of the retinal surface over the photo (relief.py), 16 bits in R, G
 uniform float u_hmap_on;   // 0 the relief from the photo's brightness … 1 from the height map
 float height_(vec2 uv) { vec4 h = texture2D(u_hmap, uv); return (h.r * 65280.0 + h.g * 255.0) / 65535.0 * 2.0 - 1.0; }
@@ -322,7 +326,8 @@ vec3 retina_marks(vec3 c, vec3 d) {
 """
 
 # Detailed fundus: the photo over the procedural periphery, the ora serrata and
-# the ciliary body (``w`` = 1 on the retina, 0 on the ciliary body).
+# the ciliary body (``w`` = 1 on the retina, 0 on the ciliary body). With a photo, the retina beyond
+# it is UNSEEN (dark grey) instead of the procedural periphery (사진 밖, see MAPPING_LIB).
 RETINA_LIB = """
 uniform sampler2D u_peri;
 vec3 fundus(vec3 d, float z, out float w) {
@@ -330,15 +335,18 @@ vec3 fundus(vec3 d, float z, out float w) {
     float phi = atan(d.y, d.x);
     float dx = u_mirror == 1 ? -d.x : d.x;
     float phim = u_mirror == 1 ? (phi > 0.0 ? @PI@ - phi : -@PI@ - phi) : phi;   // anatomical azimuth
-    vec3 ret = texture2D(u_peri, vec2(dx, d.y) / max(1.0 - d.z, 0.05) * @PERI_K@ + 0.5).rgb;
-    if (u_simple > 0.0) ret = mix(ret, texture2D(u_peri, vec2(dx, d.y) / max(1.0 - d.z, 0.05) * @PERI_K@ + 0.5, 7.0).rgb, u_simple);
+    vec3 ret = UNSEEN;
+    if (u_has_tex == 0) {
+        ret = texture2D(u_peri, vec2(dx, d.y) / max(1.0 - d.z, 0.05) * @PERI_K@ + 0.5).rgb;
+        if (u_simple > 0.0) ret = mix(ret, texture2D(u_peri, vec2(dx, d.y) / max(1.0 - d.z, 0.05) * @PERI_K@ + 0.5, 7.0).rgb, u_simple);
+    }
     vec4 t = photo(d);
     ret = retina_marks(mix(ret, t.rgb, t.a), d);
     w = 1.0;
     if (theta <= @ORA@ - 0.04) return ret;
-    // ora serrata: dentate processes reaching forward between the bays
+    // ora serrata: dentate processes reaching forward between the bays (beyond a photo: as dark as the rest)
     float ora = @ORA@ + 0.035 * pow(max(cos(phim * 24.0), 0.0), 8.0) + 0.008 * sin(phim * 7.0);
-    ret = mix(ret, vec3(0.42, 0.33, 0.27), smoothstep(ora - 0.025, ora, theta) * 0.55);
+    ret = mix(ret, vec3(0.42, 0.33, 0.27), smoothstep(ora - 0.025, ora, theta) * 0.55 * (u_has_tex == 1 ? t.a : 1.0));
     // ciliary body: pars plana, then the 72 processes (whitish crests on black)
     vec3 cil = vec3(0.15, 0.095, 0.065) * (0.88 + 0.12 * sin(phim * 150.0 + sin(phim * 13.0) * 2.0));
     float u = clamp((z - @PLIC0@) / (@PLIC1@ - @PLIC0@), 0.0, 1.0);
@@ -808,9 +816,10 @@ varying vec3 v_n;
 
 vec3 fundus_s(vec3 d, out float theta) {
     theta = acos(clamp(-d.z, -1.0, 1.0));
-    // ground colour beyond the photographed field: choroid-orange fading to
-    // the darker ora serrata
-    vec3 base = mix(vec3(0.70, 0.33, 0.20), vec3(0.36, 0.16, 0.10), smoothstep(1.6, 2.6, theta));
+    // ground colour beyond the photographed field: with a photo dark grey (사진 밖, see MAPPING_LIB),
+    // without one choroid-orange fading to the darker ora serrata
+    vec3 base = u_has_tex == 1 ? UNSEEN
+                               : mix(vec3(0.70, 0.33, 0.20), vec3(0.36, 0.16, 0.10), smoothstep(1.6, 2.6, theta));
     vec4 t = photo(d);
     return retina_marks(mix(base, t.rgb, t.a), d);
 }

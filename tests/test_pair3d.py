@@ -60,6 +60,23 @@ def test_3d_on_the_two_photo_view_shows_both_eyes(tmp_path, demo_dir, import_and
         pair.b_home.click()
         assert all(e.magnification == pytest.approx(1.0) for e in pair.eyes)
 
+        # 깊이 막대 at each eye's right edge, from the 3D tab's depth; with 함께 움직이기 all eyes are cut
+        # so deep, off only the one whose bar moved
+        bars = pair.depth_bars
+        assert len(bars) == 2 and all(bar.isVisible() and bar.parentWidget() is e for bar, e in zip(bars, pair.eyes))
+        assert all(bar.geometry().right() > e.width() * 0.8 for bar, e in zip(bars, pair.eyes))
+        assert all(d.value() == w.s_cut.value() for d in pair.depths)
+        assert all(e.cut == pytest.approx(w.eye3d.cut) for e in pair.eyes)
+        bars[0]._set_from_y(bars[0]._track()[1])              # the bottom: the deepest cut
+        assert all(d.value() == -30 for d in pair.depths) and all(e.cut == pytest.approx(-0.3) for e in pair.eyes)
+        assert bars[1].text() == "100%"
+        pair.c_link.setChecked(False)
+        bars[1]._set_from_y(bars[1]._track()[0])              # the top: closed — that eye only
+        assert a.cut == pytest.approx(-0.3) and b.cut == 1.0 and bars[1].text() == "닫힘"
+        pair.c_link.setChecked(True)
+        pair.set_depth(25)
+        assert all(e.cut == pytest.approx(0.25) for e in pair.eyes)
+
         b3d.click()                                           # 3D again: the two photos
         app.processEvents()
         assert w._tab() == "multi" and len(w._picks) == 2 and not b3d.isChecked()

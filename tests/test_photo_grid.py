@@ -1,6 +1,6 @@
-"""설정 → 일반 → 환자를 열면: the newest OD | OS on 다중 보기 (the default) or the VK-2 way — 16장 보기,
-the patient's photos 16 on one screen (newest first); a click picks a photo (numbered), [멀티] shows the picked ones in the
-multi view, a double click opens one big, and [16장] goes back to the 16."""
+"""설정 → 일반 → 환자를 열면: 16장 보기 (the VK-2 way, the default) — the patient's photos 16 on one screen
+(newest first); a click picks a photo (numbered), [Multi] shows the picked ones only on the multi view, [Multi]
+again goes back to the 16, a double click opens one big — or Simple, the newest OD | OS on the multi view."""
 import os
 
 import pytest
@@ -88,14 +88,15 @@ def _click(app, w, iid, double=False, ctrl=False):
 def test_setting_is_saved(tmp_path):
     from fundusview.config import Settings
 
-    assert Settings().open_view == "odos"                  # the newest OD | OS, unless chosen
-    s = Settings(open_view="grid")
+    assert Settings().open_view == "grid"                  # 16장 보기, unless chosen
+    s = Settings(open_view="odos")
     s.save(tmp_path / "settings.json")
-    assert Settings.load(tmp_path / "settings.json").open_view == "grid"
+    assert Settings.load(tmp_path / "settings.json").open_view == "odos"
 
 
-def test_default_opens_on_the_newest_od_and_os(app, window):
+def test_simple_way_opens_on_the_newest_od_and_os(app, window):
     w = window
+    w.settings.open_view = "odos"
     pid = _open(app, w)
     rows = w.db.images_for_patient(pid)
     assert w.patient_list.isHidden() and w._tab() == "multi"
@@ -103,19 +104,23 @@ def test_default_opens_on_the_newest_od_and_os(app, window):
     assert all(w.db.get_image(i)["exam_date"] == rows[0]["exam_date"] for i in w.picks())
     assert w.acts["view:simple"].isChecked() and not w.acts["view:multi"].isChecked()
     assert w.thumbs.isVisible() and not w.grid_bar.isVisible()
-    # [Multi] is 16장 보기 in this way too
+    # [Multi] there (nothing picked by hand): 16장 보기, Multi off
     w.tb_cmd.widgetForAction(w.acts["view:multi"]).click()
-    assert w._tab() == "grid" and w.acts["view:multi"].isChecked() and w.grid_bar.isVisible()
+    assert w._tab() == "grid" and not w.acts["view:multi"].isChecked() and w.grid_bar.isVisible()
 
 
-def test_vk2_way_grid_pick_multi_and_back(app, window):
+def test_default_16_photos_pick_multi_and_back(app, window):
     from PySide6.QtCore import Qt
 
     w = window
-    w.settings.open_view = "grid"
+    assert w.settings.open_view == "grid"                   # (the first setting)
     pid = _open(app, w)
     assert w.patient_list.isHidden() and w._tab() == "grid" and w.picks() == []
-    assert w.acts["view:multi"].isChecked() and not w.acts["view:simple"].isChecked()
+    assert not w.acts["view:multi"].isChecked() and not w.acts["view:simple"].isChecked()
+    assert not w.lbl_grid_picks.isVisible() and not w.btn_grid_clear.isVisible()
+    # [Multi] with nothing picked: pick first — the 16 stay
+    w.tb_cmd.widgetForAction(w.acts["view:multi"]).click()
+    assert w._tab() == "grid" and not w.acts["view:multi"].isChecked() and w.lbl_status.text() == w.PICK_FIRST_HINT
 
     # 16 photos on one screen: the photos of the photo list, newest first (the list is by eye: OD row · OS row)
     rows = w.db.images_for_patient(pid)
@@ -143,17 +148,23 @@ def test_vk2_way_grid_pick_multi_and_back(app, window):
     assert w.picks() == [a, c, b]
     assert w._tab() == "grid"                               # picking stays on the 16
 
-    # [고른 사진 보기]: the picked photos, and only those, on Simple
-    assert w.btn_grid_open.isVisible() and w.btn_grid_open.text() == "고른 사진 보기 (3장)"
-    w.btn_grid_open.click()
+    # [Multi]: the picked photos, and only those, one cell each — Multi lit
+    assert w.lbl_grid_picks.isVisible() and w.lbl_grid_picks.text().startswith("3장 선택")
+    w.tb_cmd.widgetForAction(w.acts["view:multi"]).click()
     app.processEvents()
     assert w._tab() == "multi" and w.multi.count == 4 and w.lbl_picks.text() == "3장 선택"
+    assert w.acts["view:multi"].isChecked() and not w.acts["view:simple"].isChecked()
     shown = [cell.image_id for cell in w.multi.cells if cell.isVisible() and cell.image_id is not None]
     assert shown == [a, c, b]
-    # [Multi]: back to the 16, the picks still there
+    # [Multi] again: back to the 16, the picks still there (Ctrl+2 · 보기 → Multi the same)
     w.tb_cmd.widgetForAction(w.acts["view:multi"]).click()
     app.processEvents()
     assert w._tab() == "grid" and w.picks() == [a, c, b] and w.grid_bar.isVisible()
+    assert not w.acts["view:multi"].isChecked()
+    w.view_acts["multi"].trigger()
+    assert w._tab() == "multi" and w.acts["view:multi"].isChecked()
+    w.view_acts["multi"].trigger()
+    assert w._tab() == "grid" and w.picks() == [a, c, b]
 
     # a double click opens the photo big in 모두 보기 (and does not pick it)
     w.grid.set_page(0)
@@ -192,21 +203,21 @@ def test_switching_the_way_in_settings(app, window):
 
     w = window
     _open(app, w)
-    assert w._tab() == "multi"
+    assert w._tab() == "grid"
     dlg = SettingsDialog(w.settings, w)
-    assert [dlg.open_view.itemData(k) for k in range(dlg.open_view.count())] == ["odos", "grid"]
-    assert dlg.open_view.currentData() == "odos"
-    assert dlg.open_view.itemText(0).startswith("Simple") and dlg.open_view.itemText(1).startswith("Multi")
-    i = dlg.open_view.findData("grid")
+    assert [dlg.open_view.itemData(k) for k in range(dlg.open_view.count())] == ["grid", "odos"]
+    assert dlg.open_view.currentData() == "grid"
+    assert dlg.open_view.itemText(0).startswith("16장 보기") and dlg.open_view.itemText(1).startswith("Simple")
+    i = dlg.open_view.findData("odos")
     dlg.open_view.setCurrentIndex(i)
     dlg.apply()
-    assert w.settings.open_view == "grid"
-    _open(app, w)                                          # a patient opens on Multi (16장) now
-    assert w._tab() == "grid" and w.picks() == [] and w.acts["view:multi"].isChecked()
-    w.settings.open_view = "odos"                          # back: on Simple again
-    _open(app, w)
+    assert w.settings.open_view == "odos"
+    _open(app, w)                                          # a patient opens on Simple now
     assert w._tab() == "multi" and len(w.picks()) == 2 and w.acts["view:simple"].isChecked()
+    w.settings.open_view = "grid"                          # back: on 16장 보기 again
+    _open(app, w)
+    assert w._tab() == "grid" and w.picks() == [] and not w.acts["view:multi"].isChecked()
     # an older settings file's "overview" is the first way
     w.settings.open_view = "overview"
-    assert not w._grid_mode()
-    assert SettingsDialog(w.settings, w).open_view.currentData() == "odos"
+    assert w._grid_mode()
+    assert SettingsDialog(w.settings, w).open_view.currentData() == "grid"
