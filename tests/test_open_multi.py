@@ -627,3 +627,34 @@ def test_macula_and_disc_under_the_photos_of_simple(win):
     # off: gone, and remembered
     w.btn_closeups.click()
     assert not w.settings.simple_closeups and not any(c.closeups.isVisible() for c in w.multi.cells)
+
+
+def test_the_photo_being_adjusted_has_a_blue_badge_not_a_frame(win):
+    """Simple · Multi: the photo the processing toolbar works on (the cell clicked last) has a small blue
+    보정 badge in its header — with two photos or more; no blue frame round any cell (it was taken for a
+    pick)."""
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+
+    from fundusview.ui import theme
+
+    app, w, db, refs, ids = win
+    _open(app, w, refs["kim"])
+    od3, os3 = ids["od3"], ids["os3"]
+    cells = [c for c in w.multi.cells if c.isVisible() and c.image_id]
+    assert [c.image_id for c in cells] == [od3, os3]
+
+    def badges():
+        return [c.image_id for c in w.multi.cells if c.badge.isVisible()]
+
+    assert badges() == [w.current["id"]]
+    assert all(theme.ACCENT.lower() not in c.styleSheet().lower() for c in w.multi.cells)
+    # a click on the other cell: the badge goes with it (and the processing with it)
+    other = next(c for c in cells if c.image_id != w.current["id"])
+    QTest.mouseClick(other.view.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(20, 20))
+    app.processEvents()
+    assert badges() == [other.image_id] == [w.current["id"]]
+    assert "적용" in other.badge.toolTip()
+    # one photo on the page: no badge (there is no other it could be)
+    _click(app, w, od3)                                    # (od3 out: os3 alone)
+    assert [c.image_id for c in w.multi.cells if c.isVisible() and c.image_id] == [os3] and badges() == []

@@ -22,6 +22,7 @@ from PySide6.QtWidgets import QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabe
 
 from . import theme
 from .edge_nav import EdgeNav
+from .icons import icon as line_icon
 from .image_view import ImageView
 
 LAYOUTS = {1: (1, 1), 2: (1, 2), 4: (2, 2), 6: (2, 3), 9: (3, 3), 16: (4, 4)}
@@ -39,6 +40,13 @@ class _Cell(QFrame):
         lay.setSpacing(0)
         self.label = QLabel()
         self.label.setStyleSheet(f"background:{theme.CARD}; color:{theme.TEXT2}; padding:3px 6px; font-size:11px")
+        # the photo the processing toolbar works on: a small blue 보정 badge at the right of its header
+        # (shown with two cells or more — no frame round the cell, which was taken for a pick)
+        self.badge = _active_badge()
+        hl = QHBoxLayout(self.label)
+        hl.setContentsMargins(0, 0, 4, 0)
+        hl.addStretch(1)
+        hl.addWidget(self.badge, 0, Qt.AlignmentFlag.AlignVCenter)
         self.view = ImageView()
         self.nav = EdgeNav(self.view)       # ◀ ▶ at its sides (Simple; nowhere to go until told)
         lay.addWidget(self.label)
@@ -74,10 +82,37 @@ class _Cell(QFrame):
         self.select(False)
 
     def select(self, on: bool) -> None:
-        """The cell whose photo the processing toolbar works on — not framed (a blue frame said nothing
-        the user needed and was taken for a pick)."""
+        """The cell whose photo the processing toolbar works on — marked by its blue 보정 badge
+        (MultiView._sync_badges), not by a frame round the cell."""
         self.selected = on
         self.setStyleSheet("QFrame { border: 2px solid %s; }" % theme.CARD)
+
+
+def _active_badge() -> QFrame:
+    """보정: a blue pill with a white tools icon — on the cell whose photo the processing toolbar works on."""
+    from PySide6.QtGui import QPainter
+
+    badge = QFrame()
+    badge.setObjectName("cellActive")
+    badge.setStyleSheet(f"QFrame#cellActive {{ background:{theme.ACCENT}; border:none; border-radius:6px; }}"
+                        "QLabel { background:transparent; border:none; color:#ffffff; font-size:11px; "
+                        "font-weight:600; padding:0; }")
+    bl = QHBoxLayout(badge)
+    bl.setContentsMargins(6, 1, 8, 1)
+    bl.setSpacing(3)
+    pm = line_icon("tools").pixmap(13, 13)
+    p = QPainter(pm)                                   # the icon in white on the blue
+    p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+    p.fillRect(pm.rect(), Qt.GlobalColor.white)
+    p.end()
+    pic = QLabel()
+    pic.setPixmap(pm)
+    bl.addWidget(pic)
+    bl.addWidget(QLabel("보정"))
+    badge.setToolTip("아래 영상 처리 툴바(밝기 · 대비 · Red-free · 선명 …)는 이 사진에 적용됩니다 — "
+                     "다른 칸을 누르면 그 사진으로 바뀝니다")
+    badge.hide()
+    return badge
 
 
 class MultiView(QWidget):
@@ -181,6 +216,7 @@ class MultiView(QWidget):
                 cell.select(False)
                 cell.nav.set_available(False, False)
         self._show_closeups()
+        self._sync_badges()
         for r in range(4):
             self.grid.setRowStretch(r, 1 if r < rows else 0)
         for c in range(4):
@@ -227,10 +263,19 @@ class MultiView(QWidget):
     def mark_selected(self, image_id: int | None) -> None:
         for c in self.cells:
             c.select(c.image_id is not None and c.image_id == image_id)
+        self._sync_badges()
+
+    def _sync_badges(self) -> None:
+        """The blue 보정 badge on the selected cell — with two photos or more on the page (with one there
+        is no other it could be)."""
+        shown = [c for c in self.cells if c.image_id is not None and not c.isHidden()]
+        for c in self.cells:
+            c.badge.setVisible(len(shown) >= 2 and c in shown and c.selected)
 
     def _select(self, cell: _Cell) -> None:
         if cell.image_id is None:
             return
         for c in self.cells:
             c.select(c is cell)
+        self._sync_badges()
         self.selected.emit(cell.image_id)
