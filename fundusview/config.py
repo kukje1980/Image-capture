@@ -76,10 +76,11 @@ class Settings:
     # 간단히 | 자세히 in the bar above the 3D eye)
     view3d_detail: str = "detailed"
     panel3d: bool = False           # 3D: the settings beside the eye are open ([설정] in the bar; closed at first)
-    # 3D 마우스 휠 (3D 설정 → 마우스 휠 · 설정 → 일반): "depth" — 자르는 깊이 (내부에서는 확대) ·
-    # "zoom" — 커서 쪽으로 확대 · "walk" — 들어가기 (각막 → 망막, 뒤로 나오기). walk_click3d: a click on the
-    # cornea picks the anterior segment, and the wheel walks in meanwhile (depth · zoom)
-    wheel3d: str = "depth"
+    # 3D 마우스 휠 (3D 설정 → 마우스 휠 · 설정 → 일반): "zoom" — 커서 쪽으로 확대 (the depth on the 깊이
+    # 막대 beside the eye) · "depth" — 자르는 깊이 (내부에서는 확대) · "walk" — 들어가기 (각막 → 망막, 뒤로
+    # 나오기). walk_click3d: a click on the cornea picks the anterior segment, and the wheel walks in meanwhile
+    # (zoom · depth)
+    wheel3d: str = "zoom"
     walk_click3d: bool = True
     # Motion and 3D effects (보기 → 부드러운 움직임; 3D 안구: 입체 조명, 자동 회전)
     smooth_motion: bool = True
