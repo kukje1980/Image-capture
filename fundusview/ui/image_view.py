@@ -6,8 +6,9 @@ Mouse
   * **a left drag moves the photo** (확대/축소, the starting tool in every view, and
     이동); the middle button moves it with any tool. A right click opens the menu.
   * **a double click turns the loupe on** (확대/축소 · 이동 tools, views with
-    ``dblclick_loupe``: the 2D view, 비교): it follows the mouse — through drags and
-    zooms too — until the next double click or Esc. Elsewhere a double click fits.
+    ``dblclick_loupe``: 비교): it follows the mouse — through drags and zooms too —
+    until the next double click or Esc. With ``dblclick_leaves`` (Detail's big photo) a
+    double click only says so (``activated``: Detail is left); elsewhere it fits.
   * left button depends on the active tool: 확대/축소 · 이동 (default, above), 돋보기 (hold for a loupe; wheel while holding changes its power),
     길이 / 각도 / C/D 비 (길이·면적) measurements, 글자 / 화살표+글자
     annotations, 회색조 분석 (hold: grey-level profile of the row under the
@@ -221,6 +222,7 @@ class ImageView(QGraphicsView):
         self._loupe.hide()
         self.loupe_mag, self.loupe_size = 3.0, 260
         self.dblclick_loupe = False      # 확대/축소 · 이동: a double click turns a loupe on that follows the mouse
+        self.dblclick_leaves = False     # 확대/축소 · 이동: a double click is only reported (Detail: back where one was)
         self.step_keys = False           # ← / → ask for the photo before / after (``stepped``) instead of scrolling
         self._loupe_on = False
         self._mouse_at = QPoint()        # last mouse position in the viewport (the loupe follows it)
@@ -904,7 +906,9 @@ class ImageView(QGraphicsView):
             return
         if self.tool in ("angle", "cd_area", "length", "arrow", "cd_length", "text"):
             return
-        if self.dblclick_loupe and self.tool in ("zoom", "pan") and self.has_image():
+        if self.dblclick_leaves and self.tool in ("zoom", "pan"):
+            pass                                                         # (the window leaves the view)
+        elif self.dblclick_loupe and self.tool in ("zoom", "pan") and self.has_image():
             self.set_loupe(not self._loupe_on, e.position().toPoint())   # the loupe on / off
         else:
             self.fit(animate=True)

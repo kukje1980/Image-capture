@@ -63,6 +63,7 @@ from .disc_pair import DiscPairDialog
 from .glaucoma_dialog import GlaucomaDialog, Photo
 from .depth_bar import DepthBar
 from .eye3d import EyeView
+from .pair3d import MAX_EYES as MAX_3D, Pair3D
 from .histogram import HistogramDialog
 from . import motion, theme
 from .image_view import TOOL_HINTS, TOOLS, ImageView, from_qimage
@@ -305,8 +306,11 @@ class MainWindow(QMainWindow):
         self._default_exam: str | None = None   # … of this exam (None: the newest)
         self._multi_auto = True              # Simple, nothing picked: 화면 분할 fits the photos of the list
         self._last_view = "multi"            # the view before 3D (the 3D icon again goes back there)
+        self._shown_view = ""                # the view on screen (_on_tab) …
+        self._detail_from = ""               # … and the one Detail was opened from (a double click goes back)
         self._montage_dlg = None             # the open 몽타주 editor (tests reach it here)
-        self._pick_pre: tuple | None = None  # (image id, picks, _multi_auto before the click) — a double click undoes it
+        self._pick_pre: tuple | None = None  # (image id, picks, _multi_auto before the click, when) — the
+                                             # double click it begins undoes it
         self._per_photo: dict[int, dict] = {}  # processing of each picked photo {"state", "history"}
         self._3d_dirty = True
         self._review_dirty = True            # the 검토 tab's photos are read when it is shown
@@ -606,7 +610,8 @@ class MainWindow(QMainWindow):
         self.tabs.tabBar().hide()                # the views are switched with the icons above the photos
         self.view2d = ImageView()
         self.view2d.crossfade = True            # the next photo fades in over the last
-        self.view2d.dblclick_loupe = True       # a double click: the loupe on / off
+        self.view2d.dblclick_leaves = True      # Detail: a double click goes back where one was (the
+        self.view2d.activated.connect(self._leave_detail)   # loupe: the 돋보기 tool)
         self.view2d.toggle_captions(True)
         self.nav2d = EdgeNav(self.view2d)       # Detail: ◀ ▶ at the sides of the photo · ← / →
         self.nav2d.stepped.connect(self._step)
@@ -671,11 +676,10 @@ class MainWindow(QMainWindow):
         self.review.status.connect(lambda t: self.lbl_status.setText(t))
         self.tabs.insertTab(0, self.review, "검토")
         self.tabs.addTab(self.grid, "Multi (16장 보기)")
-        # 두 장 3D: the two photos of Simple (or two picked ones), each on its own 3D eye (pair3d.py)
-        from .pair3d import Pair3D
+        # 여러 장 3D: Simple's two photos (or the photos picked), each on its own 3D eye (pair3d.py)
         self.pair3d = Pair3D()
         self.pair3d.glError.connect(lambda msg: self.lbl_status.setText(f"3D를 그릴 수 없습니다: {msg}"))
-        self.tabs.addTab(self.pair3d, "두 장 3D")
+        self.tabs.addTab(self.pair3d, "여러 장 3D")
         self.tabs.setCurrentWidget(self.page_all)
         self._pages = {"review": self.review, "all": self.page_all, "2d": self.page2d, "3d": self.page3d,
                        "multi": self.multi, "cmp": cmp_w, "grid": self.grid, "3d2": self.pair3d}
@@ -1442,7 +1446,8 @@ class MainWindow(QMainWindow):
             "+/−: 확대·축소 · 0: 화면 맞춤 · 1: 100%<br>"
             "확대하면 오른쪽 위 미니맵에 전체 사진과 보이는 곳이 나옵니다 — 눌러서 이동<br>"
             "화면 맞춤 ▾ 또는 아래쪽 [배율]: 400·800%, 후극부·위/아래/코/귀쪽 주변부로 바로 확대<br>"
-            "더블클릭: 돋보기 켜기·끄기 (마우스를 따라다님, Esc로도 끔)<br>"
+            "더블클릭: Simple의 칸 · Multi의 사진은 Detail에서 크게, Detail의 큰 사진은 보던 화면으로 · "
+            "돋보기는 아래 툴바의 [돋보기] (누르는 동안)<br>"
             "오른쪽 클릭: 메뉴 (시신경 유두 · 황반 위치 지정, 돋보기 배율, 미니맵)<br><br>"
             "<b>3D 안구</b><br>"
             "위 막대: 간단히 / 자세히 (가벼운 기본 모형 / 실제 해부 구조) · 외부 / 내부 · 확대 바 · ▶ 슬릿 스캔 · "
@@ -1499,7 +1504,8 @@ class MainWindow(QMainWindow):
             "사진 좌우 끝의 ◀ ▶ 또는 ← → 키: 이전 / 다음 사진 · 사진 목록을 클릭하면 그 사진<br>"
             "칸 제목을 누르거나 칸을 더블클릭하면 큰 사진을 그 쪽으로 확대 · 큰 사진 전체로: 0 · "
             "잘못 찾았으면 큰 사진에서 오른쪽 클릭 → 황반 / 시신경 유두로 지정<br>"
-            "<b>3D</b>: 보고 있는 사진을 3D 안구로 — 한 번 더 누르면 보던 화면으로<br><br>"
+            "<b>3D</b>: 보고 있는 사진을 3D 안구로 — Simple에 두 장이면 두 장 모두, 여러 장 골라 두었으면 한 장 / 모두를 물어봄(9장까지) · "
+            "한 번 더 누르면 보던 화면으로<br><br>"
             "<b>사진 목록 (화면 아래)</b><br>"
             "위 줄 OD · 아래 줄 OS (줄마다 최신 사진부터) — 눈은 줄 왼쪽에 한 번만 표시하고, 사진 위에는 날짜만 씁니다<br>"
             "보기 → 사진 목록 표시: 날짜 · 종류(컬러 · 몽타주 …) · 눈별로 두 줄 (끄면 한 줄) · 미상 사진은 눈 고르기 → 미상<br><br>"
@@ -1880,8 +1886,8 @@ class MainWindow(QMainWindow):
                    "더블클릭: 크게 보기 (Detail)")
     MULTI_HINT = ("Multi (16장) — 사진을 클릭해 고르고(번호) 아래 [고른 사진 보기]를 누르면 고른 사진만 모아 봅니다 · "
                   "더블클릭: 크게 보기 (Detail) · 휠: 다음 / 이전 16장")
-    DETAIL_HINT = ("Detail — 사진 좌우의 ◀ ▶ 또는 ← → 키: 이전 / 다음 사진 · 사진 목록을 클릭하면 그 사진 · "
-                   "[Simple]: 최신 OD | OS · [Multi]: 16장")
+    DETAIL_HINT = ("Detail — 다시 더블클릭: 보던 화면으로 · 사진 좌우의 ◀ ▶ 또는 ← → 키: 이전 / 다음 사진 · "
+                   "사진 목록을 클릭하면 그 사진")
 
     def _newest_pair(self, exam: str | None = None) -> list[int]:
         """The patient's newest OD and newest OS photo, OD first (on the left, as the patient
@@ -1965,6 +1971,21 @@ class MainWindow(QMainWindow):
         self._select_from_multi(image_id)
         self._go("all")
         self.lbl_status.setText(self.DETAIL_HINT)
+
+    def _leave_detail(self) -> None:
+        """A double click on Detail's big photo: back to the view it was opened from, as it was —
+        Simple with the same photos, Multi (16장), 3D; opened on Detail itself: Simple."""
+        if self._tab() != "all":
+            return
+        back = self._detail_from
+        if back == "grid":
+            self._go("grid")
+            self.lbl_status.setText(self.MULTI_HINT)
+        elif back in ("3d", "3d2"):
+            self._on_action("view3d")             # (3D again from Detail: the 3D view)
+        else:
+            self.open_picks()                     # Simple, the photos on it as they were
+        self._sync_views()
 
     def _raise_main(self) -> None:
         if self.isMinimized():
@@ -2340,11 +2361,13 @@ class MainWindow(QMainWindow):
         self._fit_multi_count()
         if self._tab() == "multi":
             self._fill_multi()
-        elif self._tab() == "3d2" and self._pair3d_ids() != self.pair3d.image_ids:
-            # 두 장 3D: another photo was put in — the two eyes show the two photos of now
-            # (no longer two: back to the photos)
-            if not self._open_pair3d():
-                self.open_picks()
+        elif self._tab() == "3d2":
+            # 여러 장 3D: a photo shown there was taken out (or Simple's two changed) — the eyes show the
+            # photos picked now (fewer than two: back to the photos)
+            ids, shown = self._picked_ids(), self.pair3d.image_ids
+            if ids[:len(shown)] != shown or (len(shown) == 2 and ids != shown):
+                if not self._open_pair3d(ids if len(ids) != 2 else None):
+                    self.open_picks()
 
     def _on_multi_layout(self, _n: int) -> None:
         """화면 분할 chosen by hand: with nothing picked, consecutive photos from the shown one (VK-2)."""
@@ -2495,7 +2518,7 @@ class MainWindow(QMainWindow):
         it is picked or taken out there. The double click it may begin takes it back
         (``_open_photo``)."""
         self._stop_slideshow()
-        self._pick_pre = (image_id, list(self._picks), self._multi_auto)
+        self._pick_pre = (image_id, list(self._picks), self._multi_auto, time.monotonic())
         if stay:
             self._toggle_pick(image_id)
         else:
@@ -2504,7 +2527,9 @@ class MainWindow(QMainWindow):
     def _open_photo(self, image_id: int) -> None:
         """A double click on a photo of the strip or of 16장 보기: the photo large (Detail)."""
         pre = self._pick_pre
-        if pre is not None and pre[0] == image_id and (pre[1], pre[2]) != (self._picks, self._multi_auto):
+        # (only the click of this double click: a click on the same photo a while ago stays done)
+        recent = pre is not None and time.monotonic() - pre[3] <= QApplication.doubleClickInterval() / 1000.0 + 0.2
+        if recent and pre[0] == image_id and (pre[1], pre[2]) != (self._picks, self._multi_auto):
             self._picks, self._multi_auto = list(pre[1]), pre[2]   # the first click of the double click
             self._mark_picks()
             self._fit_multi_count()
@@ -2963,16 +2988,15 @@ class MainWindow(QMainWindow):
             else:
                 self.patient_list.hide()
         elif key == "view3d":                    # 3D, and again: back to the view before it
-            if self._tab() == "3d2":             # 두 장 3D: back to the two photos
-                self.open_picks()
-            elif self._tab() == "multi" and self._open_pair3d():
-                pass                             # two photos on screen: both in 3D, side by side
-            elif self._tab() != "3d":
-                self._go("3d")
-            elif self._last_view == "multi":
-                self.open_picks()
+            if self._tab() in ("3d", "3d2"):     # back to the photos (Simple as it was · Multi · Detail)
+                if self._last_view == "multi":
+                    self.open_picks()
+                else:
+                    self._go(self._last_view)
+            elif self._tab() in ("multi", "grid"):
+                self._open_3d_from_picks()       # Simple's two: both; more picked: which of them?
             else:
-                self._go(self._last_view)
+                self._go("3d")
         elif key.startswith("view:"):            # Simple · Multi (16장) · Detail
             self._show_view(key[5:], toggle=True)
         elif key == "montage":
@@ -3905,26 +3929,75 @@ class MainWindow(QMainWindow):
         self.lbl_status.setText("부드러운 움직임을 켰습니다" if on else
                                 "부드러운 움직임을 껐습니다 — 확대·회전·전환이 바로 바뀝니다")
 
+    def _picked_ids(self) -> list[int]:
+        """The photos picked (Simple's · Multi's numbers) that are still there."""
+        return [i for i in self._picks if self.db.get_image(i) is not None]
+
     def _pair3d_ids(self) -> list[int]:
-        """The two photos the two-photo view shows (Simple's OD | OS, or exactly two picked ones)."""
-        ids = [i for i in self._picks if self.db.get_image(i) is not None]
+        """The two photos Simple shows when it shows two (its OD | OS, or two picked ones): [3D] puts
+        both on 3D eyes at once."""
+        ids = self._picked_ids()
         return ids if len(ids) == 2 else []
 
-    def _open_pair3d(self) -> bool:
-        """두 장 3D: each of the two photos on screen on its own 3D eye, side by side, with the look
-        of the 3D tab; turned and zoomed like it (together unless 함께 움직이기 is off). False when
-        the view does not show two photos (then the 3D icon opens the 3D tab as before)."""
-        ids = self._pair3d_ids()
-        if not ids:
+    def _ask_3d_which(self, n: int) -> str | None:
+        """[3D] with several photos picked: "one" (the photo being looked at), "all" (all of them, each
+        on its own 3D eye) or None (neither)."""
+        box = QMessageBox(self)
+        box.setWindowTitle("3D")
+        box.setIcon(QMessageBox.Icon.Question)
+        more = f"\n(3D로는 한 번에 {MAX_3D}장까지 — 앞의 {MAX_3D}장)" if n > MAX_3D else ""
+        box.setText(f"고른 사진이 {n}장입니다. 어느 사진을 3D로 볼까요?{more}")
+        one = box.addButton("보고 있는 사진만", QMessageBox.ButtonRole.AcceptRole)
+        every = box.addButton(f"고른 사진 모두 ({min(n, MAX_3D)}장)", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("취소", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(every)
+        box.exec()
+        return {one: "one", every: "all"}.get(box.clickedButton())
+
+    def _open_3d_from_picks(self) -> None:
+        """[3D] on Simple or Multi: Simple's two photos both at once (as ever); with more photos picked
+        (or two on Multi) the question — the photo being looked at in the 3D view, or all of them on
+        3D eyes side by side (up to MAX_3D); otherwise the photo being looked at."""
+        ids = self._picked_ids()
+        if self._tab() == "multi" and len(ids) == 2:
+            if self._open_pair3d(ids):
+                return
+        elif len(ids) >= 2:
+            which = self._ask_3d_which(len(ids))
+            if which is None:
+                return
+            if which == "all" and self._open_pair3d(ids[:MAX_3D]):
+                return
+        self._go("3d")
+
+    def _open_pair3d(self, ids: list[int] | None = None) -> bool:
+        """여러 장 3D: each of the photos ``ids`` (default: Simple's two) on its own 3D eye — side by
+        side, or in a grid for more than two — with the look of the 3D tab; turned and zoomed like it
+        (together unless 함께 움직이기 is off). False when there are not two photos to show. With more
+        than two each eye gets the photo reduced (at most 2048 pixels across: lighter, as sharp on a
+        smaller eye)."""
+        ids = self._pair3d_ids() if ids is None else list(ids)[:MAX_3D]
+        if len(ids) < 2:
             return False
         photos = []
         for iid in ids:
             row = self.db.get_image(iid)
-            rgb = self._load(row)
+            if row is None:
+                return False
+            k = 1.0
+            rgb = self._small_photo(row, 2048) if len(ids) > 2 and row["width"] else None
+            if rgb is not None:
+                k = rgb.shape[1] / float(row["width"])     # the marks are in the whole photo's pixels
+            else:
+                rgb = self._load(row)
             if rgb is None:
                 return False
             prof = get_profile(row["profile"])
-            circle = ((row["circle_cx"], row["circle_cy"], row["circle_r"]) if row["circle_r"]
+
+            def scaled(pt):
+                return None if pt is None else tuple(v * k for v in pt)
+
+            circle = (scaled((row["circle_cx"], row["circle_cy"], row["circle_r"])) if row["circle_r"]
                       else imaging.detect_circle(rgb))
             disc, fovea = self._marks_for_3d(row)
             photos.append({
@@ -3933,12 +4006,13 @@ class MainWindow(QMainWindow):
                 "mapping": dict(fov_deg=row["fov_deg"] or prof.fov_deg, fov_type=row["fov_type"] or prof.fov_type,
                                 projection=row["projection"] or prof.projection, viewpoint=prof.viewpoint,
                                 roll_deg=0.0, radial_c=prof.radial_c),
-                "laterality": row["laterality"], "disc": disc, "fovea": fovea,
-                "mark_circle": self._marks_of(row)[0], "from_cover": row["modality"] == "montage"})
+                "laterality": row["laterality"], "disc": scaled(disc), "fovea": scaled(fovea),
+                "mark_circle": scaled(self._marks_of(row)[0]), "from_cover": row["modality"] == "montage"})
         self.pair3d.copy_look(self.eye3d)
         self.pair3d.set_photos(photos)
         self._go("3d2")
-        self.lbl_status.setText("두 장 3D — 드래그: 회전 · 휠: 확대 · 축소 · [3D]를 다시 누르면 사진으로 돌아갑니다")
+        what = "두 장 3D" if len(photos) == 2 else f"{len(photos)}장 3D"
+        self.lbl_status.setText(f"{what} — 드래그: 회전 · 휠: 확대 · 축소 · [3D]를 다시 누르면 사진으로 돌아갑니다")
         return True
 
     def _mark_3d_dirty(self) -> None:
@@ -4072,6 +4146,11 @@ class MainWindow(QMainWindow):
 
     def _on_tab(self, i: int) -> None:
         key = self._tab()
+        if key == "all" and self._shown_view not in ("", "all"):
+            self._detail_from = self._shown_view          # where a double click on Detail goes back to
+        if key != self._shown_view:
+            self._pick_pre = None             # (a click before another view is no double click's first)
+        self._shown_view = key
         if key and key not in ("3d", "3d2"):
             self._last_view = key             # where the 3D icon goes back to
         if key != "3d2" and self.pair3d.image_ids:
