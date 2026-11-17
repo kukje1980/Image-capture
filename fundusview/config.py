@@ -108,6 +108,8 @@ class Settings:
     # (컬러 · 몽타주 …). The eye is said once per row, at its left.
     thumb_date: bool = True
     thumb_kind: bool = False
+    # Simple · Multi: 황반 · 디스크 — each photo's macula and optic disc enlarged under it, as on Detail
+    simple_closeups: bool = False
     # 환자를 열면 (설정 → 일반): "grid" = 16장 보기 (VK-2 방식, 처음 설정) — 사진 16장을 한 화면에,
     # 골라서 [Multi]로 고른 사진만 보기 · "odos" = Simple — 최신 OD | OS 두 장을 나란히.
     # Anything else (an older "overview") is 16장 보기.

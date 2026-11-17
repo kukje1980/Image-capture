@@ -563,3 +563,54 @@ def test_the_last_patient_comes_back_on_16_photos_or_simple(tmp_path, way):
     finally:
         w.close()
         db.close()
+
+
+def test_macula_and_disc_under_the_photos_of_simple(win):
+    """[황반 · 디스크] on the Simple · Multi row: under each photo its macula and optic disc enlarged, as on
+    Detail (a photo whose disc / macula is not known: its middle, said so) — with at most 4 cells;
+    remembered for the next time."""
+    app, w, db, refs, ids = win
+    _open(app, w, refs["kim"])
+    od3, os3 = ids["od3"], ids["os3"]
+    assert w._tab() == "multi" and w.btn_closeups.isVisible() and not w.btn_closeups.isChecked()
+    cells = [c for c in w.multi.cells if c.isVisible() and c.image_id]
+    assert all(not c.closeups.isVisible() for c in cells)
+
+    db.update_image(od3, disc_x=200.0, disc_y=150.0, fovea_x=120.0, fovea_y=160.0)   # (as found on import)
+    w.btn_closeups.click()
+    app.processEvents()
+    assert w.settings.simple_closeups and w.multi.closeups_shown()
+    assert all(c.closeups.isVisible() for c in cells)
+    od_cell = next(c for c in cells if c.image_id == od3)
+    os_cell = next(c for c in cells if c.image_id == os3)
+    for c in (od_cell, os_cell):
+        assert all(z.has_image() for z in c.zooms.values())
+    assert od_cell.zoom_heads["disc"].text() == "시신경 유두" and od_cell.zoom_heads["macula"].text() == "황반"
+    assert "찾지 못함" in os_cell.zoom_heads["disc"].text()
+    # the disc pane looks at the disc: the middle of what it shows is the disc, in the photo's pixels
+    z = od_cell.zooms["disc"]
+    seen = z.mapToScene(z.viewport().rect()).boundingRect()
+    d = 80.0                                                  # disc–fovea distance
+    assert seen.width() == pytest.approx(0.85 * d, rel=0.35)
+    assert w._tab() == "multi"
+    # with the photo's processing: red-free on that photo, its panes red-free too
+    w._select_from_multi(od3)
+    w._on_action("chan:redfree")
+    app.processEvents()
+    g = od_cell.zooms["disc"]._rgb
+    assert (g[..., 0] == g[..., 2]).all()
+    w._on_action("chan:redfree", False)
+    # a double click on a pane: that photo large (Detail)
+    od_cell.zooms["macula"].activated.emit()
+    assert w._tab() == "all" and w.current["id"] == od3
+    _press(w, "view:simple")
+    # more than 4 cells: no room — the panes go, and come back with fewer
+    w._on_action("multi:9")
+    app.processEvents()
+    assert not w.multi.closeups_shown() and not any(c.closeups.isVisible() for c in w.multi.cells)
+    w._on_action("multi:2")
+    app.processEvents()
+    assert w.multi.closeups_shown()
+    # off: gone, and remembered
+    w.btn_closeups.click()
+    assert not w.settings.simple_closeups and not any(c.closeups.isVisible() for c in w.multi.cells)

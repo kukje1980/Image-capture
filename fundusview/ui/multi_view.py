@@ -10,6 +10,9 @@ Click a cell to select it: the info panel, the other views and the image-process
 follow, and the processing applies to that photo only. Double-click opens it large (Detail).
 Each cell can be zoomed (wheel) and panned (drag) on its own.
 
+황반 · 디스크 (``set_closeups``): under each photo its macula and optic disc enlarged, as on Detail —
+with at most ``CLOSEUP_MAX`` cells on screen (smaller cells have no room for them).
+
 ``compact=True`` (a small pane, no longer shown): no layout row, always 4 photos (2 × 2).
 """
 from __future__ import annotations
@@ -22,6 +25,8 @@ from .edge_nav import EdgeNav
 from .image_view import ImageView
 
 LAYOUTS = {1: (1, 1), 2: (1, 2), 4: (2, 2), 6: (2, 3), 9: (3, 3), 16: (4, 4)}
+CLOSEUP_MAX = 4                 # 황반 · 디스크 under the photos up to this many cells
+CLOSEUPS = (("macula", "황반"), ("disc", "시신경 유두"))
 
 
 class _Cell(QFrame):
@@ -37,7 +42,34 @@ class _Cell(QFrame):
         self.view = ImageView()
         self.nav = EdgeNav(self.view)       # ◀ ▶ at its sides (Simple; nowhere to go until told)
         lay.addWidget(self.label)
-        lay.addWidget(self.view, 1)
+        lay.addWidget(self.view, 3)
+        # 황반 · 디스크: the photo's macula and optic disc enlarged, side by side under it (set_closeups)
+        self.closeups = QWidget()
+        cl = QHBoxLayout(self.closeups)
+        cl.setContentsMargins(0, 2, 0, 0)
+        cl.setSpacing(2)
+        self.zooms: dict[str, ImageView] = {}
+        self.zoom_heads: dict[str, QLabel] = {}
+        for key, title in CLOSEUPS:
+            box = QWidget()
+            bl = QVBoxLayout(box)
+            bl.setContentsMargins(0, 0, 0, 0)
+            bl.setSpacing(0)
+            head = QLabel(title)
+            head.setStyleSheet(f"background:{theme.CARD}; color:{theme.TEXT2}; padding:2px 6px; font-size:11px")
+            view = ImageView()
+            view.set_navigator(False)
+            view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            view.setToolTip(f"{title} 확대 — 휠: 배율 · 드래그: 이동 · 더블클릭: 크게 보기 (Detail)")
+            view.setMinimumHeight(60)
+            bl.addWidget(head)
+            bl.addWidget(view, 1)
+            cl.addWidget(box, 1)
+            self.zooms[key] = view
+            self.zoom_heads[key] = head
+        self.closeups.hide()
+        lay.addWidget(self.closeups, 2)
         self.image_id: int | None = None
         self.select(False)
 
@@ -84,6 +116,7 @@ class MultiView(QWidget):
             self.grid.setSpacing(2)
             self.topbar.hide()
         self.cells: list[_Cell] = []
+        self.closeups_on = False             # 황반 · 디스크 under the photos (set_closeups)
 
     @property
     def count(self) -> int:
@@ -117,6 +150,9 @@ class MultiView(QWidget):
             cell.view.clicked.connect(lambda c=cell: self._select(c))
             cell.view.activated.connect(lambda c=cell: c.image_id is not None and self.opened.emit(c.image_id))
             cell.nav.stepped.connect(lambda d, c=cell: c.image_id is not None and self.stepped.emit(c.image_id, d))
+            for z in cell.zooms.values():
+                z.clicked.connect(lambda c=cell: self._select(c))
+                z.activated.connect(lambda c=cell: c.image_id is not None and self.opened.emit(c.image_id))
             self.cells.append(cell)
         for cell in self.cells:
             self.grid.removeWidget(cell)
@@ -138,8 +174,11 @@ class MultiView(QWidget):
                 cell.image_id = None
                 cell.label.setText("")
                 cell.view.set_rgb(None)
+                for z in cell.zooms.values():
+                    z.set_rgb(None)
                 cell.select(False)
                 cell.nav.set_available(False, False)
+        self._show_closeups()
         for r in range(4):
             self.grid.setRowStretch(r, 1 if r < rows else 0)
         for c in range(4):
@@ -160,6 +199,20 @@ class MultiView(QWidget):
     def _tip(self) -> None:
         tip = "화면 분할 — 휠: 확대·축소 · 드래그: 이동 · 클릭: 선택 · 더블클릭: 크게 보기"
         self.combo.setToolTip(f"{self.mode_text}\n{tip}" if self.mode_text else tip)
+
+    # -- 황반 · 디스크 ------------------------------------------------------------------------------
+    def closeups_shown(self) -> bool:
+        """황반 · 디스크 are under the photos now (switched on, and few enough cells for them)."""
+        return self.closeups_on and self.count <= CLOSEUP_MAX
+
+    def set_closeups(self, on: bool) -> None:
+        self.closeups_on = bool(on)
+        self._show_closeups()
+
+    def _show_closeups(self) -> None:
+        shown = self.closeups_shown()
+        for cell in self.cells:
+            cell.closeups.setVisible(shown and cell.image_id is not None)
 
     def update_cell(self, image_id: int, rgb) -> bool:
         """Show new pixels for one photo, keeping that cell's zoom and position."""

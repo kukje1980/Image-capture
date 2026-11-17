@@ -73,7 +73,7 @@ from ..montage import span_text as mt_span_text
 from .montage_dialog import MontageDialog, MontageSource, confirm_sources
 from .edge_nav import EdgeNav
 from .keys import IS_MAC, keys
-from .multi_view import MultiView
+from .multi_view import CLOSEUP_MAX, MultiView
 from .patient_list import SEX_LABEL, UNASSIGNED, PatientListWindow, age_on
 from .photo_grid import GridPhoto, PhotoGrid
 from .review_view import ReviewPage
@@ -574,6 +574,17 @@ class MainWindow(QMainWindow):
         self.btn_clear_picks.setAutoRaise(True)
         self.btn_clear_picks.setToolTip("고른 사진을 모두 해제 — 고른 사진이 없으면 모든 사진을 보여 줍니다")
         self.btn_clear_picks.clicked.connect(self.clear_picks)
+        # 황반 · 디스크: under each photo of Simple · Multi its macula and optic disc enlarged (as on Detail)
+        self.btn_closeups = QToolButton()
+        self.btn_closeups.setObjectName("closeupsToggle")
+        self.btn_closeups.setText("황반 · 디스크")
+        self.btn_closeups.setCheckable(True)
+        self.btn_closeups.setChecked(bool(self.settings.simple_closeups))
+        self.btn_closeups.setAutoRaise(True)
+        self.btn_closeups.setToolTip("켜면 사진마다 아래에 황반과 시신경 유두를 확대해서 보여 줍니다 (Detail처럼)\n"
+                                     f"화면 분할 {CLOSEUP_MAX}장 이하일 때 · 확대 화면을 더블클릭: 크게 보기 (Detail)")
+        self.btn_closeups.toggled.connect(self._set_closeups)
+        self._closeup_timer = QTimer(self, singleShot=True, interval=0, timeout=self._fill_closeups)
         # the views (Simple · Multi · Detail · 3D), Montage and Glaucoma are on the command toolbar
         self.thumbs = ThumbStrip()                 # OD 위 줄 · OS 아래 줄 (or one line)
         self.thumbs.setObjectName("thumbStrip")
@@ -641,6 +652,7 @@ class MainWindow(QMainWindow):
         self.multi.opened.connect(self.open_large)
         self.multi.layoutChanged.connect(self._on_multi_layout)
         self.multi.stepped.connect(self._step_cell)
+        self.multi.set_closeups(bool(self.settings.simple_closeups))     # 황반 · 디스크 as left last time
         self.tabs.addTab(self.multi, "다중 보기")
         cmp_w = QWidget()
         cmp_l = QVBoxLayout(cmp_w)
@@ -681,7 +693,7 @@ class MainWindow(QMainWindow):
         self.review.handOff.connect(self._review_hand_off)
         self.review.status.connect(lambda t: self.lbl_status.setText(t))
         self.tabs.insertTab(0, self.review, "검토")
-        self.tabs.addTab(self.grid, "Multi (16장 보기)")
+        self.tabs.addTab(self.grid, "16장 보기")
         # 여러 장 3D: Simple's two photos (or the photos picked), each on its own 3D eye (pair3d.py)
         self.pair3d = Pair3D()
         self.pair3d.glError.connect(lambda msg: self.lbl_status.setText(f"3D를 그릴 수 없습니다: {msg}"))
@@ -706,6 +718,7 @@ class MainWindow(QMainWindow):
         mbar.setContentsMargins(0, 0, 0, 0)
         mbar.setSpacing(4)
         mbar.addWidget(self.multi.take_topbar())
+        mbar.addWidget(self.btn_closeups)
         mbar.addWidget(self.lbl_picks)
         mbar.addWidget(self.btn_clear_picks)
         self.multi_bar.hide()                # shown on Simple (_sync_views)
@@ -2866,6 +2879,8 @@ class MainWindow(QMainWindow):
                 small = self._multi_small(self.current, self._snapshot())
                 if small is None or not self.multi.update_cell(cid, small):
                     self._fill_multi()
+                else:
+                    self._fill_closeups([cid])   # (황반 · 디스크 with the same processing)
             else:
                 self._fill_multi()
         if self._tab() == "cmp":
@@ -3333,6 +3348,7 @@ class MainWindow(QMainWindow):
             mv.populate(items, self.current["id"] if self.current else None)
             if target is None:
                 self._sync_navs()
+                self._schedule_closeups()
             return
         mv.set_mode_text("")
         ids = self._strip_ids()
@@ -3354,6 +3370,60 @@ class MainWindow(QMainWindow):
         mv.populate(items, cur)
         if target is None:
             self._sync_navs()
+            self._schedule_closeups()
+
+    # -- 황반 · 디스크 under the photos of Simple · Multi -------------------------------------------
+    def _set_closeups(self, on: bool) -> None:
+        """[황반 · 디스크] on the Simple · Multi row: each photo's macula and disc enlarged under it."""
+        self.settings.simple_closeups = bool(on)
+        self.multi.set_closeups(on)
+        if on:
+            self._fill_closeups()
+            if not self.multi.closeups_shown():
+                self.lbl_status.setText(f"황반 · 디스크는 화면 분할 {CLOSEUP_MAX}장 이하일 때 사진 아래에 나옵니다")
+
+    def _schedule_closeups(self) -> None:
+        if self.multi.closeups_shown():
+            self._closeup_timer.start()       # (once the cells have their sizes)
+
+    def _fill_closeups(self, only: list[int] | None = None) -> None:
+        """황반 · 디스크 of the photos on the cells (``only``: of those photos): cut from the whole photo
+        around its macula and disc, with that photo's processing, each pane on its place — as wide as
+        on Detail (by the photo's own disc–fovea distance, or a part of the photo where not found)."""
+        if not self.multi.closeups_shown():
+            return
+        for cell in self.multi.cells:
+            iid = cell.image_id
+            if iid is None or not cell.isVisible() or (only is not None and iid not in only):
+                continue
+            row = self.db.get_image(iid)
+            full = self._load(row) if row is not None else None
+            if full is None:
+                for z in cell.zooms.values():
+                    z.set_rgb(None)
+                continue
+            row = self._ensure_fovea(row)
+            st = self._photo_state(iid)
+            h, w = full.shape[:2]
+            _, disc, fovea = self._marks_of(row)
+            d = math.hypot(disc[0] - fovea[0], disc[1] - fovea[1]) if disc and fovea else None
+            long, centre = max(w, h), (w / 2, h / 2)
+            targets = {"macula": (fovea or centre, 1.5 * d if d else long / 3),
+                       "disc": (disc or centre, 0.85 * d if d else long / OV_ZOOM)}
+            for key, title, found in (("macula", "황반", fovea), ("disc", "시신경 유두", disc)):
+                (x, y), tw = targets[key]
+                half = max(16, int(tw))                        # the place and as much again around it
+                x0, y0 = max(0, int(x) - half), max(0, int(y) - half)
+                x1, y1 = min(w, int(x) + half), min(h, int(y) + half)
+                crop = np.ascontiguousarray(full[y0:y1, x0:x1])
+                ops = st.get("ops", [])
+                crop = self._adjusted_with(imaging.apply_ops(crop, ops) if ops else crop, st)
+                view = cell.zooms[key]
+                view.set_rgb(crop)
+                vw, vh = max(view.viewport().width(), 1), max(view.viewport().height(), 1)
+                th = tw * vh / vw
+                view.zoom_to_rect(QRectF(x - x0 - tw / 2, y - y0 - th / 2, tw, th), animate=False)
+                cell.zoom_heads[key].setText(title + ("" if found else "  (찾지 못함 — 사진 가운데)"))
 
     def _select_from_multi(self, image_id: int) -> None:
         self._multi_lock = True
