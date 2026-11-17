@@ -100,7 +100,8 @@ def win(tmp_path):
 
     app = QApplication.instance() or QApplication([])
     db, refs, ids = _library(tmp_path)
-    s = Settings(library_dir=str(tmp_path / "lib"), watch_on_startup=False, auto_detect=False, last_patient="")
+    s = Settings(library_dir=str(tmp_path / "lib"), watch_on_startup=False, auto_detect=False, last_patient="",
+                 open_view="odos", ui_version=MainWindow.UI_VERSION)      # (환자를 열면: Simple)
     w = MainWindow(s, db)
     assert (w.width(), w.height()) == (1600, 960)        # the size the program opens with
     w.patient_list.select_delay = 0                     # a selection goes through at once (no key stepping here)
@@ -380,7 +381,7 @@ def test_more_than_16_photos_page_by_16(win):
     assert w.grid.visible_ids() == order[32:] and w.grid.page() == 2
     pl.set_exam(pl.exam_dates()[0])
     assert w.grid.visible_ids() == order[:16]
-    # a photo opened large, and back with [Multi]: 16장 보기 as it was
+    # a photo opened large, and back with [Multi] (nothing picked): 16장 보기 as it was
     w.open_large(order[5])
     assert w._tab() == "all" and w.current["id"] == order[5]
     w.tb_cmd.widgetForAction(w.acts["view:multi"]).click()

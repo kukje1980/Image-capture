@@ -108,10 +108,10 @@ class Settings:
     # (컬러 · 몽타주 …). The eye is said once per row, at its left.
     thumb_date: bool = True
     thumb_kind: bool = False
-    # 환자를 열면 (설정 → 일반): "odos" = Simple — 최신 OD | OS 두 장을 나란히 (처음 설정) ·
-    # "grid" = Multi (VK-2 방식) — 사진 16장을 한 화면에, 골라서 [고른 사진 보기]로 모아 보기.
-    # Anything else (an older "overview") is the first way.
-    open_view: str = "odos"
+    # 환자를 열면 (설정 → 일반): "grid" = 16장 보기 (VK-2 방식, 처음 설정) — 사진 16장을 한 화면에,
+    # 골라서 [Multi]로 고른 사진만 보기 · "odos" = Simple — 최신 OD | OS 두 장을 나란히.
+    # Anything else (an older "overview") is 16장 보기.
+    open_view: str = "grid"
     # 카메라 각도 보정 (calibrate.py): the lens curve measured from the photos, {camera profile: radial_c}
     lens_curves: dict[str, float] = field(default_factory=dict)
     montage_fast: bool = False      # 몽타주 빠르게: the saved picture at most 2400 px instead of 4000

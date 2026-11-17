@@ -1,9 +1,10 @@
-"""A patient opens on Simple: its newest OD and OS photo side by side (OD left, OS right), numbered
-1 and 2 — and [Simple] puts them back whatever was picked. From there Simple follows the clicks on
-the photo list: a click adds a photo, a click on a picked one takes it away, the layout fits the
-number picked (1 · 2 · 4 · 6 · 9 · 16; none picked: all the photos). Multi is 16장 보기: a click
-picks a photo there, [고른 사진 보기] shows the picked ones on Simple. A double click shows a photo
-large (Detail), where a click on the list shows that photo."""
+"""설정 → 일반 → 환자를 열면 Simple: a patient opens on its newest OD and OS photo side by side (OD
+left, OS right), numbered 1 and 2 — and [Simple] puts them back whatever was picked. From there Simple
+follows the clicks on the photo list: a click adds a photo, a click on a picked one takes it away, the
+layout fits the number picked (1 · 2 · 4 · 6 · 9 · 16; none picked: all the photos). 16장 보기 (the
+first setting, test_photo_grid): a click picks a photo there, [Multi] shows the picked ones only and
+[Multi] again goes back to the 16. A double click shows a photo large (Detail), where a click on the
+list shows that photo."""
 import os
 
 import pytest
@@ -23,7 +24,8 @@ def win(tmp_path):
 
     app = QApplication.instance() or QApplication([])
     db, refs, ids = _library(tmp_path)
-    s = Settings(library_dir=str(tmp_path / "lib"), watch_on_startup=False, auto_detect=False, last_patient="")
+    s = Settings(library_dir=str(tmp_path / "lib"), watch_on_startup=False, auto_detect=False, last_patient="",
+                 open_view="odos", ui_version=MainWindow.UI_VERSION)      # (환자를 열면: Simple)
     w = MainWindow(s, db)
     w.patient_list.select_delay = 0          # a selection goes through at once (no key stepping here)
     w.show()
@@ -278,30 +280,41 @@ def test_simple_with_nothing_picked_and_multi_is_16_photos(win):
     _click(app, w, rf3, double=True)                       # (one not picked, too)
     assert w._tab() == "all" and w.current["id"] == rf3 and w.picks() == [od3, od2]
 
-    # [Multi]: 16장 보기 — every photo, the picked ones numbered; [고른 사진 보기] brings them back on Simple
+    # [Multi] (from Detail, photos picked): those photos only, Multi lit; [Multi] again: 16장 보기 — every
+    # photo, the picked ones still numbered
     _press(w, "view:multi")
-    assert w._tab() == "grid" and _lit(w) == ["view:multi"] and not w.multi_bar.isVisible()
+    assert w._tab() == "multi" and _lit(w) == ["view:multi"] and _cells(w)[0] == [od3, od2]
+    assert w.multi_bar.isVisible() and "16장 보기로" in w.lbl_status.text()
+    _press(w, "view:multi")
+    assert w._tab() == "grid" and _lit(w) == [] and not w.multi_bar.isVisible()
     assert len(w.grid.items()) == 7 and w.grid._picks == {od3: 1, od2: 2}
-    assert w.btn_grid_open.isVisible() and w.btn_grid_open.text() == "고른 사진 보기 (2장)" and montage.isEnabled()
-    w.btn_grid_open.click()
-    assert w._tab() == "multi" and _lit(w) == ["view:simple"] and _cells(w) == ([od3, od2], od3)
-    # a click on Multi picks there (numbered), again lets it go; 선택 해제 lets them all go
-    _press(w, "view:multi")
+    assert w.lbl_grid_picks.isVisible() and w.lbl_grid_picks.text().startswith("2장 선택") and montage.isEnabled()
+    assert not hasattr(w, "btn_grid_open")                 # ([고른 사진 보기] was the same as [Multi]: gone)
+    # a click on 16장 보기 picks there (numbered), again lets it go; [Multi]: the picked ones only
     w.grid.pressed.emit(os2)
     assert w.picks() == [od3, od2, os2] and w.grid._picks[os2] == 3 and w._tab() == "grid"
     w.grid.pressed.emit(od3)
-    assert w.picks() == [od2, os2] and w.btn_grid_open.text() == "고른 사진 보기 (2장)"
+    assert w.picks() == [od2, os2] and w.lbl_grid_picks.text().startswith("2장 선택")
+    _press(w, "view:multi")
+    assert w._tab() == "multi" and _lit(w) == ["view:multi"] and _cells(w)[0] == [od2, os2]
+    _press(w, "view:multi")
+    assert w._tab() == "grid" and w.picks() == [od2, os2]
+    # 선택 해제 lets them all go; with nothing picked [Multi] says to pick first and 16장 보기 stays
     w.btn_grid_clear.click()
-    assert w.picks() == [] and w.grid._picks == {} and not w.btn_grid_open.isVisible() and w._tab() == "grid"
-    # Simple's newest OD | OS are not picks of one's own: Multi starts with nothing picked after [Simple]
-    _press(w, "view:simple")
-    assert w.picks() == [od3, os3]
+    assert w.picks() == [] and w.grid._picks == {} and not w.lbl_grid_picks.isVisible() and w._tab() == "grid"
     _press(w, "view:multi")
-    assert w.picks() == [] and w.grid._picks == {}
+    assert w._tab() == "grid" and _lit(w) == [] and w.lbl_status.text() == w.PICK_FIRST_HINT
+    # Simple's newest OD | OS are not picks of one's own: [Multi] on Simple is 16장 보기, nothing picked
     _press(w, "view:simple")
-    _click(app, w, od2)                                    # (changed by hand: they are picks, numbered on Multi)
+    assert w.picks() == [od3, os3] and _lit(w) == ["view:simple"]
     _press(w, "view:multi")
-    assert w.grid._picks == {od3: 1, os3: 2, od2: 3}
+    assert w._tab() == "grid" and w.picks() == [] and w.grid._picks == {}
+    _press(w, "view:simple")
+    _click(app, w, od2)                                    # (changed by hand: they are picks, numbered on 16장)
+    _press(w, "view:multi")
+    assert w._tab() == "grid" and w.grid._picks == {od3: 1, os3: 2, od2: 3}
+    _press(w, "view:multi")                                # … and [Multi] shows them
+    assert w._tab() == "multi" and _lit(w) == ["view:multi"] and _cells(w)[0] == [od3, os3, od2]
 
     # 화면 분할 chosen by hand (보기 → Simple 화면 분할 4장) with nothing picked: VK-2's consecutive photos
     # from the shown one — and it stays so when Simple comes back from 3D
@@ -346,13 +359,21 @@ def test_a_double_click_opens_detail_and_another_goes_back(win):
     w._step(1)
     dclick(w.view2d)
     assert w._tab() == "multi" and w.picks() == [od3, os3, od2]
-    # Multi (16장): a photo double clicked — Detail; double clicked again — Multi
+    # 16장 보기 ([Multi] on Simple): a photo double clicked — Detail; double clicked again — 16장 보기
     _press(w, "view:multi")
+    assert w._tab() == "grid"
     w.grid.activated.emit(od2)
     app.processEvents()
     assert w._tab() == "all" and w.current["id"] == od2
     dclick(w.view2d)
-    assert w._tab() == "grid" and _lit(w) == ["view:multi"]
+    assert w._tab() == "grid" and _lit(w) == []
+    # Multi (the picked photos only): a cell double clicked — Detail; double clicked again — Multi, lit
+    _press(w, "view:multi")
+    assert w._tab() == "multi" and _lit(w) == ["view:multi"]
+    dclick(next(c for c in w.multi.cells if c.image_id == od2).view)
+    assert w._tab() == "all" and w.current["id"] == od2 and _lit(w) == ["view:all"]
+    dclick(w.view2d)
+    assert w._tab() == "multi" and _lit(w) == ["view:multi"] and _cells(w)[0] == [od3, os3, od2]
     # [Detail] pressed on 3D: back to 3D
     w._go("3d")
     _press(w, "view:all")
@@ -409,8 +430,8 @@ def test_a_new_photo_takes_its_eyes_place(win):
 
 def test_arrows_at_the_sides_of_a_photo_and_the_arrow_keys(win):
     """◀ ▶ come up at the left / right side of a photo under the mouse and go to the photo before /
-    after it, as ← / → do — Detail: of the photo list; Simple: no arrows on its cells (the list
-    picks), ← / → go through the photos on it."""
+    after it, as ← / → do — Detail: of the photo list; Simple (and Multi): in a cell's place the photo of
+    the same eye before / after it; ← / → on the photo list go through the photos on the page."""
     from PySide6.QtCore import QPoint, Qt
     from PySide6.QtTest import QTest
 
@@ -470,26 +491,49 @@ def test_arrows_at_the_sides_of_a_photo_and_the_arrow_keys(win):
     assert w.current["id"] == os3
     assert w.picks() == [od3, os3]                                # the two of Simple: as they were
 
-    # -- Simple: no arrows on the cells (the list picks); ← / → go through the photos on it ---------------
+    # -- Simple: ◀ ▶ on a cell — in its place the photo of the same eye before / after it (newer / older);
+    #    ← / → in the cell the same; ← / → on the photo list go through the photos on it -------------------
     _press(w, "view:simple")
-    _click(app, w, od2)
-    assert _cells(w) == ([od3, os3, od2], od2)
+    assert _cells(w)[0] == [od3, os3]
+    assert w._eye_ids(od3) == [rf3, od3, od2, sheet, od1] and w._eye_ids(os3) == [os3, os2]
     cells = [c for c in w.multi.cells if c.isVisible() and c.image_id]
-    assert all(c.nav.available() == (False, False) for c in cells)
+    assert cells[0].nav.available() == (True, True)               # OD: rf3 before, od2 after
+    assert cells[1].nav.available() == (False, True)              # OS: the newest — nothing before it
     hover(cells[0].view, "right")
-    assert not cells[0].nav.buttons[1].isVisible()
+    assert cells[0].nav.buttons[1].isVisible() and not cells[0].nav.buttons[-1].isVisible()
+    press(cells[0].nav.buttons[1])                                # ▶ on OD: the older OD photo, in its place
+    assert _cells(w) == ([od2, os3], od2) and w.picks() == [od2, os3]
+    hover(cells[1].view, "right")
+    press(cells[1].nav.buttons[1])                                # ▶ on OS
+    assert _cells(w) == ([od2, os2], os2) and cells[1].nav.available() == (True, False)
+    QTest.keyClick(cells[0].view, Qt.Key.Key_Left)                # ← in the OD cell: back to the newer one
+    assert _cells(w) == ([od3, os2], od3)
+    hover(cells[0].view, "left")
+    press(cells[0].nav.buttons[-1])                               # ◀: the red-free of that day
+    assert _cells(w) == ([rf3, os2], rf3) and cells[0].nav.available() == (False, True)
+    QTest.keyClick(cells[0].view, Qt.Key.Key_Right)
+    # a photo on another cell is passed over: od2 picked too, ▶ on od3 goes to the one after od2
+    _click(app, w, od2)
+    assert _cells(w) == ([od3, os2, od2], od2)
+    cells = [c for c in w.multi.cells if c.isVisible() and c.image_id]
+    w._step_cell(od3, 1)
+    assert _cells(w) == ([sheet, os2, od2], sheet) and w.picks() == [sheet, os2, od2]
+    w._step_cell(sheet, -1)
+    assert _cells(w) == ([od3, os2, od2], od3)
+    # ← / → on the photo list: through the photos on the page
+    QTest.keyClick(w.thumbs, Qt.Key.Key_Right)
+    assert _cells(w) == ([od3, os2, od2], os2)
     QTest.keyClick(w.thumbs, Qt.Key.Key_Left)
-    assert _cells(w) == ([od3, os3, od2], os3)
-    QTest.keyClick(cells[1].view, Qt.Key.Key_Left)
-    QTest.keyClick(cells[0].view, Qt.Key.Key_Left)
-    assert _cells(w) == ([od3, os3, od2], od3) and w.picks() == [od3, os3, od2]
+    assert _cells(w) == ([od3, os2, od2], od3) and w.picks() == [od3, os2, od2]
     w._on_action("next")                                          # 다음 (PageDown): the same
-    assert w.current["id"] == os3 and w._tab() == "multi"
+    assert w.current["id"] == os2 and w._tab() == "multi"
 
 
-def test_the_last_patient_comes_back_on_simple(tmp_path):
-    """At the start the patient of the last session is behind the patient list — on Simple, its
-    newest OD | OS, so that closing the list without picking a patient shows that first."""
+@pytest.mark.parametrize("way", ["grid", "odos"])
+def test_the_last_patient_comes_back_on_16_photos_or_simple(tmp_path, way):
+    """At the start the patient of the last session is behind the patient list — on 16장 보기 (the
+    first setting: also for settings of before, once), or on Simple with its newest OD | OS when
+    that was chosen — so that closing the list without picking a patient shows that first."""
     import time
 
     from PySide6.QtWidgets import QApplication
@@ -499,8 +543,10 @@ def test_the_last_patient_comes_back_on_simple(tmp_path):
 
     app = QApplication.instance() or QApplication([])
     db, refs, ids = _library(tmp_path)
-    s = Settings(library_dir=str(tmp_path / "lib"), watch_on_startup=False, auto_detect=False, last_patient="K001")
+    s = Settings(library_dir=str(tmp_path / "lib"), watch_on_startup=False, auto_detect=False, last_patient="K001",
+                 open_view="odos", ui_version=5 if way == "grid" else MainWindow.UI_VERSION)
     w = MainWindow(s, db)
+    assert s.open_view == way and s.ui_version == MainWindow.UI_VERSION       # (5 → 6: 16장 보기, once)
     try:
         w.show()
         end = time.time() + 5
@@ -509,8 +555,11 @@ def test_the_last_patient_comes_back_on_simple(tmp_path):
             time.sleep(0.01)
         app.processEvents()
         assert w._patient_ref == refs["kim"] and w.patient_list.isVisible()
-        assert w._tab() == "multi" and _lit(w) == ["view:simple"]
-        assert _cells(w) == ([ids["od3"], ids["os3"]], ids["od3"])
+        if way == "grid":
+            assert w._tab() == "grid" and _lit(w) == [] and w.picks() == [] and len(w.grid.items()) == 7
+        else:
+            assert w._tab() == "multi" and _lit(w) == ["view:simple"]
+            assert _cells(w) == ([ids["od3"], ids["os3"]], ids["od3"])
     finally:
         w.close()
         db.close()

@@ -190,7 +190,8 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
     from fundusview.ui.thumbs import EYE_ROLE, PICK_ROLE
 
     s = Settings(library_dir=str(tmp_path / "lib"), stable_seconds=0.05, rescan_seconds=0,
-                 watch_folders=[WatchFolder(path=str(demo_dir))], watch_on_startup=False)
+                 watch_folders=[WatchFolder(path=str(demo_dir))], watch_on_startup=False,
+                 open_view="odos", ui_version=MainWindow.UI_VERSION)          # (환자를 열면: Simple)
     db = Database(tmp_path / "lib" / "fundus.db")
     w = MainWindow(s, db)
     try:
@@ -314,15 +315,15 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
         assert w.current["id"] == ids[2] and w._tab() == "all"
         assert w.picks() == [ids[0], ids[1]]
 
-        # back to the picked photos: Multi (16장) has them numbered, [고른 사진 보기] shows them on Simple
-        # in pick order, the first one selected
+        # back to the picked photos: 16장 보기 has them numbered, [Multi] shows them only, in pick order,
+        # the first one selected
+        w.show_grid()
+        app.processEvents()
+        assert w._tab() == "grid" and w.grid._picks == {ids[0]: 1, ids[1]: 2} and w.lbl_grid_picks.isVisible()
+        assert w.lbl_grid_picks.text().startswith("2장 선택")
         w.acts["view:multi"].trigger()
         app.processEvents()
-        assert w._tab() == "grid" and w.grid._picks == {ids[0]: 1, ids[1]: 2} and w.btn_grid_open.isVisible()
-        assert w.btn_grid_open.text() == "고른 사진 보기 (2장)"
-        w.btn_grid_open.click()
-        app.processEvents()
-        assert w._tab() == "multi" and w.multi.count == 2
+        assert w._tab() == "multi" and w.multi.count == 2 and w.acts["view:multi"].isChecked()
         cells = [c for c in w.multi.cells if c.isVisible()]
         assert [c.image_id for c in cells] == [ids[0], ids[1]]
         assert w.current["id"] == ids[0] and "고른 사진 2장" in w.multi.mode_text
@@ -349,8 +350,7 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
         QTest.mouseDClick(cells[0].view.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(20, 20))
         app.processEvents()
         assert w._tab() == "all" and w.current["id"] == ids[0] and w._channel == "redfree"
-        w.acts["view:multi"].trigger()
-        w.btn_grid_open.click()
+        w.acts["view:multi"].trigger()                               # (from Detail: the picked photos)
         app.processEvents()
         cells = [c for c in w.multi.cells if c.isVisible()]
         assert w._tab() == "multi" and [c.image_id for c in cells] == [ids[0], ids[1]]

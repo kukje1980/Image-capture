@@ -6,14 +6,17 @@ again goes back to the photos.
 Each eye is the 3D view of the 3D tab (``eye3d.EyeView``) with the look chosen there (자세히 / 간단히,
 유리 공막, 안구 열기 …), so it is turned, zoomed and moved the same way: drag to turn, the wheel or
 + / − to zoom, right drag to zoom, middle / Shift+drag to move, double click or 0 for the start view.
-With **함께 움직이기** on (the start) the other eyes follow the one moved, so all show the same place at
-the same size; off, each eye is moved on its own.
+Each eye has the 3D tab's 깊이 막대 at its right edge (depth_bar.py): how deep the eye is cut open,
+starting from the 3D tab's depth. With **함께 움직이기** on (the start) the other eyes follow the one
+moved or cut, so all show the same place at the same size and depth; off, each eye is moved and cut on
+its own.
 """
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout, QWidget
 
+from .depth_bar import DepthBar
 from .eye3d import EyeView
 from .widgets import Switch
 
@@ -21,6 +24,13 @@ from .widgets import Switch
 LOOK = ("glass", "relief", "relief_on", "relief_amount", "simple", "cut", "xray", "show_nerve",
         "show_muscles", "show_grid", "align")
 MAX_EYES = 9            # photos on 3D eyes at once (3 × 3)
+DEPTH_RANGE = (-30, 100)   # the 깊이 막대's slider, as the 3D tab's (100 = the closed eye)
+
+
+def depth_value(cut: float) -> int:
+    """An eye's ``cut`` as the 깊이 slider's value (the 3D tab's ``_on_cut`` the other way)."""
+    lo, hi = DEPTH_RANGE
+    return hi if cut >= 1.0 else max(lo, min(hi - 1, round(cut * 100)))
 
 
 def grid_shape(n: int) -> tuple[int, int]:
@@ -53,7 +63,8 @@ class Pair3D(QWidget):
         self.b_front = QPushButton("정면")
         self.b_front.setToolTip("모든 안구를 정면에서 보기")
         self.b_front.clicked.connect(lambda: [e.front_view(animate=True) for e in self._shown()])
-        hint = QLabel("드래그: 회전 · 휠 · + / −: 확대 · 축소 · 가운데 / Shift+드래그: 이동 · 3D 다시: 사진으로")
+        hint = QLabel("드래그: 회전 · 휠 · + / −: 확대 · 축소 · 가운데 / Shift+드래그: 이동 · 오른쪽 막대: 깊이 · "
+                      "3D 다시: 사진으로")
         hint.setObjectName("hint3d")
         bar.addWidget(self.c_link)
         bar.addWidget(self.b_home)
@@ -68,6 +79,8 @@ class Pair3D(QWidget):
         self.eyes: list[EyeView] = []
         self.labels: list[QLabel] = []
         self.cells: list[QFrame] = []
+        self.depths: list[QSlider] = []      # each eye's 깊이 (the value its 깊이 막대 shows and sets)
+        self.depth_bars: list[DepthBar] = []
         for _ in range(2):                  # (more are made when more photos come)
             self._add_eye()
         self._place(2)
@@ -98,6 +111,14 @@ class Pair3D(QWidget):
                     setattr(eye, name, getattr(first, name))
         cl.addWidget(label)
         cl.addWidget(eye, 1)
+        # 깊이 막대 at the eye's right edge, on a slider of its own (not on screen) as in the 3D tab
+        depth = QSlider(Qt.Orientation.Horizontal, self)
+        depth.hide()
+        depth.setRange(*DEPTH_RANGE)
+        depth.setValue(depth_value(eye.cut))
+        depth.valueChanged.connect(lambda v, eye=eye: self._on_depth(eye, v))
+        self.depths.append(depth)
+        self.depth_bars.append(DepthBar(depth, eye))
         self.eyes.append(eye)
         self.labels.append(label)
         self.cells.append(cell)
@@ -120,13 +141,41 @@ class Pair3D(QWidget):
 
     # -- what is shown ---------------------------------------------------------------------------
     def copy_look(self, src: EyeView) -> None:
-        """Take over how the 3D tab's eye looks (not where it is seen from)."""
-        for eye in self.eyes:
+        """Take over how the 3D tab's eye looks (not where it is seen from), its depth too."""
+        for eye, depth in zip(self.eyes, self.depths):
             eye.set_detail(src.detail)
             for name in LOOK:
                 if hasattr(src, name):
                     setattr(eye, name, getattr(src, name))
             eye.half = 0.0
+            self._show_depth(depth, depth_value(eye.cut))
+            eye.update()
+
+    # -- 깊이 막대 ---------------------------------------------------------------------------------
+    def _show_depth(self, depth: QSlider, v: int) -> None:
+        """The slider (and its bar) at ``v`` without cutting again."""
+        if depth.value() != v:
+            depth.blockSignals(True)
+            depth.setValue(v)
+            depth.blockSignals(False)
+        self.depth_bars[self.depths.index(depth)].update()
+
+    def _on_depth(self, eye: EyeView, v: int) -> None:
+        """An eye's 깊이 막대 moved: that eye cut so deep — all the eyes shown with 함께 움직이기 on."""
+        cut = v / 100.0 if v < DEPTH_RANGE[1] else 1.0
+        together = self.linked() and eye in self._shown()
+        for other, depth in zip(self.eyes, self.depths):
+            if other is eye or (together and other in self._shown()):
+                other.cut = cut
+                self._show_depth(depth, v)
+                other.update()
+        self._set_lead(eye)
+
+    def set_depth(self, v: int) -> None:
+        """깊이 for every eye (as the 깊이 막대 says: 100 closed … −30 the deepest)."""
+        for eye, depth in zip(self.eyes, self.depths):
+            eye.cut = v / 100.0 if v < DEPTH_RANGE[1] else 1.0
+            self._show_depth(depth, v)
             eye.update()
 
     def set_photos(self, photos: list[dict]) -> None:

@@ -104,6 +104,38 @@ def test_cut_open_eye_shows_the_retina(eye, detail):
 
 
 @pytest.mark.parametrize("detail", ["simple", "detailed"])
+def test_the_retina_beyond_the_photo_is_dark_not_made_up(eye, detail):
+    """사진 밖: with a photo (135° here) the retina it does not show is plain dark grey — no orange
+    fundus pattern made up there, nothing laid over the photo; without a photo the eye model's own
+    orange fundus as ever."""
+    import math
+
+    v = eye[0]
+
+    def on_wall(theta, az):
+        t, a = math.radians(theta), math.radians(az)
+        return (math.sin(t) * math.cos(a) * 0.97, math.sin(t) * math.sin(a) * 0.97, -math.cos(t) * 0.97)
+
+    _render(eye, detail, cut=0.25, yaw=38.0, pitch=18.0, dist=3.3)
+    r, g, b = _at(v, on_wall(0, 0), 1)                 # the posterior pole: the photo, as it is
+    assert r > g + 40 > b + 40
+    for theta in (85, 100):                            # beyond the photo's 67.5°: dark and grey
+        r, g, b = _at(v, on_wall(theta, 180), 1)
+        assert max(r, g, b) < 50 and max(r, g, b) - min(r, g, b) < 8
+    try:
+        v.set_image(None)
+        _render(eye, detail, cut=0.25, yaw=38.0, pitch=18.0, dist=3.3)
+        r, g, b = _at(v, on_wall(85, 180), 1)          # no photo: the model's orange fundus
+        assert r > g + 20 and r > 60
+    finally:                                           # (the module's photo back)
+        from fundusview import demo, imaging
+
+        rgb = demo.synth_fundus(eye="OD", size=(512, 540))
+        circle = imaging.detect_circle(rgb)
+        v.set_image(rgb, imaging.fundus_alpha(rgb, circle), circle)
+
+
+@pytest.mark.parametrize("detail", ["simple", "detailed"])
 def test_inside_view_looks_at_the_posterior_pole(eye, detail):
     px = _render(eye, detail, mode="inside", in_yaw=0.0, in_pitch=0.0, in_fov=85.0)
     r, g, b = px(0.5, 0.5)

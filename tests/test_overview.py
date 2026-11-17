@@ -147,7 +147,7 @@ def test_overview_is_the_photo_with_its_macula_and_disc(tmp_path, demo_dir, impo
         if row["fovea_x"] is not None:
             assert roi_m.rect().contains(QPointF(row["fovea_x"], row["fovea_y"]))
 
-        # -- the views of the command toolbar: Simple · Multi (16장) · 3D · back --
+        # -- the views of the command toolbar: Simple · Multi (off: 16장 보기) · 3D · back --
         def lit():
             return [k for k in ("view:simple", "view:multi", "view:all", "view3d") if w.acts[k].isChecked()]
 
@@ -158,10 +158,10 @@ def test_overview_is_the_photo_with_its_macula_and_disc(tmp_path, demo_dir, impo
         assert w._tab() == "multi" and lit() == ["view:simple"] and w.multi_bar.isVisible() and len(w.picks()) == 2
         press("view:simple")                                             # (the lit one again: it stays lit)
         assert w._tab() == "multi" and lit() == ["view:simple"]
-        press("view:multi")
-        assert w._tab() == "grid" and lit() == ["view:multi"] and not w.multi_bar.isVisible()
-        press("view:multi")
-        assert w._tab() == "grid" and lit() == ["view:multi"]
+        press("view:multi")                                              # Simple's two are no picks: the 16
+        assert w._tab() == "grid" and lit() == [] and not w.multi_bar.isVisible()
+        press("view:multi")                                              # nothing picked: the 16 stay
+        assert w._tab() == "grid" and lit() == []
         press("view:simple")
         press("view3d")                                                  # Simple's two photos: both in 3D
         assert w._tab() == "3d2" and lit() == ["view3d"] and not w.multi_bar.isVisible()
@@ -180,10 +180,10 @@ def test_overview_is_the_photo_with_its_macula_and_disc(tmp_path, demo_dir, impo
             assert w._tab() == "all"
         # 보기 menu: Ctrl+1 · 2 · 3 · 5 for the views, Ctrl+0 the patient list
         acts = {a.text(): a.shortcut().toString() for a in w.findChildren(type(w.acts["fit"]))
-                if a.text() in ("Simple", "Multi (16장 보기)", "Detail", "모두 보기", "다중 보기", "3D", "2D 보기", "비교",
+                if a.text() in ("Simple", "Multi (고른 사진만 ↔ 16장)", "Detail", "모두 보기", "다중 보기", "3D", "2D 보기", "비교",
                                 "검토", "3D 안구", "환자 목록", "16장 보기")
                 and not a.shortcut().isEmpty()}
-        assert acts == {"Simple": "Ctrl+1", "Multi (16장 보기)": "Ctrl+2", "3D": "Ctrl+3", "Detail": "Ctrl+5",
+        assert acts == {"Simple": "Ctrl+1", "Multi (고른 사진만 ↔ 16장)": "Ctrl+2", "3D": "Ctrl+3", "Detail": "Ctrl+5",
                         "환자 목록": "Ctrl+0"}
         assert w.acts["view3d"].text() == "3D"
     finally:
