@@ -330,8 +330,8 @@ def test_simple_with_nothing_picked_and_multi_is_16_photos(win):
 
 
 def test_a_double_click_opens_detail_and_another_goes_back(win):
-    """Detail: a double click on a photo opens it large, a double click on the big photo goes back to the
-    view it came from, as it was — Simple with the photos picked there, Multi (16장), 3D."""
+    """Detail: a double click on a photo opens it large, a double click on the big photo — or [Detail]
+    again — goes back to the view it came from, as it was: Simple · Multi with their photos, 16장 보기, 3D."""
     from PySide6.QtCore import QPoint, Qt
     from PySide6.QtTest import QTest
 
@@ -386,6 +386,19 @@ def test_a_double_click_opens_detail_and_another_goes_back(win):
     dclick(w.view2d)
     assert w._tab() == "all"
     w._on_action("tool:zoom")
+    # [Detail] again (or Ctrl+5): Detail off — back where it was opened from, as a double click
+    _press(w, "view:all")
+    assert w._tab() == "3d" and _lit(w) == ["view3d"]
+    _press(w, "view:multi")                                # (from 3D: the picked photos)
+    _press(w, "view:all")
+    assert w._tab() == "all" and _lit(w) == ["view:all"]
+    _press(w, "view:all")
+    assert w._tab() == "multi" and _lit(w) == ["view:multi"] and _cells(w)[0] == [od3, os3, od2]
+    w._go("grid")
+    w.view_acts["all"].trigger()
+    assert w._tab() == "all"
+    w.view_acts["all"].trigger()
+    assert w._tab() == "grid" and _lit(w) == []
 
 
 def test_a_new_photo_takes_its_eyes_place(win):

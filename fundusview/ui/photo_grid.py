@@ -8,7 +8,7 @@
 * Ctrl+클릭 = 두 번째 사진(②) · 오른쪽 클릭 = 사진 메뉴
 
 [Multi]를 누르면 고른 사진만 모아 봅니다. 사진이 16장보다 많으면 쪽으로 나뉩니다
-(◀ ▶ 단추 · 휠). 지금 보고 있는 사진은 파란 테두리입니다.
+(◀ ▶ 단추 · 휠). 테두리는 고른 사진(노란색)에만 — 지금 보고 있는 사진은 따로 표시하지 않습니다.
 
 The window owns the photos and the picks (``main_window.py``); this widget only paints them and
 reports what was clicked. It reads the stored thumbnails (``images.thumb_path``, 320 px), so a
@@ -214,10 +214,7 @@ class PhotoGrid(QWidget):
                 p.drawEllipse(dot)
                 p.setPen(QColor("#111827"))
                 p.drawText(dot, Qt.AlignmentFlag.AlignCenter, str(rank))
-            if it.image_id == self._current:  # the photo shown in Detail / selected
-                p.setBrush(Qt.BrushStyle.NoBrush)
-                p.setPen(QPen(QColor(theme.ACCENT), 2))
-                p.drawRoundedRect(cell.adjusted(1, 1, -1, -1), 6, 6)
+            # (the photo shown in Detail is not framed in blue: only the picks are marked, in yellow)
         p.end()
 
     # -- mouse -----------------------------------------------------------------------------------

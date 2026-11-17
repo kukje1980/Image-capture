@@ -1927,7 +1927,7 @@ class MainWindow(QMainWindow):
     MULTI_HINT = ("16장 보기 — 사진을 클릭해 고르고(번호) 왼쪽 툴바의 [Multi]를 누르면 고른 사진만 봅니다 "
                   "(다시 [Multi]: 16장으로) · 더블클릭: 크게 보기 (Detail) · 휠: 다음 / 이전 16장")
     PICK_FIRST_HINT = "Multi — 먼저 16장 보기에서 사진을 클릭해 고르세요(번호). 그다음 [Multi]를 누르면 고른 사진만 나옵니다"
-    DETAIL_HINT = ("Detail — 다시 더블클릭: 보던 화면으로 · 사진 좌우의 ◀ ▶ 또는 ← → 키: 이전 / 다음 사진 · "
+    DETAIL_HINT = ("Detail — 다시 더블클릭 · [Detail] 다시: 보던 화면으로 · 사진 좌우의 ◀ ▶ 또는 ← → 키: 이전 / 다음 사진 · "
                    "사진 목록을 클릭하면 그 사진")
 
     def _newest_pair(self, exam: str | None = None) -> list[int]:
@@ -2017,11 +2017,13 @@ class MainWindow(QMainWindow):
     def _show_view(self, key: str, toggle: bool = False) -> None:
         """A view of the command toolbar or of the 보기 menu: Simple · Multi · Detail · 3D.
         ``toggle`` (the toolbar): 3D again goes back to the view before it. Multi is on / off either
-        way (the picked photos only ↔ 16장 보기)."""
+        way (the picked photos only ↔ 16장 보기), and so is Detail (again: the view it was opened from)."""
         if key == SIMPLE:
             self.show_simple()
         elif key == MULTI:
             self.toggle_multi()
+        elif key == "all" and self._tab() == "all":
+            self._leave_detail()                  # Detail again: off — back to where it was opened from
         elif key == "3d" and toggle:
             self._on_action("view3d")
         else:
@@ -2041,18 +2043,18 @@ class MainWindow(QMainWindow):
         self.lbl_status.setText(self.DETAIL_HINT)
 
     def _leave_detail(self) -> None:
-        """A double click on Detail's big photo: back to the view it was opened from, as it was —
-        Simple · Multi with the same photos, 16장 보기, 3D; opened on Detail itself: the 다중 보기 page."""
+        """A double click on Detail's big photo, or [Detail] again: back to the view it was opened from,
+        as it was — Simple · Multi with the same photos, 16장 보기, 3D; opened on Detail itself: 16장 보기."""
         if self._tab() != "all":
             return
         back = self._detail_from
-        if back == "grid":
-            self._go("grid")
-            self.lbl_status.setText(self.MULTI_HINT)
-        elif back in ("3d", "3d2"):
+        if back in ("3d", "3d2"):
             self._on_action("view3d")             # (3D again from Detail: the 3D view)
+        elif back == "multi":
+            self.open_picks()                     # Simple · Multi, the photos on it as they were
         else:
-            self.open_picks()                     # Simple, the photos on it as they were
+            self._go("grid")                      # 16장 보기 (where a patient opens)
+            self.lbl_status.setText(self.MULTI_HINT)
         self._sync_views()
 
     def _raise_main(self) -> None:

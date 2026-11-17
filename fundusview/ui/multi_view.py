@@ -74,8 +74,10 @@ class _Cell(QFrame):
         self.select(False)
 
     def select(self, on: bool) -> None:
+        """The cell whose photo the processing toolbar works on — not framed (a blue frame said nothing
+        the user needed and was taken for a pick)."""
         self.selected = on
-        self.setStyleSheet("QFrame { border: 2px solid %s; }" % (theme.ACCENT if on else theme.CARD))
+        self.setStyleSheet("QFrame { border: 2px solid %s; }" % theme.CARD)
 
 
 class MultiView(QWidget):
