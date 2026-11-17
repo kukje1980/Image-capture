@@ -316,6 +316,57 @@ def test_simple_with_nothing_picked_and_multi_is_16_photos(win):
     assert w._tab() == "multi" and w.multi.count == 4 and len(_cells(w)[0]) == 4
 
 
+def test_a_double_click_opens_detail_and_another_goes_back(win):
+    """Detail: a double click on a photo opens it large, a double click on the big photo goes back to the
+    view it came from, as it was — Simple with the photos picked there, Multi (16장), 3D."""
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+
+    app, w, db, refs, ids = win
+    _open(app, w, refs["kim"])
+    od3, os3, od2 = ids["od3"], ids["os3"], ids["od2"]
+
+    def dclick(view):
+        QTest.mouseDClick(view.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(60, 60))
+        app.processEvents()
+
+    # Simple with a photo added by hand: a cell double clicked — Detail; the big photo double clicked — back,
+    # the three photos as they were, that photo selected
+    _click(app, w, od2)
+    assert w.picks() == [od3, os3, od2]
+    dclick(next(c for c in w.multi.cells if c.image_id == os3).view)
+    assert w._tab() == "all" and w.current["id"] == os3 and _lit(w) == ["view:all"]
+    assert not w.view2d.loupe_on
+    dclick(w.view2d)
+    assert w._tab() == "multi" and _lit(w) == ["view:simple"] and w.picks() == [od3, os3, od2]
+    assert _cells(w) == ([od3, os3, od2], os3) and not w.view2d.loupe_on
+    # from the photo list the same; ◀ ▶ on Detail in between do not change where it goes back to
+    _click(app, w, od2, double=True)
+    assert w._tab() == "all" and w.current["id"] == od2
+    w._step(1)
+    dclick(w.view2d)
+    assert w._tab() == "multi" and w.picks() == [od3, os3, od2]
+    # Multi (16장): a photo double clicked — Detail; double clicked again — Multi
+    _press(w, "view:multi")
+    w.grid.activated.emit(od2)
+    app.processEvents()
+    assert w._tab() == "all" and w.current["id"] == od2
+    dclick(w.view2d)
+    assert w._tab() == "grid" and _lit(w) == ["view:multi"]
+    # [Detail] pressed on 3D: back to 3D
+    w._go("3d")
+    _press(w, "view:all")
+    assert w._tab() == "all"
+    dclick(w.view2d)
+    assert w._tab() == "3d"
+    # with a measuring tool a double click is the tool's (Detail stays)
+    _press(w, "view:all")
+    w._on_action("tool:length")
+    dclick(w.view2d)
+    assert w._tab() == "all"
+    w._on_action("tool:zoom")
+
+
 def test_a_new_photo_takes_its_eyes_place(win):
     """새 영상 자동 표시 on Simple: the newest OD | OS again, the new photo selected — unless the photos
     there were changed by hand, then the new photo is shown large."""
