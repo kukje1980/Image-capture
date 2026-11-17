@@ -62,6 +62,7 @@ from ..watcher import ImportService
 from .dialogs import WHEEL3D, ImageDialog, PatientDialog, SettingsDialog, source_label
 from .disc_pair import DiscPairDialog
 from .glaucoma_dialog import GlaucomaDialog, Photo
+from .depth_bar import DepthBar
 from .eye3d import EyeView
 from .histogram import HistogramDialog
 from . import motion, theme
@@ -266,8 +267,11 @@ class MainWindow(QMainWindow):
             if settings.ui_version < 3:
                 settings.view3d_detail, settings.auto_rotate3d, settings.glass3d = "detailed", True, 80
                 settings.autofind3d = True
-            # 4: the photo as taken — 표면 높낮이 and 입체 조명 stay off until switched on in 망막 입체
-            settings.surface3d, settings.relief3d = False, False
+            if settings.ui_version < 4:
+                # 4: the photo as taken — 표면 높낮이 and 입체 조명 stay off until switched on in 망막 입체
+                settings.surface3d, settings.relief3d = False, False
+            # 5: the wheel over the 3D eye zooms; the depth has its own bar beside the eye (깊이 막대)
+            settings.wheel3d = "zoom"
             settings.ui_version = self.UI_VERSION
         self.bridge = Bridge()
         # 설정 → 공유: connected to a server, the database and the photos are the server's (share.py)
@@ -919,9 +923,9 @@ class MainWindow(QMainWindow):
         # meridian and seen from the side; the slider sets the depth of either (right end = closed)
         self.c_view3d = QComboBox(w)            # the choice itself (the two segments show and set it)
         self.c_view3d.hide()
-        tips = {"front": "앞부분을 잘라 안쪽 망막을 봅니다 (깊이 슬라이더: 자르는 깊이)",
+        tips = {"front": "앞부분을 잘라 안쪽 망막을 봅니다 (깊이 막대: 자르는 깊이)",
                 "section": "사진의 세로 자오선을 따라 안구를 잘라 옆에서 봅니다 — 공막·맥락막·망막 층, "
-                           "홍채·수정체·각막 단면과 화각 (깊이 슬라이더 왼쪽 끝 = 정확히 반)"}
+                           "홍채·수정체·각막 단면과 화각 (깊이 막대 맨 아래 = 정확히 반)"}
         self._view_buttons = {}
         for label, key in (("앞쪽 절개", "front"), ("세로 단면", "section")):
             self.c_view3d.addItem(label, key)
@@ -938,7 +942,7 @@ class MainWindow(QMainWindow):
         self.s_cut.setRange(-30, 100)
         self.s_cut.setValue(25)
         self.s_cut.setMinimumWidth(120)
-        self.s_cut.setToolTip("자르는 깊이 (오른쪽 끝 = 닫힌 안구) — 안구 위에서 마우스 휠로도 조절합니다")
+        self.s_cut.setToolTip("자르는 깊이 (오른쪽 끝 = 닫힌 안구) — 3D 화면 오른쪽의 깊이 막대와 같습니다")
         self.s_cut.valueChanged.connect(self._on_cut)
         self.s_glass = QSlider(Qt.Orientation.Horizontal)
         self.s_glass.setRange(0, 100)
@@ -1104,6 +1108,8 @@ class MainWindow(QMainWindow):
         self.s_height3d.setEnabled(self.c_surface3d.isChecked())
         self.eye3d.journeyChanged.connect(self._on_journey)
         self._where = _WhereChip(self.eye3d)
+        # 깊이 막대: the depth of the cut on a bar over the eye's right edge (the 깊이 slider, where the eye is)
+        self.depth_bar = DepthBar(self.s_cut, self.eye3d)
 
         # 들어가며 보기: from the whole eye through the cornea, the pupil and the lens to the retina
         self.b_journey = QPushButton("▶ 들어가기")
@@ -1336,9 +1342,9 @@ class MainWindow(QMainWindow):
         "depth": ("휠: 자르는 깊이 (내부에서는 확대) · 확대: 위쪽 확대 바 · Ctrl+휠",
                   "<b>휠</b> 자르는 깊이 (내부: 확대) · <b>확대 바</b> · <b>Ctrl+휠</b>",
                   "앞으로 굴리면 깊게 자르고, 뒤로 굴리면 닫힙니다 (내부에서는 확대) · Ctrl+휠: 확대"),
-        "zoom": ("휠: 커서 쪽으로 확대 · 확대 바",
-                 "<b>휠</b> 커서 쪽으로 확대 · <b>확대 바</b>",
-                 "커서가 가리키는 곳으로 확대 · 축소합니다 — 자르는 깊이는 안구 열기의 깊이 막대로"),
+        "zoom": ("휠: 커서 쪽으로 확대 · 확대 바 · 자르는 깊이: 오른쪽 깊이 막대",
+                 "<b>휠</b> 커서 쪽으로 확대 · <b>확대 바</b> · <b>깊이 막대</b>(오른쪽) 자르는 깊이",
+                 "커서가 가리키는 곳으로 확대 · 축소합니다 — 자르는 깊이는 3D 화면 오른쪽의 깊이 막대로"),
         "walk": ("휠: 각막부터 망막까지 들어가기 · 나오기 · 확대: 위쪽 확대 바 · Ctrl+휠",
                  "<b>휠</b> 각막부터 망막까지 들어가기 · 나오기 · <b>확대 바</b> · <b>Ctrl+휠</b>",
                  "앞으로 굴리면 각막 → 앞방 → 동공 → 수정체 → 유리체 → 망막으로 들어가고, 뒤로 굴리면 나옵니다 · "
@@ -1348,7 +1354,7 @@ class MainWindow(QMainWindow):
     def _set_wheel3d(self, mode: str, save: bool = True) -> None:
         """마우스 휠 (3D 설정 · 설정 → 일반): what the wheel over the eye does — 깊이 (the cut's depth),
         확대, or 들어가기 (in from the cornea; the wheel picks the anterior segment itself)."""
-        mode = mode if mode in self.WHEEL_TEXTS else "depth"
+        mode = mode if mode in self.WHEEL_TEXTS else "zoom"
         eye = self.eye3d
         was, eye.wheel_mode = eye.wheel_mode, mode
         eye.pick_walk = mode == "walk" or bool(self.settings.walk_click3d)
@@ -1431,10 +1437,12 @@ class MainWindow(QMainWindow):
             "<b>3D 안구</b><br>"
             "위 막대: 간단히 / 자세히 (가벼운 기본 모형 / 실제 해부 구조) · 외부 / 내부 · 확대 바 · ▶ 슬릿 스캔 · "
             "크게 보기 · 설정 (나머지 설정을 여닫기 — 설정 메뉴 → 3D 보기 설정… 으로도 엽니다)<br>"
-            "마우스 휠 — 설정 패널의 <b>마우스 휠</b>(또는 설정 → 일반 → 3D 마우스 휠)에서 고릅니다: <b>깊이</b> 자르는 깊이 "
-            "(앞으로 굴리면 깊게, 뒤로 굴리면 닫힘 · 내부에서는 확대) / <b>확대</b> 커서 쪽으로 / <b>들어가기</b> 각막부터 망막까지 · "
-            "각막을 누르면 그동안 휠로 들어가기(끌 수 있음) · 확대는 언제나: 확대 바, Ctrl+휠, 오른쪽 드래그, +/−<br>"
-            "설정 — <b>마우스 휠</b>: 깊이 · 확대 · 들어가기, 각막을 누르면 휠로 들어가기 / <b>망막 입체</b>: 표면 높낮이 · 높이 · 입체 조명 / <b>시점</b>: 정면 · 처음 시점 · 화면 저장 / "
+            "<b>깊이 막대</b> (3D 화면 오른쪽): 핸들을 위아래로 끌거나 막대 위에서 휠 — 맨 위 닫힘, 아래로 갈수록 깊게 자릅니다 "
+            "(세로 단면은 맨 아래가 정확히 반)<br>"
+            "마우스 휠 — 처음에는 <b>확대</b>(커서 쪽으로). 설정 패널의 <b>마우스 휠</b>(또는 설정 → 일반 → 3D 마우스 휠)에서 "
+            "<b>깊이</b> 자르는 깊이 (앞으로 굴리면 깊게, 뒤로 굴리면 닫힘 · 내부에서는 확대) / <b>들어가기</b> 각막부터 망막까지로 "
+            "바꿀 수 있습니다 · 각막을 누르면 그동안 휠로 들어가기(끌 수 있음) · 확대는 언제나: 확대 바, Ctrl+휠, 오른쪽 드래그, +/−<br>"
+            "설정 — <b>마우스 휠</b>: 확대 · 깊이 · 들어가기, 각막을 누르면 휠로 들어가기 / <b>망막 입체</b>: 표면 높낮이 · 높이 · 입체 조명 / <b>시점</b>: 정면 · 처음 시점 · 화면 저장 / "
             "<b>들어가며 보기</b>: ▶ 들어가기 · 위치 · 전안부 선택 / <b>안구 열기</b>: 앞쪽 절개 · 세로 단면, 깊이, 공막 투명도, "
             "망막 투시 / <b>슬릿 스캔</b>: 방향 ↓ ↑ → ← · 상하좌우 / <b>효과</b>: 자동 회전 · 화각 표시 · 사진 나란히 / "
             "<b>표시</b>: 단순하게 보기 · 시신경 · 외안근 · 각도 격자 / <b>사진 맞춤</b>: 실제 위치에 맞춤 · 화각 · "
@@ -3417,6 +3425,7 @@ class MainWindow(QMainWindow):
         self.s_cut.setValue(self._cut_values[mode])
         for w in (self.c_view3d, self.s_cut):
             w.blockSignals(False)
+        self.depth_bar.set_bottom("절반" if mode == "section" else "깊게")
         self._sync_view_buttons()
         self.s_cut.setEnabled(self.r_out.isChecked())
 
@@ -3925,9 +3934,10 @@ class MainWindow(QMainWindow):
     # -- 효과: 입체 조명 · 자동 회전 -----------------------------------------------------------
     RELIEF = 0.6            # strength of 입체 조명
     SPIN = 10.0             # 자동 회전, degrees per second
-    UI_VERSION = 4          # 2: the dark look — 자세히, 유리 공막 and 자동 회전 from the start; 3: the 3D tab
+    UI_VERSION = 5          # 2: the dark look — 자세히, 유리 공막 and 자동 회전 from the start; 3: the 3D tab
                             # as the web page (자세히, 황반·유두 자동으로 찾기); 4: the 3D eye shows the
-                            # original photo (망막 입체 — 표면 높낮이 and 입체 조명 — off from the start)
+                            # original photo (망막 입체 — 표면 높낮이 and 입체 조명 — off from the start);
+                            # 5: the 3D wheel zooms, the depth is on the 깊이 막대 beside the eye
 
     def _on_relief(self, on: bool) -> None:
         self.settings.relief3d = bool(on)

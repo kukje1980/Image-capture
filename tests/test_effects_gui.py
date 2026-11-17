@@ -104,7 +104,7 @@ def test_browsing_reads_ahead_and_effects_follow_their_controls(app, tmp_path, d
         assert not w.inspector.isVisible() and s.panel3d is False
         w._open_3d_settings()
         assert w.inspector.isVisible() and w.b_inspector.isChecked()
-        # the wheel over the eye (outside) sets 깊이 — forward cuts deeper — and leaves the zoom alone
+        # the wheel over the eye zooms from the start and leaves the depth alone (that is the 깊이 막대's)
         from PySide6.QtCore import QPoint, QPointF, Qt
         from PySide6.QtGui import QWheelEvent
 
@@ -116,13 +116,10 @@ def test_browsing_reads_ahead_and_effects_follow_their_controls(app, tmp_path, d
 
         eye.reset_view()
         cut0, mag0 = w.s_cut.value(), eye.magnification
+        assert s.wheel3d == "zoom" and eye.wheel_mode == "zoom"
         wheel(2)
-        assert w.s_cut.value() == cut0 - 8 and eye.cut == pytest.approx((cut0 - 8) / 100.0)
-        wheel(-3)
-        assert w.s_cut.value() == cut0 + 4 and eye.magnification == pytest.approx(mag0)
-        wheel(-100)                                        # the end of the slider: the closed eye
-        assert w.s_cut.value() == 100 and eye.cut == 1.0
-        w.s_cut.setValue(cut0)
+        assert w.s_cut.value() == cut0 and eye.magnification > mag0
+        eye.reset_view()
         # 확대 바: the magnification on a logarithmic bar, both ways
         assert w.s_zoom3d.value() == 0 and w.lbl_zoom3d.text() == "배율 ×1.0"
         w.s_zoom3d.setValue(100)
@@ -270,11 +267,102 @@ def test_3d_shows_the_original_photo_until_relief_is_switched_on(app, tmp_path):
     new = Settings(library_dir=str(tmp_path / "lib"), watch_on_startup=False, auto_detect=False)
     assert open_window(new) == (False, False, False, 0.0, False)
     assert (new.view3d_detail, new.auto_rotate3d, new.glass3d, new.autofind3d) == ("detailed", True, 80, True)
+    assert new.wheel3d == "zoom"
+
+    # UI version 4: the wheel was 깊이 — it zooms now (the depth has its bar), once; 망막 입체 as they had it
+    v4 = Settings(library_dir=str(tmp_path / "lib"), watch_on_startup=False, auto_detect=False,
+                  ui_version=4, wheel3d="depth", surface3d=True, relief3d=True)
+    assert open_window(v4) == (True, True, True, MainWindow.RELIEF, True)
+    assert (v4.ui_version, v4.wheel3d) == (MainWindow.UI_VERSION, "zoom")
+    v4.wheel3d = "depth"                                               # chosen again afterwards: kept
+    open_window(v4)
+    assert v4.wheel3d == "depth"
+
+
+def test_3d_depth_bar_beside_the_eye(app, tmp_path, demo_dir, import_and_wait):
+    """깊이 막대: a vertical bar over the eye's right edge sets the depth of the cut — drag it (top: 닫힘,
+    down: deeper), press on it, or turn the wheel over it. It is the 깊이 slider of the settings panel shown
+    where the eye is: one value, its range (세로 단면: down to 절반), and only while outside the eye."""
+    from PySide6.QtCore import QPoint, QPointF, Qt
+    from PySide6.QtGui import QWheelEvent
+    from PySide6.QtTest import QTest
+
+    from fundusview.config import Settings
+    from fundusview.db import Database
+    from fundusview.ui import depth_bar
+    from fundusview.ui.main_window import MainWindow
+
+    s = Settings(library_dir=str(tmp_path / "lib"), stable_seconds=0.05, rescan_seconds=0, watch_on_startup=False,
+                 auto_detect=False)
+    db = Database(tmp_path / "lib" / "fundus.db")
+    w = MainWindow(s, db)
+    try:
+        w.resize(1500, 950)
+        w.show()
+        import_and_wait(app, w, [demo_dir / "RetiCam"])
+        w._select_patient_ref(db.find_patient("PID20260310-0A1B2C3D")["id"])
+        w.patient_list.hide()
+        w._go("3d")
+        app.processEvents()
+        eye, bar = w.eye3d, w.depth_bar
+        # on the eye, at its right edge, half way down; it says what the depth is
+        assert bar.parentWidget() is eye and bar.isVisible()
+        g = bar.geometry()
+        assert g.right() == eye.width() - depth_bar.MARGIN - 1 and abs(g.center().y() - eye.height() // 2) <= 1
+        assert w.s_cut.value() == 25 and bar.text() == f"{round(100 * 75 / 130)}%" and bar.bottom_text == "깊게"
+        # dragged to the top: the closed eye; to the bottom: the deepest cut — the eye follows
+        x = g.width() // 2
+        y0, y1 = bar._track()
+        QTest.mousePress(bar, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(x, round(bar.handle_y())))
+        QTest.mouseMove(bar, QPoint(x, int(y0) - 30))
+        assert w.s_cut.value() == 100 and eye.cut == 1.0 and bar.text() == "닫힘"
+        QTest.mouseMove(bar, QPoint(x, int(y1) + 30))
+        QTest.mouseRelease(bar, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(x, int(y1) + 30))
+        assert w.s_cut.value() == -30 and eye.cut == pytest.approx(-0.3) and bar.text() == "100%"
+        QTest.mouseClick(bar, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
+                         QPoint(x, round((y0 + y1) / 2)))          # a press half way: half the depth
+        assert w.s_cut.value() == 35 and bar.handle_y() == pytest.approx((y0 + y1) / 2, abs=2)
+
+        def wheel(notches):
+            pos = QPointF(x, (y0 + y1) / 2)
+            bar.wheelEvent(QWheelEvent(pos, QPointF(bar.mapToGlobal(pos.toPoint())), QPoint(0, 0),
+                                       QPoint(0, int(notches * 120)), Qt.MouseButton.NoButton,
+                                       Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False))
+
+        mag = eye.magnification
+        wheel(-2)                                                    # down: deeper (the handle goes down)
+        assert w.s_cut.value() == 27 and eye.magnification == pytest.approx(mag)
+        wheel(3)
+        assert w.s_cut.value() == 39
+        w.s_cut.setValue(25)                                         # the panel's slider moves the bar
+        assert bar.fraction() == pytest.approx(75 / 130)
+        # 세로 단면: from closed down to through the axis (절반)
+        w._view_buttons["section"].click()
+        w._tween._finish()
+        assert bar.bottom_text == "절반" and (w.s_cut.minimum(), w.s_cut.value()) == (0, 0) and bar.text() == "100%"
+        w._view_buttons["front"].click()
+        w._tween._finish()
+        assert bar.bottom_text == "깊게" and w.s_cut.value() == 25
+        # inside the eye there is no cut: no bar; outside again, the bar
+        w.r_in.setChecked(True)
+        app.processEvents()
+        assert not bar.isVisible()
+        w.r_out.setChecked(True)
+        app.processEvents()
+        assert bar.isVisible()
+        # the window resized: the bar stays at the eye's right edge
+        w.resize(1200, 800)
+        app.processEvents()
+        assert bar.geometry().right() == eye.width() - depth_bar.MARGIN - 1
+    finally:
+        w.close()
+        db.close()
 
 
 def test_3d_wheel_mode_is_chosen_in_the_settings(app, tmp_path, demo_dir, import_and_wait, monkeypatch):
-    """마우스 휠 (3D 설정 · 설정 → 일반): what the wheel over the eye does — 깊이 (the cut's depth, the
-    first setting), 확대 (toward the cursor) or 들어가기 (in from the cornea, without picking it first);
+    """마우스 휠 (3D 설정 · 설정 → 일반): what the wheel over the eye does — 확대 (toward the cursor, the
+    first setting; the depth is on the 깊이 막대), 깊이 (the cut's depth) or 들어가기 (in from the cornea,
+    without picking it first);
     Ctrl+wheel zooms in all of them. Whether a click on the cornea picks the way in (the wheel then walks
     in meanwhile) is a switch of its own. Both are remembered."""
     from PySide6.QtCore import QPoint, QPointF, Qt
@@ -306,27 +394,30 @@ def test_3d_wheel_mode_is_chosen_in_the_settings(app, tmp_path, demo_dir, import
                                        QPoint(0, int(notches * 120)), Qt.MouseButton.NoButton, mods,
                                        Qt.ScrollPhase.NoScrollPhase, False))
 
-        # 깊이: the first setting — the wheel cuts deeper, Ctrl+wheel zooms
-        assert s.wheel3d == "depth" and s.walk_click3d is True
-        assert eye.wheel_mode == "depth" and eye.pick_walk and w._wheel_buttons["depth"].isChecked()
+        # 확대: the first setting — the wheel zooms toward the cursor and leaves the depth alone (the 깊이 막대's)
+        assert s.wheel3d == "zoom" and s.walk_click3d is True
+        assert eye.wheel_mode == "zoom" and eye.pick_walk and w._wheel_buttons["zoom"].isChecked()
         assert w.c_walkclick3d.isEnabled() and w.c_walkclick3d.isChecked()
-        assert "자르는 깊이" in eye.toolTip() and "각막 클릭" in eye.toolTip() and "자르는 깊이" in w.keys3d.text()
+        assert "확대" in w.lbl_wheel3d.text() and "휠</b> 커서 쪽으로 확대" in w.keys3d.text()
+        assert "깊이 막대" in eye.toolTip() and "각막 클릭" in eye.toolTip() and "깊이 막대" in w.keys3d.text()
         eye.reset_view()
         cut0, mag0 = w.s_cut.value(), eye.magnification
+        wheel(2)
+        assert w.s_cut.value() == cut0 and eye.magnification > mag0
+        eye.reset_view()
+
+        # 깊이: the wheel cuts deeper, Ctrl+wheel zooms
+        w._wheel_buttons["depth"].click()
+        assert s.wheel3d == "depth" and eye.wheel_mode == "depth" and w._wheel_buttons["depth"].isChecked()
+        assert "자르는 깊이" in eye.toolTip() and "자르는 깊이" in w.keys3d.text()
+        mag0 = eye.magnification
         wheel(2)
         assert w.s_cut.value() == cut0 - 8 and eye.magnification == pytest.approx(mag0)
         wheel(2, Qt.KeyboardModifier.ControlModifier)
         assert w.s_cut.value() == cut0 - 8 and eye.magnification > mag0
+        wheel(-100)                                        # the end of the slider: the closed eye
+        assert w.s_cut.value() == 100 and eye.cut == 1.0
         w.s_cut.setValue(cut0)
-        eye.reset_view()
-
-        # 확대: the wheel zooms toward the cursor and leaves the depth alone
-        w._wheel_buttons["zoom"].click()
-        assert s.wheel3d == "zoom" and eye.wheel_mode == "zoom" and w._wheel_buttons["zoom"].isChecked()
-        assert "확대" in w.lbl_wheel3d.text() and "휠</b> 커서 쪽으로 확대" in w.keys3d.text()
-        mag0 = eye.magnification
-        wheel(2)
-        assert w.s_cut.value() == cut0 and eye.magnification > mag0
         eye.reset_view()
 
         # 들어가기: the wheel goes in from the cornea at once (no pick first), and back out; Ctrl+wheel zooms
@@ -367,7 +458,7 @@ def test_3d_wheel_mode_is_chosen_in_the_settings(app, tmp_path, demo_dir, import
         assert saved.wheel3d == "depth" and saved.walk_click3d is False
         dlg = SettingsDialog(s, w)
         assert dlg.wheel3d.currentData() == "depth" and not dlg.walk_click3d.isChecked()
-        assert [dlg.wheel3d.itemData(k) for k in range(dlg.wheel3d.count())] == ["depth", "zoom", "walk"]
+        assert [dlg.wheel3d.itemData(k) for k in range(dlg.wheel3d.count())] == ["zoom", "depth", "walk"]
         dlg.wheel3d.setCurrentIndex(dlg.wheel3d.findData("walk"))         # (들어가기: the switch does not matter)
         assert not dlg.walk_click3d.isEnabled()
         dlg.wheel3d.setCurrentIndex(dlg.wheel3d.findData("depth"))
