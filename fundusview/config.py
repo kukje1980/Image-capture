@@ -99,6 +99,8 @@ class Settings:
     # "grid" = VK-2 방식 — 사진 16장을 한 화면에 (16장 보기), 골라서 [멀티]로 모아 보기.
     # Anything else (an older "overview") is the first way.
     open_view: str = "odos"
+    # 카메라 각도 보정 (calibrate.py): the lens curve measured from the photos, {camera profile: radial_c}
+    lens_curves: dict[str, float] = field(default_factory=dict)
     montage_fast: bool = False      # 몽타주 빠르게: the saved picture at most 2400 px instead of 4000
     # Automatic import (autosetup.py): an always-watched inbox folder and
     # detection of the capture software's folders at every start.

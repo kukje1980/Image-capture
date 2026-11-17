@@ -19,7 +19,7 @@ onto the 3D eye.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from .projection import DEFAULT_RADIAL_C, DEFAULT_VIEWPOINT
 
@@ -114,8 +114,35 @@ PROFILES: dict[str, CameraProfile] = {
 AUTO = "auto"
 
 
+# 카메라 각도 보정 (calibrate.py): the lens curve of a camera as measured from this clinic's own photos,
+# in place of the provisional one above — {profile key: radial_c}, kept in the settings
+_LENS_CURVES: dict[str, float] = {}
+
+
+def set_lens_curves(curves: dict | None) -> None:
+    """The measured lens curves (``Settings.lens_curves``) every ``get_profile`` answers with from now on."""
+    _LENS_CURVES.clear()
+    for key, c in (curves or {}).items():
+        try:
+            c = float(c)
+        except (TypeError, ValueError):
+            continue
+        if key in PROFILES and 0.0 <= c <= 0.9:
+            _LENS_CURVES[key] = c
+
+
+def lens_curve(key: str) -> float | None:
+    """The measured lens curve of a camera (None: the built-in one is used)."""
+    return _LENS_CURVES.get(key)
+
+
+def _calibrated(p: CameraProfile) -> CameraProfile:
+    c = _LENS_CURVES.get(p.key)
+    return p if c is None else replace(p, radial_c=c)
+
+
 def get_profile(key: str | None) -> CameraProfile:
-    return PROFILES.get(key or "", PROFILES["generic"])
+    return _calibrated(PROFILES.get(key or "", PROFILES["generic"]))
 
 
 def profile_for_device(device: str | None) -> CameraProfile | None:
@@ -124,5 +151,5 @@ def profile_for_device(device: str | None) -> CameraProfile | None:
     u = device.upper()
     for p in PROFILES.values():
         if any(tok in u for tok in p.match_devices):
-            return p
+            return _calibrated(p)
     return None

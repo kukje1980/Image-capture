@@ -49,7 +49,7 @@ from ..config import Settings
 from ..db import Database
 from ..importer import ImportResult, safe_component
 from ..models import MODALITY_LABELS
-from ..profiles import get_profile
+from ..profiles import get_profile, set_lens_curves
 from ..review import EYES, eye_series
 from .. import share
 from ..watcher import ImportService
@@ -220,6 +220,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.settings = settings
         self.db = db
+        set_lens_curves(settings.lens_curves)         # 카메라 각도 보정: the measured lens of the camera
         if not settings.smooth_motion:        # 보기 → 부드러운 움직임 (off: everything changes at once)
             motion.set_enabled(False)
         if settings.ui_version < self.UI_VERSION:     # a new look: its 3D defaults, once
@@ -448,6 +449,7 @@ class MainWindow(QMainWindow):
 
         m = mb.addMenu("설정(&S)")
         m.addAction(A["settings"])
+        m.addAction("카메라 각도 보정…", self.open_calibration)
 
         m = mb.addMenu("도움말(&H)")
         m.addAction("마우스·단축키", self._show_help)
@@ -1447,6 +1449,18 @@ class MainWindow(QMainWindow):
             e.acceptProposedAction()
             # after the drop has returned: the file manager must not wait for the dialog
             QTimer.singleShot(0, lambda: self.review_import(paths))
+
+    def open_calibration(self) -> None:
+        """설정 → 카메라 각도 보정: the lens curve of the wide-field camera from the photos (calibrate.py)."""
+        from .calibrate_dialog import CalibrationDialog
+
+        self._calibration_dlg = dlg = CalibrationDialog(self.db, self.settings, self, on_applied=self._lens_changed)
+        dlg.exec()
+
+    def _lens_changed(self) -> None:
+        """Another lens curve: the photo on screen, its measurements and the 3D eye follow."""
+        if self.current is not None:
+            self._show_image(self.current["id"])
 
     def _open_settings(self) -> None:
         dlg = SettingsDialog(self.settings, self)
