@@ -38,7 +38,7 @@ from .config import ACTION_MOVE, ACTION_REFERENCE, Settings, WatchFolder
 from .db import Database
 from .extract import extract_metadata, is_dicom
 from .models import FIELD_LABELS, ExtractedMeta, PatientAssign
-from .profiles import IGNORED_EXTS, IMAGE_EXTS
+from .profiles import IGNORED_EXTS, IMAGE_EXTS, get_profile
 from .projection import theta_max
 
 
@@ -290,7 +290,8 @@ class Importer:
         fovea = None                    # with the disc it says where the photo lies on the eye (3D)
         if disc is not None:
             cam = placement.Camera(*circle, meta.fov_deg or profile.fov_deg, meta.fov_type or profile.fov_type,
-                                   meta.projection or profile.projection, profile.viewpoint, profile.radial_c)
+                                   meta.projection or profile.projection, profile.viewpoint,
+                                   get_profile(profile.key).radial_c)   # (the measured lens curve)
             # an eye the file does not name: the macula is looked for on both sides of the disc, and the
             # side it is on (temporal of the disc) tells the eye better than where the disc lies
             found = imaging.detect_fovea(rgb, cam, disc[:2], None if guessed else meta.laterality, with_side=True)
