@@ -43,7 +43,7 @@ from PySide6.QtGui import QAction, QActionGroup, QBrush, QColor, QCursor, QDeskt
     QKeySequence, QPainter, QPen, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDockWidget, QDoubleSpinBox, QFileDialog,
-    QFrame, QGraphicsRectItem, QHBoxLayout, QHeaderView, QLabel, QListWidget,
+    QFrame, QGraphicsRectItem, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QListWidget,
     QListWidgetItem, QMainWindow, QMenu,
     QMessageBox, QPushButton, QScrollArea, QSizePolicy, QSlider, QSplitter, QStackedWidget, QStatusBar, QStyle,
     QTableWidget,
@@ -58,6 +58,7 @@ from ..importer import ImportResult, safe_component
 from ..models import MODALITY_LABELS
 from ..profiles import get_profile, set_lens_curves
 from ..review import EYES, eye_series
+from ..samples import SampleLibrary
 from .. import share
 from ..watcher import ImportService
 from .dialogs import WHEEL3D, ImageDialog, PatientDialog, SettingsDialog, source_label
@@ -74,6 +75,7 @@ from .montage_dialog import MontageDialog, MontageSource, confirm_sources
 from .edge_nav import EdgeNav
 from .keys import IS_MAC, keys
 from .multi_view import CLOSEUP_MAX, MultiView
+from .sample_compare import SampleCompareDialog
 from .patient_list import SEX_LABEL, UNASSIGNED, PatientListWindow, age_on
 from .photo_grid import GridPhoto, PhotoGrid
 from .review_view import ReviewPage
@@ -315,6 +317,8 @@ class MainWindow(QMainWindow):
         self._shown_view = ""                # the view on screen (_on_tab) …
         self._detail_from = ""               # … and the one Detail was opened from (a double click goes back)
         self._montage_dlg = None             # the open 몽타주 editor (tests reach it here)
+        self._samples: SampleLibrary | None = None   # 질환 샘플 (in the library folder)
+        self._sample_dlg: SampleCompareDialog | None = None
         self._pick_pre: tuple | None = None  # (image id, picks, _multi_auto before the click, when) — the
                                              # double click it begins undoes it
         self._per_photo: dict[int, dict] = {}  # processing of each picked photo {"state", "history"}
@@ -501,6 +505,16 @@ class MainWindow(QMainWindow):
         m.addAction(A["edit"])
         m.addAction("환자 정보 수정…", self._edit_patient)
         m.addAction("환자 삭제 (영상은 미분류로)…", self._delete_patient)
+
+        # 질환 샘플: sample photos of retinal diseases, by disease, beside the patient's photo (sample_compare.py)
+        m = mb.addMenu("질환 샘플(&D)")
+        self.act_samples = m.addAction("질환 샘플과 비교…", self.open_samples)
+        self.act_samples.setShortcut(QKeySequence("Ctrl+D"))
+        self.act_samples.setToolTip("보고 있는 사진을 질환별 샘플 사진과 나란히 비교 (Ctrl+D)")
+        m.addAction("보고 있는 사진을 질환 샘플로 등록…", self.register_sample)
+        m.addSeparator()
+        m.addAction("질환 샘플 보관 폴더 열기", lambda: QDesktopServices.openUrl(
+            QUrl.fromLocalFile(str(self.samples.root.mkdir(parents=True, exist_ok=True) or self.samples.root))))
 
         m = mb.addMenu("설정(&S)")
         m.addAction(A["settings"])
@@ -1519,12 +1533,16 @@ class MainWindow(QMainWindow):
             "(밝기·대비·감마·Red-free·선명하게 …)<br>"
             "<b>Simple</b>: 누를 때마다 최신 OD | OS 두 장 — OD 왼쪽 · OS 오른쪽. 사진 목록을 클릭하면 더하고(번호) "
             "다시 클릭하면 뺍니다 (모두 빼면 모든 사진, 화면 분할로 장수 고르기)<br>"
+            "Simple · Multi의 칸 좌우 끝 ◀ ▶ (칸을 누른 뒤 ← →): 그 칸에 같은 눈의 이전 / 다음 사진 · "
+            "메뉴 옆 <b>황반 · 디스크</b>: 사진마다 아래에 황반과 시신경 유두 확대 (4칸 이하)<br>"
             "<b>Detail</b> (어느 사진이든 더블클릭): 큰 사진 + 오른쪽에 황반과 시신경 유두 확대 (큰 사진 위 점선 틀이 그 자리). "
             "사진 좌우 끝의 ◀ ▶ 또는 ← → 키: 이전 / 다음 사진 · 사진 목록을 클릭하면 그 사진<br>"
             "칸 제목을 누르거나 칸을 더블클릭하면 큰 사진을 그 쪽으로 확대 · 큰 사진 전체로: 0 · "
             "잘못 찾았으면 큰 사진에서 오른쪽 클릭 → 황반 / 시신경 유두로 지정<br>"
             "<b>3D</b>: 보고 있는 사진을 3D 안구로 — Simple에 두 장이면 두 장 모두, 여러 장 골라 두었으면 한 장 / 모두를 물어봄(9장까지) · "
-            "한 번 더 누르면 보던 화면으로<br><br>"
+            "한 번 더 누르면 보던 화면으로 · 여러 장 3D: 안구마다 오른쪽 깊이 막대<br>"
+            "<b>질환 샘플</b> (Ctrl+D): 보고 있는 사진과 질환별 샘플 사진을 나란히 — 질환 추가 · 샘플 등록(파일 · 보고 있는 사진) · "
+            "설명 · 함께 확대 · 이동<br><br>"
             "<b>사진 목록 (화면 아래)</b><br>"
             "위 줄 OD · 아래 줄 OS (줄마다 최신 사진부터) — 눈은 줄 왼쪽에 한 번만 표시하고, 사진 위에는 날짜만 씁니다<br>"
             "보기 → 사진 목록 표시: 날짜 · 종류(컬러 · 몽타주 …) · 눈별로 두 줄 (끄면 한 줄) · 미상 사진은 눈 고르기 → 미상<br><br>"
@@ -2735,6 +2753,7 @@ class MainWindow(QMainWindow):
             saved = self._per_photo.get(row["id"], {})
             self._load_state(saved.get("state", {}), saved.get("history"))
         self.view2d.set_rgb(self._display_rgb(row))
+        self._sync_samples()
         self._sync_palette()
         row = self.current = self._ensure_fovea(row)
         self.view2d.set_overlays(*self._marks_of(row))
@@ -2871,6 +2890,7 @@ class MainWindow(QMainWindow):
             self.view2d.set_rgb(rgb, keep_view=True)
             if self.c_adj3d.isChecked():
                 self._mark_3d_dirty()
+            self._sync_samples()
         cid = self.current["id"]
         if cid in self._picks:                # this photo's own processing, kept for the multi view
             self._per_photo[cid] = {"state": self._snapshot(), "history": list(self._history)}
@@ -4538,6 +4558,80 @@ class MainWindow(QMainWindow):
             r = vis.intersected(QRectF(view._pix.pixmap().rect()))
             roi.setRect(r)
             roi.setVisible(not r.isEmpty())
+
+    # -- 질환 샘플 (sample_compare.py, samples.py) ---------------------------------------------------
+    @property
+    def samples(self) -> SampleLibrary:
+        if self._samples is None or self._samples.root.parent != self.settings.library:
+            self._samples = SampleLibrary(self.settings.library)
+        return self._samples
+
+    def _sample_photo(self, masked: bool = False) -> tuple[np.ndarray, str] | None:
+        """The photo on screen as shown (its processing too) and what it is (eye · date · kind) — for the
+        질환 샘플 window. ``masked``: black outside the photo's circle (to be kept as a sample: what a camera
+        writes there — the patient's name, ID — does not go along)."""
+        row = self.current
+        rgb = self._display_rgb(row) if row is not None else None
+        if rgb is None:
+            return None
+        if masked:
+            circle = self._marks_of(row)[0]
+            if circle is None:
+                c = imaging.detect_circle(rgb)
+                circle = c if c else None
+            if circle is not None:
+                cx, cy, r = circle
+                h, w = rgb.shape[:2]
+                yy, xx = np.ogrid[:h, :w]
+                rgb = rgb.copy()
+                rgb[(xx - cx) ** 2 + (yy - cy) ** 2 > (r * 1.01) ** 2] = 0
+        eye = row["laterality"] or ""
+        kind = MODALITY_LABELS.get(row["modality"] or "", row["modality"] or "")
+        return rgb, " · ".join(t for t in (eye, row["exam_date"] or "", kind) if t)
+
+    def open_samples(self) -> SampleCompareDialog:
+        """질환 샘플 → 질환 샘플과 비교 (Ctrl+D): the photo on screen beside sample photos of retinal diseases."""
+        dlg = self._sample_dlg
+        if dlg is None:
+            dlg = self._sample_dlg = SampleCompareDialog(self.samples, self._dialog_parent(),
+                                                         take_current=self._sample_photo)
+        else:
+            dlg.refresh_patient()
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
+        return dlg
+
+    def _sync_samples(self) -> None:
+        """The 질환 샘플 window, when open, shows the photo on screen now."""
+        if self._sample_dlg is not None and self._sample_dlg.isVisible():
+            self._sample_dlg.refresh_patient()
+
+    def register_sample(self) -> None:
+        """질환 샘플 → 보고 있는 사진을 질환 샘플로 등록: which disease (or a new one), a note; saved as shown,
+        black outside the photo's circle, under a name of its own."""
+        got = self._sample_photo(masked=True)
+        if got is None:
+            QMessageBox.information(self._dialog_parent(), "질환 샘플", "사진을 먼저 고르세요.")
+            return
+        names = self.samples.diseases()
+        disease, ok = QInputDialog.getItem(self._dialog_parent(), "보고 있는 사진을 질환 샘플로",
+                                           "질환 (새 이름을 적으면 추가됩니다)", names, 0, True)
+        if not ok or not disease.strip():
+            return
+        note, ok = QInputDialog.getText(self._dialog_parent(), "보고 있는 사진을 질환 샘플로",
+                                        f"'{disease.strip()}' 샘플의 설명 (비워 두어도 됩니다)\n"
+                                        "사진 원 밖(환자 이름 등이 찍히는 곳)은 검게 저장합니다")
+        if not ok:
+            return
+        try:
+            path = self.samples.add_rgb(disease.strip(), got[0], note)
+        except (ValueError, OSError) as e:
+            QMessageBox.warning(self._dialog_parent(), "질환 샘플", f"등록하지 못했습니다: {e}")
+            return
+        self.lbl_status.setText(f"질환 샘플 '{disease.strip()}'에 등록했습니다 ({path.name}) — 질환 샘플과 비교: Ctrl+D")
+        if self._sample_dlg is not None:
+            self._sample_dlg._fill_diseases(select=disease.strip())
 
     # -- compare -------------------------------------------------------------------
     def _set_compare(self, image_id: int) -> None:
