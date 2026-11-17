@@ -103,11 +103,30 @@ def test_cut_open_eye_shows_the_retina(eye, detail):
     assert r > g > b and r > 80                        # fundus orange inside the eye cup
 
 
+def test_opened_15_percent_deep_no_lens_iris_or_cornea_hides_the_retina(eye):
+    """깊이 막대 at 15 % or more: the lens (and its zonules), the iris and the cornea are left out, so the
+    opened eye shows its inside unhidden; less deep they are there as ever."""
+    from fundusview.ui.eye3d import FRONT_CLEAR_CUT
+
+    v = eye[0]
+    front = dict(yaw=0.0, pitch=0.0, dist=3.3)
+    near_pole = (0.18, 0.12, -0.95)                           # on the photo, seen through the pupil
+
+    def seen(cut):
+        _render(eye, "detailed", cut=cut, pose=front, show_nerve=False)
+        return _at(v, near_pole, 2)
+
+    shallow, deep, deepest = seen(FRONT_CLEAR_CUT + 0.03), seen(FRONT_CLEAR_CUT - 0.03), seen(-0.2)
+    assert max(abs(a - c) for a, c in zip(deep, deepest)) <= 6     # nothing in front of the photo now …
+    assert max(abs(a - c) for a, c in zip(shallow, deep)) > 12     # … where the iris and the lens were
+    assert FRONT_CLEAR_CUT == pytest.approx(1.0 - 1.3 * 0.15)  # (15 % on the 깊이 막대: 100 − 0.15 × 130)
+
+
 @pytest.mark.parametrize("detail", ["simple", "detailed"])
-def test_the_retina_beyond_the_photo_is_dark_not_made_up(eye, detail):
-    """사진 밖: with a photo (135° here) the retina it does not show is plain dark grey — no orange
-    fundus pattern made up there, nothing laid over the photo; without a photo the eye model's own
-    orange fundus as ever."""
+def test_the_retina_beyond_the_photo_is_white_not_made_up(eye, detail):
+    """사진 밖: with a photo (135° here) the retina it does not show is plain white, solid — no orange
+    fundus pattern made up there, nothing laid over the photo (it keeps its colours); without a photo
+    the eye model's own orange fundus as ever."""
     import math
 
     v = eye[0]
@@ -119,9 +138,9 @@ def test_the_retina_beyond_the_photo_is_dark_not_made_up(eye, detail):
     _render(eye, detail, cut=0.25, yaw=38.0, pitch=18.0, dist=3.3)
     r, g, b = _at(v, on_wall(0, 0), 1)                 # the posterior pole: the photo, as it is
     assert r > g + 40 > b + 40
-    for theta in (85, 100):                            # beyond the photo's 67.5°: dark and grey
+    for theta in (85, 100):                            # beyond the photo's 67.5°: white (shaded), not orange
         r, g, b = _at(v, on_wall(theta, 180), 1)
-        assert max(r, g, b) < 50 and max(r, g, b) - min(r, g, b) < 8
+        assert min(r, g, b) > 120 and max(r, g, b) - min(r, g, b) < 20
     try:
         v.set_image(None)
         _render(eye, detail, cut=0.25, yaw=38.0, pitch=18.0, dist=3.3)
@@ -245,10 +264,21 @@ def test_glass_sclera_keeps_the_photographed_retina_solid(eye, detail):
     r, g, b = some
     assert r > g + 50 and g > b and b < 100                          # the fundus, seen from behind …
     assert max(abs(a - c) for a, c in zip(some, full)) <= 6          # … as solid at 60 % as at 100 %
-    white = _render(eye, detail, pose=side, show_nerve=False)(0.36, 0.5)                # in front of the photo
-    frost = _render(eye, detail, pose=side, show_nerve=False, glass=0.6)(0.36, 0.5)
-    clear = _render(eye, detail, pose=side, show_nerve=False, glass=1.0)(0.36, 0.5)
-    assert sum(white) > sum(frost) + 60 and sum(frost) > sum(clear) + 60
+    # beside the photo: the inside of the eye shows through — without a photo the model's darker fundus,
+    # so how clear the glass is can be told (with a photo the inside beside it is white, as the sclera)
+    v = eye[0]
+    try:
+        v.set_image(None)
+        white = _render(eye, detail, pose=side, show_nerve=False)(0.36, 0.5)
+        frost = _render(eye, detail, pose=side, show_nerve=False, glass=0.6)(0.36, 0.5)
+        clear = _render(eye, detail, pose=side, show_nerve=False, glass=1.0)(0.36, 0.5)
+        assert sum(white) > sum(frost) + 60 and sum(frost) > sum(clear) + 60
+    finally:
+        from fundusview import demo, imaging
+
+        rgb = demo.synth_fundus(eye="OD", size=(512, 540))
+        circle = imaging.detect_circle(rgb)
+        v.set_image(rgb, imaging.fundus_alpha(rgb, circle), circle)
     look = dict(mode="inside", in_yaw=0.0, in_pitch=0.0, in_fov=60.0)                   # from inside: no glass
     _render(eye, detail, **look)
     plain = _frame(eye)

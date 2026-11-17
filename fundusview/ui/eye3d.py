@@ -251,9 +251,9 @@ uniform float u_relief;   // 입체 조명: vessels and the disc catch a raking 
 uniform vec2  u_texel;    // one texel of the photo (texture coordinates)
 uniform vec3  u_rlight;   // direction to that light (the photo's frame)
 
-// 사진 밖: with a photo, the retina it does not show is not made up — no orange fundus pattern there, but a
-// plain dark grey like the black surround of a fundus photo, drawn solid (nothing is laid over the photo)
-const vec3 UNSEEN = vec3(0.105, 0.10, 0.095);
+// 사진 밖: with a photo, the retina it does not show is not made up — no orange fundus pattern there, but
+// plain white, drawn solid (opaque: nothing is laid over the photo, which keeps its own colours)
+const vec3 UNSEEN = vec3(0.90, 0.89, 0.87);
 
 uniform sampler2D u_hmap;  // 망막 높낮이: the height of the retinal surface over the photo (relief.py), 16 bits in R, G
 uniform float u_hmap_on;   // 0 the relief from the photo's brightness … 1 from the height map
@@ -327,7 +327,7 @@ vec3 retina_marks(vec3 c, vec3 d) {
 
 # Detailed fundus: the photo over the procedural periphery, the ora serrata and
 # the ciliary body (``w`` = 1 on the retina, 0 on the ciliary body). With a photo, the retina beyond
-# it is UNSEEN (dark grey) instead of the procedural periphery (사진 밖, see MAPPING_LIB).
+# it is UNSEEN (white) instead of the procedural periphery (사진 밖, see MAPPING_LIB).
 RETINA_LIB = """
 uniform sampler2D u_peri;
 vec3 fundus(vec3 d, float z, out float w) {
@@ -344,7 +344,7 @@ vec3 fundus(vec3 d, float z, out float w) {
     ret = retina_marks(mix(ret, t.rgb, t.a), d);
     w = 1.0;
     if (theta <= @ORA@ - 0.04) return ret;
-    // ora serrata: dentate processes reaching forward between the bays (beyond a photo: as dark as the rest)
+    // ora serrata: dentate processes reaching forward between the bays (beyond a photo: as white as the rest)
     float ora = @ORA@ + 0.035 * pow(max(cos(phim * 24.0), 0.0), 8.0) + 0.008 * sin(phim * 7.0);
     ret = mix(ret, vec3(0.42, 0.33, 0.27), smoothstep(ora - 0.025, ora, theta) * 0.55 * (u_has_tex == 1 ? t.a : 1.0));
     // ciliary body: pars plana, then the 72 processes (whitish crests on black)
@@ -356,6 +356,7 @@ vec3 fundus(vec3 d, float z, out float w) {
     cil = mix(cil, proc, smoothstep(@PLIC0@ - 0.015, @PLIC0@ + 0.025, z));
     cil = mix(cil, vec3(0.05, 0.035, 0.025), smoothstep(0.772, 0.795, z));
     cil = mix(cil, vec3(0.13, 0.09, 0.065), u_simple);
+    if (u_has_tex == 1) cil = UNSEEN;      // with a photo: the whole inside but the photo is white (사진 밖)
     w = 1.0 - smoothstep(ora - 0.003, ora + 0.003, theta);
     return mix(cil, ret, w);
 }
@@ -593,6 +594,8 @@ vec3 wall_layers(vec3 p, bool post, bool epith) {
 TISSUE_FRAG = """
 uniform int u_kind;   // 0 wall section, 1 iris section, 2 iris, 3 chamber angle, 4 optic nerve, 5 muscle
 uniform int u_rim_post;
+uniform int u_plain;  // with a photo (사진 밖): the cut ciliary body in front of the ora white, as the inside
+const vec3 UNSEEN_RIM = vec3(0.86, 0.85, 0.83);
 
 float cell_edge(vec2 x) {           // distance to the nearest Voronoi border (fascicles)
     vec2 i = floor(x);
@@ -665,7 +668,11 @@ void main() {
     vec3 n = normalize(v_n);
     if (dot(n, v) < 0.0) n = -n;             // meshes are seen from both sides
     vec3 col;
-    if (u_kind == 0) col = wet(lin(wall_layers(v_obj, u_rim_post == 1, v_uv.x < 0.05)), n, v, 0.35, 0.3);
+    if (u_kind == 0) {
+        vec3 layers = wall_layers(v_obj, u_rim_post == 1, v_uv.x < 0.05);
+        if (u_plain == 1 && u_rim_post == 0 && 1.0 - length(v_obj) >= @SCLERA_T@) layers = UNSEEN_RIM;
+        col = wet(lin(layers), n, v, 0.35, 0.3);
+    }
     else if (u_kind == 1) col = lighting(lin(vec3(0.30, 0.18, 0.09)), n, 0.3);
     else if (u_kind == 2) {
         if (n.z > 0.7) col = iris_lit(v_obj.xy, u_key, v, 1.0);
@@ -816,7 +823,7 @@ varying vec3 v_n;
 
 vec3 fundus_s(vec3 d, out float theta) {
     theta = acos(clamp(-d.z, -1.0, 1.0));
-    // ground colour beyond the photographed field: with a photo dark grey (사진 밖, see MAPPING_LIB),
+    // ground colour beyond the photographed field: with a photo white (사진 밖, see MAPPING_LIB),
     // without one choroid-orange fading to the darker ora serrata
     vec3 base = u_has_tex == 1 ? UNSEEN
                                : mix(vec3(0.70, 0.33, 0.20), vec3(0.36, 0.16, 0.10), smoothstep(1.6, 2.6, theta));
@@ -928,6 +935,10 @@ void main() {
     gl_FragColor = vec4(0.0, 0.0, 0.0, u_dark);
 }
 """
+
+# 깊이 막대 at 15 % or more (the 3D tab's 깊이: 100 − 0.15 × 130 = 80.5 → cut 0.805): the eye opened that deep
+# shows its inside unhidden — the lens (with its zonules), the iris and the cornea are left out
+FRONT_CLEAR_CUT = 0.805
 
 # texture units
 _UNITS = {"tex": 0, "iris": 1, "scl_a": 2, "scl_p": 3, "peri": 4, "hmap": 5}
@@ -2567,6 +2578,8 @@ class EyeView(QOpenGLWidget):
                                  or (self._journey_from is not None and self.journey_j > 0.27))
         sheet = self._relief_sheet()          # 망막 높낮이: the photographed field raised, the wall open there
         mapping = self._mapping_uniforms()
+        # opened 15 % deep or more (깊이 막대): no lens, iris or cornea in front of the retina
+        front_clear = not (inside or half or within) and self.cut <= FRONT_CLEAR_CUT
 
         def use(name, **extra):
             p = self._prog[name]
@@ -2623,8 +2636,10 @@ class EyeView(QOpenGLWidget):
                 if half_clip:
                     gl.glEnable(gl.GL_CLIP_PLANE1)
             elif not closed:
-                p = use("tissue", rim_post=int(em.cut_plane_z(self.cut) < em.Z_ORA))
+                p = use("tissue", rim_post=int(em.cut_plane_z(self.cut) < em.Z_ORA), plain=int(bool(mapping["has_tex"])))
                 for part, kind in (("wall", 0), ("iris", 1)):
+                    if part == "iris" and front_clear:
+                        continue
                     mesh = self._dynamic("rim_" + part, round(self.cut, 4), lambda part=part: self._rim(part))
                     if mesh is not None:
                         self._set(p, kind=kind)
@@ -2644,7 +2659,7 @@ class EyeView(QOpenGLWidget):
 
         # -- iris, chamber angle, retina and inner wall ------------------------------
         if not closed or glass > 0.0 or within:   # (through glass the closed eye shows its inside too)
-            if inside or half or self.cut > em.IRIS_BACK_Z:      # otherwise cut away entirely
+            if (inside or half or self.cut > em.IRIS_BACK_Z) and not front_clear:   # otherwise cut away
                 use("tissue", kind=2)
                 self._meshes["iris"].draw(gl)
                 self._set(self._prog["tissue"], kind=3)
@@ -2660,7 +2675,8 @@ class EyeView(QOpenGLWidget):
         self._draw_backdrop(gl)
 
         # -- transparent media ----------------------------------------------------
-        if inside or half or within or ((not closed or glass > 0.0) and self.cut > em.LENS_BACK_Z):
+        if inside or half or within or ((not closed or glass > 0.0) and self.cut > em.LENS_BACK_Z
+                                         and not front_clear):
             gl.glEnable(gl.GL_BLEND)
             # Keep destination alpha at 1: QOpenGLWidget composites its FBO as
             # premultiplied, so alpha < 1 here shows as colour artifacts.
