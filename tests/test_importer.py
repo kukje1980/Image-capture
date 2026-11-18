@@ -171,3 +171,56 @@ def test_polling_folder_and_unchanged_dirs(tmp_path, demo_dir):
     finally:
         svc.shutdown()
         db.close()
+
+
+def test_a_reticam_copy_without_its_data_is_still_a_176_degree_reticam_photo(tmp_path):
+    """A RetiCam photo exported or re-saved under another name has lost the RetiCam data and file name —
+    its picture size (the RetiCam's own) still says the camera: 176°, not a 45° camera. Photos imported
+    so before are put right once when the new version starts."""
+    import numpy as np
+    from PIL import Image
+
+    from fundusview.extract import detect_profile
+    from fundusview.extract.reticam_meta import reticam_size
+
+    assert reticam_size((5734, 4300)) and reticam_size((5736, 4304)) and reticam_size((5730, 4296))
+    assert not reticam_size((4000, 3000)) and not reticam_size((5734, 3000))
+    copy = tmp_path / "OD_copy_0042.jpg"
+    Image.fromarray(np.zeros((4300, 5734, 3), np.uint8)).save(copy, quality=30)
+    assert detect_profile(copy).key == "reticam" and detect_profile(copy).fov_deg == 176.0
+    other = tmp_path / "IMG_0042.jpg"
+    Image.fromarray(np.zeros((3000, 4000, 3), np.uint8)).save(other, quality=30)
+    assert detect_profile(other).key == "generic"
+
+
+def test_reticam_sized_photos_imported_as_45_degrees_are_put_right_once(tmp_path):
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6")
+    from PySide6.QtWidgets import QApplication
+
+    from fundusview.config import Settings
+    from fundusview.db import Database
+    from fundusview.ui.main_window import MainWindow
+
+    app = QApplication.instance() or QApplication([])
+    db = Database(tmp_path / "lib" / "fundus.db")
+    wide = db.insert_image(patient_ref=None, exam_date="2024-09-24", laterality="OD", modality="color",
+                           file_path=str(tmp_path / "a.jpg"), sha256="a", width=5734, height=4300,
+                           profile="generic", fov_deg=45.0, fov_type="external", projection="perspective")
+    small = db.insert_image(patient_ref=None, exam_date="2024-09-24", laterality="OD", modality="color",
+                            file_path=str(tmp_path / "b.jpg"), sha256="b", width=4000, height=3000,
+                            profile="generic", fov_deg=45.0, fov_type="external", projection="perspective")
+    w = MainWindow(Settings(library_dir=str(tmp_path / "lib"), watch_on_startup=False, auto_detect=False,
+                            ui_version=6), db)
+    try:
+        row = db.get_image(wide)
+        assert (row["profile"], row["fov_deg"], row["fov_type"], row["projection"]) == \
+            ("reticam", 176.0, "internal", "radial")
+        assert db.get_image(small)["profile"] == "generic" and db.get_image(small)["fov_deg"] == 45.0
+        assert w.settings.ui_version == MainWindow.UI_VERSION
+    finally:
+        w.close()
+        db.close()
+    app.processEvents()

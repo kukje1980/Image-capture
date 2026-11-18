@@ -247,6 +247,10 @@ class Database:
         sets = ", ".join(f"{c} = ?" for c in cols)
         self._exec(f"UPDATE images SET {sets} WHERE id = ?", (*(values[c] for c in cols), image_id))
 
+    def generic_images(self) -> list[sqlite3.Row]:
+        """Photos imported without a camera to go by (the 일반 안저카메라 profile): id, width, height."""
+        return self._all("SELECT id, width, height FROM images WHERE profile IS NULL OR profile IN ('', 'generic')")
+
     def get_image(self, image_id: int) -> sqlite3.Row | None:
         return self._one("SELECT * FROM images WHERE id = ?", (image_id,))
 

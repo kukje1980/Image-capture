@@ -207,6 +207,8 @@ def test_the_3d_question_itself(tmp_path):
         def press():
             box = QApplication.activeModalWidget()
             seen.append((box.text(), [b.text() for b in box.buttons()]))
+            # every label fits its button (the Mac's message box clipped the longer ones)
+            assert all(b.minimumWidth() >= b.fontMetrics().horizontalAdvance(b.text()) + 20 for b in box.buttons())
             next(b for b in box.buttons() if b.text().startswith(text)).click()
         QTimer.singleShot(0, press)
 
