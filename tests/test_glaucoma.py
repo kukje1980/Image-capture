@@ -441,3 +441,59 @@ def test_patient_explanation_tab(tmp_path):
         assert dlg.save_to_record() == 7 and len(saved) == 1
     finally:
         dlg.close()
+
+
+def test_find_turn_and_match_point():
+    """Two photos of one eye from slightly different places differ by a small turn and size too: 자동 맞춤
+    finds them from matched vessel points; a 기준점 then lays the two exactly on each other there."""
+    from fundusview import imaging
+
+    circle = (400, 400, 380)
+    a = synth_fundus(eye="OD", fov_deg=45, size=(800, 800), circle=circle, seed=4)
+    b = G.turned(a, -3.0, 1.03, 14.0, -9.0)                         # b: a turned, enlarged and moved
+    found = G.find_turn(a, b)
+    assert found is not None
+    angle, scale, dx, dy = found
+    assert angle == pytest.approx(3.0, abs=0.3) and scale == pytest.approx(1 / 1.03, abs=0.01)
+    back = G.turned(b, angle, scale, dx, dy)
+    core = (slice(250, 550), slice(250, 550))
+    assert np.abs(back[core].astype(int) - a[core].astype(int)).mean() < 6
+    # 기준점: where b lies 2.5 px off, the point is found and the shift that lays it on a
+    disc = imaging.detect_disc(a, circle, disc_frac=0.085)
+    x, y = disc[0] + 40, disc[1] - 30                               # by the disc: vessels to go by
+    off = G.shifted(a, 2.5, -1.5)
+    assert G.match_point(a, off, x, y) == pytest.approx((-2.5, 1.5), abs=0.3)
+    assert G.match_point(a, off, 3, 3) is None                       # at the edge: nothing to go by
+    flat = np.full_like(a, 90)
+    assert G.match_point(flat, flat, 400, 400) is None               # an even patch: nothing to go by
+
+
+def test_stereo_reference_point_holds_the_picture_still_there(app):
+    from fundusview.ui.glaucoma_dialog import StereoTab
+
+    a = _photo(1)
+    b = _photo(2)
+    import dataclasses
+    b = dataclasses.replace(b, rgb=G.turned(b.rgb, 2.0, 1.0, 5.0, -4.0))   # taken from a little aside
+    st = StereoTab((a, b))
+    st.set_region("full")
+    assert abs(st.angle) == pytest.approx(2.0, abs=0.4)             # 자동 맞춤: the turn as well as the shift
+    assert "회전" in st.status.text()
+    x, y = a.disc[0] - 60, a.disc[1] + 50
+    st.set_mode("wiggle")
+    st._on_press(x, y)                                              # 위글: a click is the 기준점
+    assert st.ref == (x, y) and "기준점" in st.status.text()
+    pa = st.a[int(y) - 20:int(y) + 21, int(x) - 20:int(x) + 21].astype(int)
+    pb = st._bs[int(y) - 20:int(y) + 21, int(x) - 20:int(x) + 21].astype(int)
+    assert np.abs(pa - pb).mean() < 5                               # there the two are one picture
+    # the point is marked on the screen, not in what is saved
+    st._phase = 0
+    shown = st.compose()
+    assert not np.array_equal(shown, st.a)
+    st._timer.stop()
+    saved = st.render()
+    assert saved is not None
+    # 맞춤 해제: no turn, no 기준점
+    st.clear_alignment()
+    assert st.ref is None and st.angle == 0.0 and (st.dx, st.dy) == (0.0, 0.0)
+    st._timer.stop()

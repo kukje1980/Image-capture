@@ -84,6 +84,88 @@ def shifted(img: np.ndarray, dx: float, dy: float) -> np.ndarray:
     return cv2.warpAffine(img, np.float32([[1, 0, dx], [0, 1, dy]]), (w, h))
 
 
+def find_turn(a: np.ndarray, b: np.ndarray) -> tuple[float, float, float, float] | None:
+    """``(angle°, scale, dx, dy)`` that lays ``b`` onto ``a`` — a turn and a size about the centre of the
+    frame, then a shift — from vessel points matched between the two (SIFT, RANSAC). Two photos of one
+    eye taken from slightly different places differ by more than a shift; what this leaves moving is
+    mostly depth (the cup against the rim). None when too few points agree, or the answer is not a
+    small turn (then ``find_shift``)."""
+    if cv2 is None or not hasattr(cv2, "SIFT_create"):
+        return None
+    b = match_size(b, a)
+    h, w = a.shape[:2]
+    k = min(1.0, 900 / max(h, w))
+
+    def prep(img):
+        g = img[..., 1] if img.ndim == 3 else img
+        g = cv2.resize(g, (max(8, round(w * k)), max(8, round(h * k))), interpolation=cv2.INTER_AREA)
+        return cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8)).apply(g), (g > 12).astype(np.uint8)
+
+    (ga, ma), (gb, mb) = prep(a), prep(b)
+    sift = cv2.SIFT_create(2500)
+    ka, da = sift.detectAndCompute(ga, ma)
+    kb, db = sift.detectAndCompute(gb, mb)
+    if da is None or db is None or len(ka) < 8 or len(kb) < 8:
+        return None
+    pairs = cv2.BFMatcher().knnMatch(db, da, k=2)
+    good = [m for m, n in (p for p in pairs if len(p) == 2) if m.distance < 0.8 * n.distance]
+    if len(good) < 10:
+        return None
+    pb = np.float32([kb[m.queryIdx].pt for m in good]) / k
+    pa = np.float32([ka[m.trainIdx].pt for m in good]) / k
+    M, inl = cv2.estimateAffinePartial2D(pb, pa, method=cv2.RANSAC, ransacReprojThreshold=3.0 / k)
+    if M is None or inl is None or int(inl.sum()) < 10:
+        return None
+    alpha, beta = float(M[0, 0]), float(M[0, 1])
+    angle, scale = math.degrees(math.atan2(beta, alpha)), math.hypot(alpha, beta)
+    if not (0.85 < scale < 1.18 and abs(angle) < 15.0):
+        return None
+    R = cv2.getRotationMatrix2D((w / 2.0, h / 2.0), angle, scale)
+    return angle, scale, float(M[0, 2] - R[0, 2]), float(M[1, 2] - R[1, 2])
+
+
+def turned(img: np.ndarray, angle: float, scale: float, dx: float, dy: float) -> np.ndarray:
+    """``img`` turned by ``angle``° and sized by ``scale`` about its centre, then shifted (``find_turn``)."""
+    h, w = img.shape[:2]
+    M = cv2.getRotationMatrix2D((w / 2.0, h / 2.0), angle, scale)
+    M[:, 2] += (dx, dy)
+    return cv2.warpAffine(img, M, (w, h), flags=cv2.INTER_LINEAR)
+
+
+def match_point(a: np.ndarray, b: np.ndarray, x: float, y: float, patch: int = 36,
+                search: int = 40) -> tuple[float, float] | None:
+    """The shift that lays ``b``'s picture at (``x``, ``y``) exactly onto ``a``'s — the patch of ``a`` round
+    the point looked for in ``b`` nearby (to a tenth of a pixel). None where there is nothing to go by
+    (an even patch, outside the photo) or no clear match."""
+    ga = (a[..., 1] if a.ndim == 3 else a).astype(np.float32)
+    gb = (b[..., 1] if b.ndim == 3 else b).astype(np.float32)
+    h, w = ga.shape
+    x0, y0 = int(round(x)), int(round(y))
+    if not (patch <= x0 < w - patch and patch <= y0 < h - patch):
+        return None
+    tpl = ga[y0 - patch:y0 + patch + 1, x0 - patch:x0 + patch + 1]
+    if float(tpl.std()) < 2.0:
+        return None
+    s = min(search, x0 - patch, y0 - patch, w - patch - 1 - x0, h - patch - 1 - y0)
+    if s < 3:
+        return None
+    win = gb[y0 - patch - s:y0 + patch + s + 1, x0 - patch - s:x0 + patch + s + 1]
+    res = cv2.matchTemplate(win, tpl, cv2.TM_CCOEFF_NORMED)
+    _, best, _, (lx, ly) = cv2.minMaxLoc(res)
+    if best < 0.4:
+        return None
+
+    def peak(c, i, n):                                   # (a parabola through the peak and its neighbours)
+        if 0 < i < n - 1:
+            l, m, r = float(c[i - 1]), float(c[i]), float(c[i + 1])
+            d = l - 2 * m + r
+            return i + (0.5 * (l - r) / d if abs(d) > 1e-9 else 0.0)
+        return float(i)
+
+    fx, fy = peak(res[ly, :], lx, res.shape[1]), peak(res[:, lx], ly, res.shape[0])
+    return round(s - fx, 2), round(s - fy, 2)
+
+
 # -- stereo --------------------------------------------------------------------------------------
 def side_by_side(left: np.ndarray, right: np.ndarray, gap: int = 10) -> np.ndarray:
     h, w = left.shape[:2]
