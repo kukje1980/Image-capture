@@ -17,9 +17,10 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+import cv2
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen, QPolygonF
+from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen, QPolygonF
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QFileDialog, QHBoxLayout, QLabel, QPushButton, QScrollArea, QSizePolicy,
     QSlider, QTabWidget, QVBoxLayout, QWidget,
@@ -269,7 +270,9 @@ class _Tab(QWidget):
 
 class _PairTab(_Tab):
     """Two photos brought to the same frame: each cut around its disc (to the same retinal
-    field, whatever the camera) or whole, then registered by a shift."""
+    field, whatever the camera) or whole, then registered — a small turn and size from matched vessel
+    points (``G.find_turn``) and a shift (the 좌우 · 상하 sliders); a 기준점 (``set_reference``) lays the
+    two exactly on each other at one point."""
     LIMIT_X, LIMIT_Y = 60.0, 60.0
 
     def __init__(self, pair, parent=None):
@@ -277,6 +280,8 @@ class _PairTab(_Tab):
         self.pair = tuple(pair) if pair else None
         self.a = self.b = self._bs = None
         self.dx = self.dy = 0.0
+        self.angle, self.scale = 0.0, 1.0      # the turn and size of b found by 자동 맞춤 (about the centre)
+        self.ref: tuple[float, float] | None = None   # 기준점: where the two lie exactly on each other
         self.region = "disc"
         self._phase = 0
         self._timer = QTimer(self)
@@ -286,7 +291,7 @@ class _PairTab(_Tab):
         self.b_auto = _button("자동 맞춤", primary=True, tip="두 사진이 겹치도록 좌우·상하로 옮깁니다")
         self.b_zero = _button("맞춤 해제")
         self.b_auto.clicked.connect(self.auto_align)
-        self.b_zero.clicked.connect(lambda: self.set_offset(0, 0, "맞춤을 해제했습니다."))
+        self.b_zero.clicked.connect(self.clear_alignment)
         self.s_dx = _Slider("좌우", -self.LIMIT_X, self.LIMIT_X, 0, 0.5, _px)
         self.s_dy = _Slider("상하", -self.LIMIT_Y, self.LIMIT_Y, 0, 0.5, _px)
         self.s_dx.changed.connect(lambda v: self.set_offset(v, self.dy))
@@ -308,6 +313,7 @@ class _PairTab(_Tab):
     def set_region(self, region: str) -> None:
         self.region = region
         self.regions.set(region)
+        self.ref = None                       # (another frame: the point is elsewhere)
         if self.pair is None:
             return
         self.a = self.frame(self.pair[0], region)
@@ -321,7 +327,10 @@ class _PairTab(_Tab):
         self.dy = max(-self.LIMIT_Y, min(self.LIMIT_Y, dy))
         self.s_dx.set(self.dx)
         self.s_dy.set(self.dy)
-        self._bs = G.shifted(self.b, self.dx, self.dy)
+        if abs(self.angle) > 1e-6 or abs(self.scale - 1.0) > 1e-6:
+            self._bs = G.turned(self.b, self.angle, self.scale, self.dx, self.dy)
+        else:
+            self._bs = G.shifted(self.b, self.dx, self.dy)
         if status is not None:
             self.status.setText(status)
         self._offset_changed()
@@ -331,11 +340,44 @@ class _PairTab(_Tab):
         pass
 
     def auto_align(self) -> None:
+        """자동 맞춤: the turn, size and shift that lay the second photo on the first (matched vessel
+        points; a shift alone where too few agree) — then the 기준점, if one is set, exactly."""
         if self.a is None:
             return
-        dx, dy = G.find_shift(self.a, self.b)
+        found = G.find_turn(self.a, self.b)
+        if found is not None and abs(found[2]) <= self.LIMIT_X and abs(found[3]) <= self.LIMIT_Y:
+            self.angle, self.scale, dx, dy = found
+        else:
+            self.angle, self.scale = 0.0, 1.0
+            dx, dy = G.find_shift(self.a, self.b)
         self.set_offset(dx, dy)
-        self.status.setText(f"자동 맞춤: 좌우 {_px(self.dx)}, 상하 {_px(self.dy)}")
+        turn = (f" · 회전 {self.angle:+.1f}° · 크기 {self.scale * 100:.1f}%"
+                if abs(self.angle) >= 0.05 or abs(self.scale - 1) >= 0.0005 else "")
+        self.status.setText(f"자동 맞춤: 좌우 {_px(self.dx)}, 상하 {_px(self.dy)}{turn}")
+        if self.ref is not None:
+            self.set_reference(*self.ref)
+
+    def clear_alignment(self) -> None:
+        """맞춤 해제: the photos as they are — no turn, size, shift or 기준점."""
+        self.angle, self.scale, self.ref = 0.0, 1.0, None
+        self.set_offset(0, 0, "맞춤을 해제했습니다.")
+
+    def set_reference(self, x: float, y: float) -> bool:
+        """기준점: the two photos laid exactly on each other at (x, y) of the first — the place looked for
+        round it in the second (as it lies now) and the shift corrected by what is left; there the
+        picture stands still and everything else moves by its depth."""
+        if self.a is None or self._bs is None:
+            return False
+        found = G.match_point(self.a, self._bs, x, y)
+        if found is None:
+            self.status.setText("기준점: 그 자리에서 두 사진의 같은 곳을 찾지 못했습니다 — 혈관이 갈라지는 곳이나 "
+                                "유두 테두리처럼 무늬가 뚜렷한 곳을 누르세요")
+            return False
+        self.ref = (float(x), float(y))
+        self.set_offset(self.dx + found[0], self.dy + found[1])
+        self.status.setText(f"기준점 ({x:.0f}, {y:.0f})에 두 사진을 맞췄습니다 — 이 점을 중심으로 움직입니다 "
+                            "(다른 곳을 누르면 그곳으로, 맞춤 해제: 지우기)")
+        return True
 
     # -- alternating the two ---------------------------------------------------------------------
     def _alternating(self) -> bool:
@@ -374,10 +416,11 @@ ST_MODES = [("wiggle", "위글", "두 장을 번갈아 보기"), ("sbs", "평행
             ("cross", "교차", "나란히 — 교차법"), ("ana", "적청", "적청 안경"), ("depth", "깊이", "깊이 지도")]
 ST_NAMES = {"wiggle": "위글", "sbs": "나란히(평행)", "cross": "나란히(교차)", "ana": "적청", "depth": "깊이 지도"}
 ST_HINT = {
-    "wiggle": "두 장을 번갈아 보여 줍니다. 컵 바닥과 림이 서로 다르게 움직이는 만큼이 깊이입니다.",
+    "wiggle": "두 장을 번갈아 보여 줍니다. 컵 바닥과 림이 서로 다르게 움직이는 만큼이 깊이입니다. "
+              "사진을 누르면 그곳이 기준점 — 두 사진을 그 점에 딱 맞춰 그 점을 중심으로 움직입니다.",
     "sbs": "평행법: 왼쪽 눈으로 왼쪽, 오른쪽 눈으로 오른쪽 사진을 봅니다. 간이 입체경에 맞는 배치입니다.",
     "cross": "교차법: 눈을 모아 왼쪽 눈으로 오른쪽, 오른쪽 눈으로 왼쪽 사진을 봅니다.",
-    "ana": "적청 안경(왼쪽 빨강, 오른쪽 청록)을 쓰고 봅니다.",
+    "ana": "적청 안경(왼쪽 빨강, 오른쪽 청록)을 쓰고 봅니다. 사진을 누르면 그곳이 기준점(화면 깊이)입니다.",
     "depth": "파랑은 깊은 곳(컵), 빨강은 솟은 곳입니다. 사진을 누르면 그 높이의 단면이 아래에 그려집니다.",
 }
 
@@ -430,10 +473,39 @@ class StereoTab(_PairTab):
     def _rate(self) -> float:
         return self.speed.value()
 
-    def _on_press(self, _x: float, y: float) -> None:
-        if self.mode == "depth" and self.a is not None and y < self.a.shape[0]:
+    def _on_press(self, x: float, y: float) -> None:
+        if self.a is None or not (0 <= x < self.a.shape[1] and 0 <= y < self.a.shape[0]):
+            return
+        if self.mode == "depth":
             self._prof_y = y
             self._draw()
+        elif self.mode in ("wiggle", "ana"):  # 기준점: the two laid exactly on each other there
+            self.set_reference(x, y)
+
+    _marking = True                           # the 기준점 is marked on the screen (not in what is saved)
+
+    def render(self):
+        self._marking = False
+        try:
+            self._draw()
+            return super().render()
+        finally:
+            self._marking = True
+            self._draw()
+
+    def _mark(self, img: np.ndarray) -> np.ndarray:
+        """The 기준점: a small cross in a ring, dark-edged so it shows on any part of the photo."""
+        if self.ref is None or not self._marking or img is None:
+            return img
+        out = img.copy()
+        x, y = int(round(self.ref[0])), int(round(self.ref[1]))
+        for color, t in (((0, 0, 0), 4), ((80, 220, 255), 2)):
+            cv2.circle(out, (x, y), 11, color, t, cv2.LINE_AA)
+            cv2.line(out, (x - 18, y), (x - 6, y), color, t, cv2.LINE_AA)
+            cv2.line(out, (x + 6, y), (x + 18, y), color, t, cv2.LINE_AA)
+            cv2.line(out, (x, y - 18), (x, y - 6), color, t, cv2.LINE_AA)
+            cv2.line(out, (x, y + 6), (x, y + 18), color, t, cv2.LINE_AA)
+        return out
 
     def eyes(self) -> tuple:
         """``(left eye's photo, right eye's photo)``."""
@@ -444,13 +516,13 @@ class StereoTab(_PairTab):
             return None
         a, b = self.eyes()
         if self.mode == "wiggle":
-            return b if self._phase else a
+            return self._mark(b if self._phase else a)
         if self.mode == "sbs":
             return G.side_by_side(a, b)
         if self.mode == "cross":
             return G.side_by_side(b, a)
         if self.mode == "ana":
-            return G.anaglyph(a, b)
+            return self._mark(G.anaglyph(a, b))
         if self._disp is None:
             self._disp = G.disparity(a, b)
         h, w = a.shape[:2]
@@ -468,8 +540,20 @@ class StereoTab(_PairTab):
 
 
 # -- disc: C/D -------------------------------------------------------------------------------------
+def _outline_path(e: dict) -> QPainterPath:
+    """An outline (``G.outline``) as four quarter ellipses round its centre: up-right, up-left, down-left,
+    down-right — the ellipse itself when the opposite reaches are equal."""
+    cx, cy, t, r, b, l = (e[k] for k in ("cx", "cy", "top", "right", "bottom", "left"))
+    path = QPainterPath(QPointF(cx + r, cy))
+    for (rx, ry), start in (((r, t), 0), ((l, t), 90), ((l, b), 180), ((r, b), 270)):
+        path.arcTo(QRectF(cx - rx, cy - ry, 2 * rx, 2 * ry), start, 90)
+    path.closeSubpath()
+    return path
+
+
 class DiscTab(_Tab):
-    """The optic disc of the photo with two ellipses to fit: the disc margin and the cup."""
+    """The optic disc of the photo with two outlines to fit: the disc margin and the cup — each point
+    (S · N · I · T) moved on its own, the centre moving the whole outline."""
 
     def __init__(self, photo: Photo | None, parent=None):
         super().__init__(NEED_ONE, parent)
@@ -479,7 +563,7 @@ class DiscTab(_Tab):
         self._drag = None
         self.field = "normal"
         self.hint.setText("초록 타원을 디스크 경계에, 노란 타원을 컵 경계에 맞추세요. "
-                          "가운데 점은 옮기기, 가장자리 점은 크기입니다.")
+                          "가운데 점은 통째로 옮기기, 가장자리 점(S · N · I · T)은 하나씩 따로 움직입니다.")
         self.eyes = _Choice([("OD", "OD (우안)"), ("OS", "OS (좌안)")])
         self.eyes.set(self.eye_key)
         self.eyes.changed.connect(self.set_eye)
@@ -526,8 +610,8 @@ class DiscTab(_Tab):
         side = float(self.img.shape[0])
         r = side / factor / 2.0                                  # the disc radius in this picture
         c = side / 2.0
-        self.disc = {"cx": c, "cy": c, "rx": r * 0.95, "ry": r * 1.05}
-        self.cup = {"cx": c, "cy": c, "rx": r * 0.45, "ry": r * 0.50}
+        self.disc = G.outline({"cx": c, "cy": c, "rx": r * 0.95, "ry": r * 1.05})
+        self.cup = G.outline({"cx": c, "cy": c, "rx": r * 0.45, "ry": r * 0.50})
         self.warn.setText("" if self.photo.disc_found else
                           "유두를 찾지 못해 예상 위치를 잘랐습니다 — 2D 사진에서 오른쪽 클릭 → 시신경 유두로 지정")
         self.warn.setVisible(not self.photo.disc_found)
@@ -540,19 +624,22 @@ class DiscTab(_Tab):
         self._changed()
 
     def set_ellipses(self, disc: dict, cup: dict) -> None:
-        self.disc, self.cup = dict(disc), dict(cup)
+        """The disc and cup outlines (``G.outline``: an ellipse or the reach up · right · down · left)."""
+        self.disc, self.cup = G.outline(disc), G.outline(cup)
         self._changed()
 
     def metrics(self) -> dict | None:
         return G.cdr_metrics(self.disc, self.cup, self.eye_key) if self.disc else None
 
     def _handles(self) -> list:
+        """The points of each outline: its centre (moves it) and S · N · I · T — each moves on its own,
+        along its own direction (up / down, left / right), the opposite one staying where it is."""
         out = []
         for key in ("cup", "disc"):
             e = getattr(self, key)
-            out += [(key, "c", e["cx"], e["cy"]), (key, "e", e["cx"] + e["rx"], e["cy"]),
-                    (key, "w", e["cx"] - e["rx"], e["cy"]), (key, "n", e["cx"], e["cy"] - e["ry"]),
-                    (key, "s", e["cx"], e["cy"] + e["ry"])]
+            out += [(key, "c", e["cx"], e["cy"]), (key, "e", e["cx"] + e["right"], e["cy"]),
+                    (key, "w", e["cx"] - e["left"], e["cy"]), (key, "n", e["cx"], e["cy"] - e["top"]),
+                    (key, "s", e["cx"], e["cy"] + e["bottom"])]
         return out
 
     def _press(self, x: float, y: float) -> None:
@@ -574,10 +661,14 @@ class DiscTab(_Tab):
         e = getattr(self, key)
         if h == "c":
             e["cx"], e["cy"] = x - ox, y - oy
-        elif h in "ew":
-            e["rx"] = max(5.0, abs(x - e["cx"]))
+        elif h == "e":                        # each point on its own: the opposite one stays
+            e["right"] = max(5.0, x - e["cx"])
+        elif h == "w":
+            e["left"] = max(5.0, e["cx"] - x)
+        elif h == "n":
+            e["top"] = max(5.0, e["cy"] - y)
         else:
-            e["ry"] = max(5.0, abs(y - e["cy"]))
+            e["bottom"] = max(5.0, y - e["cy"])
         self._changed()
 
     def _changed(self) -> None:
@@ -591,7 +682,7 @@ class DiscTab(_Tab):
         for e, col in ((self.disc, DISC_COLOR), (self.cup, CUP_COLOR)):
             p.setPen(QPen(col, 2.5 * u))
             p.setBrush(Qt.BrushStyle.NoBrush)
-            p.drawEllipse(QPointF(e["cx"], e["cy"]), e["rx"], e["ry"])
+            p.drawPath(_outline_path(e))
         for key, _h, x, y in self._handles():
             p.setPen(QPen(QColor("#111111"), 1.5 * u))
             p.setBrush(DISC_COLOR if key == "disc" else CUP_COLOR)
@@ -603,8 +694,8 @@ class DiscTab(_Tab):
         f.setBold(True)
         p.setFont(f)
         p.setPen(QColor("#ffffff"))
-        for text, x, y in (("S", d["cx"], d["cy"] - d["ry"] - 16 * u), ("I", d["cx"], d["cy"] + d["ry"] + 16 * u),
-                           (right, d["cx"] + d["rx"] + 16 * u, d["cy"]), (left, d["cx"] - d["rx"] - 16 * u, d["cy"])):
+        for text, x, y in (("S", d["cx"], d["cy"] - d["top"] - 16 * u), ("I", d["cx"], d["cy"] + d["bottom"] + 16 * u),
+                           (right, d["cx"] + d["right"] + 16 * u, d["cy"]), (left, d["cx"] - d["left"] - 16 * u, d["cy"])):
             p.drawText(QRectF(x - 20 * u, y - 12 * u, 40 * u, 24 * u), Qt.AlignmentFlag.AlignCenter, text)
 
     def _report(self) -> None:

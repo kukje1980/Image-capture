@@ -84,6 +84,88 @@ def shifted(img: np.ndarray, dx: float, dy: float) -> np.ndarray:
     return cv2.warpAffine(img, np.float32([[1, 0, dx], [0, 1, dy]]), (w, h))
 
 
+def find_turn(a: np.ndarray, b: np.ndarray) -> tuple[float, float, float, float] | None:
+    """``(angle°, scale, dx, dy)`` that lays ``b`` onto ``a`` — a turn and a size about the centre of the
+    frame, then a shift — from vessel points matched between the two (SIFT, RANSAC). Two photos of one
+    eye taken from slightly different places differ by more than a shift; what this leaves moving is
+    mostly depth (the cup against the rim). None when too few points agree, or the answer is not a
+    small turn (then ``find_shift``)."""
+    if cv2 is None or not hasattr(cv2, "SIFT_create"):
+        return None
+    b = match_size(b, a)
+    h, w = a.shape[:2]
+    k = min(1.0, 900 / max(h, w))
+
+    def prep(img):
+        g = img[..., 1] if img.ndim == 3 else img
+        g = cv2.resize(g, (max(8, round(w * k)), max(8, round(h * k))), interpolation=cv2.INTER_AREA)
+        return cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8)).apply(g), (g > 12).astype(np.uint8)
+
+    (ga, ma), (gb, mb) = prep(a), prep(b)
+    sift = cv2.SIFT_create(2500)
+    ka, da = sift.detectAndCompute(ga, ma)
+    kb, db = sift.detectAndCompute(gb, mb)
+    if da is None or db is None or len(ka) < 8 or len(kb) < 8:
+        return None
+    pairs = cv2.BFMatcher().knnMatch(db, da, k=2)
+    good = [m for m, n in (p for p in pairs if len(p) == 2) if m.distance < 0.8 * n.distance]
+    if len(good) < 10:
+        return None
+    pb = np.float32([kb[m.queryIdx].pt for m in good]) / k
+    pa = np.float32([ka[m.trainIdx].pt for m in good]) / k
+    M, inl = cv2.estimateAffinePartial2D(pb, pa, method=cv2.RANSAC, ransacReprojThreshold=3.0 / k)
+    if M is None or inl is None or int(inl.sum()) < 10:
+        return None
+    alpha, beta = float(M[0, 0]), float(M[0, 1])
+    angle, scale = math.degrees(math.atan2(beta, alpha)), math.hypot(alpha, beta)
+    if not (0.85 < scale < 1.18 and abs(angle) < 15.0):
+        return None
+    R = cv2.getRotationMatrix2D((w / 2.0, h / 2.0), angle, scale)
+    return angle, scale, float(M[0, 2] - R[0, 2]), float(M[1, 2] - R[1, 2])
+
+
+def turned(img: np.ndarray, angle: float, scale: float, dx: float, dy: float) -> np.ndarray:
+    """``img`` turned by ``angle``° and sized by ``scale`` about its centre, then shifted (``find_turn``)."""
+    h, w = img.shape[:2]
+    M = cv2.getRotationMatrix2D((w / 2.0, h / 2.0), angle, scale)
+    M[:, 2] += (dx, dy)
+    return cv2.warpAffine(img, M, (w, h), flags=cv2.INTER_LINEAR)
+
+
+def match_point(a: np.ndarray, b: np.ndarray, x: float, y: float, patch: int = 36,
+                search: int = 40) -> tuple[float, float] | None:
+    """The shift that lays ``b``'s picture at (``x``, ``y``) exactly onto ``a``'s — the patch of ``a`` round
+    the point looked for in ``b`` nearby (to a tenth of a pixel). None where there is nothing to go by
+    (an even patch, outside the photo) or no clear match."""
+    ga = (a[..., 1] if a.ndim == 3 else a).astype(np.float32)
+    gb = (b[..., 1] if b.ndim == 3 else b).astype(np.float32)
+    h, w = ga.shape
+    x0, y0 = int(round(x)), int(round(y))
+    if not (patch <= x0 < w - patch and patch <= y0 < h - patch):
+        return None
+    tpl = ga[y0 - patch:y0 + patch + 1, x0 - patch:x0 + patch + 1]
+    if float(tpl.std()) < 2.0:
+        return None
+    s = min(search, x0 - patch, y0 - patch, w - patch - 1 - x0, h - patch - 1 - y0)
+    if s < 3:
+        return None
+    win = gb[y0 - patch - s:y0 + patch + s + 1, x0 - patch - s:x0 + patch + s + 1]
+    res = cv2.matchTemplate(win, tpl, cv2.TM_CCOEFF_NORMED)
+    _, best, _, (lx, ly) = cv2.minMaxLoc(res)
+    if best < 0.4:
+        return None
+
+    def peak(c, i, n):                                   # (a parabola through the peak and its neighbours)
+        if 0 < i < n - 1:
+            l, m, r = float(c[i - 1]), float(c[i]), float(c[i + 1])
+            d = l - 2 * m + r
+            return i + (0.5 * (l - r) / d if abs(d) > 1e-9 else 0.0)
+        return float(i)
+
+    fx, fy = peak(res[ly, :], lx, res.shape[1]), peak(res[:, lx], ly, res.shape[0])
+    return round(s - fx, 2), round(s - fy, 2)
+
+
 # -- stereo --------------------------------------------------------------------------------------
 def side_by_side(left: np.ndarray, right: np.ndarray, gap: int = 10) -> np.ndarray:
     h, w = left.shape[:2]
@@ -157,14 +239,34 @@ def depth_profile(disp: np.ndarray, y: float, image_h: int, width: int, height: 
 
 
 # -- disc: cup-to-disc ratio -----------------------------------------------------------------------
+def outline(e: dict) -> dict:
+    """A disc or cup outline as ``{cx, cy, top, right, bottom, left}`` — its centre and how far it reaches
+    up, right, down and left (each point of the C/D tab moves on its own). An ellipse ``{cx, cy, rx, ry}``
+    is the outline with top = bottom = ry and left = right = rx. Between the four points the outline is
+    a quarter ellipse each (smooth where they meet)."""
+    if "top" in e:
+        return {k: float(e[k]) for k in ("cx", "cy", "top", "right", "bottom", "left")}
+    return {"cx": float(e["cx"]), "cy": float(e["cy"]), "top": float(e["ry"]), "right": float(e["rx"]),
+            "bottom": float(e["ry"]), "left": float(e["rx"])}
+
+
+def outline_area(e: dict) -> float:
+    """Area of an outline: four quarter ellipses."""
+    o = outline(e)
+    return math.pi / 4 * (o["right"] * o["top"] + o["top"] * o["left"] + o["left"] * o["bottom"]
+                          + o["bottom"] * o["right"])
+
+
 def cdr_metrics(disc: dict, cup: dict, eye: str = "OD") -> dict:
-    """``disc`` / ``cup`` = ``{cx, cy, rx, ry}``. Rim widths are fractions of the vertical disc
-    diameter (DD). The photo is upright: the right eye's nasal side is on the right."""
-    dd = 2 * disc["ry"]
-    s = ((cup["cy"] - cup["ry"]) - (disc["cy"] - disc["ry"])) / dd
-    i = ((disc["cy"] + disc["ry"]) - (cup["cy"] + cup["ry"])) / dd
-    right = ((disc["cx"] + disc["rx"]) - (cup["cx"] + cup["rx"])) / dd
-    left = ((cup["cx"] - cup["rx"]) - (disc["cx"] - disc["rx"])) / dd
+    """``disc`` / ``cup`` = outlines (``outline``: centre and the reach up, right, down, left — or an
+    ellipse ``{cx, cy, rx, ry}``). Rim widths are fractions of the vertical disc diameter (DD). The
+    photo is upright: the right eye's nasal side is on the right."""
+    d, c = outline(disc), outline(cup)
+    dd = d["top"] + d["bottom"]
+    s = ((c["cy"] - c["top"]) - (d["cy"] - d["top"])) / dd
+    i = ((d["cy"] + d["bottom"]) - (c["cy"] + c["bottom"])) / dd
+    right = ((d["cx"] + d["right"]) - (c["cx"] + c["right"])) / dd
+    left = ((c["cx"] - c["left"]) - (d["cx"] - d["left"])) / dd
     n, t = (left, right) if eye == "OS" else (right, left)
     bad = []
     if i < s:
@@ -173,9 +275,9 @@ def cdr_metrics(disc: dict, cup: dict, eye: str = "OD") -> dict:
         bad.append("상측 림이 비측보다 얇음")
     if n < t:
         bad.append("비측 림이 이측보다 얇음")
-    area = (cup["rx"] * cup["ry"]) / (disc["rx"] * disc["ry"])
-    return {"vertical": cup["ry"] / disc["ry"], "horizontal": cup["rx"] / disc["rx"], "area": area,
-            "rim": {"I": i, "S": s, "N": n, "T": t}, "isnt": bad}
+    area = outline_area(c) / outline_area(d)
+    return {"vertical": (c["top"] + c["bottom"]) / dd, "horizontal": (c["left"] + c["right"]) / (d["left"] + d["right"]),
+            "area": area, "rim": {"I": i, "S": s, "N": n, "T": t}, "isnt": bad}
 
 
 # -- wide field ------------------------------------------------------------------------------------
@@ -183,6 +285,9 @@ def enhance_wide(img: np.ndarray, red_free: bool = True, k: float = 1.5) -> np.n
     """Red-free (the green channel) with local contrast, which brings out the nerve fibre layer."""
     if not red_free and k <= 0:
         return img.copy()
+    if red_free:                                                 # (the main window's G 필터 ▾ RNFL 강화 too)
+        from .imaging import rnfl_green
+        return rnfl_green(img, k)
     h, w = img.shape[:2]
     f = img.astype(np.float32)
     small = cv2.resize(img, (max(1, w // 16), max(1, h // 16)), interpolation=cv2.INTER_AREA)

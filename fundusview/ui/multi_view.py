@@ -40,8 +40,8 @@ class _Cell(QFrame):
         lay.setSpacing(0)
         self.label = QLabel()
         self.label.setStyleSheet(f"background:{theme.CARD}; color:{theme.TEXT2}; padding:3px 6px; font-size:11px")
-        # the photo the processing toolbar works on: a small blue 보정 badge at the right of its header
-        # (shown with two cells or more — no frame round the cell, which was taken for a pick)
+        # the photo the processing toolbar works on: framed in blue (select), and a small blue 보정 badge at
+        # the right of its header (with two cells or more)
         self.badge = _active_badge()
         hl = QHBoxLayout(self.label)
         hl.setContentsMargins(0, 0, 4, 0)
@@ -82,10 +82,10 @@ class _Cell(QFrame):
         self.select(False)
 
     def select(self, on: bool) -> None:
-        """The cell whose photo the processing toolbar works on — marked by its blue 보정 badge
-        (MultiView._sync_badges), not by a frame round the cell."""
+        """The cell whose photo the processing toolbar works on (the one clicked last): framed in blue,
+        with its blue 보정 badge (MultiView._sync_badges)."""
         self.selected = on
-        self.setStyleSheet("QFrame { border: 2px solid %s; }" % theme.CARD)
+        self.setStyleSheet("QFrame { border: 2px solid %s; }" % (theme.ACCENT if on else theme.CARD))
 
 
 def _active_badge() -> QFrame:

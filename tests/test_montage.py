@@ -389,3 +389,38 @@ def test_quick_rotation_agrees_with_the_slow_one():
     assert inl[30:].all() and inl.sum() == inl2.sum() and inl[:30].sum() <= 1
     r0, none = mt.quick_rotation(src[:2], dst[:2], 0.3)             # too few points: nothing
     assert np.allclose(r0, np.eye(3)) and not none.any()
+
+
+def test_where_photos_overlap_far_from_their_edges_the_vessels_are_not_doubled():
+    """Two wide photos over the same posterior pole, one of them a little off (1°, as a montage's residual
+    error can be): where both see the place well — far from their edges — the fine detail (vessels) is
+    taken from the photo that sees it most centrally, not averaged (averaging two shifted pictures of a
+    vessel draws two vessels)."""
+    photos = _wide_series(110.0)[:2]
+    shots = _wide_shots(photos, 110.0, "equidistant", c=0.0)
+    truth = [demo.gaze_rotation(*g) for g in WIDE_GAZES[:2]]
+    for s, r in zip(shots, truth):
+        s.R = r.copy()
+    shots[1].R = mt.axis_angle((0.3, 1.0, 0.0), math.radians(1.0)) @ shots[1].R
+    geom = mt.map_for(shots, max_size=700)
+    dirs = mt._band_dirs(geom, slice(None))
+    sigma = max(2.0, geom.size / 220.0)
+    out, _ = mt._smooth_band(shots, dirs, sigma)
+
+    def high(img):
+        f = img.astype(np.float32).mean(axis=2)
+        return f - cv2.GaussianBlur(f, (0, 0), 2.0)
+
+    seen = [mt._sample_dirs(s, dirs) for s in shots]
+    both = (seen[0][1] > 0.99) & (seen[1][1] > 0.99) & (seen[0][2] > 0.2) & (seen[1][2] > 0.2)
+    both = cv2.erode(both.astype(np.uint8), np.ones((9, 9), np.uint8)) > 0
+    assert both.sum() > 5000                                     # a broad overlap, far from both edges
+    h_out = high(out)
+    h0, h1 = (high(np.clip(c.astype(np.float32) * s.gain, 0, 255)) for (c, _, _), s in zip(seen, shots))
+    differ = np.abs(h0 - h1)
+    busy = both & (differ > 4.0)                                 # where the two pictures disagree (vessels)
+    assert busy.sum() > 500
+    closest = np.minimum(np.abs(h_out - h0), np.abs(h_out - h1))
+    # averaged, the detail is half-way between the two (error ≈ 0.5 × their difference) everywhere;
+    # taken from one photo it matches that photo but for a narrow band where one gives way to the other
+    assert np.median(closest[busy] / differ[busy]) < 0.2

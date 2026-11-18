@@ -1,6 +1,8 @@
 """녹내장 분석: the image work (glaucoma.py), the window's four tabs and the main-window flow."""
 import os
 
+import math
+
 import numpy as np
 import pytest
 
@@ -82,6 +84,14 @@ def test_cdr_metrics_and_isnt():
     # inferior notch
     low = G.cdr_metrics(disc, {"cx": 100, "cy": 115, "rx": 25, "ry": 40}, "OD")
     assert "하측 림이 상측보다 얇음" in low["isnt"] and low["vertical"] == pytest.approx(40 / 60)
+    # an outline whose points were moved one by one: a cup reaching further down than up (an inferior
+    # notch) — the inferior rim alone thins; the area is its four quarter ellipses
+    notch = {"cx": 100, "cy": 100, "top": 30, "right": 25, "bottom": 48, "left": 25}
+    m2 = G.cdr_metrics(disc, notch, "OD")
+    assert m2["rim"]["S"] == pytest.approx(m["rim"]["S"]) and m2["rim"]["I"] == pytest.approx((60 - 48) / 120)
+    assert m2["vertical"] == pytest.approx((30 + 48) / 120) and "하측 림이 상측보다 얇음" in m2["isnt"]
+    assert G.outline_area(notch) == pytest.approx(math.pi / 4 * (25 * 30 * 2 + 25 * 48 * 2))
+    assert G.outline(cup) == {"cx": 100.0, "cy": 100.0, "top": 30.0, "right": 25.0, "bottom": 30.0, "left": 25.0}
 
 
 def test_sectors_and_clock_hours():
@@ -174,16 +184,26 @@ def test_disc_tab_cuts_around_the_disc_and_measures(app):
     assert tab.has_image() and tab.img.shape[0] == tab.img.shape[1]
     side = tab.img.shape[0]
     # the ellipses start at the disc's own size: 3.5 disc diameters across the picture
-    assert 2 * tab.disc["ry"] == pytest.approx(side / 3.5 * 1.05, rel=0.01)
+    assert tab.disc["top"] + tab.disc["bottom"] == pytest.approx(side / 3.5 * 1.05, rel=0.01)
     assert tab.metrics()["vertical"] == pytest.approx(0.50 / 1.05, abs=0.01)
     assert not tab.warn.isVisibleTo(tab)
     tab.set_field("wide")
-    assert 2 * tab.disc["ry"] == pytest.approx(tab.img.shape[0] / 5.0 * 1.05, rel=0.01)
-    # drag the cup's lower handle down: the vertical C/D grows, the eye decides nasal / temporal
-    c = tab.cup
-    tab._press(c["cx"], c["cy"] + c["ry"])
-    tab._move(c["cx"], c["cy"] + 1.6 * c["ry"])
-    assert tab.metrics()["vertical"] == pytest.approx(1.6 * 0.50 / 1.05, abs=0.02)
+    assert tab.disc["top"] + tab.disc["bottom"] == pytest.approx(tab.img.shape[0] / 5.0 * 1.05, rel=0.01)
+    # drag the cup's lower point down: that point alone moves (the upper one stays) — the vertical C/D
+    # grows by half as much, the inferior rim narrows, the superior one is as it was
+    c = dict(tab.cup)
+    rim0 = tab.metrics()["rim"]
+    tab._press(c["cx"], c["cy"] + c["bottom"])
+    tab._move(c["cx"], c["cy"] + 1.6 * c["bottom"])
+    assert tab.cup["top"] == c["top"] and tab.cup["bottom"] == pytest.approx(1.6 * c["bottom"])
+    assert tab.metrics()["vertical"] == pytest.approx((1 + 1.6) / 2 * 0.50 / 1.05, abs=0.02)
+    assert tab.metrics()["rim"]["S"] == pytest.approx(rim0["S"]) and tab.metrics()["rim"]["I"] < rim0["I"]
+    # … and the disc's nasal point on its own: the temporal side stays
+    d = dict(tab.disc)
+    tab._press(d["cx"] + d["right"], d["cy"])
+    tab._move(d["cx"] + d["right"] + 12, d["cy"])
+    assert tab.disc["right"] == pytest.approx(d["right"] + 12) and tab.disc["left"] == d["left"]
+    tab._drag = None
     assert tab.lbl_v.text() == f"{tab.metrics()['vertical']:.2f}"
     tab.set_ellipses(tab.disc, {**tab.cup, "cx": tab.cup["cx"] - 10})
     n_od = tab.metrics()["rim"]["N"]
@@ -441,3 +461,59 @@ def test_patient_explanation_tab(tmp_path):
         assert dlg.save_to_record() == 7 and len(saved) == 1
     finally:
         dlg.close()
+
+
+def test_find_turn_and_match_point():
+    """Two photos of one eye from slightly different places differ by a small turn and size too: 자동 맞춤
+    finds them from matched vessel points; a 기준점 then lays the two exactly on each other there."""
+    from fundusview import imaging
+
+    circle = (400, 400, 380)
+    a = synth_fundus(eye="OD", fov_deg=45, size=(800, 800), circle=circle, seed=4)
+    b = G.turned(a, -3.0, 1.03, 14.0, -9.0)                         # b: a turned, enlarged and moved
+    found = G.find_turn(a, b)
+    assert found is not None
+    angle, scale, dx, dy = found
+    assert angle == pytest.approx(3.0, abs=0.3) and scale == pytest.approx(1 / 1.03, abs=0.01)
+    back = G.turned(b, angle, scale, dx, dy)
+    core = (slice(250, 550), slice(250, 550))
+    assert np.abs(back[core].astype(int) - a[core].astype(int)).mean() < 6
+    # 기준점: where b lies 2.5 px off, the point is found and the shift that lays it on a
+    disc = imaging.detect_disc(a, circle, disc_frac=0.085)
+    x, y = disc[0] + 40, disc[1] - 30                               # by the disc: vessels to go by
+    off = G.shifted(a, 2.5, -1.5)
+    assert G.match_point(a, off, x, y) == pytest.approx((-2.5, 1.5), abs=0.3)
+    assert G.match_point(a, off, 3, 3) is None                       # at the edge: nothing to go by
+    flat = np.full_like(a, 90)
+    assert G.match_point(flat, flat, 400, 400) is None               # an even patch: nothing to go by
+
+
+def test_stereo_reference_point_holds_the_picture_still_there(app):
+    from fundusview.ui.glaucoma_dialog import StereoTab
+
+    a = _photo(1)
+    b = _photo(2)
+    import dataclasses
+    b = dataclasses.replace(b, rgb=G.turned(b.rgb, 2.0, 1.0, 5.0, -4.0))   # taken from a little aside
+    st = StereoTab((a, b))
+    st.set_region("full")
+    assert abs(st.angle) == pytest.approx(2.0, abs=0.4)             # 자동 맞춤: the turn as well as the shift
+    assert "회전" in st.status.text()
+    x, y = a.disc[0] - 60, a.disc[1] + 50
+    st.set_mode("wiggle")
+    st._on_press(x, y)                                              # 위글: a click is the 기준점
+    assert st.ref == (x, y) and "기준점" in st.status.text()
+    pa = st.a[int(y) - 20:int(y) + 21, int(x) - 20:int(x) + 21].astype(int)
+    pb = st._bs[int(y) - 20:int(y) + 21, int(x) - 20:int(x) + 21].astype(int)
+    assert np.abs(pa - pb).mean() < 5                               # there the two are one picture
+    # the point is marked on the screen, not in what is saved
+    st._phase = 0
+    shown = st.compose()
+    assert not np.array_equal(shown, st.a)
+    st._timer.stop()
+    saved = st.render()
+    assert saved is not None
+    # 맞춤 해제: no turn, no 기준점
+    st.clear_alignment()
+    assert st.ref is None and st.angle == 0.0 and (st.dx, st.dy) == (0.0, 0.0)
+    st._timer.stop()

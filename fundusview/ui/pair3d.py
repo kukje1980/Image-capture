@@ -167,6 +167,7 @@ class Pair3D(QWidget):
         for other, depth in zip(self.eyes, self.depths):
             if other is eye or (together and other in self._shown()):
                 other.cut = cut
+                other.cut_changed()
                 self._show_depth(depth, v)
                 other.update()
         self._set_lead(eye)

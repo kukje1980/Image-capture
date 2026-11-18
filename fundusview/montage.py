@@ -24,7 +24,9 @@ projection and the field of view ``2 · angle`` without further calibration.
 Brightness is matched between the photos (gains from their overlaps) and the
 photos are blended in two bands: the broad brightness with soft weights that
 fade towards each photo's edge (no seams), the fine detail from the photo that
-sees that place best (no doubled vessels).
+sees that place best — the one it lies most centrally in, away from its edge and
+masks — eased over a narrow band only, so photos that are a little misaligned
+do not draw a vessel twice (they meet at a seam instead).
 """
 from __future__ import annotations
 
@@ -44,6 +46,8 @@ except ImportError:          # pragma: no cover - listed in requirements.txt
 MIN_INLIERS = 12             # matched points that must agree before two photos are linked
 WORK_SIDE = 1600             # photos are aligned and drawn from copies at most this size
 EDGE_SPAN = 0.25             # distances from the edge of a photo are kept up to this (× circle radius)
+DETAIL_SHARPNESS = 60.0      # the fine detail of a place: from the photo that sees it most centrally; a photo
+                             # 0.05 radius further out from its centre there weighs e⁻³ ≈ 1/20 as much
 
 
 # ---------------------------------------------------------------------------
@@ -922,6 +926,12 @@ def _band_dirs(geom: MapGeometry, rows: slice) -> np.ndarray:
     return geom.dirs(xx, yy)
 
 
+def _centrality(shot: Shot, dirs: np.ndarray) -> np.ndarray:
+    """How centrally the photo sees the directions ``dirs``: 1 at its centre … 0 at its edge (and outside)."""
+    rho = shot.pixels(dirs @ shot.R)[2]
+    return np.where(np.isfinite(rho), 1.0 - np.minimum(rho, 1.0), 0.0).astype(np.float32)
+
+
 def _sample_dirs(shot: Shot, dirs: np.ndarray):
     """The photo seen in the directions ``dirs`` (…×3, on the eye): colour (uint8), coverage (0 … 1)
     and the distance from the edge of what it shows (radii, up to ``EDGE_SPAN``)."""
@@ -1053,10 +1063,15 @@ def _over(base, cover, top, opacity):
 
 def _smooth_band(shots, dirs, sigma):
     """Two-band blend: the broad brightness as a soft-weighted average (no seams), the fine detail
-    (vessels) mostly from the photo that sees each place best, so slightly misaligned photos do
-    not double the vessels; in overlaps the detail eases from one photo to the next."""
+    (vessels) from the photo that sees each place best — most centrally (``DETAIL_SHARPNESS``), and
+    away from its edge and masks — so slightly misaligned photos do not double the vessels: in an
+    overlap the detail eases from one photo to the next over a narrow band only. (Weighting the
+    detail by the distance from the edge alone averaged it wherever several photos overlapped far
+    from their edges — the posterior pole of a montage of wide photos — and drew vessels twice.)"""
+    central = [_centrality(s, dirs) for s in shots]
+    best = np.max(central, axis=0)
     low_acc = w_acc = det_acc = dw_acc = cover = None
-    for s in shots:
+    for s, c in zip(shots, central):
         col, a, e = _sample_dirs(s, dirs)
         col = col.astype(np.float32) * s.gain.astype(np.float32)
         w = _weights(a, e)
@@ -1064,7 +1079,7 @@ def _smooth_band(shots, dirs, sigma):
         den = cv2.GaussianBlur(a, (0, 0), sigma)
         low = num / np.maximum(den, 1e-4)[..., None]
         high = (col - low) * (a[..., None] > 0.5)
-        wd = w ** 8                                       # near winner-take-all, but continuous
+        wd = (w ** 8) * np.exp(DETAIL_SHARPNESS * (c - best))   # the most central photo, near-alone
         if low_acc is None:
             low_acc, det_acc = np.zeros_like(col), np.zeros_like(col)
             w_acc, dw_acc, cover = (np.zeros(a.shape, np.float32) for _ in range(3))

@@ -1641,10 +1641,21 @@ class EyeView(QOpenGLWidget):
             return min(float(self.cut), em.LIMBUS_Z)
         return em.LIMBUS_Z
 
+    def opened(self) -> bool:
+        """Cut open from the front 15 % deep or more (깊이 막대): the cornea, iris and lens are left out —
+        there is no anterior segment to click on (a click there is on the retina: the wheel keeps zooming)."""
+        return self.mode == "outside" and not self._half_on() and self.cut <= FRONT_CLEAR_CUT
+
+    def cut_changed(self) -> None:
+        """The depth was set (깊이 막대): opened that far, an anterior segment picked by a click is let go —
+        the wheel zooms again (the wheel's own 들어가기 setting still goes in)."""
+        if self.walk and self.wheel_mode != "walk" and self.opened() and not self.on_the_way():
+            self.set_walk(False)
+
     def anterior_at(self, pos: QPointF) -> bool:
         """Does ``pos`` point at the anterior segment — the cornea and the limbus round it (with the front
-        cut open: the opening and its rim)?"""
-        if self.mode != "outside":
+        cut open a little: the opening and its rim; opened 15 % or more: nothing — see ``opened``)?"""
+        if self.mode != "outside" or self.opened():
             return False
         o, d = self._ray(pos)
 
@@ -3032,6 +3043,7 @@ class EyeView(QOpenGLWidget):
         self.interacted.emit()
         steps = e.angleDelta().y() / 120.0
         ctrl = bool(e.modifiers() & Qt.KeyboardModifier.ControlModifier)
+        self.cut_changed()                                # (opened: no way in to walk — the wheel zooms)
         if self.wheel_mode == "walk" and not self.walk and not ctrl and self.scan is None:
             self.set_walk(True)                           # 들어가기: the wheel itself picks the way in
         if self.walk and not (ctrl and not self.on_the_way()):   # (Ctrl+wheel at the start of the way: zoom)
@@ -3053,6 +3065,7 @@ class EyeView(QOpenGLWidget):
         if value > -1.0:
             self.interacted.emit()
             steps = math.log1p(value) / -math.log(0.88)
+            self.cut_changed()
             if self.walk:
                 self.walk_by(steps, pos)
             else:

@@ -58,6 +58,7 @@ from ..importer import ImportResult, safe_component
 from ..models import MODALITY_LABELS
 from ..profiles import get_profile, set_lens_curves
 from ..review import EYES, eye_series
+from ..extract.reticam_meta import reticam_size
 from ..samples import SampleLibrary
 from .. import share
 from ..watcher import ImportService
@@ -272,12 +273,19 @@ class MainWindow(QMainWindow):
             if settings.ui_version < 5:
                 # 5: the wheel over the 3D eye zooms; the depth has its own bar beside the eye (깊이 막대)
                 settings.wheel3d = "zoom"
-            # 6: a patient opens on 16장 보기 ([Multi]: the picked photos only, again: back to the 16)
-            settings.open_view = GRID_MODE
+            if settings.ui_version < 6:
+                # 6: a patient opens on 16장 보기 ([Multi]: the picked photos only, again: back to the 16)
+                settings.open_view = GRID_MODE
+            # 7: photos of the RetiCam's own size imported as 일반 안저카메라 (45°) are RetiCam (176°) photos
+            relabel = settings.ui_version < 7
             settings.ui_version = self.UI_VERSION
+        else:
+            relabel = False
         self.bridge = Bridge()
         # 설정 → 공유: connected to a server, the database and the photos are the server's (share.py)
         self.remote = isinstance(db, share.RemoteDatabase)
+        if relabel and not self.remote:      # (a viewer of a server: the server's own program does it)
+            self._relabel_reticam_copies()
         self.share_server: share.ShareServer | None = None
         self._share_sig = None                # the open patient's photos, as last listed
         if self.remote:
@@ -2959,7 +2967,7 @@ class MainWindow(QMainWindow):
         """Light up the toolbar buttons whose effect is on the photo (VK-2 pushed state)."""
         A = self.acts
         for ch in ("red", "green", "blue", "redfree"):
-            A[f"chan:{ch}"].setChecked(self._channel == ch)
+            A[f"chan:{ch}"].setChecked(self._channel == ch or (ch == "green" and self._channel == "rnfl"))
         A["auto"].setChecked(self._auto)
         A["negative"].setChecked(self._invert)
         A["slideshow"].setChecked(self._slide_timer.isActive())
@@ -2999,7 +3007,8 @@ class MainWindow(QMainWindow):
             v.setFocus()
         elif key.startswith("chan:"):
             ch = key[5:]
-            if checked is False and ch == self._channel:   # clicked the lit filter again
+            lit = "green" if self._channel == "rnfl" else self._channel   # (G 필터 is lit for ▾ RNFL 강화 too)
+            if checked is False and ch == lit:            # clicked the lit filter again
                 ch = "rgb"
             self._push_history()
             self._channel = ch
@@ -3560,6 +3569,7 @@ class MainWindow(QMainWindow):
             self.eye3d.half = 1.0 - v / 100.0
         else:
             self.eye3d.cut = v / 100.0 if v < 100 else 1.0
+            self.eye3d.cut_changed()          # (opened 15 % or more: the wheel zooms, no way in)
         self.eye3d.update()
 
     # -- 세로 단면 · 망막 투시 · 슬릿 스캔 -------------------------------------------------
@@ -4081,11 +4091,11 @@ class MainWindow(QMainWindow):
     # -- 효과: 입체 조명 · 자동 회전 -----------------------------------------------------------
     RELIEF = 0.6            # strength of 입체 조명
     SPIN = 10.0             # 자동 회전, degrees per second
-    UI_VERSION = 6          # 2: the dark look — 자세히, 유리 공막 and 자동 회전 from the start; 3: the 3D tab
+    UI_VERSION = 7          # 2: the dark look — 자세히, 유리 공막 and 자동 회전 from the start; 3: the 3D tab
                             # as the web page (자세히, 황반·유두 자동으로 찾기); 4: the 3D eye shows the
                             # original photo (망막 입체 — 표면 높낮이 and 입체 조명 — off from the start);
                             # 5: the 3D wheel zooms, the depth is on the 깊이 막대 beside the eye;
-                            # 6: a patient opens on 16장 보기
+                            # 6: a patient opens on 16장 보기; 7: RetiCam-sized 일반 45° photos → RetiCam 176°
 
     def _on_relief(self, on: bool) -> None:
         self.settings.relief3d = bool(on)
@@ -4124,6 +4134,8 @@ class MainWindow(QMainWindow):
         one = box.addButton("보고 있는 사진만", QMessageBox.ButtonRole.AcceptRole)
         every = box.addButton(f"고른 사진 모두 ({min(n, MAX_3D)}장)", QMessageBox.ButtonRole.AcceptRole)
         box.addButton("취소", QMessageBox.ButtonRole.RejectRole)
+        for b in box.buttons():                  # (the Mac's message box clipped the longer labels)
+            b.setMinimumWidth(b.fontMetrics().horizontalAdvance(b.text()) + 44)
         box.setDefaultButton(every)
         box.exec()
         return {one: "one", every: "all"}.get(box.clickedButton())
@@ -4281,6 +4293,25 @@ class MainWindow(QMainWindow):
         self.lbl_status.setText("황반 위치를 저장했습니다 (3D에서 안구 뒤쪽 한가운데에 맞춤)")
 
     # -- the first view: 16장 보기 (the VK-2 way), or Simple (설정 → 일반 → 환자를 열면) ----------------
+    def _relabel_reticam_copies(self) -> int:
+        """Photos imported as 일반 안저카메라 (45°) — copies that lost the RetiCam data and file name — but of
+        the RetiCam's own picture size: RetiCam photos (176°, 안구 중심각, 광각 보정), so 3D, 몽타주 and the
+        measurements place them as wide as they were taken. Once (UI 버전 7); returns how many."""
+        prof = get_profile("reticam")
+        n = 0
+        try:
+            with self.db.batch():
+                for r in self.db.generic_images():
+                    if reticam_size((r["width"], r["height"])):
+                        self.db.update_image(r["id"], profile=prof.key, fov_deg=prof.fov_deg, fov_type=prof.fov_type,
+                                             projection=prof.projection)
+                        n += 1
+            if n:
+                self.db.log("info", f"카메라 다시 확인: RetiCam 크기의 일반 안저카메라(45°) 사진 {n}장 → {prof.name}")
+        except Exception as exc:                   # (an old database without these columns …: leave it)
+            self.db.log("error", f"카메라 다시 확인 실패: {exc}")
+        return n
+
     def _grid_mode(self) -> bool:
         """A patient opens on 16장 보기 — unless Simple ("odos") was chosen (an older "overview": 16장 보기)."""
         return self.settings.open_view != SIMPLE_MODE

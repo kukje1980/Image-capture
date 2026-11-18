@@ -30,6 +30,18 @@ def test_main_window_imports_and_lists(tmp_path, demo_dir, import_and_wait):
         assert "김민수" in w.banner.text()
         w._on_action("chan:redfree")
         assert w._channel == "redfree"
+        # G 필터 ▾ 녹색 + RNFL 강화 (광각 분석의 레드프리 0.9): the G 필터 lit; it again: colour
+        labels = [a.text() for a in w.menus["chan:green"].actions()]
+        assert labels[0].startswith("녹색 성분만") and "RNFL" in labels[1]
+        w._on_action("chan:rnfl")
+        assert w._channel == "rnfl" and w.acts["chan:green"].isChecked() and not w.acts["chan:redfree"].isChecked()
+        shown = w.view2d._rgb
+        h, wd = shown.shape[:2]
+        mid = shown[h // 3:2 * h // 3, wd // 3:2 * wd // 3]
+        assert (mid[..., 0] == mid[..., 2]).all() and (mid[..., 0] == mid[..., 1]).all()   # grey on the retina
+        w._on_action("chan:green", False)                               # the lit G 필터 clicked again
+        assert w._channel == "rgb" and not w.acts["chan:green"].isChecked()
+        w._on_action("chan:redfree")
         # zooming: steps and wide-field regions from the 화면 맞춤 ▾ menu, the status-bar magnification
         w._on_action("zoom4")
         assert w.view2d.zoom == pytest.approx(4.0) and w.btn_zoom.text() == "배율 400%"

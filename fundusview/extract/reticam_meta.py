@@ -81,6 +81,21 @@ def reticam_json(img) -> dict | None:
     return None
 
 
+# The RetiCam 3100 Plus's own picture sizes. A photo of that size with nothing else to tell its camera — a copy
+# that lost the RetiCam data and the RetiCam file name (exported, re-saved) — is still a 176° RetiCam photo.
+RETICAM_SIZES = ((5734, 4300), (5736, 4304))
+SIZE_SLACK = 8
+
+
+def reticam_size(size) -> bool:
+    """Is ``(width, height)`` the RetiCam's own picture size?"""
+    try:
+        w, h = int(size[0]), int(size[1])
+    except (TypeError, ValueError, IndexError):
+        return False
+    return any(abs(w - rw) <= SIZE_SLACK and abs(h - rh) <= SIZE_SLACK for rw, rh in RETICAM_SIZES)
+
+
 def looks_like_reticam(path: Path, img=None) -> bool:
     if FILENAME.match(path.stem):
         return True

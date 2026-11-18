@@ -22,7 +22,7 @@ from .apollo_meta import apollo_meta, looks_like_apollo
 from .dicom_meta import dicom_meta, is_dicom
 from .embedded_meta import embedded_meta, sidecar_meta
 from .filename_meta import filename_meta, match_patterns
-from .reticam_meta import looks_like_reticam, reticam_meta
+from .reticam_meta import looks_like_reticam, reticam_meta, reticam_size
 
 __all__ = ["extract_metadata", "detect_profile", "is_dicom"]
 
@@ -48,6 +48,8 @@ def detect_profile(path: Path, meta: ExtractedMeta | None = None) -> CameraProfi
                     return PROFILES["reticam"]
                 if looks_like_apollo(path, img):
                     return PROFILES["apollo"]
+                if reticam_size(img.size):        # (a copy that lost the RetiCam data: its size still says)
+                    return PROFILES["reticam"]
         except Exception:
             pass
     return PROFILES["generic"]
