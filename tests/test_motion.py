@@ -337,9 +337,14 @@ def test_3d_wheel_walks_in_from_the_picked_cornea(app, live, monkeypatch):
     from fundusview.ui import eye_model as em
     from fundusview.ui import motion
 
+    from fundusview.ui.eye3d import FRONT_CLEAR_CUT
+
     e = _eye(app, monkeypatch)
-    e.cut = 0.25                                                      # the front cut open, as the tab starts
-    e.reset_view()
+    e.cut = 0.25                                                      # opened 58 % deep, as the tab starts:
+    e.reset_view()                                                    # no cornea, no lens — nothing to pick
+    assert e.opened() and not e.anterior_at(_screen(e, (0.0, 0.0, 0.6)))
+    e.cut = 0.9                                                       # the front cut open a little (< 15 %)
+    assert e.cut > FRONT_CLEAR_CUT and not e.opened()
     start = e.pose()
     seen = []
     e.walkChanged.connect(seen.append)
@@ -395,7 +400,7 @@ def test_3d_wheel_walks_in_from_the_picked_cornea(app, live, monkeypatch):
     assert e.journey_j == pytest.approx(1.0 - 2 * e.WALK_STEP, abs=1e-6) and e.mode == "outside"
     _wheel3d(e, -40)                                                    # all the way out: the view it started from
     live(2.0)
-    assert e.journey_j == 0.0 and e.mode == "outside" and e.cut == pytest.approx(0.25)
+    assert e.journey_j == 0.0 and e.mode == "outside" and e.cut == pytest.approx(0.9)
     p = e.pose()
     assert (p["yaw"], p["pitch"], p["dist"]) == (pytest.approx(start["yaw"]), pytest.approx(start["pitch"]),
                                                  pytest.approx(start["dist"]))
@@ -426,7 +431,7 @@ def test_3d_wheel_walks_in_from_the_picked_cornea(app, live, monkeypatch):
         _wheel3d(e, 10)
         assert e.journey_j == pytest.approx(10 * e.WALK_STEP) and not e.moving()
         e.reset_view(animate=False)
-        assert not e.walk and not e.journey_on() and e.cut == pytest.approx(0.25)
+        assert not e.walk and not e.journey_on() and e.cut == pytest.approx(0.9)
     finally:
         motion.set_enabled(True)
 
