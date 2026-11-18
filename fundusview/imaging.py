@@ -382,9 +382,32 @@ def thumbnail(rgb: np.ndarray, size: int = 320) -> Image.Image:
 # ---------------------------------------------------------------------------
 # display adjustments
 # ---------------------------------------------------------------------------
-CHANNELS = ("rgb", "redfree", "red", "green", "blue")
+CHANNELS = ("rgb", "redfree", "red", "green", "blue", "rnfl")
 CHANNEL_LABELS = {"rgb": "컬러", "redfree": "Red-free (녹색)", "red": "적색 채널",
-                  "green": "녹색 채널(흑백)", "blue": "청색 채널"}
+                  "green": "녹색 채널(흑백)", "blue": "청색 채널", "rnfl": "녹색 + RNFL 강화"}
+RNFL_K = 0.9            # G 필터 ▾ 녹색 + RNFL 강화: the strength of 녹내장 분석 → 광각 분석's RNFL 대비 강화
+
+
+def rnfl_green(rgb: np.ndarray, k: float = RNFL_K) -> np.ndarray:
+    """The green channel with its local contrast raised, which brings out the nerve fibre layer — grey;
+    outside the image circle the photo as it is. The same picture as 녹내장 분석 → 광각 분석 with 레드프리
+    and RNFL 대비 강화 ``k`` (``glaucoma.enhance_wide``)."""
+    h, w = rgb.shape[:2]
+    g = rgb[..., 1].astype(np.float32)
+    if cv2 is not None:
+        small = cv2.resize(np.ascontiguousarray(rgb[..., 1]), (max(1, w // 16), max(1, h // 16)),
+                           interpolation=cv2.INTER_AREA)
+        blur = cv2.resize(small, (w, h), interpolation=cv2.INTER_CUBIC).astype(np.float32)
+    else:
+        img = Image.fromarray(np.ascontiguousarray(rgb[..., 1]))
+        blur = np.asarray(img.resize((max(1, w // 16), max(1, h // 16)), Image.Resampling.BOX)
+                          .resize((w, h), Image.Resampling.BICUBIC)).astype(np.float32)
+    lit = rgb.astype(np.int32).sum(axis=2) > 24              # outside the image circle stays as it is
+    mean = float(g[lit].mean()) if lit.any() else 80.0
+    v = np.clip(105 + (g - mean) * 1.9 + k * 2.2 * (g - blur), 0, 255).astype(np.uint8)
+    out = np.repeat(v[..., None], 3, axis=2)
+    out[~lit] = rgb[~lit]
+    return out
 
 
 def _lut(brightness: float, contrast: float, gamma: float, lo: float = 0.0, hi: float = 255.0) -> np.ndarray:
@@ -402,6 +425,8 @@ def adjust(rgb: np.ndarray, *, brightness: float = 0.0, contrast: float = 1.0, g
     black / white input points (histogram dialog)."""
     if channel == "rgb":
         src = rgb
+    elif channel == "rnfl":     # G 필터 ▾ 녹색 + RNFL 강화 (the picture of 광각 분석)
+        src = rnfl_green(rgb)
     elif channel == "redfree":  # green channel, shown as green-tinted grey
         g = np.ascontiguousarray(rgb[..., 1])
         if cv2 is not None and g.dtype == np.uint8:

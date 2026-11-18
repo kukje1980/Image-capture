@@ -121,3 +121,26 @@ def test_fovea_tells_an_unknown_eye(eye):
     assert found is not None and found[3] == eye
     named = imaging.detect_fovea(rgb, cam, disc[:2], eye)
     assert named is not None and math.hypot(found[0] - named[0], found[1] - named[1]) < 3.0
+
+
+def test_green_with_rnfl_contrast_is_the_wide_analysis_picture():
+    """G 필터 ▾ 녹색 + RNFL 강화: the green channel with the local contrast of 녹내장 분석 → 광각 분석 at 0.9 —
+    the same picture there and here; grey; outside the image circle the photo as it is."""
+    import cv2
+
+    from fundusview import glaucoma as G
+
+    rgb = synth_fundus(eye="OD", size=(320, 300), seed=5)
+    out = imaging.rnfl_green(rgb)
+    assert imaging.RNFL_K == 0.9
+    assert out.shape == rgb.shape and out.dtype == np.uint8
+    assert (out == G.enhance_wide(rgb, True, 0.9)).all()                  # 광각 분석's 레드프리 at 0.9
+    lit = rgb.astype(int).sum(axis=2) > 24
+    assert (out[lit][:, 0] == out[lit][:, 1]).all() and (out[lit][:, 1] == out[lit][:, 2]).all()
+    assert (out[~lit] == rgb[~lit]).all()
+    assert (imaging.adjust(rgb, channel="rnfl") == out).all()            # as a filter of the main window
+    # it brings out what the plain green channel shows flat: more local contrast
+    plain = imaging.adjust(rgb, channel="green")[..., 1].astype(float)
+    hp = lambda x: x - cv2.GaussianBlur(x, (0, 0), 6)  # noqa: E731
+    assert hp(out[..., 1].astype(float))[lit].std() > 1.3 * hp(plain)[lit].std()
+    assert "RNFL" in imaging.CHANNEL_LABELS["rnfl"]

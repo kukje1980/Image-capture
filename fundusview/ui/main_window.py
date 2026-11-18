@@ -2959,7 +2959,7 @@ class MainWindow(QMainWindow):
         """Light up the toolbar buttons whose effect is on the photo (VK-2 pushed state)."""
         A = self.acts
         for ch in ("red", "green", "blue", "redfree"):
-            A[f"chan:{ch}"].setChecked(self._channel == ch)
+            A[f"chan:{ch}"].setChecked(self._channel == ch or (ch == "green" and self._channel == "rnfl"))
         A["auto"].setChecked(self._auto)
         A["negative"].setChecked(self._invert)
         A["slideshow"].setChecked(self._slide_timer.isActive())
@@ -2999,7 +2999,8 @@ class MainWindow(QMainWindow):
             v.setFocus()
         elif key.startswith("chan:"):
             ch = key[5:]
-            if checked is False and ch == self._channel:   # clicked the lit filter again
+            lit = "green" if self._channel == "rnfl" else self._channel   # (G 필터 is lit for ▾ RNFL 강화 too)
+            if checked is False and ch == lit:            # clicked the lit filter again
                 ch = "rgb"
             self._push_history()
             self._channel = ch
