@@ -239,14 +239,34 @@ def depth_profile(disp: np.ndarray, y: float, image_h: int, width: int, height: 
 
 
 # -- disc: cup-to-disc ratio -----------------------------------------------------------------------
+def outline(e: dict) -> dict:
+    """A disc or cup outline as ``{cx, cy, top, right, bottom, left}`` — its centre and how far it reaches
+    up, right, down and left (each point of the C/D tab moves on its own). An ellipse ``{cx, cy, rx, ry}``
+    is the outline with top = bottom = ry and left = right = rx. Between the four points the outline is
+    a quarter ellipse each (smooth where they meet)."""
+    if "top" in e:
+        return {k: float(e[k]) for k in ("cx", "cy", "top", "right", "bottom", "left")}
+    return {"cx": float(e["cx"]), "cy": float(e["cy"]), "top": float(e["ry"]), "right": float(e["rx"]),
+            "bottom": float(e["ry"]), "left": float(e["rx"])}
+
+
+def outline_area(e: dict) -> float:
+    """Area of an outline: four quarter ellipses."""
+    o = outline(e)
+    return math.pi / 4 * (o["right"] * o["top"] + o["top"] * o["left"] + o["left"] * o["bottom"]
+                          + o["bottom"] * o["right"])
+
+
 def cdr_metrics(disc: dict, cup: dict, eye: str = "OD") -> dict:
-    """``disc`` / ``cup`` = ``{cx, cy, rx, ry}``. Rim widths are fractions of the vertical disc
-    diameter (DD). The photo is upright: the right eye's nasal side is on the right."""
-    dd = 2 * disc["ry"]
-    s = ((cup["cy"] - cup["ry"]) - (disc["cy"] - disc["ry"])) / dd
-    i = ((disc["cy"] + disc["ry"]) - (cup["cy"] + cup["ry"])) / dd
-    right = ((disc["cx"] + disc["rx"]) - (cup["cx"] + cup["rx"])) / dd
-    left = ((cup["cx"] - cup["rx"]) - (disc["cx"] - disc["rx"])) / dd
+    """``disc`` / ``cup`` = outlines (``outline``: centre and the reach up, right, down, left — or an
+    ellipse ``{cx, cy, rx, ry}``). Rim widths are fractions of the vertical disc diameter (DD). The
+    photo is upright: the right eye's nasal side is on the right."""
+    d, c = outline(disc), outline(cup)
+    dd = d["top"] + d["bottom"]
+    s = ((c["cy"] - c["top"]) - (d["cy"] - d["top"])) / dd
+    i = ((d["cy"] + d["bottom"]) - (c["cy"] + c["bottom"])) / dd
+    right = ((d["cx"] + d["right"]) - (c["cx"] + c["right"])) / dd
+    left = ((c["cx"] - c["left"]) - (d["cx"] - d["left"])) / dd
     n, t = (left, right) if eye == "OS" else (right, left)
     bad = []
     if i < s:
@@ -255,9 +275,9 @@ def cdr_metrics(disc: dict, cup: dict, eye: str = "OD") -> dict:
         bad.append("상측 림이 비측보다 얇음")
     if n < t:
         bad.append("비측 림이 이측보다 얇음")
-    area = (cup["rx"] * cup["ry"]) / (disc["rx"] * disc["ry"])
-    return {"vertical": cup["ry"] / disc["ry"], "horizontal": cup["rx"] / disc["rx"], "area": area,
-            "rim": {"I": i, "S": s, "N": n, "T": t}, "isnt": bad}
+    area = outline_area(c) / outline_area(d)
+    return {"vertical": (c["top"] + c["bottom"]) / dd, "horizontal": (c["left"] + c["right"]) / (d["left"] + d["right"]),
+            "area": area, "rim": {"I": i, "S": s, "N": n, "T": t}, "isnt": bad}
 
 
 # -- wide field ------------------------------------------------------------------------------------

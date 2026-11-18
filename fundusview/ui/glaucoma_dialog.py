@@ -20,7 +20,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen, QPolygonF
+from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen, QPolygonF
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QFileDialog, QHBoxLayout, QLabel, QPushButton, QScrollArea, QSizePolicy,
     QSlider, QTabWidget, QVBoxLayout, QWidget,
@@ -540,8 +540,20 @@ class StereoTab(_PairTab):
 
 
 # -- disc: C/D -------------------------------------------------------------------------------------
+def _outline_path(e: dict) -> QPainterPath:
+    """An outline (``G.outline``) as four quarter ellipses round its centre: up-right, up-left, down-left,
+    down-right — the ellipse itself when the opposite reaches are equal."""
+    cx, cy, t, r, b, l = (e[k] for k in ("cx", "cy", "top", "right", "bottom", "left"))
+    path = QPainterPath(QPointF(cx + r, cy))
+    for (rx, ry), start in (((r, t), 0), ((l, t), 90), ((l, b), 180), ((r, b), 270)):
+        path.arcTo(QRectF(cx - rx, cy - ry, 2 * rx, 2 * ry), start, 90)
+    path.closeSubpath()
+    return path
+
+
 class DiscTab(_Tab):
-    """The optic disc of the photo with two ellipses to fit: the disc margin and the cup."""
+    """The optic disc of the photo with two outlines to fit: the disc margin and the cup — each point
+    (S · N · I · T) moved on its own, the centre moving the whole outline."""
 
     def __init__(self, photo: Photo | None, parent=None):
         super().__init__(NEED_ONE, parent)
@@ -551,7 +563,7 @@ class DiscTab(_Tab):
         self._drag = None
         self.field = "normal"
         self.hint.setText("초록 타원을 디스크 경계에, 노란 타원을 컵 경계에 맞추세요. "
-                          "가운데 점은 옮기기, 가장자리 점은 크기입니다.")
+                          "가운데 점은 통째로 옮기기, 가장자리 점(S · N · I · T)은 하나씩 따로 움직입니다.")
         self.eyes = _Choice([("OD", "OD (우안)"), ("OS", "OS (좌안)")])
         self.eyes.set(self.eye_key)
         self.eyes.changed.connect(self.set_eye)
@@ -598,8 +610,8 @@ class DiscTab(_Tab):
         side = float(self.img.shape[0])
         r = side / factor / 2.0                                  # the disc radius in this picture
         c = side / 2.0
-        self.disc = {"cx": c, "cy": c, "rx": r * 0.95, "ry": r * 1.05}
-        self.cup = {"cx": c, "cy": c, "rx": r * 0.45, "ry": r * 0.50}
+        self.disc = G.outline({"cx": c, "cy": c, "rx": r * 0.95, "ry": r * 1.05})
+        self.cup = G.outline({"cx": c, "cy": c, "rx": r * 0.45, "ry": r * 0.50})
         self.warn.setText("" if self.photo.disc_found else
                           "유두를 찾지 못해 예상 위치를 잘랐습니다 — 2D 사진에서 오른쪽 클릭 → 시신경 유두로 지정")
         self.warn.setVisible(not self.photo.disc_found)
@@ -612,19 +624,22 @@ class DiscTab(_Tab):
         self._changed()
 
     def set_ellipses(self, disc: dict, cup: dict) -> None:
-        self.disc, self.cup = dict(disc), dict(cup)
+        """The disc and cup outlines (``G.outline``: an ellipse or the reach up · right · down · left)."""
+        self.disc, self.cup = G.outline(disc), G.outline(cup)
         self._changed()
 
     def metrics(self) -> dict | None:
         return G.cdr_metrics(self.disc, self.cup, self.eye_key) if self.disc else None
 
     def _handles(self) -> list:
+        """The points of each outline: its centre (moves it) and S · N · I · T — each moves on its own,
+        along its own direction (up / down, left / right), the opposite one staying where it is."""
         out = []
         for key in ("cup", "disc"):
             e = getattr(self, key)
-            out += [(key, "c", e["cx"], e["cy"]), (key, "e", e["cx"] + e["rx"], e["cy"]),
-                    (key, "w", e["cx"] - e["rx"], e["cy"]), (key, "n", e["cx"], e["cy"] - e["ry"]),
-                    (key, "s", e["cx"], e["cy"] + e["ry"])]
+            out += [(key, "c", e["cx"], e["cy"]), (key, "e", e["cx"] + e["right"], e["cy"]),
+                    (key, "w", e["cx"] - e["left"], e["cy"]), (key, "n", e["cx"], e["cy"] - e["top"]),
+                    (key, "s", e["cx"], e["cy"] + e["bottom"])]
         return out
 
     def _press(self, x: float, y: float) -> None:
@@ -646,10 +661,14 @@ class DiscTab(_Tab):
         e = getattr(self, key)
         if h == "c":
             e["cx"], e["cy"] = x - ox, y - oy
-        elif h in "ew":
-            e["rx"] = max(5.0, abs(x - e["cx"]))
+        elif h == "e":                        # each point on its own: the opposite one stays
+            e["right"] = max(5.0, x - e["cx"])
+        elif h == "w":
+            e["left"] = max(5.0, e["cx"] - x)
+        elif h == "n":
+            e["top"] = max(5.0, e["cy"] - y)
         else:
-            e["ry"] = max(5.0, abs(y - e["cy"]))
+            e["bottom"] = max(5.0, y - e["cy"])
         self._changed()
 
     def _changed(self) -> None:
@@ -663,7 +682,7 @@ class DiscTab(_Tab):
         for e, col in ((self.disc, DISC_COLOR), (self.cup, CUP_COLOR)):
             p.setPen(QPen(col, 2.5 * u))
             p.setBrush(Qt.BrushStyle.NoBrush)
-            p.drawEllipse(QPointF(e["cx"], e["cy"]), e["rx"], e["ry"])
+            p.drawPath(_outline_path(e))
         for key, _h, x, y in self._handles():
             p.setPen(QPen(QColor("#111111"), 1.5 * u))
             p.setBrush(DISC_COLOR if key == "disc" else CUP_COLOR)
@@ -675,8 +694,8 @@ class DiscTab(_Tab):
         f.setBold(True)
         p.setFont(f)
         p.setPen(QColor("#ffffff"))
-        for text, x, y in (("S", d["cx"], d["cy"] - d["ry"] - 16 * u), ("I", d["cx"], d["cy"] + d["ry"] + 16 * u),
-                           (right, d["cx"] + d["rx"] + 16 * u, d["cy"]), (left, d["cx"] - d["rx"] - 16 * u, d["cy"])):
+        for text, x, y in (("S", d["cx"], d["cy"] - d["top"] - 16 * u), ("I", d["cx"], d["cy"] + d["bottom"] + 16 * u),
+                           (right, d["cx"] + d["right"] + 16 * u, d["cy"]), (left, d["cx"] - d["left"] - 16 * u, d["cy"])):
             p.drawText(QRectF(x - 20 * u, y - 12 * u, 40 * u, 24 * u), Qt.AlignmentFlag.AlignCenter, text)
 
     def _report(self) -> None:

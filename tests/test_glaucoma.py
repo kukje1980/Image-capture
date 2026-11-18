@@ -1,6 +1,8 @@
 """녹내장 분석: the image work (glaucoma.py), the window's four tabs and the main-window flow."""
 import os
 
+import math
+
 import numpy as np
 import pytest
 
@@ -82,6 +84,14 @@ def test_cdr_metrics_and_isnt():
     # inferior notch
     low = G.cdr_metrics(disc, {"cx": 100, "cy": 115, "rx": 25, "ry": 40}, "OD")
     assert "하측 림이 상측보다 얇음" in low["isnt"] and low["vertical"] == pytest.approx(40 / 60)
+    # an outline whose points were moved one by one: a cup reaching further down than up (an inferior
+    # notch) — the inferior rim alone thins; the area is its four quarter ellipses
+    notch = {"cx": 100, "cy": 100, "top": 30, "right": 25, "bottom": 48, "left": 25}
+    m2 = G.cdr_metrics(disc, notch, "OD")
+    assert m2["rim"]["S"] == pytest.approx(m["rim"]["S"]) and m2["rim"]["I"] == pytest.approx((60 - 48) / 120)
+    assert m2["vertical"] == pytest.approx((30 + 48) / 120) and "하측 림이 상측보다 얇음" in m2["isnt"]
+    assert G.outline_area(notch) == pytest.approx(math.pi / 4 * (25 * 30 * 2 + 25 * 48 * 2))
+    assert G.outline(cup) == {"cx": 100.0, "cy": 100.0, "top": 30.0, "right": 25.0, "bottom": 30.0, "left": 25.0}
 
 
 def test_sectors_and_clock_hours():
@@ -174,16 +184,26 @@ def test_disc_tab_cuts_around_the_disc_and_measures(app):
     assert tab.has_image() and tab.img.shape[0] == tab.img.shape[1]
     side = tab.img.shape[0]
     # the ellipses start at the disc's own size: 3.5 disc diameters across the picture
-    assert 2 * tab.disc["ry"] == pytest.approx(side / 3.5 * 1.05, rel=0.01)
+    assert tab.disc["top"] + tab.disc["bottom"] == pytest.approx(side / 3.5 * 1.05, rel=0.01)
     assert tab.metrics()["vertical"] == pytest.approx(0.50 / 1.05, abs=0.01)
     assert not tab.warn.isVisibleTo(tab)
     tab.set_field("wide")
-    assert 2 * tab.disc["ry"] == pytest.approx(tab.img.shape[0] / 5.0 * 1.05, rel=0.01)
-    # drag the cup's lower handle down: the vertical C/D grows, the eye decides nasal / temporal
-    c = tab.cup
-    tab._press(c["cx"], c["cy"] + c["ry"])
-    tab._move(c["cx"], c["cy"] + 1.6 * c["ry"])
-    assert tab.metrics()["vertical"] == pytest.approx(1.6 * 0.50 / 1.05, abs=0.02)
+    assert tab.disc["top"] + tab.disc["bottom"] == pytest.approx(tab.img.shape[0] / 5.0 * 1.05, rel=0.01)
+    # drag the cup's lower point down: that point alone moves (the upper one stays) — the vertical C/D
+    # grows by half as much, the inferior rim narrows, the superior one is as it was
+    c = dict(tab.cup)
+    rim0 = tab.metrics()["rim"]
+    tab._press(c["cx"], c["cy"] + c["bottom"])
+    tab._move(c["cx"], c["cy"] + 1.6 * c["bottom"])
+    assert tab.cup["top"] == c["top"] and tab.cup["bottom"] == pytest.approx(1.6 * c["bottom"])
+    assert tab.metrics()["vertical"] == pytest.approx((1 + 1.6) / 2 * 0.50 / 1.05, abs=0.02)
+    assert tab.metrics()["rim"]["S"] == pytest.approx(rim0["S"]) and tab.metrics()["rim"]["I"] < rim0["I"]
+    # … and the disc's nasal point on its own: the temporal side stays
+    d = dict(tab.disc)
+    tab._press(d["cx"] + d["right"], d["cy"])
+    tab._move(d["cx"] + d["right"] + 12, d["cy"])
+    assert tab.disc["right"] == pytest.approx(d["right"] + 12) and tab.disc["left"] == d["left"]
+    tab._drag = None
     assert tab.lbl_v.text() == f"{tab.metrics()['vertical']:.2f}"
     tab.set_ellipses(tab.disc, {**tab.cup, "cx": tab.cup["cx"] - 10})
     n_od = tab.metrics()["rim"]["N"]
