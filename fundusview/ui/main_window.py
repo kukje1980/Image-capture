@@ -3560,6 +3560,7 @@ class MainWindow(QMainWindow):
             self.eye3d.half = 1.0 - v / 100.0
         else:
             self.eye3d.cut = v / 100.0 if v < 100 else 1.0
+            self.eye3d.cut_changed()          # (opened 15 % or more: the wheel zooms, no way in)
         self.eye3d.update()
 
     # -- 세로 단면 · 망막 투시 · 슬릿 스캔 -------------------------------------------------

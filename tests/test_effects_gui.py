@@ -439,6 +439,26 @@ def test_3d_wheel_mode_is_chosen_in_the_settings(app, tmp_path, demo_dir, import
         assert not eye.walk and not w.b_walk.isChecked() and eye.wheel_mode == "depth"
         eye.reset_view(animate=True)
 
+        # opened 15 % or more (the 깊이 막대 — the cornea, iris and lens left out): a click there is on the
+        # retina — it picks no way in, the wheel goes on zooming; a way picked before is let go when opened
+        front = _screen(eye, (0.0, 0.0, 0.6))
+        w._wheel_buttons["zoom"].click()
+        assert eye.opened() and not eye.anterior_at(front)
+        eye._clicked(front)
+        assert not eye.walk
+        mag0 = eye.magnification
+        wheel(2)
+        assert eye.magnification > mag0 and not eye.walk
+        eye.reset_view()
+        w._wheel_buttons["depth"].click()
+        w.s_cut.setValue(95)                                              # opened a little: the cornea is there
+        assert not eye.opened()
+        eye._clicked(front)
+        assert eye.walk
+        w.s_cut.setValue(cut0)                                            # opened far: let go
+        assert not eye.walk and not w.b_walk.isChecked()
+        w.s_cut.setValue(95)
+
         # 각막을 누르면 휠로 들어가기 — off: a click on the cornea picks nothing; on: it picks the way in
         front = _screen(eye, (0.0, 0.0, 0.6))
         assert eye.anterior_at(front)
@@ -452,6 +472,7 @@ def test_3d_wheel_mode_is_chosen_in_the_settings(app, tmp_path, demo_dir, import
         assert eye.walk and w.b_walk.isChecked()
         w.c_walkclick3d.setChecked(False)                                 # off while picked: let go
         assert not eye.walk
+        w.s_cut.setValue(cut0)
 
         # remembered — and 설정 → 일반 has the same two
         saved = Settings.load(config_dir() / "settings.json")
