@@ -451,7 +451,7 @@ def test_a_new_photo_takes_its_eyes_place(win):
     app.processEvents()
     assert w._tab() == "multi" and w.picks() == [ids["od3"], new] and _cells(w) == ([ids["od3"], new], new)
     assert w._book == "2026-04-01" and w._strip_ids() == [new]      # the list: the new photo's bookmark
-    assert w.book_bar.tabText(0).startswith("2026-04-01")
+    assert w.book_bar.tabText(1).startswith("2026-04-01")
     # a photo pinned by hand: it stays; the new photo is shown large — and [Simple] puts the newest
     # OD | OS on the page again
     _click(app, w, new)

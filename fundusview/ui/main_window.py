@@ -4,7 +4,7 @@ Simple, its newest OD | OS (the first setting, v0.10.0), or on 16장 보기, its
 (photo_grid.py; a click picks, [Multi] shows the picked ones only and [Multi] again all 16).
 
 The photo list under the photos shows one exam's photos: the 날짜 책갈피 over it (one per exam
-date, the newest at the left and open first, then 전체) pick the exam, and so does the wheel over
+date — 전체 at the left, then the newest, which is open first) pick the exam, and so does the wheel over
 the list (``set_book``). A photo of the list under the mouse is shown larger just above it (미리
 보기, peek.py — a small pane; the photos of the views stay as they are) and on Simple a click selects it, numbered —
 as many photos above as are selected; with none the newest OD | OS of the bookmark's exam. The patient list
@@ -679,7 +679,7 @@ class MainWindow(QMainWindow):
         self.book_bar.setUsesScrollButtons(True)
         self.book_bar.setElideMode(Qt.TextElideMode.ElideNone)
         self.book_bar.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.book_bar.setToolTip("날짜 책갈피 — 누르면 그 검사일의 사진이 아래에 나옵니다 (최근 날짜가 왼쪽)\n"
+        self.book_bar.setToolTip("날짜 책갈피 — 누르면 그 검사일의 사진이 아래에 나옵니다 (맨 왼쪽은 전체, 그다음 최근 날짜부터)\n"
                                  "사진 목록 위에서 마우스 휠을 굴려도 넘어갑니다 · ✓: 그 날짜에서 고정한 사진 수")
         self.book_bar.setStyleSheet(
             f"QTabBar#bookBar::tab {{ background:{theme.CARD}; color:{theme.TEXT2}; padding:3px 12px; "
@@ -2436,8 +2436,8 @@ class MainWindow(QMainWindow):
 
     # -- 날짜 책갈피: the photo list by exam date -----------------------------------------------------
     def _book_tabs(self) -> list[str]:
-        """The bookmarks, left to right: the exam dates newest first, then 전체 (with two dates or more)."""
-        return self._books + ([ALL_DATES] if len(self._books) > 1 else [])
+        """The bookmarks, left to right: 전체 (with two dates or more), then the exam dates newest first."""
+        return ([ALL_DATES] if len(self._books) > 1 else []) + self._books
 
     @staticmethod
     def _book_name(book: str) -> str:
@@ -2500,7 +2500,7 @@ class MainWindow(QMainWindow):
             self._apply_peek()
 
     def step_book(self, d: int) -> None:
-        """The bookmark ``d`` to the right (older; 전체 last) or, negative, to the left (newer)."""
+        """The bookmark ``d`` to the right (older) or, negative, to the left (newer; 전체 first)."""
         tabs = self._book_tabs()
         if self._book in tabs:
             self.set_book(tabs[max(0, min(len(tabs) - 1, tabs.index(self._book) + d))])
@@ -2562,10 +2562,6 @@ class MainWindow(QMainWindow):
             return
         self._peek = want
         own = self._own_picks() and want in self._picks
-        if self._tab() == "all":
-            what = "클릭하면 이 사진을 봅니다"
-        else:
-            what = "고정한 사진 — 클릭하면 빼기" if own else "클릭하면 고정(선택)"
         # … just above that photo of the list
         item = next((self.thumbs.item(i) for i in range(self.thumbs.count())
                      if self.thumbs.item(i).data(Qt.ItemDataRole.UserRole) == want), None)
@@ -2574,9 +2570,12 @@ class MainWindow(QMainWindow):
         side = self.peek_pane.side
         if rgb.shape[1] < side and max(row["width"] or 0, row["height"] or 0) > rgb.shape[1]:
             rgb = self._multi_small(row, self._photo_state(want), 1)      # (1400 px: enough for any size)
-        self.peek_pane.show_photo(want, f"{self._multi_label(row, self._picks.index(want) + 1 if own else 0)}"
-                                        f"<br><b style='color:#ffd60a'>미리 보기</b> — {what}", rgb, x)
-        self.lbl_status.setText("미리 보기 — 이 사진이 맞으면 클릭해서 고정(선택)하세요 · 마우스를 떼면 닫힙니다")
+        self.peek_pane.show_photo(want, eye_badge_html(row["laterality"]), rgb, x)     # (only the eye, on the photo)
+        if self._tab() == "all":
+            what = "클릭하면 이 사진을 봅니다"
+        else:
+            what = "고정한 사진입니다 — 클릭하면 뺍니다" if own else "이 사진이 맞으면 클릭해서 고정(선택)하세요"
+        self.lbl_status.setText(f"미리 보기 — {what} · 마우스를 떼면 닫힙니다")
 
     def _end_peek(self) -> None:
         """No preview any more (the mouse left the list, a click, another view)."""

@@ -1007,7 +1007,15 @@ def match_gains(shots: list[Shot], size: int = 256, strength: float = 0.05) -> N
     if n < 2:
         return
     geom = MapGeometry(size, coverage_angle(shots))
-    samples = [_sample(s, geom) for s in shots]
+    gains_from_samples(shots, [_sample(s, geom) for s in shots], size, strength)
+
+
+def gains_from_samples(shots: list[Shot], samples: list, size: int = 256, strength: float = 0.05) -> None:
+    """``match_gains`` from the photos drawn on one small picture already: ``samples[k]`` = (colour,
+    coverage, edge distance) of ``shots[k]`` (also for the flat 수동 합치기, ``flat_montage.py``)."""
+    n = len(shots)
+    if n < 2:
+        return
     ok = [(a > 0.9) & (e > 0.08) for _, a, e in samples]
     for ch in range(3):
         rows, rhs = [], []
@@ -1111,11 +1119,22 @@ def _smooth_band(shots, dirs, sigma):
     detail by the distance from the edge alone averaged it wherever several photos overlapped far
     from their edges — the posterior pole of a montage of wide photos — and drew vessels twice.)"""
     central = [_centrality(s, dirs) for s in shots]
+
+    def sample(k):
+        col, a, e = _sample_dirs(shots[k], dirs)
+        return col.astype(np.float32) * shots[k].gain.astype(np.float32), a, e
+
+    return two_band(central, sample, sigma)
+
+
+def two_band(central: list, sample, sigma: float):
+    """The two-band blend of ``_smooth_band`` for photos drawn on one picture any way: ``central[k]`` =
+    how centrally photo ``k`` sees each pixel (1 … 0), ``sample(k)`` = its (colour float32 with its
+    gain, coverage 0 … 1, edge distance in radii). Returns (rgb uint8, coverage uint8)."""
     best = np.max(central, axis=0)
     low_acc = w_acc = det_acc = dw_acc = cover = None
-    for s, c in zip(shots, central):
-        col, a, e = _sample_dirs(s, dirs)
-        col = col.astype(np.float32) * s.gain.astype(np.float32)
+    for k, c in enumerate(central):
+        col, a, e = sample(k)
         w = _weights(a, e)
         num = cv2.GaussianBlur(col * a[..., None], (0, 0), sigma)
         den = cv2.GaussianBlur(a, (0, 0), sigma)

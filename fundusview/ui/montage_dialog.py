@@ -7,6 +7,8 @@
 * 자동 합치기 finds the vessels the photos share and places them (and corrects a wrong
   field of view); 기준점 맞추기 places the selected photo from points clicked on it and on
   a neighbour.
+* 수동 합치기 (원본 사진 그대로)… opens ``flat_montage_dialog.py``: the photos as they are (not drawn on
+  the eye), the one at the back opaque and the others semi-transparent, placed by hand and blended.
 * 완성 tab: the blended montage (brightness matched, two-band blend: no seams, no doubled
   vessels); 3D tab: it on the eyeball, with the field of view worked out from the
   photos (몽타주 화각 자동) or set by hand.
@@ -594,6 +596,9 @@ class MontageDialog(QDialog):
         self.file_stem = file_stem
         self._save_record = save_record
         self.saved_id: int | None = None
+        self._flat_definition = definition if definition and definition.get("flat") else None
+        if self._flat_definition is not None:   # made by 수동 합치기 (flat): that editor opens with it
+            definition = None
         self.definition_loaded = bool(definition)
         self.shots = [mt.Shot.from_photo(s.rgb, s.alpha, s.circle, fov_deg=s.fov_deg, fov_type=s.fov_type,
                                          projection=s.projection, viewpoint=s.viewpoint, radial_c=s.radial_c,
@@ -673,6 +678,11 @@ class MontageDialog(QDialog):
         self.b_points = QPushButton("기준점으로 맞추기…")
         self.b_points.setToolTip("고른 사진과 옆 사진에서 같은 곳(혈관 갈림길)을 찍어 맞춥니다")
         self.b_points.clicked.connect(self.align_by_points)
+        self.b_flat = QPushButton("수동 합치기 (원본 사진 그대로)…")
+        self.b_flat.setToolTip("사진을 안구 모양으로 펴지 않고 원본 그대로 겹쳐서 손으로 맞춥니다 —\n"
+                               "맨 뒤 사진은 불투명, 위 사진은 반투명 · 드래그로 옮기고 돌린 뒤 이음매 없이 저장\n"
+                               "(지금 배치에서 시작합니다)")
+        self.b_flat.clicked.connect(lambda: self.open_flat())
         self.b_undo = QPushButton("되돌리기")
         self.b_undo.setToolTip("마지막 이동·회전·맞추기를 취소 (Ctrl+Z)")
         self.b_undo.clicked.connect(self.undo)
@@ -746,6 +756,7 @@ class MontageDialog(QDialog):
         row.addWidget(self.b_points)
         row.addWidget(self.b_undo)
         side.addLayout(row)
+        side.addWidget(self.b_flat)
         side.addWidget(g_view)
         side.addWidget(g_out)
         side_w = QWidget()
@@ -843,7 +854,9 @@ class MontageDialog(QDialog):
         self._update_range()
         self._set_status("사진을 끌어 맞추거나 [자동 합치기]를 누르세요" if definition is None
                          else "저장된 몽타주 배치를 불러왔습니다")
-        if auto and definition is None and len(self.shots) >= 2:
+        if self._flat_definition is not None:
+            QTimer.singleShot(0, lambda: self.open_flat(self._flat_definition))
+        elif auto and definition is None and len(self.shots) >= 2:
             QTimer.singleShot(0, self.auto_align)
         QTimer.singleShot(0, self.canvas.fit)
 
@@ -869,7 +882,8 @@ class MontageDialog(QDialog):
                 if self.list.item(k).checkState() == Qt.CheckState.Checked]
 
     def _busy(self, on: bool) -> None:
-        for w in (self.b_auto, self.b_points, self.b_undo, self.b_record, self.b_file, self.list, self.c_ref, self.c_centre,
+        for w in (self.b_auto, self.b_points, self.b_flat, self.b_undo, self.b_record, self.b_file, self.list, self.c_ref,
+                  self.c_centre,
                   self.sp_fov, self.c_type, self.c_proj):
             w.setEnabled(not on and (w is not self.b_record or self._save_record is not None))
         self.canvas.setEnabled(not on)
@@ -1124,6 +1138,46 @@ class MontageDialog(QDialog):
         warn = err > 1.0
         self._set_status(f"기준점 {len(mu)}쌍으로 맞췄습니다 · 가장 큰 어긋남 {err:.2f}°"
                          + (" — 잘못 찍은 점이 있는지 확인하세요" if warn else ""), error=warn)
+
+    # -- 수동 합치기 (flat) ------------------------------------------------------------------
+    def open_flat(self, definition: dict | None = None):
+        """수동 합치기: the photos as they are (not drawn on the eye), over each other — the one at the
+        back opaque, the others semi-transparent — moved and turned by hand, then blended and saved
+        (``flat_montage_dialog.py``). Starts from where the photos lie here (``definition``: from a
+        saved arrangement, with every photo)."""
+        from .. import flat_montage as fm
+        from .flat_montage_dialog import FlatMontageDialog
+
+        if self._job is not None:
+            return None
+        if definition is not None:
+            idx, places, ref = list(range(len(self.shots))), None, 0
+        else:
+            idx = self.included()
+            if not idx:
+                return None
+            ref = idx.index(self.ref) if self.ref in idx else 0
+            places = fm.from_sphere([self.shots[k] for k in idx], ref)
+        dlg = FlatMontageDialog([self.sources[k] for k in idx], places=places, definition=definition,
+                                file_stem=self.file_stem, save_record=self._save_record, parent=self)
+        if definition is None:
+            dlg.canvas.base = ref
+            dlg.c_base.setCurrentIndex(ref)
+        self.flat_dialog = dlg
+        try:
+            self._run_flat(dlg)
+        finally:
+            self.flat_dialog = None
+            if dlg.saved_id is not None:
+                self.saved_id = dlg.saved_id
+                self._set_status("수동 합치기로 만든 사진을 환자 기록에 저장했습니다")
+            dlg.deleteLater()
+        return dlg
+
+    @staticmethod
+    def _run_flat(dlg) -> None:
+        """Show the 수동 합치기 window until it is closed (the tests look at it instead)."""
+        dlg.exec()
 
     # -- 완성 / 3D -------------------------------------------------------------------------
     def _on_tab(self, i: int) -> None:
