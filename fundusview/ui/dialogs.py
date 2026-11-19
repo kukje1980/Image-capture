@@ -42,7 +42,7 @@ OPEN_VIEWS = (("odos", "Simple — 최신 OD | OS 두 장을 나란히, 아래 �
 
 
 # 3D 안구의 마우스 휠 (Settings.wheel3d): (key, short name, what it does)
-WHEEL3D = (("zoom", "확대", "커서가 가리키는 곳으로 확대 · 축소 (깊이는 3D 화면 오른쪽의 깊이 막대로)"),
+WHEEL3D = (("zoom", "확대", "커서가 가리키는 곳으로 확대 · 축소 (깊이는 3D 화면 위의 깊이 막대로)"),
            ("depth", "깊이", "자르는 깊이 — 앞으로 굴리면 깊게, 뒤로 굴리면 닫힘 (내부에서는 확대)"),
            ("walk", "들어가기", "각막 → 앞방 → 동공 → 수정체 → 유리체 → 망막, 뒤로 굴리면 나오기"))
 
@@ -300,7 +300,7 @@ class SettingsDialog(QDialog):
         f2.addRow("3D 렌더링 (재시작 필요)", self.opengl)
         self.wheel3d = _combo([(k, f"{name} — {what}") for k, name, what in WHEEL3D], settings.wheel3d)
         self.wheel3d.setToolTip("3D 안구 위에서 마우스 휠이 하는 일 (3D 탭의 설정 → 마우스 휠에서도 바꿉니다)\n"
-                                "어느 것이든 Ctrl+휠 · 확대 바 · 오른쪽 드래그 · + / − 는 확대입니다")
+                                "어느 것이든 Ctrl+휠 · 배율 막대 · 오른쪽 드래그 · + / − 는 확대입니다")
         f2.addRow("3D 마우스 휠", self.wheel3d)
         self.walk_click3d = QCheckBox("각막을 누르면 그동안 휠로 들어가기 (휠이 깊이 · 확대일 때)")
         self.walk_click3d.setToolTip("3D 안구의 각막을 누르면 전안부가 선택되고, 선택한 동안에는 휠이 각막부터 망막까지 "

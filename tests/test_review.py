@@ -317,8 +317,8 @@ def test_click_a_patient_shows_its_exams_not_its_photos(win):
     assert not pl.btn_edit.isVisible() and not pl.btn_delete.isVisible()
     assert pl.lbl_exams.text() == "검사 목록 · 1회 · 사진 1장" and pl.exam_stack.currentWidget() is pl.exams
     assert "환자 ID를 찾지 못한" in pl.lbl_exam_note.text() and pl.lbl_exam_note.isVisible()
-    pl.btn_open.click()                       # (no eye known: 모두 보기, to be given a patient)
-    assert pl.isHidden() and w._tab() == "all" and w._patient_ref == UNASSIGNED and w.current["id"] == ids["un"]
+    pl.btn_open.click()                       # (its eye is known: on Simple, as a patient's)
+    assert pl.isHidden() and w._tab() == "multi" and w._patient_ref == UNASSIGNED and w.current["id"] == ids["un"]
 
     # the list's search hides the patient on screen: it stays the patient, only not listed
     w.show_patient_list()

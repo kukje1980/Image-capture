@@ -81,6 +81,10 @@ class Settings:
     # 나오기). walk_click3d: a click on the cornea picks the anterior segment, and the wheel walks in meanwhile
     # (zoom · depth)
     wheel3d: str = "zoom"
+    # 3D 깊이 막대 · 배율 막대 over the eye: lying ("h") or standing ("v") and where they were dragged to
+    # (depth_bar.FloatBar.state(): "" as at first, "h", "v:0.250:0.900" — fractions of the free room)
+    depth_bar3d: str = ""
+    zoom_bar3d: str = ""
     walk_click3d: bool = True
     # Motion and 3D effects (보기 → 부드러운 움직임; 3D 안구: 입체 조명, 자동 회전)
     smooth_motion: bool = True
