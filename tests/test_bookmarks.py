@@ -1,7 +1,7 @@
 """The photo list by exam date (날짜 책갈피) and 미리 보기 — v0.10.0.
 
 The photo list under the photos shows one exam's photos (OD row · OS row, as before); the bookmarks
-over it — one per exam date, newest at the left, then 전체 — pick the exam, and so does the wheel
+over it — 전체 at the left, then one per exam date, newest first — pick the exam, and so does the wheel
 over the list. A patient opens on its newest exam, the newest OD | OS above. A photo of the list
 under the mouse is shown larger in a small pane just above it (미리 보기, v0.10.2 — the photos of
 the views stay) until the mouse leaves it; a click pins it (numbered) — several pinned: that many
@@ -59,30 +59,30 @@ def test_the_photo_list_is_sorted_by_date_bookmarks(win):
     app, w, db, refs, ids = win
     _open(app, w, refs["kim"])
     od3, os3, rf3, od2, os2, od1, sheet = (ids[k] for k in ("od3", "os3", "rf3", "od2", "os2", "od1", "sheet"))
-    # a bookmark per exam date, the newest at the left, then 전체 — the newest one open: its photos
+    # 전체 at the left, then a bookmark per exam date, the newest first — the newest one open: its photos
     # in the list (OD row, OS row), the newest OD | OS above
-    assert w.book_bar.isVisible() and _books(w) == ["2026-03-02", "2025-12-01", "2025-08-20", "*"]
-    assert w.book_bar.currentIndex() == 0 and w._book == "2026-03-02"
-    assert [w.book_bar.tabText(k) for k in range(4)] == ["2026-03-02 · 3장", "2025-12-01 · 2장",
-                                                         "2025-08-20 · 2장", "전체 · 7장"]
+    assert w.book_bar.isVisible() and _books(w) == ["*", "2026-03-02", "2025-12-01", "2025-08-20"]
+    assert w.book_bar.currentIndex() == 1 and w._book == "2026-03-02"
+    assert [w.book_bar.tabText(k) for k in range(4)] == ["전체 · 7장", "2026-03-02 · 3장",
+                                                         "2025-12-01 · 2장", "2025-08-20 · 2장"]
     assert w._strip_ids() == [rf3, od3, os3] and w.thumbs.row_eyes() == ["OD", "OS"]
     assert w.picks() == [od3, os3] and _cells(w) == ([od3, os3], od3)
     assert w.book_bar.geometry().bottom() <= w.thumbs.geometry().top()      # over the list
     high = w.thumbs.height()
 
     # a click on a bookmark: that exam's photos in the list; nothing pinned — its OD | OS above
-    w.book_bar.setCurrentIndex(1)
+    w.book_bar.setCurrentIndex(2)
     app.processEvents()
     assert w._book == "2025-12-01" and w._strip_ids() == [od2, os2]
     assert w.picks() == [od2, os2] and _cells(w) == ([od2, os2], od2) and not w._own_picks()
     # an exam of one eye: one row of photos, the list as high as before (the photos above keep their size)
-    w.book_bar.setCurrentIndex(2)
+    w.book_bar.setCurrentIndex(3)
     app.processEvents()
     assert w._strip_ids() == [sheet, od1] or w._strip_ids() == [od1, sheet]
     assert w.thumbs.row_eyes() == ["OD"] and w.thumbs.height() == high
     assert w.picks() == [od1] and w.multi.count == 1
     # 전체: every exam in the list, the newest OD | OS above
-    w.book_bar.setCurrentIndex(3)
+    w.book_bar.setCurrentIndex(0)
     app.processEvents()
     assert w._book == "*" and len(w._strip_ids()) == 7 and w.picks() == [od3, os3]
     # [Simple] starts again from the bookmark's exam
@@ -96,7 +96,7 @@ def test_the_photo_list_is_sorted_by_date_bookmarks(win):
     w.show_patient_list()
     w.patient_list.set_exam("2025-08-20")
     app.processEvents()
-    assert w._book == "2025-08-20" and w.book_bar.currentIndex() == 2 and w.picks() == [od1]
+    assert w._book == "2025-08-20" and w.book_bar.currentIndex() == 3 and w.picks() == [od1]
     # 16장 보기 has no bookmarks (every photo is on it) and no list; back on Simple they are there again
     w.patient_list.hide()
     _press(w, "view:multi")
@@ -126,22 +126,24 @@ def test_the_wheel_over_the_photo_list_turns_the_bookmarks(win):
     od3, os3, od2, os2, od1 = (ids[k] for k in ("od3", "os3", "od2", "os2", "od1"))
     assert w._book == "2026-03-02"
     _wheel(app, w, -1)                                     # back (down): the exam before
-    assert w._book == "2025-12-01" and w.book_bar.currentIndex() == 1 and w._strip_ids() == [od2, os2]
+    assert w._book == "2025-12-01" and w.book_bar.currentIndex() == 2 and w._strip_ids() == [od2, os2]
     assert w.picks() == [od2, os2]                         # nothing pinned: that exam's OD | OS
     _wheel(app, w, -1)
     assert w._book == "2025-08-20" and w.picks() == [od1]
-    _wheel(app, w, -1)
-    assert w._book == "*" and len(w._strip_ids()) == 7 and w.picks() == [od3, os3]
-    _wheel(app, w, -1)                                     # the last one: it stays
-    assert w._book == "*"
-    _wheel(app, w, 2)                                      # forward (up): newer — two notches, two bookmarks
+    _wheel(app, w, -1)                                     # the oldest: it stays
+    assert w._book == "2025-08-20"
+    _wheel(app, w, 1)                                      # forward (up): newer
     assert w._book == "2025-12-01"
     _wheel(app, w, 0.5)                                    # a fine wheel: a bookmark per whole notch
     assert w._book == "2025-12-01"
     _wheel(app, w, 0.5)
     assert w._book == "2026-03-02"
-    _wheel(app, w, 3)                                      # the newest: it stays
-    assert w._book == "2026-03-02" and w.book_bar.currentIndex() == 0
+    _wheel(app, w, 1)                                      # past the newest: 전체 (the leftmost)
+    assert w._book == "*" and len(w._strip_ids()) == 7 and w.picks() == [od3, os3]
+    _wheel(app, w, 3)                                      # the first one: it stays
+    assert w._book == "*" and w.book_bar.currentIndex() == 0
+    _wheel(app, w, -1)
+    assert w._book == "2026-03-02" and w.book_bar.currentIndex() == 1
     # Shift+wheel: the list sideways, the bookmark stays
     _wheel(app, w, -1, Qt.KeyboardModifier.ShiftModifier)
     assert w._book == "2026-03-02"
@@ -152,8 +154,8 @@ def test_the_wheel_over_the_photo_list_turns_the_bookmarks(win):
     assert w._book == "2025-12-01" and w.picks() == [os3] and _cells(w) == ([os3], os3)
     _click(app, w, od2)
     assert w.picks() == [os3, od2] and w.multi.count == 2
-    assert w.book_bar.tabText(0) == "2026-03-02 · 3장  ✓1" and w.book_bar.tabText(1) == "2025-12-01 · 2장  ✓1"
-    assert w.book_bar.tabText(3) == "전체 · 7장  ✓2"
+    assert w.book_bar.tabText(1) == "2026-03-02 · 3장  ✓1" and w.book_bar.tabText(2) == "2025-12-01 · 2장  ✓1"
+    assert w.book_bar.tabText(0) == "전체 · 7장  ✓2"
     _wheel(app, w, 1)
     assert w.picks() == [os3, od2] and w.current["id"] == od2      # (the photo being adjusted stays, too)
 
@@ -172,7 +174,11 @@ def test_a_photo_under_the_mouse_is_previewed_and_a_click_pins_it(win):
     # under it stay as they are, nothing is pinned by it, and the photo being adjusted stays
     _hover(app, w, rf3)
     assert w._peek == rf3 and pane.isVisible() and pane.image_id == rf3 and pane.view.has_image()
-    assert "미리 보기" in pane.label.text() and "클릭하면 고정" in pane.label.text() and "OD" in pane.label.text()
+    # … only its eye on it (top left of the photo) — no line of text over the photo; what a click does: the status line
+    assert "OD" in pane.label.text() and "미리 보기" not in pane.label.text() and "2026" not in pane.label.text()
+    assert pane.label.isVisible() and pane.view.y() <= 6           # (ImageView.geometry is something else)
+    assert pane.view.x() <= pane.label.x() < 40 and pane.view.y() <= pane.label.y() < 40
+    assert "클릭해서 고정" in w.lbl_status.text()
     # … a small pane just above that photo of the list: a good deal larger than it there, but only a
     # corner of the views (not the main photos' whole room)
     from fundusview.ui.main_window import THUMB_GRID
@@ -211,7 +217,7 @@ def test_a_photo_under_the_mouse_is_previewed_and_a_click_pins_it(win):
     # a pinned photo under the mouse is looked at large, too (small cells): a click lets it go
     _hover(app, w, os2)
     _hover(app, w, od2)
-    assert pane.isVisible() and pane.image_id == od2 and "클릭하면 빼기" in pane.label.text()
+    assert pane.isVisible() and pane.image_id == od2 and "클릭하면 뺍니다" in w.lbl_status.text()
     _click(app, w, od2)
     assert w.picks() == [rf3, os3] and not pane.isVisible()
 
