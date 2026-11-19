@@ -5,9 +5,9 @@ Simple, its newest OD | OS (the first setting, v0.10.0), or on 16장 보기, its
 
 The photo list under the photos shows one exam's photos: the 날짜 책갈피 over it (one per exam
 date, the newest at the left and open first, then 전체) pick the exam, and so does the wheel over
-the list (``set_book``). On Simple a photo of the list under the mouse is shown above (미리 보기,
-``_view_ids``) and a click pins it there, numbered — as many photos above as are pinned; with
-none pinned the newest OD | OS of the bookmark's exam. The patient list
+the list (``set_book``). A photo of the list under the mouse is shown large over the views (미리
+보기, peek.py — the photos under it stay as they are) and on Simple a click selects it, numbered —
+as many photos above as are selected; with none the newest OD | OS of the bookmark's exam. The patient list
 is the only one: the command toolbar's [환자 목록], the menu bar's 환자 목록 (Ctrl+0) and 환자 검색
 (Ctrl+F) bring that window up; the patient is the same in both windows.
 
@@ -83,6 +83,7 @@ from .edge_nav import EdgeNav
 from .keys import IS_MAC, keys
 from .multi_view import CLOSEUP_MAX, MultiView
 from .sample_compare import SampleCompareDialog
+from .peek import PeekPane
 from .patient_list import SEX_LABEL, UNASSIGNED, PatientListWindow, age_on
 from .photo_grid import GridPhoto, PhotoGrid
 from .review_view import ReviewPage
@@ -500,7 +501,7 @@ class MainWindow(QMainWindow):
         self.act_peek = m.addAction("사진 목록에 마우스를 올리면 미리 보기")
         self.act_peek.setCheckable(True)
         self.act_peek.setChecked(bool(self.settings.hover_preview))
-        self.act_peek.setToolTip("Simple에서 아래 사진 목록의 사진에 마우스를 올리면 위에 크게 미리 보여 줍니다 "
+        self.act_peek.setToolTip("아래 사진 목록의 사진에 마우스를 올리면 그 사진만 화면 위에 크게 띄워 보여 줍니다 "
                                  "(클릭하면 고정)")
         self.act_peek.toggled.connect(self._set_hover_preview)
         m.addAction(self.tb_cmd.toggleViewAction())
@@ -646,7 +647,7 @@ class MainWindow(QMainWindow):
         self.thumb_paint.show_date = bool(self.settings.thumb_date)
         self.thumb_paint.show_kind = bool(self.settings.thumb_kind)
         self.thumbs.setItemDelegate(self.thumb_paint)
-        self.thumbs.setToolTip(keys("Simple — 마우스를 올리면 위에 미리 보기 · 클릭: 고정(번호), 다시 클릭하면 빼기\n"
+        self.thumbs.setToolTip(keys("마우스를 올리면 그 사진을 크게 미리 보기 · Simple — 클릭: 고정(번호), 다시 클릭하면 빼기\n"
                                     "Detail · 3D — 클릭: 이 사진 보기 · 더블클릭: 크게 보기 (Detail)\n"
                                     "휠: 이전 / 다음 날짜 책갈피 (Shift+휠: 옆으로 넘기기) · ← →: 이전 / 다음 사진\n"
                                     "Ctrl+클릭: 두 번째 사진(②) 선택/해제 — 비교 · 디스크 2장 · "
@@ -774,6 +775,8 @@ class MainWindow(QMainWindow):
         self._pages = {"review": self.review, "all": self.page_all, "2d": self.page2d, "3d": self.page3d,
                        "multi": self.multi, "cmp": cmp_w, "grid": self.grid, "3d2": self.pair3d}
         self._ov_on = False
+        self.peek_pane = PeekPane(self.tabs)     # 미리 보기: the photo under the mouse, large over the views
+        self.tabs.installEventFilter(self)
         self._tab_fade = motion.Crossfade(self.tabs.findChild(QStackedWidget) or self.tabs)
         self.tabs.tabBar().tabBarClicked.connect(
             lambda i: i != self.tabs.currentIndex() and self._tab_fade.snap())
@@ -2361,8 +2364,8 @@ class MainWindow(QMainWindow):
         if any(i not in left for i in self._picks):
             self._picks = [i for i in self._picks if i in left]
             self._per_photo = {k: v for k, v in self._per_photo.items() if k in left}
-        if self._peek not in left:
-            self._peek = self._peek_want = None
+        if self._peek is not None and self._peek not in left:
+            self._end_peek()
         self._fit_multi_count()                # (Multi, nothing picked: split for the photos now listed)
         # 16장 보기: the strip's photos newest first, both eyes together (the strip is by eye)
         newest = {r["id"]: k for k, r in enumerate(self._images())}
@@ -2505,23 +2508,37 @@ class MainWindow(QMainWindow):
         if image_id != self._peek or self._peek_timer.isActive():
             self._peek_timer.start()
 
+    PEEK_TABS = ("multi", "all")               # 미리 보기 on Simple · Multi and Detail (the views with the list)
+
     def _apply_peek(self) -> None:
+        """The photo the mouse rests on, large over the views (``PeekPane``) — the photos under it
+        stay as they are. Any photo of the list: one selected already is looked at the same way."""
         want = self._peek_want
-        if self._tab() != "multi" or not self.settings.hover_preview:
+        if self._tab() not in self.PEEK_TABS or not self.settings.hover_preview:
             want = None
-        elif want is not None and self._own_picks() and (want in self._picks or len(self._picks) >= MAX_PICKS):
-            want = None                        # pinned already: it is above
         if want == self._peek:
             return
+        row = self.db.get_image(want) if want is not None else None
+        rgb = self._multi_small(row, self._photo_state(want), 1) if row is not None else None
+        if rgb is None:
+            self._end_peek()
+            return
         self._peek = want
-        self._refill_multis()
-        if want is not None:
-            self.lbl_status.setText("미리 보기 — 이 사진이 맞으면 클릭해서 고정하세요 (여러 장을 고정하면 그 수만큼 나란히)")
+        own = self._own_picks() and want in self._picks
+        if self._tab() == "all":
+            what = "클릭하면 이 사진을 봅니다"
+        else:
+            what = "고정한 사진 — 클릭하면 빼기" if own else "클릭하면 고정(선택)"
+        self.peek_pane.show_photo(want, f"<b style='color:#ffd60a'>미리 보기</b> — {what}&nbsp;&nbsp; "
+                                        f"{self._multi_label(row, self._picks.index(want) + 1 if own else 0)}", rgb)
+        self.lbl_status.setText("미리 보기 — 이 사진이 맞으면 클릭해서 고정(선택)하세요 · 마우스를 떼면 닫힙니다")
 
     def _end_peek(self) -> None:
-        """No preview any more (a click, another view) — without redrawing: the caller does."""
+        """No preview any more (the mouse left the list, a click, another view)."""
         self._peek = self._peek_want = None
         self._peek_timer.stop()
+        if getattr(self, "peek_pane", None) is not None:
+            self.peek_pane.clear()
 
     def _set_hover_preview(self, on: bool) -> None:
         """보기 → 사진 목록에 마우스를 올리면 미리 보기."""
@@ -2530,20 +2547,12 @@ class MainWindow(QMainWindow):
             self.settings.save()
         except OSError:
             pass
-        if not on and self._peek is not None:
+        if not on:
             self._end_peek()
-            self._refill_multis()
 
     def _view_ids(self) -> list[int]:
-        """The photos on the Simple · Multi page: the pinned ones (none pinned: the newest OD | OS) —
-        and, while the mouse rests on a photo of the list, that one after them (미리 보기: what a
-        click would give; with none pinned that photo alone)."""
-        peek = self._peek
-        if peek is None:
-            return list(self._picks)
-        if not self._own_picks():
-            return [peek]
-        return list(self._picks) if peek in self._picks else self._picks + [peek]
+        """The photos on the Simple · Multi page: the selected ones (none: the newest OD | OS)."""
+        return list(self._picks)
 
     def _on_thumb_current(self, cur, _prev=None) -> None:
         """Another photo of the list is the current one: it is shown."""
@@ -2842,6 +2851,9 @@ class MainWindow(QMainWindow):
             return False
         if obj is self.menuBar() and e.type() == QEvent.Type.Resize:
             self._fit_banner()
+        if (e.type() == QEvent.Type.Resize and obj is getattr(self, "tabs", None)
+                and self.peek_pane.isVisible()):
+            self.peek_pane.place()
         if obj is self.thumbs.viewport() and e.type() == QEvent.Type.Resize and e.size().width() != e.oldSize().width():
             QTimer.singleShot(0, self._fit_thumb_height)       # wider strip: the scroll bar may go
         # Detail: the two enlarged panes keep their places when they change size
@@ -3682,8 +3694,6 @@ class MainWindow(QMainWindow):
                 if small is None:
                     continue
                 label = self._multi_label(row, self._picks.index(iid) + 1 if own and iid in self._picks else 0)
-                if iid == self._peek and not (own and iid in self._picks):
-                    label = f"<b style='color:#ffd60a'>미리 보기</b> — 클릭하면 고정&nbsp; {label}"
                 items.append((iid, label, small))
             more = f" (화면에 {n}장 — 화면 분할을 늘리세요)" if len(self._picks) > n else ""
             pair = self._picks == self._default_picks and len(self._picks) == 2
@@ -3738,10 +3748,6 @@ class MainWindow(QMainWindow):
         for cell in self.multi.cells:
             iid = cell.image_id
             if iid is None or not cell.isVisible() or (only is not None and iid not in only):
-                continue
-            if iid == self._peek and iid not in self._picks:      # 미리 보기: only the photo (at once)
-                for z in cell.zooms.values():
-                    z.set_rgb(None)
                 continue
             row = self.db.get_image(iid)
             full = self._load(row) if row is not None else None
@@ -4676,8 +4682,7 @@ class MainWindow(QMainWindow):
         if key != self._shown_view:
             self._pick_pre = None             # (a click before another view is no double click's first)
         self._shown_view = key
-        if key != "multi":
-            self._end_peek()                  # (미리 보기 is Simple's)
+        self._end_peek()                      # (미리 보기 was over the view before)
         if key and key not in ("3d", "3d2"):
             self._last_view = key             # where the 3D icon goes back to
         if key != "3d2" and self.pair3d.image_ids:

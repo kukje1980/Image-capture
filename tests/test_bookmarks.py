@@ -3,8 +3,9 @@
 The photo list under the photos shows one exam's photos (OD row · OS row, as before); the bookmarks
 over it — one per exam date, newest at the left, then 전체 — pick the exam, and so does the wheel
 over the list. A patient opens on its newest exam, the newest OD | OS above. A photo of the list
-under the mouse is shown above (미리 보기) until the mouse leaves it; a click pins it (numbered) —
-several pinned: that many side by side — and a click on a pinned one lets it go."""
+under the mouse is shown large over the views (미리 보기, v0.10.1: a pane of its own — the photos
+under it stay) until the mouse leaves it; a click pins it (numbered) — several pinned: that many
+side by side — and a click on a pinned one lets it go."""
 import os
 
 import pytest
@@ -35,15 +36,18 @@ def _wheel(app, w, notches, modifiers=None):
 
 def _hover(app, w, image_id):
     """The mouse comes to rest on that photo of the list (None: it leaves the list)."""
-    from PySide6.QtCore import QEvent
-    from PySide6.QtTest import QTest
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
     from PySide6.QtWidgets import QApplication
 
     vp = w.thumbs.viewport()
     if image_id is None:
         QApplication.sendEvent(vp, QEvent(QEvent.Type.Leave))
-    else:
-        QTest.mouseMove(vp, w.thumbs.visualItemRect(_item(w, image_id)).center())
+    else:                                      # (no button held, whatever QTest clicked last)
+        pos = QPointF(w.thumbs.visualItemRect(_item(w, image_id)).center())
+        QApplication.sendEvent(vp, QMouseEvent(QEvent.Type.MouseMove, pos, QPointF(vp.mapToGlobal(pos.toPoint())),
+                                               Qt.MouseButton.NoButton, Qt.MouseButton.NoButton,
+                                               Qt.KeyboardModifier.NoModifier))
     app.processEvents()
     if w._peek_timer.isActive():               # (rested there long enough)
         w._peek_timer.stop()
@@ -160,75 +164,79 @@ def test_a_photo_under_the_mouse_is_previewed_and_a_click_pins_it(win):
     app, w, db, refs, ids = win
     _open(app, w, refs["kim"])
     od3, os3, rf3, od2, os2 = (ids[k] for k in ("od3", "os3", "rf3", "od2", "os2"))
-    assert w.act_peek.isChecked() and w.settings.hover_preview
+    pane = w.peek_pane
+    assert w.act_peek.isChecked() and w.settings.hover_preview and not pane.isVisible()
     assert _cells(w) == ([od3, os3], od3)
 
-    # the mouse on a photo of the list: that photo above — what a click would give (nothing pinned:
-    # it alone) —, marked 미리 보기; nothing is pinned by it, and the photo being adjusted stays
+    # the mouse on a photo of the list: that photo large over the views, marked 미리 보기 — the photos
+    # under it stay as they are, nothing is pinned by it, and the photo being adjusted stays
     _hover(app, w, rf3)
-    assert w._peek == rf3 and _cells(w) == ([rf3], None) and w.multi.count == 1
-    cell = next(c for c in w.multi.cells if c.image_id == rf3)
-    assert "미리 보기" in cell.label.text() and cell.view.has_image()
+    assert w._peek == rf3 and pane.isVisible() and pane.image_id == rf3 and pane.view.has_image()
+    assert "미리 보기" in pane.label.text() and "클릭하면 고정" in pane.label.text() and "OD" in pane.label.text()
+    assert pane.parentWidget() is w.tabs and pane.width() > w.tabs.width() * 0.9      # nearly the whole room
+    assert pane.height() > w.tabs.height() * 0.9
+    assert _cells(w) == ([od3, os3], od3) and w.multi.count == 2
     assert w.picks() == [od3, os3] and not w._own_picks() and w.current["id"] == od3
     assert _item(w, rf3).data(PICK_ROLE) == 0 and _item(w, od3).data(PICK_ROLE) == SHOWN
-    # … another photo: that one; the mouse off the list: the newest OD | OS again
+    # … another photo: that one; the mouse off the list: the pane is gone
     _hover(app, w, os3)
-    assert _cells(w) == ([os3], None)
+    assert pane.isVisible() and pane.image_id == os3 and "OS" in pane.label.text()
     _hover(app, w, None)
-    assert w._peek is None and _cells(w) == ([od3, os3], od3) and w.multi.count == 2
+    assert w._peek is None and not pane.isVisible() and _cells(w) == ([od3, os3], od3)
 
-    # a click pins the photo under the mouse: it stays above when the mouse leaves
+    # a click pins the photo looked at: the pane closes, the photo is above (alone: the first one)
     _hover(app, w, rf3)
     _click(app, w, rf3)
-    assert w.picks() == [rf3] and w._peek is None and _cells(w) == ([rf3], rf3)
-    assert "미리 보기" not in next(c for c in w.multi.cells if c.image_id == rf3).label.text()
+    assert w.picks() == [rf3] and w._peek is None and not pane.isVisible() and _cells(w) == ([rf3], rf3)
     assert _item(w, rf3).data(PICK_ROLE) == 1 and w.lbl_picks.text() == "1장 고정"
-    _hover(app, w, None)
-    assert _cells(w) == ([rf3], rf3)
-    # with a photo pinned the one under the mouse comes after it; a click pins it, too — as many
-    # photos above as are pinned
+    _hover(app, w, rf3)                                    # (not again while the mouse stays on it)
+    assert not pane.isVisible()
+    # more photos pinned: as many above as are pinned — the pane never changes them
     _hover(app, w, os3)
-    assert _cells(w) == ([rf3, os3], rf3) and w.multi.count == 2 and w.picks() == [rf3]
-    assert "미리 보기" in next(c for c in w.multi.cells if c.image_id == os3).label.text()
-    _hover(app, w, rf3)                                    # (a pinned one under the mouse: as it is)
-    assert w._peek is None and _cells(w) == ([rf3], rf3)
-    _hover(app, w, os3)
+    assert pane.isVisible() and pane.image_id == os3 and _cells(w) == ([rf3], rf3) and w.multi.count == 1
     _click(app, w, os3)
-    assert w.picks() == [rf3, os3] and _cells(w) == ([rf3, os3], os3)
-    # … from another bookmark as well: three pinned, three above (2 × 2)
+    assert w.picks() == [rf3, os3] and _cells(w) == ([rf3, os3], os3) and not pane.isVisible()
+    w.set_book("2025-12-01")                               # … from another bookmark as well (2 × 2)
+    _hover(app, w, od2)
+    assert pane.image_id == od2 and _cells(w) == ([rf3, os3], os3)
+    _click(app, w, od2)
+    assert w.picks() == [rf3, os3, od2] and _cells(w) == ([rf3, os3, od2], od2) and w.multi.count == 4
+    # a pinned photo under the mouse is looked at large, too (small cells): a click lets it go
+    _hover(app, w, os2)
+    _hover(app, w, od2)
+    assert pane.isVisible() and pane.image_id == od2 and "클릭하면 빼기" in pane.label.text()
+    _click(app, w, od2)
+    assert w.picks() == [rf3, os3] and not pane.isVisible()
+
+    # the pane follows the window's size, and goes with the view
+    _hover(app, w, os2)
+    w.resize(1300, 800)
+    app.processEvents()
+    assert pane.isVisible() and pane.geometry().right() <= w.tabs.width() and pane.width() > w.tabs.width() * 0.9
+    _press(w, "view:multi")
+    assert not pane.isVisible() and w._peek is None
+    _press(w, "view:simple")
+
+    # Detail: the mouse on the list previews as well (the big photo stays); a click shows the photo
+    _hover(app, w, None)
     w.set_book("2025-12-01")
-    _hover(app, w, od2)
-    assert _cells(w) == ([rf3, os3, od2], os3) and w.multi.count == 4
-    _click(app, w, od2)
-    assert w.picks() == [rf3, os3, od2] and _cells(w) == ([rf3, os3, od2], od2)
-    _hover(app, w, None)
-    assert _cells(w)[0] == [rf3, os3, od2]
-
-    # a click on a pinned one lets it go — and it is not previewed again while the mouse stays on it
-    _click(app, w, od2)
-    _hover(app, w, od2)
-    assert w.picks() == [rf3, os3] and w._peek is None and _cells(w)[0] == [rf3, os3]
-    _hover(app, w, os2)                                    # (the next photo: previewed)
-    assert _cells(w)[0] == [rf3, os3, os2]
-    _hover(app, w, od2)                                    # … and back on it: previewed again
-    assert _cells(w)[0] == [rf3, os3, od2]
-
-    # the preview is Simple's: on Detail the mouse over the list changes nothing; a click shows the photo
-    _hover(app, w, None)
     _click(app, w, os2, double=True)
-    assert w._tab() == "all" and w.current["id"] == os2 and w.picks() == [rf3, os3]
+    assert w._tab() == "all" and w.current["id"] == os2 and not pane.isVisible()
+    _hover(app, w, None)
     _hover(app, w, od2)
-    assert w._peek is None and w.current["id"] == os2
+    assert pane.isVisible() and pane.image_id == od2 and w.current["id"] == os2
+    _click(app, w, od2)
+    assert not pane.isVisible() and w.current["id"] == od2 and w._tab() == "all"
     _hover(app, w, None)
 
-    # 보기 → 사진 목록에 마우스를 올리면 미리 보기: off — no preview (remembered); the click still pins
+    # 보기 → 사진 목록에 마우스를 올리면 미리 보기: off — no pane (remembered); the click still pins
     _press(w, "view:simple")
     w.set_book("2026-03-02")
     assert w.picks() == [od3, os3]
     w.act_peek.setChecked(False)
     assert not w.settings.hover_preview
     _hover(app, w, rf3)
-    assert w._peek is None and _cells(w)[0] == [od3, os3]
+    assert w._peek is None and not pane.isVisible()
     _click(app, w, rf3)
     assert w.picks() == [rf3]
     w.act_peek.setChecked(True)
