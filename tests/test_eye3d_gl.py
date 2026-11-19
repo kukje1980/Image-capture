@@ -252,6 +252,28 @@ def test_xray_shows_the_retina_on_the_globe(eye, detail):
 
 
 @pytest.mark.parametrize("detail", ["simple", "detailed"])
+def test_the_white_beside_the_photo_is_a_veil_with_the_glass_sclera(eye, detail):
+    """사진 밖 + 공막 투명도: in the opened eye the white of the far wall beside the photo lets the dark
+    backdrop through (the more, the higher 공막 투명도); the photo itself stays as solid as ever."""
+    v = eye[0]
+
+    def on_wall(theta, az):
+        t, a = math.radians(theta), math.radians(az)
+        return (math.sin(t) * math.cos(a) * 0.97, math.sin(t) * math.sin(a) * 0.97, -math.cos(t) * 0.97)
+
+    seen = {}
+    for glass in (0.0, 0.8, 1.0):
+        _render(eye, detail, cut=0.25, yaw=38.0, pitch=18.0, dist=3.3, glass=glass)
+        seen[glass] = (_at(v, on_wall(0, 0), 1), _at(v, on_wall(90, 180), 1))
+    solid, some, full = (seen[g][1] for g in (0.0, 0.8, 1.0))
+    assert min(solid) > 120                                            # 0: the solid white of before
+    assert sum(solid) > sum(some) + 90 and sum(some) > sum(full) + 20  # … thinner and thinner
+    assert max(some) - min(some) < 30                                  # still a neutral white veil
+    for glass in (0.8, 1.0):                                           # the photo: untouched
+        assert max(abs(a - c) for a, c in zip(seen[0.0][0], seen[glass][0])) <= 6
+
+
+@pytest.mark.parametrize("detail", ["simple", "detailed"])
 def test_glass_sclera_keeps_the_photographed_retina_solid(eye, detail):
     """공막 투명도: the shell turns to glass; where there is a photo the retina stays solid and in
     full colour, beside it the inside of the eye shows through (frosted at 60 %, clear at 100 %)."""
