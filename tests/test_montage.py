@@ -424,3 +424,35 @@ def test_where_photos_overlap_far_from_their_edges_the_vessels_are_not_doubled()
     # averaged, the detail is half-way between the two (error ≈ 0.5 × their difference) everywhere;
     # taken from one photo it matches that photo but for a narrow band where one gives way to the other
     assert np.median(closest[busy] / differ[busy]) < 0.2
+
+
+def test_the_map_can_be_centred_between_the_photos(series):
+    """지도 중심 = 사진들의 한가운데: no photo is left far from the centre of the map, where it stretches."""
+    photos, truth = series
+    shots = shots_of(photos)[:2]
+    shots[0].R = np.eye(3)
+    shots[1].R = mt.rotation_between([0.0, 0.0, -1.0], mt.plane_dirs(math.radians(40.0), 0.0))
+    before = mt.coverage_angle(shots)
+    rel = shots[0].R.T @ shots[1].R
+    assert mt.recentre_between(shots)
+    pole = np.array([0.0, 0.0, -1.0])
+    a, b = (float(mt.angle_deg(s.centre()[None], pole[None])[0]) for s in shots)
+    assert abs(a - 20.0) < 0.01 and abs(b - 20.0) < 0.01          # equal photos: halfway
+    assert np.allclose(shots[0].R.T @ shots[1].R, rel, atol=1e-12)  # the photos keep their places on the eye
+    assert math.degrees(before - mt.coverage_angle(shots)) > 19.0
+    y = [float(mt.plane_xy(s.centre())[1]) for s in shots]
+    assert max(abs(v) for v in y) < 1e-4                           # turned the short way: still side by side
+    r = [s.R.copy() for s in shots]
+    mt.recentre_between(shots)                                     # already there: nothing moves
+    assert all(np.allclose(s.R, q, atol=1e-5) for s, q in zip(shots, r))
+    # three photos, one of them wider: the centre of the smallest circle around them all
+    shots = shots_of(photos)[:3]
+    for s, (x, yy) in zip(shots, ((0.0, 0.0), (35.0, 0.0), (10.0, 30.0))):
+        s.R = mt.rotation_between([0.0, 0.0, -1.0], mt.plane_dirs(math.radians(x), math.radians(yy)))
+    m = mt.middle(shots)
+    far = max(math.radians(float(mt.angle_deg(s.centre()[None], m[None])[0])) + s.tmax for s in shots)
+    rng = np.random.default_rng(0)
+    for _ in range(300):
+        o = m + 0.05 * rng.normal(size=3)
+        o /= np.linalg.norm(o)
+        assert max(math.radians(float(mt.angle_deg(s.centre()[None], o[None])[0])) + s.tmax for s in shots) > far - 1e-5
