@@ -1,4 +1,4 @@
-"""수동 합치기 (v0.10.5): the photos as they are, laid over each other by hand — the one at the back
+"""수동 합치기 (v0.10.6): the photos as they are, laid over each other by hand — the one at the back
 opaque, the others semi-transparent — moved and turned, then blended into one picture without seams."""
 import math
 import os

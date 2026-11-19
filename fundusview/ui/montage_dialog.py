@@ -662,6 +662,14 @@ class MontageDialog(QDialog):
         for k, s in enumerate(self.shots):
             self.c_ref.addItem(f"{number(k)} {s.label}", k)
         self.c_ref.currentIndexChanged.connect(self._on_ref)
+        self.c_centre = QComboBox()
+        self.c_centre.addItem("가운데 사진", "ref")
+        self.c_centre.addItem("사진들의 한가운데 (고르게)", "middle")
+        self.c_centre.setToolTip(
+            "몽타주 지도의 중심(3D 안구의 후극)을 어디에 둘지 정합니다.\n"
+            "· 가운데 사진: 그 사진은 원 그대로, 멀리 있는 사진은 바깥쪽이 넓게 늘어나 보입니다\n"
+            "· 사진들의 한가운데: 모든 사진이 비슷하게 조금씩만 늘어납니다 (후극은 사진들 사이)")
+        self.c_centre.currentIndexChanged.connect(self._on_centre)
 
         self.b_auto = QPushButton("자동 합치기")
         self.b_auto.setObjectName("primaryButton")
@@ -738,6 +746,10 @@ class MontageDialog(QDialog):
         row = QHBoxLayout()
         row.addWidget(QLabel("가운데 사진"))
         row.addWidget(self.c_ref, 1)
+        side.addLayout(row)
+        row = QHBoxLayout()
+        row.addWidget(QLabel("지도 중심"))
+        row.addWidget(self.c_centre, 1)
         side.addLayout(row)
         side.addWidget(self.b_auto)
         row = QHBoxLayout()
@@ -821,6 +833,9 @@ class MontageDialog(QDialog):
             self.c_ref.blockSignals(True)
             self.c_ref.setCurrentIndex(self.ref)
             self.c_ref.blockSignals(False)
+            self.c_centre.blockSignals(True)
+            self.c_centre.setCurrentIndex(max(0, self.c_centre.findData(definition.get("centre") or "ref")))
+            self.c_centre.blockSignals(False)
             inc = definition.get("included")
             self.list.blockSignals(True)
             for k in range(len(self.shots)):
@@ -868,6 +883,7 @@ class MontageDialog(QDialog):
 
     def _busy(self, on: bool) -> None:
         for w in (self.b_auto, self.b_points, self.b_flat, self.b_undo, self.b_record, self.b_file, self.list, self.c_ref,
+                  self.c_centre,
                   self.sp_fov, self.c_type, self.c_proj):
             w.setEnabled(not on and (w is not self.b_record or self._save_record is not None))
         self.canvas.setEnabled(not on)
@@ -919,6 +935,7 @@ class MontageDialog(QDialog):
 
     def _on_check(self, item: QListWidgetItem) -> None:
         self.canvas.set_shots(self.shots, hidden=set(range(len(self.shots))) - set(self.included()))
+        self._centre_map()
         self._changed()
 
     def _load_photo_controls(self) -> None:
@@ -956,8 +973,25 @@ class MontageDialog(QDialog):
             self._push_undo()
             self.ref = k
             mt.recentre(self.shots, k)
+            self._centre_map()
             self._changed()
             self.canvas.fit()
+
+    def _on_centre(self, *_):
+        self._push_undo()
+        if self.c_centre.currentData() == "middle":
+            self._centre_map()
+        else:
+            mt.recentre(self.shots, self.ref)
+        self._changed()
+        self.canvas.fit()
+
+    def _centre_map(self) -> bool:
+        """지도 중심 = 사진들의 한가운데: bring the middle of the included photos to the centre of the map
+        (after anything that placed photos; a photo being dragged stays under the mouse until then)."""
+        if self.c_centre.currentData() != "middle":
+            return False
+        return mt.recentre_between(self.shots, self.included())
 
     def _on_view(self, *_):
         self.canvas.opacity = self.s_opacity.value() / 100.0
@@ -1067,6 +1101,7 @@ class MontageDialog(QDialog):
                 self.c_ref.blockSignals(True)
                 self.c_ref.setCurrentIndex(mid)
                 self.c_ref.blockSignals(False)
+        self._centre_map()
         self._load_photo_controls()
         self._changed()
         self.canvas.fit()
@@ -1097,6 +1132,7 @@ class MontageDialog(QDialog):
             self._undo.pop()
             self._set_status(str(exc), error=True)
             return
+        self._centre_map()
         self._load_photo_controls()
         self._changed()
         warn = err > 1.0
@@ -1148,6 +1184,8 @@ class MontageDialog(QDialog):
         if i == 2 and self.eye is None:
             self._make_eye()
         if i != 0:
+            if self._centre_map():                      # photos dragged since: the map follows them
+                self._changed()
             self._schedule_preview()
 
     def _schedule_preview(self) -> None:
@@ -1238,6 +1276,8 @@ class MontageDialog(QDialog):
     def _final_job(self):
         """The montage at full detail from the original photos — a function for the worker thread,
         with everything it needs taken from the dialog now."""
+        if self._centre_map():                          # photos dragged since the map was last centred
+            self._changed()
         idx = self.included()
         gains = self.c_gain.isChecked()
         full = []
@@ -1249,7 +1289,8 @@ class MontageDialog(QDialog):
                                             R=s.R.copy(), gain=s.gain.copy() if gains else np.ones(3)))
         fov, lat = round(self.montage_fov(), 1), self.laterality()
         definition = mt.definition(self.shots, self.ref) | {
-            "included": idx, "auto_fov": self.c_auto_fov.isChecked(), "brightness": gains, "fov_deg": fov}
+            "included": idx, "auto_fov": self.c_auto_fov.isChecked(), "brightness": gains, "fov_deg": fov,
+            "centre": self.c_centre.currentData()}
         ids = [self.shots[k].image_id for k in idx]
 
         size = FAST_SIZE if self.c_fast.isChecked() else FULL_SIZE

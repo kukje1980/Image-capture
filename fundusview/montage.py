@@ -295,6 +295,48 @@ def recentre(shots: list[Shot], k: int) -> None:
         s.R = inv @ s.R
 
 
+def middle(shots: list[Shot]) -> np.ndarray:
+    """The centre of the smallest circle on the eye around all the photos: the point from which the
+    farthest photographed edge is nearest (two equal photos: halfway between their centres)."""
+    cs = np.array([s.centre() for s in shots])
+    ts = np.array([s.tmax for s in shots])
+
+    def far(m):
+        return float((np.arccos(np.clip(cs @ m, -1.0, 1.0)) + ts).max())
+
+    m = cs.sum(axis=0)
+    m = _unit(m) if np.linalg.norm(m) > 1e-9 else cs[0]
+    best, step = far(m), 0.2
+    while step > 1e-6:                                    # pattern search: the cost has kinks, no gradient
+        a = _unit(np.cross(m, [1.0, 0.0, 0.0] if abs(m[0]) < 0.9 else [0.0, 1.0, 0.0]))
+        b = np.cross(m, a)
+        for t in np.arange(8) * (math.pi / 4):
+            cand = _unit(m + math.tan(step) * (math.cos(t) * a + math.sin(t) * b))
+            f = far(cand)
+            if f < best - 1e-12:
+                m, best = cand, f
+                break
+        else:
+            step *= 0.5
+    return m
+
+
+def recentre_between(shots: list[Shot], among=None) -> bool:
+    """Put the middle of the photos (``among``: the ones that count) at the centre of the map, turning
+    everything the short way there — so no photo lies far from the centre, where the map stretches.
+    True when anything moved."""
+    idx = list(range(len(shots)) if among is None else among)
+    if not idx:
+        return False
+    m = middle([shots[k] for k in idx])
+    if m[2] < -1.0 + 1e-12:
+        return False
+    rot = rotation_between(m, [0.0, 0.0, -1.0])
+    for s in shots:
+        s.R = rot @ s.R
+    return True
+
+
 def most_central(shots: list[Shot], among=None) -> int:
     """The photo nearest the middle of the others (a good centre for the montage)."""
     idx = list(range(len(shots)) if among is None else among)
