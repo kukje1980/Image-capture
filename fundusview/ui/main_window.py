@@ -71,7 +71,7 @@ from ..watcher import ImportService
 from .dialogs import WHEEL3D, ImageDialog, PatientDialog, SettingsDialog, source_label
 from .disc_pair import DiscPairDialog
 from .glaucoma_dialog import GlaucomaDialog, Photo
-from .depth_bar import DepthBar
+from .depth_bar import DepthBar, ZoomBar
 from .eye3d import EyeView
 from .pair3d import MAX_EYES as MAX_3D, Pair3D
 from .histogram import HistogramDialog
@@ -658,7 +658,7 @@ class MainWindow(QMainWindow):
         self.thumb_paint.show_kind = bool(self.settings.thumb_kind)
         self.thumbs.setItemDelegate(self.thumb_paint)
         self.thumbs.setToolTip(keys("마우스를 올리면 그 사진을 크게 미리 보기 · Simple — 클릭: 고정(번호), 다시 클릭하면 빼기\n"
-                                    "Detail · 3D — 클릭: 이 사진 보기 · 더블클릭: 크게 보기 (Detail)\n"
+                                    "Detail · 3D — 클릭: 이 사진 보기 · 더블클릭: 크게 보기 (Detail) — Detail에서 더블클릭: 보던 화면으로\n"
                                     "휠: 이전 / 다음 날짜 책갈피 (Shift+휠: 옆으로 넘기기) · ← →: 이전 / 다음 사진\n"
                                     "Ctrl+클릭: 두 번째 사진(②) 선택/해제 — 비교 · 디스크 2장 · "
                                     "오른쪽 클릭: 환자 지정·다시 분석"))
@@ -1029,7 +1029,7 @@ class MainWindow(QMainWindow):
         self.s_cut.setRange(-30, 100)
         self.s_cut.setValue(25)
         self.s_cut.setMinimumWidth(120)
-        self.s_cut.setToolTip("자르는 깊이 (오른쪽 끝 = 닫힌 안구) — 3D 화면 오른쪽의 깊이 막대와 같습니다")
+        self.s_cut.setToolTip("자르는 깊이 (오른쪽 끝 = 닫힌 안구) — 3D 화면 위의 깊이 막대와 같습니다")
         self.s_cut.valueChanged.connect(self._on_cut)
         self.s_glass = QSlider(Qt.Orientation.Horizontal)
         self.s_glass.setRange(0, 100)
@@ -1148,11 +1148,14 @@ class MainWindow(QMainWindow):
         self.eye3d = EyeView()                # (its tool tip and what the wheel does: _set_wheel3d)
         self.eye3d.depthWheel.connect(self._on_depth_wheel)
         self._depth_wheel = 0.0               # (the part of a slider step a fine wheel has not made up yet)
-        self.lbl_zoom3d = QLabel("배율 ×1.0")
+        self.lbl_zoom3d = QLabel("배율 ×1.0", bar)     # (not shown: owned by the bar, so it goes with the window)
+        self.lbl_zoom3d.hide()
         self.lbl_zoom3d.setObjectName("hint3d")
         self.lbl_zoom3d.setToolTip("처음 보기 대비 확대 배율 · 더블클릭 또는 0: 처음 보기")
-        # 확대 바: ×0.3 … ×16 on a logarithmic scale (the middle of the start view = ×1)
-        self.s_zoom3d = QSlider(Qt.Orientation.Horizontal)
+        # 확대 바: ×0.3 … ×16 on a logarithmic scale (the middle of the start view = ×1) — shown over the
+        # eye as the 배율 막대 (below); the slider and the label are the value only
+        self.s_zoom3d = QSlider(Qt.Orientation.Horizontal, bar)
+        self.s_zoom3d.hide()
         self.s_zoom3d.setRange(round(100 * math.log2(self.ZOOM3D[0])), round(100 * math.log2(self.ZOOM3D[1])))
         self.s_zoom3d.setValue(0)
         self.s_zoom3d.setPageStep(50)
@@ -1169,8 +1172,6 @@ class MainWindow(QMainWindow):
                                     "슬릿 스캔 · 효과 · 표시 · 사진 맞춤")
         top.addWidget(self.seg_detail)
         top.addWidget(self.seg_mode)
-        top.addWidget(self.lbl_zoom3d)
-        top.addWidget(self.s_zoom3d)
         top.addStretch(1)
         top.addWidget(self.b_scan)
         top.addWidget(self.b_full3d)
@@ -1196,7 +1197,17 @@ class MainWindow(QMainWindow):
         self.eye3d.journeyChanged.connect(self._on_journey)
         self._where = _WhereChip(self.eye3d)
         # 깊이 막대: the depth of the cut on a bar over the eye's right edge (the 깊이 slider, where the eye is)
-        self.depth_bar = DepthBar(self.s_cut, self.eye3d)
+        # 배율 막대: the magnification, the same way. Both float over the eye, see-through: a double click
+        # lays one down or stands it up, a drag moves it (remembered), and the one whose ☑ 휠 is checked
+        # is what the wheel over the eye does (_set_wheel3d).
+        self.depth_bar = DepthBar(self.s_cut, self.eye3d, checkable=True)
+        self.zoom_bar = ZoomBar(self.s_zoom3d, self.eye3d, checkable=True)
+        self.depth_bar.set_state(self.settings.depth_bar3d)
+        self.zoom_bar.set_state(self.settings.zoom_bar3d)
+        self.depth_bar.placed.connect(self._on_bar_placed)
+        self.zoom_bar.placed.connect(self._on_bar_placed)
+        self.depth_bar.checkToggled.connect(lambda on: self._set_wheel3d("depth" if on else "zoom"))
+        self.zoom_bar.checkToggled.connect(lambda on: self._set_wheel3d("zoom"))
 
         # 들어가며 보기: from the whole eye through the cornea, the pupil and the lens to the retina
         self.b_journey = QPushButton("▶ 들어가기")
@@ -1331,7 +1342,7 @@ class MainWindow(QMainWindow):
 
         # 조작: how to handle the eye (as the page's card)
         keys_label = QLabel("<b>드래그</b> 회전 (놓으면 관성으로 더 돕니다) · <b>휠</b> 자르는 깊이 (내부: 확대) · "
-                            "<b>확대 바</b> · <b>Ctrl+휠</b> · <b>오른쪽 드래그</b> 확대<br>"
+                            "<b>배율 막대</b> · <b>Ctrl+휠</b> · <b>오른쪽 드래그</b> 확대<br>"
                             "<b>Shift+드래그</b> 또는 <b>가운데 버튼</b> 이동 · "
                             "<b>더블클릭</b> 처음 보기 · <b>←↑→↓ + − 0</b><br><b>트랙패드</b> 두 손가락 벌리기·오므리기 확대"
                             "<br><b>각막 클릭</b> 전안부 선택 → <b>휠</b> 각막부터 망막까지 들어가기·나오기 · "
@@ -1408,6 +1419,15 @@ class MainWindow(QMainWindow):
         self.s_zoom3d.blockSignals(True)
         self.s_zoom3d.setValue(round(100 * math.log2(max(m, 1e-3))))
         self.s_zoom3d.blockSignals(False)
+        self.zoom_bar.update()
+
+    def _on_bar_placed(self) -> None:
+        """깊이 막대 · 배율 막대 moved, laid down or stood up: remembered."""
+        s = self.settings
+        state = (self.depth_bar.state(), self.zoom_bar.state())
+        if state != (s.depth_bar3d, s.zoom_bar3d):
+            s.depth_bar3d, s.zoom_bar3d = state
+            s.save()
 
     def _on_depth_wheel(self, steps: float) -> None:
         """The wheel over the eye (outside): the depth of the cut — forward cuts deeper, back closes."""
@@ -1426,14 +1446,14 @@ class MainWindow(QMainWindow):
         self._where.say("깊이 — 닫힌 안구" if v >= hi else f"깊이 {round(100 * (hi - v) / (hi - lo))}%", hold=1.0)
 
     WHEEL_TEXTS = {   # (on the eye's tool tip, in 조작, under the choice)
-        "depth": ("휠: 자르는 깊이 (내부에서는 확대) · 확대: 위쪽 확대 바 · Ctrl+휠",
-                  "<b>휠</b> 자르는 깊이 (내부: 확대) · <b>확대 바</b> · <b>Ctrl+휠</b>",
+        "depth": ("휠: 자르는 깊이 (내부에서는 확대) · 확대: 배율 막대 · Ctrl+휠",
+                  "<b>휠</b> 자르는 깊이 (내부: 확대) · <b>배율 막대</b> · <b>Ctrl+휠</b>",
                   "앞으로 굴리면 깊게 자르고, 뒤로 굴리면 닫힙니다 (내부에서는 확대) · Ctrl+휠: 확대"),
-        "zoom": ("휠: 커서 쪽으로 확대 · 확대 바 · 자르는 깊이: 오른쪽 깊이 막대",
-                 "<b>휠</b> 커서 쪽으로 확대 · <b>확대 바</b> · <b>깊이 막대</b>(오른쪽) 자르는 깊이",
-                 "커서가 가리키는 곳으로 확대 · 축소합니다 — 자르는 깊이는 3D 화면 오른쪽의 깊이 막대로"),
-        "walk": ("휠: 각막부터 망막까지 들어가기 · 나오기 · 확대: 위쪽 확대 바 · Ctrl+휠",
-                 "<b>휠</b> 각막부터 망막까지 들어가기 · 나오기 · <b>확대 바</b> · <b>Ctrl+휠</b>",
+        "zoom": ("휠: 커서 쪽으로 확대 · 배율 막대 · 자르는 깊이: 깊이 막대",
+                 "<b>휠</b> 커서 쪽으로 확대 · <b>배율 막대</b> · <b>깊이 막대</b> 자르는 깊이",
+                 "커서가 가리키는 곳으로 확대 · 축소합니다 — 자르는 깊이는 3D 화면 위의 깊이 막대로"),
+        "walk": ("휠: 각막부터 망막까지 들어가기 · 나오기 · 확대: 배율 막대 · Ctrl+휠",
+                 "<b>휠</b> 각막부터 망막까지 들어가기 · 나오기 · <b>배율 막대</b> · <b>Ctrl+휠</b>",
                  "앞으로 굴리면 각막 → 앞방 → 동공 → 수정체 → 유리체 → 망막으로 들어가고, 뒤로 굴리면 나옵니다 · "
                  "Ctrl+휠: 확대"),
     }
@@ -1451,6 +1471,8 @@ class MainWindow(QMainWindow):
         if not b.isChecked():
             b.setChecked(True)
         self.c_walkclick3d.setEnabled(mode != "walk")      # (들어가기: the wheel goes in anyway)
+        self.depth_bar.set_checked(mode == "depth")        # ☑ 휠 on the bars over the eye
+        self.zoom_bar.set_checked(mode == "zoom")
         self._wheel_texts()
         if save and self.settings.wheel3d != mode:
             self.settings.wheel3d = mode
@@ -1557,13 +1579,14 @@ class MainWindow(QMainWindow):
             "돋보기는 아래 툴바의 [돋보기] (누르는 동안)<br>"
             "오른쪽 클릭: 메뉴 (시신경 유두 · 황반 위치 지정, 돋보기 배율, 미니맵)<br><br>"
             "<b>3D 안구</b><br>"
-            "위 막대: 간단히 / 자세히 (가벼운 기본 모형 / 실제 해부 구조) · 외부 / 내부 · 확대 바 · ▶ 슬릿 스캔 · "
+            "위 막대: 간단히 / 자세히 (가벼운 기본 모형 / 실제 해부 구조) · 외부 / 내부 · ▶ 슬릿 스캔 · "
             "크게 보기 · 설정 (나머지 설정을 여닫기 — 설정 메뉴 → 3D 보기 설정… 으로도 엽니다)<br>"
-            "<b>깊이 막대</b> (3D 화면 오른쪽): 핸들을 위아래로 끌거나 막대 위에서 휠 — 맨 위 닫힘, 아래로 갈수록 깊게 자릅니다 "
+            "<b>깊이 막대 · 배율 막대</b> (3D 화면 위, 반투명): 핸들을 끌거나 막대 위에서 휠 · <b>더블클릭</b> 가로 ↔ 세로 · "
+            "막대의 빈 곳을 끌어 옮기기 · <b>☑ 휠</b> 체크한 막대가 3D 화면 위 휠의 기본 동작 — 깊이: 닫힘 쪽이 닫힌 안구 "
             "(세로 단면은 맨 아래가 정확히 반)<br>"
             "마우스 휠 — 처음에는 <b>확대</b>(커서 쪽으로). 설정 패널의 <b>마우스 휠</b>(또는 설정 → 일반 → 3D 마우스 휠)에서 "
             "<b>깊이</b> 자르는 깊이 (앞으로 굴리면 깊게, 뒤로 굴리면 닫힘 · 내부에서는 확대) / <b>들어가기</b> 각막부터 망막까지로 "
-            "바꿀 수 있습니다 · 각막을 누르면 그동안 휠로 들어가기(끌 수 있음) · 확대는 언제나: 확대 바, Ctrl+휠, 오른쪽 드래그, +/−<br>"
+            "바꿀 수 있습니다 · 각막을 누르면 그동안 휠로 들어가기(끌 수 있음) · 확대는 언제나: 배율 막대, Ctrl+휠, 오른쪽 드래그, +/−<br>"
             "설정 — <b>마우스 휠</b>: 확대 · 깊이 · 들어가기, 각막을 누르면 휠로 들어가기 / <b>망막 입체</b>: 표면 높낮이 · 높이 · 입체 조명 / <b>시점</b>: 정면 · 처음 시점 · 화면 저장 / "
             "<b>들어가며 보기</b>: ▶ 들어가기 · 위치 · 전안부 선택 / <b>안구 열기</b>: 앞쪽 절개 · 세로 단면, 깊이, 공막 투명도, "
             "망막 투시 / <b>슬릿 스캔</b>: 방향 ↓ ↑ → ← · 상하좌우 / <b>효과</b>: 자동 회전 · 화각 표시 · 사진 나란히 / "
@@ -2005,15 +2028,15 @@ class MainWindow(QMainWindow):
     MULTI_HINT = ("16장 보기 — 사진을 클릭해 고르고(번호) 왼쪽 툴바의 [Multi]를 누르면 고른 사진만 봅니다 "
                   "(다시 [Multi]: 16장으로) · 더블클릭: 크게 보기 (Detail) · 휠: 다음 / 이전 16장")
     PICK_FIRST_HINT = "Multi — 먼저 16장 보기에서 사진을 클릭해 고르세요(번호). 그다음 [Multi]를 누르면 고른 사진만 나옵니다"
-    DETAIL_HINT = ("Detail — 다시 더블클릭 · [Detail] 다시: 보던 화면으로 · 사진 좌우의 ◀ ▶ 또는 ← → 키: 이전 / 다음 사진 · "
+    DETAIL_HINT = ("Detail — 다시 더블클릭(큰 사진 · 아래 사진 목록) · [Detail] 다시: 보던 화면으로 · 사진 좌우의 ◀ ▶ 또는 ← → 키: 이전 / 다음 사진 · "
                    "사진 목록을 클릭하면 그 사진")
 
     def _newest_pair(self, exam: str | None = None) -> list[int]:
         """The patient's newest OD and newest OS photo, OD first (on the left, as the patient
         faces you) — of the exam ``exam``, an eye not taken then from its latest exam before
         (None: the newest exam). Colour photos first (review.eye_photo); the strip's eye and kind
-        filters are kept. 미분류 photos have no eye to go by: none."""
-        rows = self._images() if self._patient_ref not in (None, UNASSIGNED) else []
+        filters are kept. 미분류 photos too, those whose eye is known (none of them: none)."""
+        rows = self._images() if self._patient_ref is not None else []
         want_eye, want_mod = self.f_eye.currentData() or "", self.f_mod.currentData() or ""
         if want_mod:
             rows = [r for r in rows if r["modality"] == want_mod]
@@ -2134,6 +2157,9 @@ class MainWindow(QMainWindow):
             self._on_action("view3d")             # (3D again from Detail: the 3D view)
         elif back == "multi":
             self.open_picks()                     # Simple · Multi, the photos on it as they were
+        elif back != "grid" and not self._grid_mode() and self._newest_pair(self._default_exam):
+            self.show_simple()                    # (opened on Detail itself: Simple, where a patient opens)
+            self.lbl_status.setText(self.SIMPLE_HINT)
         else:
             self._go("grid")                      # 16장 보기 (where a patient opens)
             self.lbl_status.setText(self.MULTI_HINT)
@@ -2164,7 +2190,7 @@ class MainWindow(QMainWindow):
                           if (self.db.get_image(g.image_id) or {"exam_date": None})["exam_date"] == exam_date), None)
             if first is not None:
                 self.grid.show_photo(first)
-        elif (self._patient_ref not in (None, UNASSIGNED) and self._picks
+        elif (self._patient_ref is not None and self._picks
               and self._picks == self._default_picks):
             # Simple, not changed by hand: the newest OD | OS of that exam
             self._picks = self._newest_pair(exam_date)
@@ -2497,7 +2523,7 @@ class MainWindow(QMainWindow):
         """Simple with nothing pinned shows the newest OD | OS of the exam of the bookmark (None: of
         all); [Simple] pressed later does too."""
         self._default_exam = exam
-        if self._tab() == "grid" or self._patient_ref in (None, UNASSIGNED):
+        if self._tab() == "grid" or self._patient_ref is None:
             return
         if self._picks and self._picks == self._default_picks:
             pair = self._newest_pair(exam)
@@ -2950,7 +2976,12 @@ class MainWindow(QMainWindow):
             self._click_pick(image_id)
 
     def _open_photo(self, image_id: int) -> None:
-        """A double click on a photo of the strip or of 16장 보기: the photo large (Detail)."""
+        """A double click on a photo of the strip or of 16장 보기: the photo large (Detail) — on Detail
+        already: back to the view it was opened from, as a double click on the large photo."""
+        if self._tab() == "all":
+            self._pick_pre = None
+            self._leave_detail()
+            return
         pre = self._pick_pre
         # (only the click of this double click: a click on the same photo a while ago stays done)
         recent = pre is not None and time.monotonic() - pre[3] <= QApplication.doubleClickInterval() / 1000.0 + 0.2

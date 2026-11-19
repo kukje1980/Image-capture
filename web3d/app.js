@@ -1164,6 +1164,16 @@ function paintScene(w, h) {
     if (sheet) { setU(pw, { hole: 0 }); drawMesh(sheet); }
   }
   drawBackdrop(w, h);
+  if (glass > 0 && mapping.has_tex) {   // 사진 밖: the white of the far wall beside the photo, a see-through veil
+    gl.enable(gl.BLEND);
+    gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ZERO, gl.ONE);
+    gl.depthMask(false);
+    const sheet = reliefSheet();
+    const pw = use('wall', { inside: 0, light: lights.key, side: 3, glass, hole: sheet ? 0.995 : 0, ...mapping });
+    drawMesh(R.meshes.wall);
+    if (sheet) { setU(pw, { hole: 0 }); drawMesh(sheet); }
+    gl.depthMask(true); gl.disable(gl.BLEND);
+  }
   if (inside || half || within || ((!closed || glass > 0) && E.cut > K.LENS_BACK_Z)) {
     gl.enable(gl.BLEND);
     gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ZERO, gl.ONE);

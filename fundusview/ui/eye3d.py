@@ -252,8 +252,10 @@ uniform vec2  u_texel;    // one texel of the photo (texture coordinates)
 uniform vec3  u_rlight;   // direction to that light (the photo's frame)
 
 // 사진 밖: with a photo, the retina it does not show is not made up — no orange fundus pattern there, but
-// plain white, drawn solid (opaque: nothing is laid over the photo, which keeps its own colours)
+// plain white (nothing is laid over the photo, which keeps its own colours and stays solid); seen from
+// outside with 공막 투명도 the white is a veil the far side shows through (UNSEEN_VEIL … 1 by u_glass)
 const vec3 UNSEEN = vec3(0.90, 0.89, 0.87);
+const float UNSEEN_VEIL = 0.30;   // how dense that white is at 공막 투명도 100
 
 uniform sampler2D u_hmap;  // 망막 높낮이: the height of the retinal surface over the photo (relief.py), 16 bits in R, G
 uniform float u_hmap_on;   // 0 the relief from the photo's brightness … 1 from the height map
@@ -513,8 +515,10 @@ uniform int   u_inside;
 uniform vec3  u_light;
 uniform float u_hole;     // 망막 높낮이: the photographed field is drawn by the relief sheet, the wall leaves
                           // it open (inside theta < u_hole × the field's half angle); 0: no hole
-uniform int   u_side;     // 유리 공막: 0 the whole wall (as ever), 1 only its inside (the far wall),
-                          // 2 only the outside of the near wall — solid where the photo lies, else clear
+uniform int   u_side;     // 유리 공막: 0 the whole wall (as ever), 1 only its inside (the far wall; with a
+                          // photo only where the photo lies, solid), 3 the rest of that inside (사진 밖: a
+                          // white veil, drawn blended), 2 only the outside of the near wall — solid where
+                          // the photo lies, else clear
 uniform float u_glass;
 
 void main() {
@@ -525,7 +529,14 @@ void main() {
     float on_ret;
     vec3 col = fundus(d, v_obj.z, on_ret);
     float facing = dot(n, normalize(u_campos - v_obj));       // > 0: the inner surface faces the viewer
-    if (u_side == 1 && facing < 0.0) discard;
+    float alpha = 1.0;
+    if (u_side == 1 || u_side == 3) {
+        if (facing < 0.0) discard;
+        float cover = photo(d).a * on_ret;
+        bool veil = u_has_tex == 1 && cover < 0.995;
+        if (veil != (u_side == 3)) discard;
+        if (veil) alpha = mix(mix(1.0, UNSEEN_VEIL, u_glass), 1.0, cover);
+    }
     if (u_side == 2) {
         if (facing >= 0.0) discard;
         // the retina seen from behind, through the glass sclera: the photographed part stays solid
@@ -549,7 +560,7 @@ void main() {
         vec3 h = normalize(u_light + normalize(u_campos - v_obj));
         outc += vec3(0.10) * pow(max(dot(n, h), 0.0), 60.0) * mix(0.4, 1.0, on_ret);
     }
-    gl_FragColor = vec4(outc, 1.0);
+    gl_FragColor = vec4(outc, alpha);
 }
 """
 
@@ -596,6 +607,7 @@ uniform int u_kind;   // 0 wall section, 1 iris section, 2 iris, 3 chamber angle
 uniform int u_rim_post;
 uniform int u_plain;  // with a photo (사진 밖): the cut ciliary body in front of the ora white, as the inside
 const vec3 UNSEEN_RIM = vec3(0.86, 0.85, 0.83);
+uniform float u_glass;   // 공막 투명도: with a photo the cut wall is see-through as the white inside (drawn blended)
 
 float cell_edge(vec2 x) {           // distance to the nearest Voronoi border (fascicles)
     vec2 i = floor(x);
@@ -684,7 +696,7 @@ void main() {
     else if (u_kind == 3) col = wet(lin(mix(gonio(v_obj.z), vec3(0.30, 0.22, 0.17), u_simple)), n, v, 0.3, 0.3);
     else if (u_kind == 4) col = mix(nerve(n, v), wet(lin(vec3(0.84, 0.79, 0.71)), n, v, 0.25, 0.2), u_simple);
     else col = mix(muscle(n, v), wet(lin(vec3(0.56, 0.24, 0.20)), n, v, 0.3, 0.2), u_simple);
-    gl_FragColor = vec4(tonemap(col), 1.0);
+    gl_FragColor = vec4(tonemap(col), u_kind == 0 && u_plain == 1 ? mix(1.0, 0.42, u_glass) : 1.0);
 }
 """
 
@@ -814,7 +826,9 @@ uniform int   u_side;     // 0 both faces (outer: sclera), 1 the outer surface o
                           // (wall mesh, normals toward the centre)
 uniform float u_xray;     // 망막 투시: the outer surface shows the retina instead of the sclera
 uniform float u_glass;    // 유리 공막 (see SCLERA_FRAG)
-uniform int   u_pass;     // 0 both surfaces, 1 the inner surface only, 2 the outer one only (see-through)
+uniform int   u_pass;     // 0 both surfaces, 1 the inner surface only (see-through: with a photo only where
+                          // the photo lies), 3 the rest of the inner surface (사진 밖: a white veil, blended),
+                          // 2 the outer one only (see-through)
 uniform vec3  u_campos;
 uniform vec3  u_hk;       // 세로 단면 (see COMMON)
 uniform float u_hoff;
@@ -839,7 +853,7 @@ void main() {
     float theta;
     bool outer = u_side != 2 && gl_FrontFacing && u_inside == 0;
     if (u_side == 1 && !outer) discard;
-    if ((u_pass == 1 && outer) || (u_pass == 2 && !outer)) discard;
+    if (((u_pass == 1 || u_pass == 3) && outer) || (u_pass == 2 && !outer)) discard;
     if (outer) {                                     // outer sclera
         float diff = max(dot(n, u_light), 0.0);
         vec3 sclera = vec3(0.93, 0.91, 0.87);
@@ -869,7 +883,14 @@ void main() {
     }
     vec3 col = fundus_s(d, theta);
     float diff = 0.62 + 0.38 * max(dot(u_side == 2 ? n : -n, u_light), 0.0);
-    gl_FragColor = vec4(col * diff, 1.0);
+    float alpha = 1.0;
+    if (u_pass == 1 || u_pass == 3) {
+        float cover = photo(d).a;
+        bool veil = u_has_tex == 1 && cover < 0.995;
+        if (veil != (u_pass == 3)) discard;
+        if (veil) alpha = mix(mix(1.0, UNSEEN_VEIL, u_glass), 1.0, cover);
+    }
+    gl_FragColor = vec4(col * diff, alpha);
 }
 """
 
@@ -2614,7 +2635,10 @@ class EyeView(QOpenGLWidget):
         # 유리 공막: the outer coat see-through (drawn last, blended), the wall in two layers — its
         # inside first (the far wall, solid), then the outside of the near wall (solid only where
         # the photo lies). 세로 단면 and the inside view keep the solid coat.
+        # With a photo the white of the far wall beside it (사진 밖) and the cut wall's face are a veil
+        # too: drawn blended over the backdrop, after the solid photo.
         glass = 0.0 if (inside or half) else float(min(1.0, max(0.0, self.glass)))
+        veil = glass > 0.0 and bool(mapping["has_tex"])
 
         def draw_wall(**extra):
             p = use("wall", hole=0.995 if sheet is not None else 0.0, **extra, **mapping)
@@ -2647,9 +2671,10 @@ class EyeView(QOpenGLWidget):
                 if half_clip:
                     gl.glEnable(gl.GL_CLIP_PLANE1)
             elif not closed:
-                p = use("tissue", rim_post=int(em.cut_plane_z(self.cut) < em.Z_ORA), plain=int(bool(mapping["has_tex"])))
+                p = use("tissue", rim_post=int(em.cut_plane_z(self.cut) < em.Z_ORA), plain=int(bool(mapping["has_tex"])),
+                        glass=0.0)
                 for part, kind in (("wall", 0), ("iris", 1)):
-                    if part == "iris" and front_clear:
+                    if (part == "iris" and front_clear) or (part == "wall" and veil):   # (the veil: below)
                         continue
                     mesh = self._dynamic("rim_" + part, round(self.cut, 4), lambda part=part: self._rim(part))
                     if mesh is not None:
@@ -2684,6 +2709,24 @@ class EyeView(QOpenGLWidget):
         if half_clip:
             gl.glDisable(gl.GL_CLIP_PLANE1)
         self._draw_backdrop(gl)
+
+        # -- 사진 밖, see-through: the white of the far wall, then the face of the cut wall ----
+        if veil:
+            gl.glEnable(gl.GL_BLEND)
+            gl.glBlendFuncSeparate(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA, gl.GL_ZERO, gl.GL_ONE)
+            gl.glDepthMask(gl.GL_FALSE)
+            if clip_plane:
+                gl.glEnable(gl.GL_CLIP_PLANE0)
+            draw_wall(inside=0, light=lights["key"], side=3, glass=glass)
+            if not closed:
+                mesh = self._dynamic("rim_wall", round(self.cut, 4), lambda: self._rim("wall"))
+                if mesh is not None:
+                    use("tissue", rim_post=int(em.cut_plane_z(self.cut) < em.Z_ORA), plain=1, glass=glass, kind=0)
+                    mesh.draw(gl)
+            if clip_plane:
+                gl.glDisable(gl.GL_CLIP_PLANE0)
+            gl.glDepthMask(gl.GL_TRUE)
+            gl.glDisable(gl.GL_BLEND)
 
         # -- transparent media ----------------------------------------------------
         if inside or half or within or ((not closed or glass > 0.0) and self.cut > em.LENS_BACK_Z
@@ -2802,12 +2845,14 @@ class EyeView(QOpenGLWidget):
             if half_clip:
                 gl.glEnable(gl.GL_CLIP_PLANE1)
             gl.glUseProgram(s)
-        if glass > 0.0:                                    # the outer surface as a glass shell, over it all
-            gl.glUseProgram(p)
-            self._set(p, **{"pass": 2})
+        if glass > 0.0:       # the white beside the photo (사진 밖) as a veil, then the outer surface as a
+            gl.glUseProgram(p)  # glass shell over it all
             gl.glEnable(gl.GL_BLEND)
             gl.glBlendFuncSeparate(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA, gl.GL_ZERO, gl.GL_ONE)
             gl.glDepthMask(gl.GL_FALSE)
+            self._set(p, **{"pass": 3})
+            self._meshes["sclera"].draw(gl)
+            self._set(p, **{"pass": 2})
             self._meshes["sclera"].draw(gl)
             gl.glDepthMask(gl.GL_TRUE)
             gl.glDisable(gl.GL_BLEND)

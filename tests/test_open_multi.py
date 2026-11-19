@@ -148,14 +148,23 @@ def test_a_patient_opens_on_simple_with_its_newest_od_and_os(win):
     _press(w, "view3d")
     assert w._tab() == "multi" and _cells(w) == ([ids["od3"], ids["os3"]], ids["os3"])
 
-    # a patient seen for one eye: that photo; 미분류: its photos large (Detail), to be assigned
+    # a patient seen for one eye: that photo; 미분류: the same, its newest photo of each eye that is known
     _open(app, w, refs["park"])
     assert w._tab() == "multi" and w.picks() == [ids["p_od"]] and w.multi.count == 1
     from fundusview.ui.main_window import UNASSIGNED
     _open(app, w, UNASSIGNED)
-    assert w._tab() == "all" and w.picks() == [] and w.current["id"] == ids["un"]
-    assert _lit(w) == ["view:all"]
-    # … [Simple] there: the photo on screen alone (no OD | OS to go by)
+    assert w._tab() == "multi" and w.picks() == [ids["un"]] and w.current["id"] == ids["un"]
+    assert _lit(w) == ["view:simple"]
+    # … a double click: Detail; a double click on the photo list there: back on Simple, as it was
+    w._open_photo(ids["un"])
+    assert w._tab() == "all" and w.current["id"] == ids["un"]
+    w._press_photo(ids["un"])
+    w._open_photo(ids["un"])
+    assert w._tab() == "multi" and _lit(w) == ["view:simple"] and w.picks() == [ids["un"]]
+    w._go("all")
+    w._detail_from = ""                       # (Detail opened by itself: a double click goes to Simple too)
+    w._leave_detail()
+    assert w._tab() == "multi" and _lit(w) == ["view:simple"]
     _press(w, "view:simple")
     assert w._tab() == "multi" and _cells(w) == ([ids["un"]], ids["un"])
     # the eye filter of the strip is kept: OD only
@@ -307,7 +316,9 @@ def test_simple_with_nothing_picked_and_multi_is_16_photos(win):
     # a double click: that photo large (Detail) — the picks stay as they were
     _click(app, w, od2, double=True)
     assert w._tab() == "all" and w.current["id"] == od2 and w.picks() == [od3, od2]
-    _click(app, w, rf3, double=True)                       # (one not picked, too)
+    _click(app, w, rf3, double=True)                       # on Detail a double click on the list goes back …
+    assert w._tab() == "multi" and w.picks() == [od3, od2] and _cells(w)[0] == [od3, od2]
+    _click(app, w, rf3, double=True)                       # … and from there one not picked opens large, too
     assert w._tab() == "all" and w.current["id"] == rf3 and w.picks() == [od3, od2]
 
     # [Multi] (from Detail, photos picked): those photos only, Multi lit; [Multi] again: 16장 보기 — every
