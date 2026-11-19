@@ -48,6 +48,7 @@ class _Cell(QFrame):
         hl.addStretch(1)
         hl.addWidget(self.badge, 0, Qt.AlignmentFlag.AlignVCenter)
         self.view = ImageView()
+        self.view.click_loupe = True        # not zoomed yet: the left button held shows the loupe
         self.nav = EdgeNav(self.view)       # ◀ ▶ at its sides (Simple; nowhere to go until told)
         lay.addWidget(self.label)
         lay.addWidget(self.view, 3)

@@ -3,8 +3,8 @@
 The photo list under the photos shows one exam's photos (OD row · OS row, as before); the bookmarks
 over it — one per exam date, newest at the left, then 전체 — pick the exam, and so does the wheel
 over the list. A patient opens on its newest exam, the newest OD | OS above. A photo of the list
-under the mouse is shown large over the views (미리 보기, v0.10.1: a pane of its own — the photos
-under it stay) until the mouse leaves it; a click pins it (numbered) — several pinned: that many
+under the mouse is shown larger in a small pane just above it (미리 보기, v0.10.2 — the photos of
+the views stay) until the mouse leaves it; a click pins it (numbered) — several pinned: that many
 side by side — and a click on a pinned one lets it go."""
 import os
 
@@ -173,8 +173,15 @@ def test_a_photo_under_the_mouse_is_previewed_and_a_click_pins_it(win):
     _hover(app, w, rf3)
     assert w._peek == rf3 and pane.isVisible() and pane.image_id == rf3 and pane.view.has_image()
     assert "미리 보기" in pane.label.text() and "클릭하면 고정" in pane.label.text() and "OD" in pane.label.text()
-    assert pane.parentWidget() is w.tabs and pane.width() > w.tabs.width() * 0.9      # nearly the whole room
-    assert pane.height() > w.tabs.height() * 0.9
+    # … a small pane just above that photo of the list: a good deal larger than it there, but only a
+    # corner of the views (not the main photos' whole room)
+    from fundusview.ui.main_window import THUMB_GRID
+
+    assert pane.parentWidget() is w.tabs and 3 * THUMB_GRID[0] < pane.width() <= 460
+    assert pane.width() < w.tabs.width() * 0.45 and pane.height() <= w.tabs.height() * 0.62
+    assert abs(pane.geometry().bottom() - w.tabs.height()) < 12            # at the bottom, by the list
+    thumb_x = w.thumbs.viewport().mapTo(w.tabs.parentWidget(), w.thumbs.visualItemRect(_item(w, rf3)).center()).x()
+    assert pane.geometry().left() >= 0 and pane.geometry().left() <= thumb_x - w.tabs.x() <= pane.geometry().right()
     assert _cells(w) == ([od3, os3], od3) and w.multi.count == 2
     assert w.picks() == [od3, os3] and not w._own_picks() and w.current["id"] == od3
     assert _item(w, rf3).data(PICK_ROLE) == 0 and _item(w, od3).data(PICK_ROLE) == SHOWN
@@ -212,7 +219,7 @@ def test_a_photo_under_the_mouse_is_previewed_and_a_click_pins_it(win):
     _hover(app, w, os2)
     w.resize(1300, 800)
     app.processEvents()
-    assert pane.isVisible() and pane.geometry().right() <= w.tabs.width() and pane.width() > w.tabs.width() * 0.9
+    assert pane.isVisible() and pane.geometry().right() <= w.tabs.width() and pane.geometry().bottom() <= w.tabs.height()
     _press(w, "view:multi")
     assert not pane.isVisible() and w._peek is None
     _press(w, "view:simple")
@@ -264,3 +271,33 @@ def test_settings_of_before_open_on_simple_once(tmp_path):
         finally:
             w.close()
     db.close()
+
+
+def test_the_left_button_on_a_photo_not_zoomed_yet_shows_the_loupe(win):
+    """Simple · Multi cells and Detail's big photo: with the whole photo on screen (before any zoom) the
+    left button held down shows the loupe under the mouse; once zoomed, a drag moves the photo as before."""
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+
+    app, w, db, refs, ids = win
+    _open(app, w, refs["kim"])
+    cell = next(c for c in w.multi.cells if c.image_id == ids["os3"])
+    view, vp = cell.view, cell.view.viewport()
+    at = QPoint(vp.width() // 2, vp.height() // 2)
+    assert view.click_loupe and view._fit and not view._loupe.isVisible()
+    QTest.mousePress(vp, Qt.MouseButton.LeftButton, pos=at)
+    assert view._loupe.isVisible() and w.current["id"] == ids["os3"]       # (the click selects the cell, too)
+    assert abs(view._loupe.geometry().center().x() - at.x()) <= 1
+    QTest.mouseMove(vp, at + QPoint(40, 10))                               # it follows the mouse
+    assert abs(view._loupe.geometry().center().x() - at.x() - 40) <= 1
+    QTest.mouseRelease(vp, Qt.MouseButton.LeftButton, pos=at + QPoint(40, 10))
+    assert not view._loupe.isVisible() and view._fit
+    # zoomed in: the left button moves the photo, no loupe
+    view.zoom_to(view._fit_zoom() * 3)
+    assert not view._fit
+    QTest.mousePress(vp, Qt.MouseButton.LeftButton, pos=at)
+    assert not view._loupe.isVisible() and view._drag["kind"] == "pan"
+    QTest.mouseRelease(vp, Qt.MouseButton.LeftButton, pos=at)
+    view.fit()
+    # Detail's big photo the same; other views (the 황반 · 디스크 panes …) as before
+    assert w.view2d.click_loupe and not cell.zooms["disc"].click_loupe
