@@ -83,7 +83,7 @@ from .edge_nav import EdgeNav
 from .keys import IS_MAC, keys
 from .multi_view import CLOSEUP_MAX, MultiView
 from .sample_compare import SampleCompareDialog
-from .peek import PeekPane
+from .peek import SIZES as PEEK_SIZES, PeekPane
 from .patient_list import SEX_LABEL, UNASSIGNED, PatientListWindow, age_on
 from .photo_grid import GridPhoto, PhotoGrid
 from .review_view import ReviewPage
@@ -504,6 +504,16 @@ class MainWindow(QMainWindow):
         self.act_peek.setToolTip("아래 사진 목록의 사진에 마우스를 올리면 그 사진 바로 위에 좀 더 크게 보여 줍니다 "
                                  "(클릭하면 고정)")
         self.act_peek.toggled.connect(self._set_hover_preview)
+        sub = m.addMenu("미리 보기 크기")          # how large the photo of the list comes up under the mouse
+        self._peek_sizes = QActionGroup(self)
+        self.peek_size_acts = {}
+        for px, name in PEEK_SIZES:
+            a = sub.addAction(f"{name} ({px} 픽셀)")
+            a.setCheckable(True)
+            self._peek_sizes.addAction(a)
+            a.triggered.connect(lambda _=False, px=px: self._set_preview_size(px))
+            self.peek_size_acts[px] = a
+        self._set_preview_size(self.settings.preview_size, save=False)
         m.addAction(self.tb_cmd.toggleViewAction())
         m.addAction(self.tb_proc.toggleViewAction())
         m.addSeparator()
@@ -2535,6 +2545,9 @@ class MainWindow(QMainWindow):
                      if self.thumbs.item(i).data(Qt.ItemDataRole.UserRole) == want), None)
         x = (self.thumbs.viewport().mapTo(self.centralWidget(), self.thumbs.visualItemRect(item).center()).x()
              - self.tabs.mapTo(self.centralWidget(), QPoint(0, 0)).x()) if item is not None else 0
+        side = self.peek_pane.side
+        if rgb.shape[1] < side and max(row["width"] or 0, row["height"] or 0) > rgb.shape[1]:
+            rgb = self._multi_small(row, self._photo_state(want), 1)      # (1400 px: enough for any size)
         self.peek_pane.show_photo(want, f"{self._multi_label(row, self._picks.index(want) + 1 if own else 0)}"
                                         f"<br><b style='color:#ffd60a'>미리 보기</b> — {what}", rgb, x)
         self.lbl_status.setText("미리 보기 — 이 사진이 맞으면 클릭해서 고정(선택)하세요 · 마우스를 떼면 닫힙니다")
@@ -2545,6 +2558,21 @@ class MainWindow(QMainWindow):
         self._peek_timer.stop()
         if getattr(self, "peek_pane", None) is not None:
             self.peek_pane.clear()
+
+    def _set_preview_size(self, px: int, save: bool = True) -> None:
+        """보기 → 미리 보기 크기: the photo in the preview pane, ``px`` pixels across (one of the sizes
+        offered; anything else: the nearest)."""
+        px = min((s for s, _name in PEEK_SIZES), key=lambda s: abs(s - int(px or 0)))
+        self.settings.preview_size = self.peek_pane.side = px
+        self.peek_size_acts[px].setChecked(True)
+        if self.peek_pane.isVisible():
+            self.peek_pane.place()
+            self.peek_pane.view.fit()
+        if save:
+            try:
+                self.settings.save()
+            except OSError:
+                pass
 
     def _set_hover_preview(self, on: bool) -> None:
         """보기 → 사진 목록에 마우스를 올리면 미리 보기."""

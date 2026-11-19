@@ -178,7 +178,7 @@ def test_a_photo_under_the_mouse_is_previewed_and_a_click_pins_it(win):
     from fundusview.ui.main_window import THUMB_GRID
 
     assert pane.parentWidget() is w.tabs and 3 * THUMB_GRID[0] < pane.width() <= 460
-    assert pane.width() < w.tabs.width() * 0.45 and pane.height() <= w.tabs.height() * 0.62
+    assert pane.width() < w.tabs.width() * 0.45 and pane.height() <= w.tabs.height() * 0.75
     assert abs(pane.geometry().bottom() - w.tabs.height()) < 12            # at the bottom, by the list
     thumb_x = w.thumbs.viewport().mapTo(w.tabs.parentWidget(), w.thumbs.visualItemRect(_item(w, rf3)).center()).x()
     assert pane.geometry().left() >= 0 and pane.geometry().left() <= thumb_x - w.tabs.x() <= pane.geometry().right()
@@ -301,3 +301,28 @@ def test_the_left_button_on_a_photo_not_zoomed_yet_shows_the_loupe(win):
     view.fit()
     # Detail's big photo the same; other views (the 황반 · 디스크 panes …) as before
     assert w.view2d.click_loupe and not cell.zooms["disc"].click_loupe
+
+
+def test_the_size_of_the_preview_is_chosen_in_the_view_menu(win):
+    """보기 → 미리 보기 크기: 작게 · 보통 · 크게 · 아주 크게 — the pane grows and shrinks with it (never
+    past the views), remembered."""
+    from fundusview.config import Settings, config_dir
+    from fundusview.ui.peek import SIZES
+
+    app, w, db, refs, ids = win
+    _open(app, w, refs["kim"])
+    pane = w.peek_pane
+    assert [px for px, _ in SIZES] == [300, 440, 600, 800] and w.settings.preview_size == 440
+    assert w.peek_size_acts[440].isChecked() and pane.side == 440
+    _hover(app, w, ids["rf3"])
+    widths = {}
+    for px in (300, 440, 600, 800):
+        w.peek_size_acts[px].trigger()
+        app.processEvents()
+        assert w.settings.preview_size == px and pane.side == px and w.peek_size_acts[px].isChecked()
+        assert pane.isVisible() and pane.geometry().top() >= 0 and pane.geometry().right() <= w.tabs.width()
+        assert pane.geometry().bottom() <= w.tabs.height()
+        widths[px] = pane.width()
+    assert widths[300] < widths[440] < widths[600] <= widths[800] and widths[300] <= 320
+    assert Settings.load(config_dir() / "settings.json").preview_size == 800
+    w.peek_size_acts[440].trigger()

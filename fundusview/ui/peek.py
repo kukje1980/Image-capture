@@ -15,7 +15,9 @@ from . import theme
 from .image_view import ImageView
 
 MARGIN = 6                      # between the pane and the edges of the views / the photo list
-SIDE = 440                      # the photo in the pane: this many pixels across (the list: 84)
+SIDE = 440                      # the photo in the pane: this many pixels across (the list: 84) …
+# … or as chosen in 보기 → 미리 보기 크기 (Settings.preview_size): (pixels across, name)
+SIZES = ((300, "작게"), (440, "보통"), (600, "크게"), (800, "아주 크게"))
 PEEK_COLOR = "#facc15"          # its frame (the colour of a picked photo in the list)
 
 
@@ -39,17 +41,19 @@ class PeekPane(QFrame):
         lay.addWidget(self.label)
         lay.addWidget(self.view, 1)
         self.image_id: int | None = None
+        self.side = SIDE                        # the photo: this many pixels across (보기 → 미리 보기 크기)
         self.anchor_x = 0                       # the middle of the photo of the list, in the parent
         self.aspect = 0.75                      # height / width of the photo shown
         self.hide()
 
     def place(self) -> None:
         """At the bottom of the parent (just above the photo list), centred over ``anchor_x`` — the
-        photo of the list it shows — and kept inside the parent; at most half the parent's height."""
+        photo of the list it shows — and kept inside the parent: ``side`` pixels across, less where
+        the parent has no room for that."""
         r = self.parentWidget().rect()
         head = self.label.sizeHint().height()
-        w = min(SIDE, r.width() - 2 * MARGIN)
-        h = min(int(w * self.aspect), max(120, r.height() // 2 - head))
+        w = min(self.side, r.width() - 2 * MARGIN)
+        h = min(int(w * self.aspect), max(120, r.height() - head - 12 - 2 * MARGIN))
         w = min(w, int(h / self.aspect)) if self.aspect > 0 else w
         w, h = max(w, 200) + 12, h + head + 12          # (the frame and its padding)
         x = max(MARGIN, min(self.anchor_x - w // 2, r.width() - w - MARGIN))
