@@ -1148,12 +1148,14 @@ class MainWindow(QMainWindow):
         self.eye3d = EyeView()                # (its tool tip and what the wheel does: _set_wheel3d)
         self.eye3d.depthWheel.connect(self._on_depth_wheel)
         self._depth_wheel = 0.0               # (the part of a slider step a fine wheel has not made up yet)
-        self.lbl_zoom3d = QLabel("배율 ×1.0")
+        self.lbl_zoom3d = QLabel("배율 ×1.0", bar)     # (not shown: owned by the bar, so it goes with the window)
+        self.lbl_zoom3d.hide()
         self.lbl_zoom3d.setObjectName("hint3d")
         self.lbl_zoom3d.setToolTip("처음 보기 대비 확대 배율 · 더블클릭 또는 0: 처음 보기")
         # 확대 바: ×0.3 … ×16 on a logarithmic scale (the middle of the start view = ×1) — shown over the
         # eye as the 배율 막대 (below); the slider and the label are the value only
-        self.s_zoom3d = QSlider(Qt.Orientation.Horizontal)
+        self.s_zoom3d = QSlider(Qt.Orientation.Horizontal, bar)
+        self.s_zoom3d.hide()
         self.s_zoom3d.setRange(round(100 * math.log2(self.ZOOM3D[0])), round(100 * math.log2(self.ZOOM3D[1])))
         self.s_zoom3d.setValue(0)
         self.s_zoom3d.setPageStep(50)

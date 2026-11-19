@@ -77,3 +77,27 @@ def _import_and_wait(app, window, paths, timeout: float = 60.0) -> int:
 def import_and_wait():
     """``import_and_wait(app, window, paths)`` — see :func:`_import_and_wait`."""
     return _import_and_wait
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """The windows still alive when the tests are over are taken down here, in order, while the
+    QApplication still exists. Left to the interpreter's shutdown they are destroyed in any order —
+    now and then after the objects they hold ("QObject: shared QObject was deleted directly"), and the
+    process died (exit 139 / 1) after every test had passed, failing the CI job."""
+    try:
+        from PySide6.QtCore import QCoreApplication, QEvent
+        from PySide6.QtWidgets import QApplication
+    except ImportError:
+        return
+    app = QApplication.instance()
+    if app is None:
+        return
+    import gc
+
+    for w in QApplication.topLevelWidgets():
+        w.close()
+        w.deleteLater()
+    for _ in range(3):
+        gc.collect()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        app.processEvents()
