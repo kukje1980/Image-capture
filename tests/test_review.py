@@ -243,7 +243,9 @@ def test_click_a_patient_shows_its_exams_not_its_photos(win):
     app.processEvents()
     assert w._patient_ref == refs["kim"] and pl.isVisible() and "김영수" in w.banner.text()
     newest_first = [ids[k] for k in ("na3", "rf3", "os3", "od3", "os2", "od2", "sheet", "od1")]
-    assert w.thumbs.count() == 7 and ids["na3"] not in w._strip_ids()     # 8 photos, na3 (eye unknown) not listed
+    # 8 photos, na3 (eye unknown) not listed; the photo list: the newest exam's bookmark (3 of the 7)
+    assert len(w._listed) == 7 and ids["na3"] not in [i for i, _eye, _day in w._listed]
+    assert w.thumbs.count() == 3 and w._book == "2026-03-02"
     # the main window: its newest OD | OS on 다중 보기 (설정 → 일반 → 환자를 열면: 최신 OD | OS)
     assert w._tab() == "multi" and w.picks() == [ids["od3"], ids["os3"]] and w.multi.count == 2
     assert len(newest_first) == 8

@@ -219,7 +219,8 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
         from fundusview.ui.thumbs import DATE_ROLE, KIND_ROLE
 
         grid_h = w.thumbs.gridSize().height()
-        assert grid_h == THUMB_GRID[1] <= 80 and w.strip_w.height() <= 2 * 80 + 12
+        assert grid_h == THUMB_GRID[1] <= 80 and w.book_bar.isVisible() and w.book_bar.height() <= 32
+        assert w.strip_w.height() <= 2 * 80 + 12 + w.book_bar.height()      # the 날짜 책갈피 over the two rows
         from fundusview.models import MODALITY_LABELS
         assert w.thumbs.item(0).data(DATE_ROLE) == by_eye[0]["exam_date"]
         assert w.thumbs.item(0).data(KIND_ROLE) == MODALITY_LABELS[by_eye[0]["modality"]]
@@ -286,25 +287,23 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
         app.processEvents()
         assert strip_ids() == ids
 
-        # [Simple]: the newest OD | OS; [선택 해제]: nothing picked — all the photos of the list
+        # [Simple]: the newest OD | OS — shown, not pinned (no [선택 해제])
         w.acts["view:simple"].trigger()
         app.processEvents()
         pair = w._newest_pair()
         assert w._tab() == "multi" and len(pair) == 2 and w.picks() == pair and w.acts["view:simple"].isChecked()
-        assert "최신 OD | OS" in w.multi.mode_text and w.btn_clear_picks.isVisible()
-        w.btn_clear_picks.click()
-        app.processEvents()
-        assert w._tab() == "multi" and w.picks() == [] and not w.btn_clear_picks.isVisible()
-        assert [c.image_id for c in w.multi.cells if c.isVisible() and c.image_id] == ids and w.multi.count == 4
+        assert "최신 OD | OS" in w.multi.mode_text and not w.btn_clear_picks.isVisible()
+        assert [c.image_id for c in w.multi.cells if c.isVisible() and c.image_id] == pair and w.multi.count == 2
 
-        # plain click = the photo on the multi view at once (numbered, selected); click again = it leaves
+        # plain click = the photo pinned on the multi view at once (numbered, selected; the first one alone);
+        # click again = it leaves
         _click(w, w.thumbs.item(2))
         app.processEvents()
         assert w._tab() == "multi" and w.picks() == [ids[2]] and w.multi.count == 1 and w.current["id"] == ids[2]
         _click(w, w.thumbs.item(0))
         assert w.picks() == [ids[2], ids[0]] and w.multi.count == 2 and w.current["id"] == ids[0]
         assert w.thumbs.item(2).data(PICK_ROLE) == 1 and w.thumbs.item(0).data(PICK_ROLE) == 2
-        assert w.lbl_picks.text() == "2장 선택" and w.btn_clear_picks.isVisible()
+        assert w.lbl_picks.text() == "2장 고정" and w.btn_clear_picks.isVisible()
         _click(w, w.thumbs.item(2))
         assert w.picks() == [ids[0]] and w.thumbs.item(0).data(PICK_ROLE) == 1 and w.multi.count == 1
         _click(w, w.thumbs.item(1))
@@ -326,7 +325,7 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
         assert w._tab() == "multi" and w.multi.count == 2 and w.acts["view:multi"].isChecked()
         cells = [c for c in w.multi.cells if c.isVisible()]
         assert [c.image_id for c in cells] == [ids[0], ids[1]]
-        assert w.current["id"] == ids[0] and "고른 사진 2장" in w.multi.mode_text
+        assert w.current["id"] == ids[0] and "고정한 사진 2장" in w.multi.mode_text
         assert "OD" in cells[0].label.text() or "OS" in cells[0].label.text() or "미상" in cells[0].label.text()
 
         # processing applies to the selected cell's photo only
@@ -359,16 +358,12 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
         assert w._channel == "rgb"
         assert w._per_photo[ids[1]]["state"]["ops"] == ["sharpen"]
 
-        # clearing the picks: all the photos of the list again; 보기 → Simple 화면 분할 N장 = VK-2's
-        # consecutive photos
+        # clearing the picks: nothing pinned — the newest OD | OS again
         w.btn_clear_picks.click()
         app.processEvents()
-        assert w.picks() == [] and w.multi.mode_text == "" and w.lbl_picks.text() == ""
+        assert w.picks() == pair and "최신 OD | OS" in w.multi.mode_text and w.lbl_picks.text() == ""
         assert not w.btn_clear_picks.isVisible() and not w.multi.empty.isVisible()
-        assert [c.image_id for c in w.multi.cells if c.isVisible() and c.image_id] == ids
-        w._on_action("multi:2")
-        app.processEvents()
-        assert not w.multi.empty.isVisible() and len([c for c in w.multi.cells if c.isVisible() and c.image_id]) == 2
+        assert [c.image_id for c in w.multi.cells if c.isVisible() and c.image_id] == pair
 
         # another patient: the picks belong to the previous one — Simple again, that patient's own newest OD | OS
         _click(w, w.thumbs.item(0))

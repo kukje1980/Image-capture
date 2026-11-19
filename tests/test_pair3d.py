@@ -157,7 +157,7 @@ def test_3d_with_more_photos_picked_asks_one_or_all(tmp_path, demo_dir, import_a
         b3d.click()
         assert w._tab() == "grid" and asked == [3, 3, 3]
 
-        # Simple with its two: both at once, no question; with a third added: the question
+        # Simple with its two: both at once, no question; with three pinned: the question
         answer[0] = "all"
         w.tb_cmd.widgetForAction(w.acts["view:simple"]).click()
         if len(w.picks()) == 2:
@@ -166,9 +166,10 @@ def test_3d_with_more_photos_picked_asks_one_or_all(tmp_path, demo_dir, import_a
             assert w._tab() == "3d2" and len(asked) == 3 and pair.image_ids == w.picks()
             b3d.click()
             assert w._tab() == "multi"
-        extra = next(i for i in photos if i not in w.picks())
-        w._toggle_pick(extra)
-        n = len(w.picks())
+        for iid in photos[:3]:                                        # (the first one pinned stands alone)
+            w._toggle_pick(iid)
+        extra, n = photos[2], len(w.picks())
+        assert n == 3
         b3d.click()
         app.processEvents()
         assert asked[-1] == n and w._tab() == "3d2" and pair.image_ids == w.picks()[:MAX_EYES]

@@ -102,7 +102,7 @@ def test_main_window_imports_and_lists(tmp_path, demo_dir, import_and_wait):
         w.c_side3d.setChecked(False)
         assert w.scan_photo.isHidden() and not eye.black
         w._select_patient_ref(UNASSIGNED)
-        assert w.thumbs.count() == 2
+        assert len(w._listed) == 2                    # (the photo list: the newest exam's bookmark)
         w._set_compare(db.images_for_patient(ref)[0]["id"])
         tab = w._tab()
         assert w.compare is not None and w._tab() == tab             # the ② pick; the view stays
