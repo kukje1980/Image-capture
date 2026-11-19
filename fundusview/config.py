@@ -110,10 +110,13 @@ class Settings:
     thumb_kind: bool = False
     # Simple · Multi: 황반 · 디스크 — each photo's macula and optic disc enlarged under it, as on Detail
     simple_closeups: bool = False
-    # 환자를 열면 (설정 → 일반): "grid" = 16장 보기 (VK-2 방식, 처음 설정) — 사진 16장을 한 화면에,
-    # 골라서 [Multi]로 고른 사진만 보기 · "odos" = Simple — 최신 OD | OS 두 장을 나란히.
-    # Anything else (an older "overview") is 16장 보기.
-    open_view: str = "grid"
+    # 환자를 열면 (설정 → 일반): "odos" = Simple (처음 설정) — 최신 OD | OS 두 장을 나란히, 아래 사진
+    # 목록은 날짜 책갈피로 · "grid" = 16장 보기 (VK-2 방식) — 사진 16장을 한 화면에, 골라서 [Multi]로
+    # 고른 사진만 보기. Anything else (an older "overview") is 16장 보기.
+    open_view: str = "odos"
+    # Simple: a photo of the list under the mouse is shown above until it is clicked (보기 → 사진 목록에
+    # 마우스를 올리면 미리 보기)
+    hover_preview: bool = True
     # 카메라 각도 보정 (calibrate.py): the lens curve measured from the photos, {camera profile: radial_c}
     lens_curves: dict[str, float] = field(default_factory=dict)
     montage_fast: bool = False      # 몽타주 빠르게: the saved picture at most 2400 px instead of 4000

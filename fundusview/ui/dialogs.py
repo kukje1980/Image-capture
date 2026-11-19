@@ -37,8 +37,8 @@ def source_label(src: str | None) -> str:
 
 
 # 설정 → 일반 → 환자를 열면 (Settings.open_view)
-OPEN_VIEWS = (("grid", "16장 보기 — 사진 16장을 한 화면에 (VK-2 방식), 골라서 [Multi]로 고른 사진만 보기"),
-              ("odos", "Simple — 최신 OD | OS 두 장을 나란히, 사진 목록을 클릭하면 더하기 · 빼기"))
+OPEN_VIEWS = (("odos", "Simple — 최신 OD | OS 두 장을 나란히, 아래 사진 목록(날짜 책갈피)에서 미리 보고 클릭으로 고정"),
+              ("grid", "16장 보기 — 사진 16장을 한 화면에 (VK-2 방식), 골라서 [Multi]로 고른 사진만 보기"))
 
 
 # 3D 안구의 마우스 휠 (Settings.wheel3d): (key, short name, what it does)
@@ -310,12 +310,14 @@ class SettingsDialog(QDialog):
         self.wheel3d.currentIndexChanged.connect(          # (들어가기: the wheel goes in anyway)
             lambda _: self.walk_click3d.setEnabled(self.wheel3d.currentData() != "walk"))
         self.walk_click3d.setEnabled(self.wheel3d.currentData() != "walk")
-        self.open_view = _combo(OPEN_VIEWS, settings.open_view)
+        # (anything but Simple — an older "overview" — is 16장 보기, as the main window reads it)
+        self.open_view = _combo(OPEN_VIEWS, "odos" if settings.open_view == "odos" else "grid")
         self.open_view.setToolTip("환자 목록에서 환자를 열 때 처음 나오는 화면\n"
-                                  "16장 보기 (VK-2 방식, 처음 설정): 사진 16장을 한 화면에 — 클릭해 고르고(번호) 왼쪽 툴바의\n"
+                                  "Simple (처음 설정): 최신 OD(왼쪽) · OS(오른쪽) 두 장 — 아래 사진 목록은 날짜 책갈피로 나뉘고\n"
+                                  "(휠로 넘김), 사진에 마우스를 올리면 위에 미리 보이며 클릭하면 고정(번호)됩니다.\n"
+                                  "여러 장을 고정하면 그 수만큼 화면이 나뉘고, 다시 클릭하면 빠집니다.\n"
+                                  "16장 보기 (VK-2 방식): 사진 16장을 한 화면에 — 클릭해 고르고(번호) 왼쪽 툴바의\n"
                                   "[Multi]를 누르면 고른 사진만 보고, 다시 [Multi]를 누르면 16장으로 돌아옵니다.\n"
-                                  "Simple: 고른 검사의 최신 OD(왼쪽) · OS(오른쪽) 두 장 — 사진 목록을 클릭하면 그 사진을\n"
-                                  "더하고(번호) 다시 클릭하면 빼며, 고른 장수에 맞게 화면이 나뉩니다.\n"
                                   "더블클릭하면 그 사진을 크게 봅니다(Detail).")
         f2.addRow("환자를 열면", self.open_view)
         # what is written on the photos of the photo list (also 보기 → 사진 목록 표시)

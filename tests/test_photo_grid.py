@@ -47,7 +47,8 @@ def window(app, tmp_path, many_dir, import_and_wait):
     from fundusview.ui.main_window import MainWindow
 
     s = Settings(library_dir=str(tmp_path / "lib"), stable_seconds=0.05, rescan_seconds=0,
-                 watch_folders=[WatchFolder(path=str(many_dir))], watch_on_startup=False)
+                 watch_folders=[WatchFolder(path=str(many_dir))], watch_on_startup=False,
+                 open_view="grid", ui_version=MainWindow.UI_VERSION)      # (환자를 열면: 16장 보기)
     db = Database(tmp_path / "lib" / "fundus.db")
     w = MainWindow(s, db)
     w.resize(1600, 960)
@@ -88,10 +89,10 @@ def _click(app, w, iid, double=False, ctrl=False):
 def test_setting_is_saved(tmp_path):
     from fundusview.config import Settings
 
-    assert Settings().open_view == "grid"                  # 16장 보기, unless chosen
-    s = Settings(open_view="odos")
+    assert Settings().open_view == "odos"                  # Simple, unless chosen
+    s = Settings(open_view="grid")
     s.save(tmp_path / "settings.json")
-    assert Settings.load(tmp_path / "settings.json").open_view == "odos"
+    assert Settings.load(tmp_path / "settings.json").open_view == "grid"
 
 
 def test_simple_way_opens_on_the_newest_od_and_os(app, window):
@@ -113,7 +114,7 @@ def test_default_16_photos_pick_multi_and_back(app, window):
     from PySide6.QtCore import Qt
 
     w = window
-    assert w.settings.open_view == "grid"                   # (the first setting)
+    assert w.settings.open_view == "grid"                   # (chosen in 설정 → 일반 → 환자를 열면)
     pid = _open(app, w)
     assert w.patient_list.isHidden() and w._tab() == "grid" and w.picks() == []
     assert not w.acts["view:multi"].isChecked() and not w.acts["view:simple"].isChecked()
@@ -126,7 +127,8 @@ def test_default_16_photos_pick_multi_and_back(app, window):
     rows = w.db.images_for_patient(pid)
     strip = [w.thumbs.item(i).data(Qt.ItemDataRole.UserRole) for i in range(w.thumbs.count())]
     order = [p.image_id for p in w.grid.items()]
-    assert order == [r["id"] for r in rows] and sorted(order) == sorted(strip)
+    assert order == [r["id"] for r in rows] and sorted(order) == sorted(i for i, _eye, _day in w._listed)
+    assert set(strip) < set(order) and len(strip) == 6      # (the photo list: one exam's bookmark)
     assert len(order) == N_PHOTOS and w.grid.pages() == 2
     assert all(p.eye in ("OD", "OS") for p in w.grid.items())
     # the grid is the photo list here: the strip's place shows its pages
@@ -152,7 +154,7 @@ def test_default_16_photos_pick_multi_and_back(app, window):
     assert w.lbl_grid_picks.isVisible() and w.lbl_grid_picks.text().startswith("3장 선택")
     w.tb_cmd.widgetForAction(w.acts["view:multi"]).click()
     app.processEvents()
-    assert w._tab() == "multi" and w.multi.count == 4 and w.lbl_picks.text() == "3장 선택"
+    assert w._tab() == "multi" and w.multi.count == 4 and w.lbl_picks.text() == "3장 고정"
     assert w.acts["view:multi"].isChecked() and not w.acts["view:simple"].isChecked()
     shown = [cell.image_id for cell in w.multi.cells if cell.isVisible() and cell.image_id is not None]
     assert shown == [a, c, b]
@@ -186,6 +188,7 @@ def test_default_16_photos_pick_multi_and_back(app, window):
     assert "17–18" in w.lbl_grid_page.text() and not w.btn_grid_next.isEnabled()
     w.btn_grid_prev.click()
     assert w.grid.page() == 0
+    strip = [i for i, _eye, _day in w._listed]              # (every photo, by eye — the list's order)
     w._select_from_multi(order[15])
     k = strip.index(order[15])
     w._step(1)                                              # PageDown: the next photo of the photo list
@@ -205,9 +208,9 @@ def test_switching_the_way_in_settings(app, window):
     _open(app, w)
     assert w._tab() == "grid"
     dlg = SettingsDialog(w.settings, w)
-    assert [dlg.open_view.itemData(k) for k in range(dlg.open_view.count())] == ["grid", "odos"]
+    assert [dlg.open_view.itemData(k) for k in range(dlg.open_view.count())] == ["odos", "grid"]
     assert dlg.open_view.currentData() == "grid"
-    assert dlg.open_view.itemText(0).startswith("16장 보기") and dlg.open_view.itemText(1).startswith("Simple")
+    assert dlg.open_view.itemText(0).startswith("Simple") and dlg.open_view.itemText(1).startswith("16장 보기")
     i = dlg.open_view.findData("odos")
     dlg.open_view.setCurrentIndex(i)
     dlg.apply()
@@ -217,7 +220,7 @@ def test_switching_the_way_in_settings(app, window):
     w.settings.open_view = "grid"                          # back: on 16장 보기 again
     _open(app, w)
     assert w._tab() == "grid" and w.picks() == [] and not w.acts["view:multi"].isChecked()
-    # an older settings file's "overview" is the first way
+    # an older settings file's "overview" is 16장 보기
     w.settings.open_view = "overview"
     assert w._grid_mode()
     assert SettingsDialog(w.settings, w).open_view.currentData() == "grid"

@@ -1,7 +1,13 @@
 """Main window — the photos. The program opens with the 환자 목록 window over it (patient_list.py,
 VK-2 OPEN LIST): a patient picked there shows here, opened as 설정 → 일반 → 환자를 열면 says — on
-16장 보기, its photos 16 to a screen (photo_grid.py, the first setting; a click picks, [Multi] shows
-the picked ones only and [Multi] again all 16), or on Simple, its newest OD | OS. The patient list
+Simple, its newest OD | OS (the first setting, v0.10.0), or on 16장 보기, its photos 16 to a screen
+(photo_grid.py; a click picks, [Multi] shows the picked ones only and [Multi] again all 16).
+
+The photo list under the photos shows one exam's photos: the 날짜 책갈피 over it (one per exam
+date, the newest at the left and open first, then 전체) pick the exam, and so does the wheel over
+the list (``set_book``). On Simple a photo of the list under the mouse is shown above (미리 보기,
+``_view_ids``) and a click pins it there, numbered — as many photos above as are pinned; with
+none pinned the newest OD | OS of the bookmark's exam. The patient list
 is the only one: the command toolbar's [환자 목록], the menu bar's 환자 목록 (Ctrl+0) and 환자 검색
 (Ctrl+F) bring that window up; the patient is the same in both windows.
 
@@ -15,10 +21,10 @@ the photo list (thumbnails: OD row, OS row) lies under the photos, as low as its
   screen; a click picks one (numbered) or lets it go.
 * **Multi**: on — the photos picked on 16장 보기 only, one cell each (the 다중 보기 page, split for
   them: 1 · 2 · 4 · 6 · 9 · 16); [Multi] again — off: back to 16장 보기, the picks still numbered.
-* **Simple**: [Simple] puts the newest OD (left) and OS (right) on the same page; from there a
-  click on the photo list adds a photo (numbered) or takes it away and the layout fits the number
-  picked (``_click_pick``); with none picked, all the photos of the list, as many to a screen as
-  화면 분할 says (multi_view.py).
+* **Simple** (what a patient opens on): [Simple] puts the newest OD (left) and OS (right) on the
+  same page; from there a click on the photo list pins a photo (numbered; the first one alone) or
+  lets it go and the layout fits the number pinned (``_click_pick``); with none pinned the newest
+  OD | OS again (multi_view.py).
 * **Detail** (a double click on a photo anywhere): that photo large, with its 황반 and 시신경 유두
   enlarged on the right (where they are is shown by a frame on the big photo). ◀ ▶ at its sides
   and ← / → go through the photo list; a click on the list shows that photo.
@@ -46,7 +52,7 @@ from PySide6.QtWidgets import (
     QFrame, QGraphicsRectItem, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QListWidget,
     QListWidgetItem, QMainWindow, QMenu,
     QMessageBox, QPushButton, QScrollArea, QSizePolicy, QSlider, QSplitter, QStackedWidget, QStatusBar, QStyle,
-    QTableWidget,
+    QTabBar, QTableWidget,
     QTableWidgetItem, QTabWidget, QToolBar, QToolButton, QVBoxLayout, QWidget,
 )
 
@@ -82,7 +88,7 @@ from .photo_grid import GridPhoto, PhotoGrid
 from .review_view import ReviewPage
 from .landmarks_view import LandmarkPhoto
 from .slit_scan import SLIT, ScanPhotoView, SlitScanShow, ViewTween
-from .thumbs import (DATE_ROLE, EYE_ROLE, KIND_ROLE, PICK_ROLE, SECOND_COLOR, SECOND_ROLE, EyeRail,
+from .thumbs import (DATE_ROLE, EYE_ROLE, KIND_ROLE, PICK_ROLE, SECOND_COLOR, SECOND_ROLE, SHOWN, EyeRail,
                      ThumbDelegate, ThumbStrip, eye_badge_html, eye_row)
 from .toolbars import CHECKABLE, CMDBAR, COMMANDS, MENUS, PROCESSING, SliderPopup, icon_for
 from .widgets import ElidedLabel, Segmented, Switch, card, segment
@@ -112,6 +118,10 @@ GONE_VIEWS = {"review": "all", "2d": "all", "cmp": "all"}
 PATIENT_LIST_KEY = "Ctrl+0"                  # the 환자 목록 window
 THUMB_GRID = (94, 72)                        # 사진 목록(아래): a cell — the photo fills it (a 4:3 photo: 84 × 63),
                                              # the date lies on the photo (thumbs.py)
+LATEST = "latest"                            # 날짜 책갈피 of a patient just opened: its newest exam
+ALL_DATES = "*"                              # 날짜 책갈피 "전체": the photos of every exam in the list
+NO_DATE = ""                                 # … "날짜 없음": the photos without an exam date
+PEEK_MS = 110                                # 미리 보기: the mouse rests this long on a photo of the list
 OV_ZOOM = 4.0                                # 확대 화면: 사진 전체 폭의 1/4 을 칸에 (×4)
 
 
@@ -278,6 +288,10 @@ class MainWindow(QMainWindow):
                 settings.open_view = GRID_MODE
             # 7: photos of the RetiCam's own size imported as 일반 안저카메라 (45°) are RetiCam (176°) photos
             relabel = settings.ui_version < 7
+            if settings.ui_version < 8:
+                # 8: a patient opens on Simple — the newest OD | OS, the photo list under it by date
+                # (날짜 책갈피), a photo of the list previewed under the mouse and pinned with a click
+                settings.open_view = SIMPLE_MODE
             settings.ui_version = self.UI_VERSION
         else:
             relabel = False
@@ -318,6 +332,14 @@ class MainWindow(QMainWindow):
                                              # OD | OS when [Simple] is pressed), numbered on Multi (16장 보기)
         self._default_picks: list[int] = []  # the newest OD | OS Simple was given last (see show_simple)
         self._default_exam: str | None = None   # … of this exam (None: the newest)
+        self._book: str = LATEST             # 날짜 책갈피: the exam date whose photos the list shows
+        self._books: list[str] = []          # … the dates there are, newest first (then 날짜 없음)
+        self._listed: list[tuple[int, str, str]] = []   # every photo of the patient through the filters,
+                                             # whatever the bookmark: (id, eye, date) in the list's order
+        self._peek: int | None = None        # 미리 보기: the photo of the list under the mouse, shown above
+        self._peek_want: int | None = None   # … the one the mouse is on now (shown once it rests there)
+        self._peek_block: int | None = None  # … not again for the photo just clicked, until the mouse leaves it
+        self._book_wheel = 0.0               # the wheel over the list, until it makes a whole notch
         self._multi_auto = True              # Simple, nothing picked: 화면 분할 fits the photos of the list
         self._split_via = SIMPLE             # the 다중 보기 page is Simple's or Multi's (which icon is lit,
                                              # what [Multi] does there)
@@ -475,6 +497,12 @@ class MainWindow(QMainWindow):
         self.act_thumb_date.toggled.connect(lambda on: self._set_thumb_text(date=on))
         self.act_thumb_kind.toggled.connect(lambda on: self._set_thumb_text(kind=on))
         self.act_thumb_eyes.toggled.connect(lambda on: self._set_thumb_rows(2 if on else 1, save=True))
+        self.act_peek = m.addAction("사진 목록에 마우스를 올리면 미리 보기")
+        self.act_peek.setCheckable(True)
+        self.act_peek.setChecked(bool(self.settings.hover_preview))
+        self.act_peek.setToolTip("Simple에서 아래 사진 목록의 사진에 마우스를 올리면 위에 크게 미리 보여 줍니다 "
+                                 "(클릭하면 고정)")
+        self.act_peek.toggled.connect(self._set_hover_preview)
         m.addAction(self.tb_cmd.toggleViewAction())
         m.addAction(self.tb_proc.toggleViewAction())
         m.addSeparator()
@@ -618,8 +646,9 @@ class MainWindow(QMainWindow):
         self.thumb_paint.show_date = bool(self.settings.thumb_date)
         self.thumb_paint.show_kind = bool(self.settings.thumb_kind)
         self.thumbs.setItemDelegate(self.thumb_paint)
-        self.thumbs.setToolTip(keys("클릭 — Simple: 더하기(번호), 다시 클릭하면 빼기 · Detail · 3D: 이 사진 보기\n"
-                                    "더블클릭: 크게 보기 (Detail) · ← →: 이전 / 다음 사진\n"
+        self.thumbs.setToolTip(keys("Simple — 마우스를 올리면 위에 미리 보기 · 클릭: 고정(번호), 다시 클릭하면 빼기\n"
+                                    "Detail · 3D — 클릭: 이 사진 보기 · 더블클릭: 크게 보기 (Detail)\n"
+                                    "휠: 이전 / 다음 날짜 책갈피 (Shift+휠: 옆으로 넘기기) · ← →: 이전 / 다음 사진\n"
                                     "Ctrl+클릭: 두 번째 사진(②) 선택/해제 — 비교 · 디스크 2장 · "
                                     "오른쪽 클릭: 환자 지정·다시 분석"))
         self.thumbs.stepped.connect(self._step)
@@ -627,7 +656,28 @@ class MainWindow(QMainWindow):
         self.thumbs.viewport().installEventFilter(self)
         self.thumbs.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.thumbs.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
-        self._thumb_wheel = motion.SmoothWheel(self.thumbs)      # the wheel glides through the photos
+        # 날짜 책갈피: the list shows the photos of one exam date; the wheel over it goes to the exam
+        # before / after (eventFilter). The photo under the mouse is previewed above (미리 보기)
+        self.thumbs.setMouseTracking(True)
+        self.thumbs.viewport().setMouseTracking(True)
+        self._peek_timer = QTimer(self, singleShot=True, interval=PEEK_MS, timeout=self._apply_peek)
+        self.book_bar = QTabBar()
+        self.book_bar.setObjectName("bookBar")
+        self.book_bar.setExpanding(False)
+        self.book_bar.setDrawBase(False)
+        self.book_bar.setUsesScrollButtons(True)
+        self.book_bar.setElideMode(Qt.TextElideMode.ElideNone)
+        self.book_bar.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.book_bar.setToolTip("날짜 책갈피 — 누르면 그 검사일의 사진이 아래에 나옵니다 (최근 날짜가 왼쪽)\n"
+                                 "사진 목록 위에서 마우스 휠을 굴려도 넘어갑니다 · ✓: 그 날짜에서 고정한 사진 수")
+        self.book_bar.setStyleSheet(
+            f"QTabBar#bookBar::tab {{ background:{theme.CARD}; color:{theme.TEXT2}; padding:3px 12px; "
+            f"margin:0 2px 0 0; border:1px solid {theme.CARD}; border-bottom:none; "
+            "border-top-left-radius:7px; border-top-right-radius:7px; font-size:12px; }"
+            f"QTabBar#bookBar::tab:hover {{ color:{theme.TEXT}; }}"
+            f"QTabBar#bookBar::tab:selected {{ background:{theme.ACCENT}; color:#ffffff; font-weight:600; "
+            f"border-color:{theme.ACCENT}; }}")
+        self.book_bar.currentChanged.connect(self._on_book_tab)
         self.thumbs.currentItemChanged.connect(self._on_thumb_current)
         self.thumbs.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.thumbs.customContextMenuRequested.connect(self._thumb_menu)
@@ -787,7 +837,11 @@ class MainWindow(QMainWindow):
         strip.addWidget(self.grid_bar, 1)
         strip.setContentsMargins(0, 0, 0, 0)
         self.strip_w = QWidget()         # hidden on the 검토 tab (its timeline lists the photos there)
-        self.strip_w.setLayout(strip)
+        books = QVBoxLayout(self.strip_w)            # the 날짜 책갈피 over the list they sort
+        books.setContentsMargins(0, 0, 0, 0)
+        books.setSpacing(0)
+        books.addWidget(self.book_bar)
+        books.addLayout(strip)
         cl.addWidget(self.strip_w)
         self._place_overview(True)       # (the page on top until a patient is opened)
 
@@ -1850,7 +1904,9 @@ class MainWindow(QMainWindow):
                 self._set_default_picks()           # not changed by hand: the newest OD | OS, the new one in
             else:
                 self._default_exam = None           # … when [Simple] is pressed again
-            self._fill_thumbs(select_id=last.image_id)
+            new = self.db.get_image(last.image_id)
+            self._fill_thumbs(select_id=last.image_id,         # … and its date's bookmark
+                              book=(new["exam_date"] or NO_DATE) if new is not None else None)
             # the new photo is shown, wherever the windows were: the patient list makes way for it
             self.patient_list.hide()
             self._raise_main()
@@ -1930,8 +1986,8 @@ class MainWindow(QMainWindow):
         if self._grid_mode():
             self.lbl_status.setText(self.MULTI_HINT)
 
-    SIMPLE_HINT = ("Simple — 최신 OD | OS · 사진 목록을 클릭하면 더하고(번호), 다시 클릭하면 뺍니다 · "
-                   "더블클릭: 크게 보기 (Detail)")
+    SIMPLE_HINT = ("Simple — 최신 OD | OS · 아래 사진에 마우스를 올리면 미리 보기, 클릭하면 고정(번호) · 다시 클릭: 빼기 · "
+                   "휠: 날짜 책갈피 · 더블클릭: 크게 보기 (Detail)")
     MULTI_HINT = ("16장 보기 — 사진을 클릭해 고르고(번호) 왼쪽 툴바의 [Multi]를 누르면 고른 사진만 봅니다 "
                   "(다시 [Multi]: 16장으로) · 더블클릭: 크게 보기 (Detail) · 휠: 다음 / 이전 16장")
     PICK_FIRST_HINT = "Multi — 먼저 16장 보기에서 사진을 클릭해 고르세요(번호). 그다음 [Multi]를 누르면 고른 사진만 나옵니다"
@@ -2045,7 +2101,11 @@ class MainWindow(QMainWindow):
         return [self.thumbs.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.thumbs.count())]
 
     def open_large(self, image_id: int) -> None:
-        """That photo large (Detail) — a double click on a cell of Simple or a photo of Multi."""
+        """That photo large (Detail) — a double click on a cell of Simple or a photo of Multi. The
+        photo list goes to its exam's bookmark (◀ ▶ on Detail go through the list)."""
+        day = next((d for i, _eye, d in self._listed if i == image_id), None)
+        if day is not None and self._book not in (ALL_DATES, day):
+            self._fill_thumbs(book=day, keep=True)
         self._select_from_multi(image_id)
         self._go("all")
         self.lbl_status.setText(self.DETAIL_HINT)
@@ -2082,6 +2142,8 @@ class MainWindow(QMainWindow):
         if self.patient_list.current() != self._patient_ref:
             return
         self._default_exam = exam_date                 # [Simple]: this exam's newest OD | OS
+        if exam_date in self._books and exam_date != self._book:
+            self._fill_thumbs(book=exam_date, keep=True)   # the photo list: that exam's bookmark
         if self._tab() == "grid" or (self._grid_mode() and not self._picks):
             # Multi (16장 보기): the page with the exam's newest photo
             first = next((g.image_id for g in self.grid.items()
@@ -2175,7 +2237,11 @@ class MainWindow(QMainWindow):
             keep = self._picks[0] if self._picks else None
         else:                            # the same patient again (its data edited …): the same photo
             keep = self.current["id"] if self.current is not None else None
-        self._fill_thumbs(select_id=keep)
+        if changed:                      # the list opens on the bookmark of the selected exam (the newest)
+            self._end_peek()
+            self._fill_thumbs(select_id=keep, book=self.patient_list.current_exam() or LATEST)
+        else:
+            self._fill_thumbs(select_id=keep)
         if changed:                      # Simple · Multi on screen: this patient's photos, not the last one's
             self._refill_multis()
 
@@ -2216,20 +2282,24 @@ class MainWindow(QMainWindow):
             self.f_date.addItem(d, d)
         self.f_date.blockSignals(False)
 
-    def _fill_thumbs(self, *_, select_id: int | None = None) -> None:
+    def _fill_thumbs(self, *_, select_id: int | None = None, book: str | None = None,
+                     keep: bool = False) -> None:
+        """The photo list (and 16장 보기) of the patient. The list shows the photos of one exam date —
+        the 날짜 책갈피 over it (``book``: that one from now on; a patient opens on its newest) —, 16장
+        보기 all of them. ``select_id``: the photo to show; ``keep``: only the bookmark changed — the
+        photo on screen stays, whether it is in the list now or not."""
         if select_id is not None and self.f_date.findData(
                 (self.db.get_image(select_id) or {"exam_date": ""})["exam_date"] or "") < 0:
             self._fill_dates()
         d, eye = self.f_date.currentData() or "", self.f_eye.currentData() or ""
         mod = self.f_mod.currentData() or ""
-        if not _:                              # not a filter of the strip: the patient or its photos changed
+        if not _ and not keep:                 # not a filter of the strip: the patient or its photos changed
             self._review_dirty = True
             if self._tab() == "review":
                 self._fill_review()
         self.thumbs.blockSignals(True)
         self.thumbs.clear()
-        first = None
-        target = None
+        self.thumbs.blockSignals(False)
         # OD first, then OS, then OU (newest first in each): the strip's rows by eye, and the order of
         # 이전 / 다음 in both layouts
         images = sorted(self._images(), key=lambda r: eye_row(r["laterality"]))
@@ -2242,13 +2312,33 @@ class MainWindow(QMainWindow):
 
         # 미상 (eye unknown) photos stay out of 양안 — unless they are all there is (no empty strip)
         hide_unknown = eye == "" and any(dated(r) and known(r) for r in images)
-        grid = []                              # 16장 보기: the same photos, in the same order
-        for r in images:
-            if (not dated(r) or (eye in ("OD", "OS") and r["laterality"] != eye)
-                    or (eye == UNKNOWN_EYE and known(r)) or (hide_unknown and not known(r))):
-                if r["id"] != select_id:       # (the photo to show stays, whatever the filters)
-                    continue
+        listed = [r for r in images
+                  if r["id"] == select_id         # (the photo to show stays, whatever the filters)
+                  or not (not dated(r) or (eye in ("OD", "OS") and r["laterality"] != eye)
+                          or (eye == UNKNOWN_EYE and known(r)) or (hide_unknown and not known(r)))]
+        self._listed = [(r["id"], r["laterality"] or "", r["exam_date"] or NO_DATE) for r in listed]
+        # 날짜 책갈피: the exam dates there are, newest first (날짜 없음 last)
+        self._books = sorted({day for _i, _e, day in self._listed}, reverse=True)
+        if book is not None:
+            self._book = book
+        if self._book not in self._books and (self._book != ALL_DATES or len(self._books) < 2):
+            self._book = self._books[0] if self._books else LATEST
+        self._fill_books()
+        first = None
+        target = None
+        want = select_id if select_id is not None else (
+            self.current["id"] if keep and self.current is not None else None)
+        if want is not None and all(i != want for i, _e, _d in self._listed):
+            want = None                            # (gone: removed, another patient's)
+        grid = []                              # 16장 보기: the same photos, of every date
+        self.thumbs.blockSignals(True)
+        for r in listed:
             mod_label = MODALITY_LABELS.get(r["modality"] or "", r["modality"] or "")
+            when = f"{r['exam_date'] or '날짜 없음'} {(r['exam_time'] or '')[:5]}".strip()
+            grid.append(GridPhoto(r["id"], r["thumb_path"], r["laterality"],
+                                  " · ".join(t for t in (when, mod_label) if t)))
+            if self._book != ALL_DATES and (r["exam_date"] or NO_DATE) != self._book:
+                continue                       # (of another bookmark)
             # the photo fills its cell; the date and the kind are painted on it (ThumbDelegate). The
             # item's own text says the same (no field angle) but is not drawn
             text = f"{r['exam_date'] or '날짜 없음'}\n{mod_label}".strip()
@@ -2262,30 +2352,39 @@ class MainWindow(QMainWindow):
             it.setToolTip(f"{r['exam_date'] or ''} {r['exam_time'] or ''}\n{r['device'] or ''}\n"
                           f"{Path(r['original_path'] or r['file_path']).name}")
             self.thumbs.addItem(it)
-            when = f"{r['exam_date'] or '날짜 없음'} {(r['exam_time'] or '')[:5]}".strip()
-            grid.append(GridPhoto(r["id"], r["thumb_path"], r["laterality"],
-                                  " · ".join(t for t in (when, mod_label) if t)))
             first = first or it
-            if r["id"] == select_id:
+            if r["id"] == want:
                 target = it
+        self.thumbs.setCurrentRow(-1)
         self.thumbs.blockSignals(False)
         left = {r["id"] for r in images}                   # removed photos leave Simple · Multi
         if any(i not in left for i in self._picks):
             self._picks = [i for i in self._picks if i in left]
             self._per_photo = {k: v for k, v in self._per_photo.items() if k in left}
+        if self._peek not in left:
+            self._peek = self._peek_want = None
         self._fit_multi_count()                # (Multi, nothing picked: split for the photos now listed)
         # 16장 보기: the strip's photos newest first, both eyes together (the strip is by eye)
         newest = {r["id"]: k for k, r in enumerate(self._images())}
         grid.sort(key=lambda g: newest.get(g.image_id, 0))
         self.grid.set_items(grid, self.current["id"] if self.current is not None else None)
-        pick = target or first
-        if pick:
+        shown = self.current is not None and self.current["id"] == want
+        if target is not None and keep and shown:
+            self.thumbs.blockSignals(True)     # the photo on screen, in the list again: as it is
+            self.thumbs.setCurrentItem(target)
+            self.thumbs.blockSignals(False)
+            self.thumbs.scrollToItem(target)
+        elif target is not None or (want is None and first is not None):
+            pick = target or first
             self._filling = True
             try:
                 self.thumbs.setCurrentItem(pick)  # -> _on_thumb_current -> _show_image
             finally:
                 self._filling = False
             self.thumbs.scrollToItem(pick)
+        elif want is not None:                 # a photo of another bookmark: shown, not in the list
+            if not (keep and shown):
+                self._show_image(want)
         else:
             self._show_image(None)
         self._mark_pair()
@@ -2294,6 +2393,157 @@ class MainWindow(QMainWindow):
             self._share_sig = self._photo_sig()
         self._mark_picks()
         self._sync_navs()
+
+    # -- 날짜 책갈피: the photo list by exam date -----------------------------------------------------
+    def _book_tabs(self) -> list[str]:
+        """The bookmarks, left to right: the exam dates newest first, then 전체 (with two dates or more)."""
+        return self._books + ([ALL_DATES] if len(self._books) > 1 else [])
+
+    @staticmethod
+    def _book_name(book: str) -> str:
+        return "전체" if book == ALL_DATES else (book or "날짜 없음")
+
+    def _fill_books(self) -> None:
+        """The tabs of the 날짜 책갈피 bar for the dates there are, the one shown lit."""
+        bar = self.book_bar
+        was = bar.blockSignals(True)
+        try:
+            while bar.count():
+                bar.removeTab(0)
+            for book in self._book_tabs():
+                bar.setTabData(bar.addTab(""), book)
+            tabs = self._book_tabs()
+            if self._book in tabs:
+                bar.setCurrentIndex(tabs.index(self._book))
+        finally:
+            bar.blockSignals(was)
+        self._mark_books()
+        self._sync_strip()
+
+    def _mark_books(self) -> None:
+        """What a bookmark says: its date, how many photos, and ✓n — the photos pinned from it."""
+        count: dict[str, int] = {}
+        pins: dict[str, int] = {}
+        own = set(self._picks) if self._own_picks() else set()
+        for iid, _eye, day in self._listed:
+            count[day] = count.get(day, 0) + 1
+            if iid in own:
+                pins[day] = pins.get(day, 0) + 1
+        for k in range(self.book_bar.count()):
+            book = self.book_bar.tabData(k)
+            n = len(self._listed) if book == ALL_DATES else count.get(book, 0)
+            p = len(own) if book == ALL_DATES else pins.get(book, 0)
+            self.book_bar.setTabText(k, f"{self._book_name(book)} · {n}장" + (f"  ✓{p}" if p else ""))
+
+    def _on_book_tab(self, i: int) -> None:
+        book = self.book_bar.tabData(i)
+        if book is not None:
+            self.set_book(book)
+
+    def set_book(self, book: str) -> None:
+        """Another 날짜 책갈피 (a click on it, the wheel over the photo list): the list shows that
+        exam's photos. The photos pinned stay above; with none pinned the newest OD | OS of that
+        exam come up (as selecting the exam in the patient list does)."""
+        if book == self._book or book not in self._book_tabs():
+            return
+        self._peek_want = None
+        self._peek_timer.stop()
+        self._fill_thumbs(book=book, keep=True)
+        self._follow_exam(None if book == ALL_DATES else book)
+        self.lbl_status.setText(f"날짜 책갈피: {self._book_name(book)} — 사진에 마우스를 올리면 미리 보기, 클릭하면 고정 · "
+                                "휠: 이전 / 다음 날짜")
+        vp = self.thumbs.viewport()            # the photo now under the mouse (the wheel, the mouse at rest)
+        if vp.underMouse():
+            item = self.thumbs.itemAt(vp.mapFromGlobal(QCursor.pos()))
+            self._hover_photo(item.data(Qt.ItemDataRole.UserRole) if item is not None else None)
+        elif self._peek is not None:
+            self._apply_peek()
+
+    def step_book(self, d: int) -> None:
+        """The bookmark ``d`` to the right (older; 전체 last) or, negative, to the left (newer)."""
+        tabs = self._book_tabs()
+        if self._book in tabs:
+            self.set_book(tabs[max(0, min(len(tabs) - 1, tabs.index(self._book) + d))])
+
+    def _wheel_books(self, e) -> None:
+        """The wheel over the photo list: back (down) — the exam before, forward — the newer one.
+        Shift+wheel (or a sideways wheel): the list itself, sideways."""
+        d = e.angleDelta()
+        if e.modifiers() & Qt.KeyboardModifier.ShiftModifier or (d.x() and not d.y()):
+            bar = self.thumbs.horizontalScrollBar()
+            bar.setValue(bar.value() - (d.y() or d.x()))
+            return
+        self._book_wheel += d.y() / 120.0
+        steps = int(self._book_wheel)
+        if steps:
+            self._book_wheel -= steps
+            self.step_book(-steps)
+
+    def _follow_exam(self, exam: str | None) -> None:
+        """Simple with nothing pinned shows the newest OD | OS of the exam of the bookmark (None: of
+        all); [Simple] pressed later does too."""
+        self._default_exam = exam
+        if self._tab() == "grid" or self._patient_ref in (None, UNASSIGNED):
+            return
+        if self._picks and self._picks == self._default_picks:
+            pair = self._newest_pair(exam)
+            if pair and pair != self._picks:
+                self._picks, self._default_picks, self._pick_pre = pair, list(pair), None
+                self._mark_picks()
+                if self.current is None or self.current["id"] not in pair:
+                    self._select_from_multi(pair[0])
+                self._refill_multis()
+
+    # -- 미리 보기: the photo of the list under the mouse, shown above until it is clicked (pinned) ----
+    def _hover_photo(self, image_id: int | None) -> None:
+        """The mouse is on that photo of the list (None: on none)."""
+        if self._peek_block is not None:
+            if image_id == self._peek_block:
+                return                         # just clicked: no preview of it until the mouse leaves it
+            self._peek_block = None
+        self._peek_want = image_id
+        if image_id != self._peek or self._peek_timer.isActive():
+            self._peek_timer.start()
+
+    def _apply_peek(self) -> None:
+        want = self._peek_want
+        if self._tab() != "multi" or not self.settings.hover_preview:
+            want = None
+        elif want is not None and self._own_picks() and (want in self._picks or len(self._picks) >= MAX_PICKS):
+            want = None                        # pinned already: it is above
+        if want == self._peek:
+            return
+        self._peek = want
+        self._refill_multis()
+        if want is not None:
+            self.lbl_status.setText("미리 보기 — 이 사진이 맞으면 클릭해서 고정하세요 (여러 장을 고정하면 그 수만큼 나란히)")
+
+    def _end_peek(self) -> None:
+        """No preview any more (a click, another view) — without redrawing: the caller does."""
+        self._peek = self._peek_want = None
+        self._peek_timer.stop()
+
+    def _set_hover_preview(self, on: bool) -> None:
+        """보기 → 사진 목록에 마우스를 올리면 미리 보기."""
+        self.settings.hover_preview = bool(on)
+        try:
+            self.settings.save()
+        except OSError:
+            pass
+        if not on and self._peek is not None:
+            self._end_peek()
+            self._refill_multis()
+
+    def _view_ids(self) -> list[int]:
+        """The photos on the Simple · Multi page: the pinned ones (none pinned: the newest OD | OS) —
+        and, while the mouse rests on a photo of the list, that one after them (미리 보기: what a
+        click would give; with none pinned that photo alone)."""
+        peek = self._peek
+        if peek is None:
+            return list(self._picks)
+        if not self._own_picks():
+            return [peek]
+        return list(self._picks) if peek in self._picks else self._picks + [peek]
 
     def _on_thumb_current(self, cur, _prev=None) -> None:
         """Another photo of the list is the current one: it is shown."""
@@ -2334,6 +2584,7 @@ class MainWindow(QMainWindow):
         (the grid is the photo list there), not when 보기 → 사진 목록 is off."""
         on = self._tab() != "grid" and self.act_thumbs.isChecked()
         self.thumbs.setVisible(on)
+        self.book_bar.setVisible(on and self.book_bar.count() > 0)
         self.eye_rail.setVisible(on and self._thumb_rows != 1)
 
     def _set_thumb_text(self, date: bool | None = None, kind: bool | None = None) -> None:
@@ -2354,6 +2605,8 @@ class MainWindow(QMainWindow):
         sideways scroll bar when the photos run past the strip (unless it floats over them)."""
         t = self.thumbs
         rows, cols = t.grid_shape()
+        if self._thumb_rows != 1:              # by eye: as high for every bookmark (a date with one eye
+            rows = max(rows, len({eye_row(eye) for _i, eye, _d in self._listed}))   # only: a row empty)
         h = rows * t.gridSize().height() + 10
         bar = t.horizontalScrollBar()
         if (cols * t.gridSize().width() > t.viewport().width()
@@ -2366,13 +2619,21 @@ class MainWindow(QMainWindow):
         return list(self._picks)
 
     def _toggle_pick(self, image_id: int) -> bool:
-        """``image_id`` joins the picked photos (Simple's), or leaves them."""
+        """``image_id`` joins the picked (pinned) photos, or leaves them. Simple's newest OD | OS are
+        only what is shown while nothing is pinned: the first photo pinned stands alone, and with
+        the last one let go the newest OD | OS are back."""
+        simple = self._tab() != "grid"
+        if simple and self._picks and self._picks == self._default_picks:
+            self._picks, self._default_picks = [], []
         if image_id in self._picks:
             self._picks.remove(image_id)
             if not self._picks:
-                self._multi_auto = True                # all clicked away: all the photos again
+                self._multi_auto = True                # all clicked away: the newest OD | OS again
+                if simple:
+                    self._restore_pair()
         elif len(self._picks) >= MAX_PICKS:
             self.lbl_status.setText(f"한 번에 {MAX_PICKS}장까지 고를 수 있습니다")
+            self._refill_multis()
             return False
         else:
             self._picks.append(image_id)
@@ -2384,6 +2645,14 @@ class MainWindow(QMainWindow):
             self.lbl_status.setText(f"{len(self._picks)}장 골랐습니다 — 고른 차례대로 나옵니다 (다시 클릭하면 빠집니다)")
         self._refill_multis()
         return True
+
+    def _restore_pair(self) -> None:
+        """Nothing pinned: the newest OD | OS of the bookmark's exam, as [Simple] puts them (a
+        patient without photos of a known eye: all the photos of the list)."""
+        pair = self._newest_pair(self._default_exam)
+        self._picks, self._default_picks = pair, list(pair)
+        if pair and self._tab() == "multi":
+            self._split_via = SIMPLE
 
     def _click_pick(self, image_id: int) -> None:
         """A plain click on a photo of the strip. On Simple the view follows the clicks: a photo
@@ -2408,18 +2677,25 @@ class MainWindow(QMainWindow):
             self._select_from_multi(target)
         n = len(self._picks)
         name = "Multi" if self._split_via == MULTI else "Simple"
-        self.lbl_status.setText(f"{name} {n}장 — 사진을 클릭하면 더하고, 다시 클릭하면 뺍니다 · 더블클릭: 크게 보기 (Detail)"
-                                if n else self.MULTI_ALL_HINT)
+        if not self._own_picks():
+            self.lbl_status.setText(self.SIMPLE_HINT if n else self.MULTI_ALL_HINT)
+        else:
+            self.lbl_status.setText(f"{name} {n}장 고정 — 사진을 클릭하면 더하고, 다시 클릭하면 뺍니다 · "
+                                    "더블클릭: 크게 보기 (Detail)")
 
     MULTI_ALL_HINT = "모든 사진 · 사진 목록에서 사진을 클릭하면 고른 사진만 모아 봅니다 (다시 클릭하면 빠집니다)"
 
     def clear_picks(self) -> None:
-        """[선택 해제] (Simple): nothing picked — all the photos of the list again."""
+        """[선택 해제] (Simple): nothing pinned — the newest OD | OS again."""
         self._picks, self._per_photo, self._pick_pre = [], {}, None
         self._multi_auto = True
+        self._restore_pair()
         self._mark_picks()
+        if self._picks and (self.current is None or self.current["id"] not in self._picks):
+            self._select_from_multi(self._picks[0])
         self._refill_multis()
-        self.lbl_status.setText(self.MULTI_ALL_HINT)
+        self._sync_views()
+        self.lbl_status.setText(self.SIMPLE_HINT if self._picks else self.MULTI_ALL_HINT)
 
     def _clear_grid_picks(self) -> None:
         """[선택 해제] on Multi (16장 보기): nothing picked; Multi stays on screen."""
@@ -2432,8 +2708,9 @@ class MainWindow(QMainWindow):
     def _fit_multi_count(self) -> None:
         """The Simple page is split for the photos picked (1 · 2 · 4 · 6 · 9 · 16), with none picked
         for the photos of the list unless 화면 분할 was chosen by hand — without refilling it."""
-        if self._picks:
-            self.multi.set_count(MultiView.fit(len(self._picks)), quiet=True)
+        ids = self._view_ids()
+        if ids:
+            self.multi.set_count(MultiView.fit(len(ids)), quiet=True)
         elif self._multi_auto:
             self.multi.set_count(MultiView.fit(max(1, self.thumbs.count())), quiet=True)
 
@@ -2473,17 +2750,22 @@ class MainWindow(QMainWindow):
 
     def _mark_picks(self) -> None:
         """The photos picked are framed in the photo list and on Multi, with their pick number."""
+        own = self._own_picks()
         for i in range(self.thumbs.count()):
             it = self.thumbs.item(i)
             iid = it.data(Qt.ItemDataRole.UserRole)
-            it.setData(PICK_ROLE, self._picks.index(iid) + 1 if iid in self._picks else 0)
+            # pinned: its number · Simple's newest OD | OS (nothing pinned): framed only
+            it.setData(PICK_ROLE, 0 if iid not in self._picks else
+                       self._picks.index(iid) + 1 if own else SHOWN)
         self.grid.set_picks(self._picks)
+        self._mark_books()
         self._sync_picks_ui()
 
     def _sync_picks_ui(self) -> None:
         n = len(self._picks)
-        self.lbl_picks.setText(f"{n}장 선택" if n else "")
-        self.btn_clear_picks.setVisible(n > 0)
+        pinned = n if self._own_picks() else 0         # (Simple's newest OD | OS are not pinned)
+        self.lbl_picks.setText(f"{pinned}장 고정" if pinned else "")
+        self.btn_clear_picks.setVisible(pinned > 0)
         self.acts["montage"].setEnabled(n >= 2)
         if hasattr(self, "lbl_grid_picks"):    # (built after the first call)
             self.lbl_grid_picks.setText(f"{n}장 선택 — [Multi]: 고른 사진만 보기" if n else "")
@@ -2567,6 +2849,19 @@ class MainWindow(QMainWindow):
                 and obj in (self.ov_zoom.viewport(), self.ov_macula.viewport())):
             QTimer.singleShot(0, self._ov_apply)
             return False
+        if obj is self.thumbs.viewport():
+            # the wheel over the photo list: the 날짜 책갈피 before / after
+            if e.type() == QEvent.Type.Wheel:
+                self._wheel_books(e)
+                return True
+            # 미리 보기: the photo under the mouse is shown above (Simple) until it is clicked
+            if e.type() == QEvent.Type.MouseMove and not e.buttons():
+                item = self.thumbs.itemAt(e.position().toPoint())
+                self._hover_photo(item.data(Qt.ItemDataRole.UserRole) if item is not None else None)
+            elif e.type() == QEvent.Type.MouseMove and e.buttons() & Qt.MouseButton.LeftButton:
+                return True                    # (dragged over the photos: the click decides, not the way)
+            elif e.type() == QEvent.Type.Leave:
+                self._hover_photo(None)
         # Ctrl+click on a thumbnail picks the second photo (②) and leaves the shown one alone
         if (e.type() in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease,
                          QEvent.Type.MouseButtonDblClick)
@@ -2600,10 +2895,13 @@ class MainWindow(QMainWindow):
         it is picked or taken out there. The double click it may begin takes it back
         (``_open_photo``)."""
         self._stop_slideshow()
-        self._pick_pre = (image_id, list(self._picks), self._multi_auto, time.monotonic())
+        self._pick_pre = (image_id, list(self._picks), self._multi_auto, time.monotonic(),
+                          list(self._default_picks))
         if stay:
             self._toggle_pick(image_id)
         else:
+            self._end_peek()                  # clicked: pinned (or let go) — no preview of it
+            self._peek_block = image_id
             self._click_pick(image_id)
 
     def _open_photo(self, image_id: int) -> None:
@@ -2613,6 +2911,7 @@ class MainWindow(QMainWindow):
         recent = pre is not None and time.monotonic() - pre[3] <= QApplication.doubleClickInterval() / 1000.0 + 0.2
         if recent and pre[0] == image_id and (pre[1], pre[2]) != (self._picks, self._multi_auto):
             self._picks, self._multi_auto = list(pre[1]), pre[2]   # the first click of the double click
+            self._default_picks = list(pre[4])
             self._mark_picks()
             self._fit_multi_count()
         self._pick_pre = None
@@ -2652,8 +2951,9 @@ class MainWindow(QMainWindow):
         """Right click on a photo of the strip or of 16장 보기."""
         menu = QMenu(self)
         multi = self._multi_picks()
-        menu.addAction("고른 사진에서 빼기" if iid in multi else "고르기 (번호)", lambda: self._toggle_pick(iid))
-        if multi:
+        pinned = multi if self._own_picks() else []
+        menu.addAction("고른 사진에서 빼기" if iid in pinned else "고르기 (번호)", lambda: self._toggle_pick(iid))
+        if pinned:
             menu.addAction(f"고른 사진만 보기 — Multi ({len(multi)}장)", self.show_picked)
         if len(multi) >= 2:
             menu.addAction(f"몽타주 만들기 ({len(multi)}장)…", lambda: self.open_montage())
@@ -3163,6 +3463,13 @@ class MainWindow(QMainWindow):
             if 0 <= k < len(ids) and ids[k] != cur:
                 self._select_from_multi(ids[k])
             return
+        if self._tab() == "grid":              # 16장 보기: through every photo (the list has one exam's)
+            ids = [i for i, _eye, _day in self._listed]
+            if cur in ids:
+                k = (ids.index(cur) + d) % len(ids) if wrap else ids.index(cur) + d
+                if 0 <= k < len(ids) and ids[k] != cur:
+                    self._select_from_multi(ids[k])
+            return
         n = self.thumbs.count()
         if n == 0:
             return
@@ -3175,8 +3482,7 @@ class MainWindow(QMainWindow):
     def _eye_ids(self, image_id: int) -> list[int]:
         """The photos of the list of the same eye as ``image_id`` (OD · OS), in the list's order
         (newest first); [] for a photo that is not in the list or of neither eye."""
-        photos = [(self.thumbs.item(i).data(Qt.ItemDataRole.UserRole), self.thumbs.item(i).data(EYE_ROLE))
-                  for i in range(self.thumbs.count())]
+        photos = [(i, e) for i, e, _day in self._listed]   # (of every 날짜 책갈피)
         eye = next((e for i, e in photos if i == image_id), None)
         return [i for i, e in photos if e == eye] if eye in EYES else []
 
@@ -3365,17 +3671,23 @@ class MainWindow(QMainWindow):
         for Multi, each with its own processing; with none, consecutive photos from the shown one
         (VK-2: all of them when 화면 분할 fits the list)."""
         mv = target or self.multi
-        if self._picks:                       # the newest OD | OS · the photos picked
+        ids = self._view_ids() if target is None else list(self._picks)
+        if ids:                               # the newest OD | OS · the photos pinned · the one previewed
             n = mv.count
             items = []
-            for k, iid in enumerate(self._picks[:n]):
+            own = self._own_picks()
+            for iid in ids[:n]:
                 row = self.db.get_image(iid)
                 small = self._multi_small(row, self._photo_state(iid), n) if row else None
-                if small is not None:
-                    items.append((iid, self._multi_label(row, k + 1), small))
+                if small is None:
+                    continue
+                label = self._multi_label(row, self._picks.index(iid) + 1 if own and iid in self._picks else 0)
+                if iid == self._peek and not (own and iid in self._picks):
+                    label = f"<b style='color:#ffd60a'>미리 보기</b> — 클릭하면 고정&nbsp; {label}"
+                items.append((iid, label, small))
             more = f" (화면에 {n}장 — 화면 분할을 늘리세요)" if len(self._picks) > n else ""
             pair = self._picks == self._default_picks and len(self._picks) == 2
-            mv.set_mode_text("Simple — 최신 OD | OS" if pair else f"고른 사진 {len(self._picks)}장{more}")
+            mv.set_mode_text("Simple — 최신 OD | OS" if pair else f"고정한 사진 {len(self._picks)}장{more}")
             mv.populate(items, self.current["id"] if self.current else None)
             if target is None:
                 self._sync_navs()
@@ -3426,6 +3738,10 @@ class MainWindow(QMainWindow):
         for cell in self.multi.cells:
             iid = cell.image_id
             if iid is None or not cell.isVisible() or (only is not None and iid not in only):
+                continue
+            if iid == self._peek and iid not in self._picks:      # 미리 보기: only the photo (at once)
+                for z in cell.zooms.values():
+                    z.set_rgb(None)
                 continue
             row = self.db.get_image(iid)
             full = self._load(row) if row is not None else None
@@ -4091,11 +4407,12 @@ class MainWindow(QMainWindow):
     # -- 효과: 입체 조명 · 자동 회전 -----------------------------------------------------------
     RELIEF = 0.6            # strength of 입체 조명
     SPIN = 10.0             # 자동 회전, degrees per second
-    UI_VERSION = 7          # 2: the dark look — 자세히, 유리 공막 and 자동 회전 from the start; 3: the 3D tab
+    UI_VERSION = 8          # 2: the dark look — 자세히, 유리 공막 and 자동 회전 from the start; 3: the 3D tab
                             # as the web page (자세히, 황반·유두 자동으로 찾기); 4: the 3D eye shows the
                             # original photo (망막 입체 — 표면 높낮이 and 입체 조명 — off from the start);
                             # 5: the 3D wheel zooms, the depth is on the 깊이 막대 beside the eye;
-                            # 6: a patient opens on 16장 보기; 7: RetiCam-sized 일반 45° photos → RetiCam 176°
+                            # 6: a patient opens on 16장 보기; 7: RetiCam-sized 일반 45° photos → RetiCam 176°;
+                            # 8: a patient opens on Simple (날짜 책갈피 · 미리 보기 · 클릭으로 고정)
 
     def _on_relief(self, on: bool) -> None:
         self.settings.relief3d = bool(on)
@@ -4359,6 +4676,8 @@ class MainWindow(QMainWindow):
         if key != self._shown_view:
             self._pick_pre = None             # (a click before another view is no double click's first)
         self._shown_view = key
+        if key != "multi":
+            self._end_peek()                  # (미리 보기 is Simple's)
         if key and key not in ("3d", "3d2"):
             self._last_view = key             # where the 3D icon goes back to
         if key != "3d2" and self.pair3d.image_ids:
