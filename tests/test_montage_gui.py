@@ -263,3 +263,42 @@ def test_the_3d_field_of_a_montage_is_what_it_covers(app):
     assert math.degrees(t1 - t0) == pytest.approx(62.5, abs=2.0)        # the vertical section cuts the band
     assert eye.cover_span() == pytest.approx((225.0, 62.5))
     assert eye._mapping_uniforms()["fovring"] == 0.0            # no ring round the empty map
+
+
+def test_map_centre_between_the_photos(app):
+    """지도 중심: 가운데 사진 ↔ 사진들의 한가운데, kept with the saved arrangement."""
+    import math
+
+    import numpy as np
+
+    from fundusview import montage as mt
+    from fundusview.ui.montage_dialog import MontageDialog
+
+    dlg = MontageDialog(_sources(), auto=False)
+    try:
+        dlg.show()
+        app.processEvents()
+        for s, x in zip(dlg.shots, (0.0, 30.0, -10.0)):
+            s.R = mt.rotation_between([0.0, 0.0, -1.0], mt.plane_dirs(math.radians(x), 0.0))
+        ref_fov = dlg.auto_fov_deg()
+        dlg.c_centre.setCurrentIndex(dlg.c_centre.findData("middle"))
+        assert dlg.auto_fov_deg() < ref_fov - 15.0
+        xs = [math.degrees(float(mt.plane_xy(s.centre())[0])) for s in dlg.shots]
+        assert abs(max(xs) + min(xs)) < 0.1
+        assert dlg._final_job is not None and mt.definition(dlg.shots, dlg.ref)
+        dlg.undo()
+        dlg.c_centre.setCurrentIndex(dlg.c_centre.findData("ref"))
+        assert np.allclose(dlg.shots[dlg.ref].R, np.eye(3), atol=1e-9)
+        assert abs(dlg.auto_fov_deg() - ref_fov) < 0.1
+        dlg.c_centre.setCurrentIndex(dlg.c_centre.findData("middle"))
+        run = dlg._final_job()
+        res = run(lambda *_: None)
+        assert res.definition["centre"] == "middle"
+        again = MontageDialog(_sources(), auto=False, definition=res.definition)
+        try:
+            assert again.c_centre.currentData() == "middle"
+            assert all(np.allclose(a.R, b.R) for a, b in zip(again.shots, dlg.shots))
+        finally:
+            again.close()
+    finally:
+        dlg.close()
