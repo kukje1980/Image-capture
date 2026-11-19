@@ -222,6 +222,7 @@ class ImageView(QGraphicsView):
         self._loupe.hide()
         self.loupe_mag, self.loupe_size = 3.0, 260
         self.dblclick_loupe = False      # 확대/축소 · 이동: a double click turns a loupe on that follows the mouse
+        self.click_loupe = False         # … the left button held on the whole photo (not zoomed): the loupe
         self.dblclick_leaves = False     # 확대/축소 · 이동: a double click is only reported (Detail: back where one was)
         self.step_keys = False           # ← / → ask for the photo before / after (``stepped``) instead of scrolling
         self._loupe_on = False
@@ -821,7 +822,12 @@ class ImageView(QGraphicsView):
         self.clicked.emit()
         sp = self.mapToScene(pos)
         t = self.tool
-        if t in ("pan", "zoom"):                      # 확대/축소 · 이동: a drag moves the photo (the wheel zooms)
+        if t in ("pan", "zoom") and self.click_loupe and self._fit:
+            # the whole photo on screen (not zoomed yet — nothing to move): held down, the loupe,
+            # following the mouse; the wheel meanwhile changes its power
+            self._drag = {"kind": "loupe"}
+            self._show_loupe(pos)
+        elif t in ("pan", "zoom"):                    # 확대/축소 · 이동: a drag moves the photo (the wheel zooms)
             self._drag = {"kind": "pan", "last": pos}
             self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
         elif t == "loupe":

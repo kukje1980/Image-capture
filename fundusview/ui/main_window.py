@@ -5,8 +5,8 @@ Simple, its newest OD | OS (the first setting, v0.10.0), or on 16장 보기, its
 
 The photo list under the photos shows one exam's photos: the 날짜 책갈피 over it (one per exam
 date, the newest at the left and open first, then 전체) pick the exam, and so does the wheel over
-the list (``set_book``). A photo of the list under the mouse is shown large over the views (미리
-보기, peek.py — the photos under it stay as they are) and on Simple a click selects it, numbered —
+the list (``set_book``). A photo of the list under the mouse is shown larger just above it (미리
+보기, peek.py — a small pane; the photos of the views stay as they are) and on Simple a click selects it, numbered —
 as many photos above as are selected; with none the newest OD | OS of the bookmark's exam. The patient list
 is the only one: the command toolbar's [환자 목록], the menu bar's 환자 목록 (Ctrl+0) and 환자 검색
 (Ctrl+F) bring that window up; the patient is the same in both windows.
@@ -501,7 +501,7 @@ class MainWindow(QMainWindow):
         self.act_peek = m.addAction("사진 목록에 마우스를 올리면 미리 보기")
         self.act_peek.setCheckable(True)
         self.act_peek.setChecked(bool(self.settings.hover_preview))
-        self.act_peek.setToolTip("아래 사진 목록의 사진에 마우스를 올리면 그 사진만 화면 위에 크게 띄워 보여 줍니다 "
+        self.act_peek.setToolTip("아래 사진 목록의 사진에 마우스를 올리면 그 사진 바로 위에 좀 더 크게 보여 줍니다 "
                                  "(클릭하면 고정)")
         self.act_peek.toggled.connect(self._set_hover_preview)
         m.addAction(self.tb_cmd.toggleViewAction())
@@ -700,6 +700,7 @@ class MainWindow(QMainWindow):
         self.tabs.tabBar().hide()                # the views are switched with the icons above the photos
         self.view2d = ImageView()
         self.view2d.crossfade = True            # the next photo fades in over the last
+        self.view2d.click_loupe = True          # not zoomed yet: the left button held shows the loupe
         self.view2d.dblclick_leaves = True      # Detail: a double click goes back where one was (the
         self.view2d.activated.connect(self._leave_detail)   # loupe: the 돋보기 tool)
         self.view2d.toggle_captions(True)
@@ -2511,8 +2512,8 @@ class MainWindow(QMainWindow):
     PEEK_TABS = ("multi", "all")               # 미리 보기 on Simple · Multi and Detail (the views with the list)
 
     def _apply_peek(self) -> None:
-        """The photo the mouse rests on, large over the views (``PeekPane``) — the photos under it
-        stay as they are. Any photo of the list: one selected already is looked at the same way."""
+        """The photo the mouse rests on, larger, in a small pane just above it (``PeekPane``) — the
+        photos of the views stay as they are. Any photo of the list: one selected already is looked at the same way."""
         want = self._peek_want
         if self._tab() not in self.PEEK_TABS or not self.settings.hover_preview:
             want = None
@@ -2529,8 +2530,13 @@ class MainWindow(QMainWindow):
             what = "클릭하면 이 사진을 봅니다"
         else:
             what = "고정한 사진 — 클릭하면 빼기" if own else "클릭하면 고정(선택)"
-        self.peek_pane.show_photo(want, f"<b style='color:#ffd60a'>미리 보기</b> — {what}&nbsp;&nbsp; "
-                                        f"{self._multi_label(row, self._picks.index(want) + 1 if own else 0)}", rgb)
+        # … just above that photo of the list
+        item = next((self.thumbs.item(i) for i in range(self.thumbs.count())
+                     if self.thumbs.item(i).data(Qt.ItemDataRole.UserRole) == want), None)
+        x = (self.thumbs.viewport().mapTo(self.centralWidget(), self.thumbs.visualItemRect(item).center()).x()
+             - self.tabs.mapTo(self.centralWidget(), QPoint(0, 0)).x()) if item is not None else 0
+        self.peek_pane.show_photo(want, f"{self._multi_label(row, self._picks.index(want) + 1 if own else 0)}"
+                                        f"<br><b style='color:#ffd60a'>미리 보기</b> — {what}", rgb, x)
         self.lbl_status.setText("미리 보기 — 이 사진이 맞으면 클릭해서 고정(선택)하세요 · 마우스를 떼면 닫힙니다")
 
     def _end_peek(self) -> None:
