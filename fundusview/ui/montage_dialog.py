@@ -1129,7 +1129,7 @@ class MontageDialog(QDialog):
             dlg.c_base.setCurrentIndex(ref)
         self.flat_dialog = dlg
         try:
-            dlg.exec()
+            self._run_flat(dlg)
         finally:
             self.flat_dialog = None
             if dlg.saved_id is not None:
@@ -1137,6 +1137,11 @@ class MontageDialog(QDialog):
                 self._set_status("수동 합치기로 만든 사진을 환자 기록에 저장했습니다")
             dlg.deleteLater()
         return dlg
+
+    @staticmethod
+    def _run_flat(dlg) -> None:
+        """Show the 수동 합치기 window until it is closed (the tests look at it instead)."""
+        dlg.exec()
 
     # -- 완성 / 3D -------------------------------------------------------------------------
     def _on_tab(self, i: int) -> None:

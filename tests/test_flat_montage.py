@@ -103,6 +103,17 @@ def app():
     return QApplication.instance() or QApplication([])
 
 
+def _gone(app, dlg):
+    """Close an editor and let Qt delete it (with the 수동 합치기 window it opened) here and now — left to
+    the end of the interpreter, its windows now and then crashed there (exit code 139 after every test passed)."""
+    from PySide6.QtCore import QCoreApplication, QEvent
+
+    dlg.close()
+    dlg.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()
+
+
 def _sources(world):
     from fundusview.ui.montage_dialog import MontageSource
 
@@ -235,7 +246,7 @@ def test_the_editor_back_photo_opaque_drag_turn_and_save(app, tmp_path):
         assert res.fov_deg == pytest.approx(45.0 * (n / 2) / R, rel=0.02) and res.span[0] > res.span[1] > 40
         d = res.definition
     finally:
-        dlg.close()
+        _gone(app, dlg)
 
     # … and that arrangement opens again
     again = FlatMontageDialog(_sources(world), definition=d)
@@ -243,22 +254,23 @@ def test_the_editor_back_photo_opaque_drag_turn_and_save(app, tmp_path):
         assert again.included() == [0, 1] and again.canvas.base == 0
         assert (again.places[1].x, again.places[1].angle) == pytest.approx((120 / R, -20.0))
     finally:
-        again.close()
+        _gone(app, again)
 
 
-def test_the_montage_editor_opens_it_from_its_own_arrangement(app, monkeypatch):
-    from fundusview.ui import flat_montage_dialog as fd
+def test_the_montage_editor_opens_it_from_its_own_arrangement(app):
+    from PySide6.QtCore import Qt
+
     from fundusview.ui.montage_dialog import MontageDialog
 
     world = _world()
     opened = []
-    monkeypatch.setattr(fd.FlatMontageDialog, "exec", lambda self: opened.append(self) or 0)
     dlg = MontageDialog(_sources(world), auto=False)
+    dlg._run_flat = opened.append                  # (looked at here instead of shown until closed)
     try:
         assert "수동 합치기" in dlg.b_flat.text() and dlg.b_flat.isEnabled()
         mt.spread(dlg.shots, 0)
         mt.roll_about(dlg.shots[1], 15.0)
-        dlg.list.item(2).setCheckState(__import__("PySide6.QtCore").QtCore.Qt.CheckState.Unchecked)
+        dlg.list.item(2).setCheckState(Qt.CheckState.Unchecked)
         dlg.b_flat.click()
         flat = opened[0]
         assert len(flat.shots) == 2 and flat.canvas.base == 0 and flat.places[0].x == 0.0
@@ -266,16 +278,17 @@ def test_the_montage_editor_opens_it_from_its_own_arrangement(app, monkeypatch):
         assert (flat.places[1].x, flat.places[1].y) == pytest.approx((want.x, want.y)) and abs(want.x) + abs(want.y) > 0.5
         assert flat.places[1].angle == pytest.approx(want.angle)
     finally:
-        dlg.close()
+        _gone(app, dlg)
     # a montage saved by 수동 합치기 opens there again (다시 편집)
     d = {"version": 1, "flat": True, "ref": 1, "included": [0, 1],
          "shots": [{"image_id": 1, "x": 0.4, "y": 0.1, "angle": 3.0}, {"image_id": 2, "x": 0, "y": 0, "angle": 0},
                    {"image_id": 3, "x": 2, "y": 2, "angle": 0}]}
     dlg = MontageDialog(_sources(world), definition=d)
+    dlg._run_flat = opened.append
     try:
         app.processEvents()
         flat = opened[-1]
         assert len(opened) == 2 and flat.canvas.base == 1 and flat.included() == [0, 1]
         assert (flat.places[0].x, flat.places[0].y, flat.places[0].angle) == (0.4, 0.1, 3.0)
     finally:
-        dlg.close()
+        _gone(app, dlg)
