@@ -196,7 +196,8 @@ def test_the_editor_back_photo_opaque_drag_turn_and_save(app, tmp_path):
         QTest.mousePress(c, Qt.MouseButton.RightButton, Qt.KeyboardModifier.NoModifier, a)
         QTest.mouseMove(c, b)
         QTest.mouseRelease(c, Qt.MouseButton.RightButton, Qt.KeyboardModifier.NoModifier, b)
-        assert dlg.places[1].angle == pytest.approx(90.0, abs=1.5) and "회전 +9" in dlg.lbl_place.text()
+        assert dlg.places[1].angle == pytest.approx(90.0, abs=1.5)
+        assert f"회전 {dlg.places[1].angle:+.1f}°" in dlg.lbl_place.text()
         # keys: an arrow = one screen pixel, [ ] = 0.2° (Shift: 1°); the buttons turn too
         was = dlg.places[1].copy()
         QTest.keyClick(c, Qt.Key.Key_Left)
