@@ -117,6 +117,8 @@ class Settings:
     # Simple: a photo of the list under the mouse is shown above until it is clicked (보기 → 사진 목록에
     # 마우스를 올리면 미리 보기)
     hover_preview: bool = True
+    # … how large: the photo in the preview pane, pixels across (보기 → 미리 보기 크기; peek.SIZES)
+    preview_size: int = 440
     # 카메라 각도 보정 (calibrate.py): the lens curve measured from the photos, {camera profile: radial_c}
     lens_curves: dict[str, float] = field(default_factory=dict)
     montage_fast: bool = False      # 몽타주 빠르게: the saved picture at most 2400 px instead of 4000
