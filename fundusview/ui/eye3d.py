@@ -417,14 +417,14 @@ uniform float u_clip;
 uniform vec3 u_disc;
 // short posterior ciliary arteries piercing the sclera around the optic nerve
 float spca(vec3 p, float d) {
-    if (d < 0.25 || d > 0.43) return 0.0;
+    if (d < 0.20 || d > 0.38) return 0.0;
     vec3 e1 = normalize(cross(u_disc, vec3(0.0, 1.0, 0.0)));
     vec3 e2 = cross(u_disc, e1);
     float a = atan(dot(p, e2), dot(p, e1));
     float sec = floor((a + @PI@) / (2.0 * @PI@) * 18.0);
     float ac = (sec + 0.5 + (hash1(sec * 7.13) - 0.5) * 0.5) / 18.0 * 2.0 * @PI@ - @PI@;
     float da = (a - ac) * sin(d);
-    float dd = d - (0.28 + hash1(sec * 3.7) * 0.10);
+    float dd = d - (0.23 + hash1(sec * 3.7) * 0.10);
     return step(0.3, hash1(sec * 1.91 + 3.0)) * exp(-(da * da) / 0.00006 - (dd * dd) / 0.0003);
 }
 uniform float u_xray;     // 망막 투시: 0 sclera … 1 the retina seen through see-through coats
@@ -436,11 +436,11 @@ void main() {
     vec3 n = normalize(v_n);
     float dn = acos(clamp(dot(p, u_disc), -1.0, 1.0));     // angle from the optic nerve
     vec3 alb = mix(sclera_albedo(p), vec3(0.36, 0.11, 0.10), spca(p, dn) * 0.6 * (1.0 - u_simple));
-    float ao = mix(0.55, 1.0, smoothstep(0.235, 0.36, dn));
+    float ao = mix(0.55, 1.0, smoothstep(0.185, 0.30, dn));
     vec3 c = sclera_shade(lin(alb) * ao, n, v, 1.0 - 0.6 * u_simple);
     if (u_xray > 0.0) {   // only where the retina lies behind: the front keeps its white sclera
         float w;
-        vec3 f = lin(fundus(p, v_obj.z, w)) * mix(0.75, 1.0, smoothstep(0.235, 0.36, dn));
+        vec3 f = lin(fundus(p, v_obj.z, w)) * mix(0.75, 1.0, smoothstep(0.185, 0.30, dn));
         float theta = acos(clamp(-p.z, -1.0, 1.0));
         c = mix(c, wet(f, n, v, 0.35, 0.35) * 1.15, u_xray * (1.0 - smoothstep(@ORA@ - 0.12, @ORA@ + 0.01, theta)));
     }

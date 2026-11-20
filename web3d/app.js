@@ -355,7 +355,7 @@ function capMesh(center, T, U, V, rx, ry, n, uvOffset, sign = 1) {
 function nerveMesh(p, lat, nSeg = 64, nLen = 48) {
   p = unit(p);
   const nasal = [lat === 'OS' ? -1 : 1, 0, 0];
-  const P0 = mul(p, 0.965), P1 = mul(p, 1.30);
+  const P0 = mul(p, 0.975), P1 = mul(p, 1.30);
   const P2 = add(P1, mul(unit(add(add(p, [0, -0.22, 0]), mul(nasal, 0.10))), 0.30));
   const P3 = add(P2, mul(unit(add(add(p, [0, 0.05, 0]), mul(nasal, 0.25))), 0.30));
   const c = [];

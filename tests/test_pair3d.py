@@ -77,6 +77,33 @@ def test_3d_on_the_two_photo_view_shows_both_eyes(tmp_path, demo_dir, import_and
         pair.set_depth(25)
         assert all(e.cut == pytest.approx(0.25) for e in pair.eyes)
 
+        # 배율 막대 at each eye's top left, lying, with ☑ 휠 checked (the wheel magnifies at first); it shows
+        # the eye's magnification and sets it — the other eye follows
+        zooms = pair.zoom_bars
+        assert len(zooms) == 2 and all(z.isVisible() and z.parentWidget() is e for z, e in zip(zooms, pair.eyes))
+        assert all(not z.vertical() and z.geometry().left() < 40 and z.geometry().top() < 40 for z in zooms)
+        assert all(z.checked for z in zooms) and not any(d.checked for d in bars) and not pair.top_strip.isVisible()
+        pair.zooms[0].setValue(100)                           # ×2
+        pair._sync()
+        assert a.magnification == pytest.approx(2.0, rel=0.02) and b.magnification == pytest.approx(a.magnification)
+        assert zooms[0].text() == "×2.0" and zooms[1].text() == "×2.0"
+        pair.b_home.click()
+        assert all(z.value() == 0 for z in pair.zooms)
+        # ☑ 휠 on a 깊이 막대: the wheel over the eyes cuts deeper (both eyes); back on 배율 it magnifies
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+        QTest.mouseClick(bars[1], Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
+                         bars[1]._check_rect().center().toPoint())
+        assert pair.wheel_mode == "depth" and all(d.checked for d in bars) and not any(z.checked for z in zooms)
+        assert all(e.wheel_mode == "depth" for e in pair.eyes)
+        a.depthWheel.emit(2.0)                                # two notches forward
+        assert all(d.value() == 25 - 8 for d in pair.depths) and all(e.cut == pytest.approx(0.17) for e in pair.eyes)
+        QTest.mouseClick(zooms[0], Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
+                         zooms[0]._check_rect().center().toPoint())
+        assert pair.wheel_mode == "zoom" and all(e.wheel_mode == "zoom" for e in pair.eyes)
+        assert all(z.checked for z in zooms) and not any(d.checked for d in bars)
+        pair.set_depth(25)
+
         b3d.click()                                           # 3D again: the two photos
         app.processEvents()
         assert w._tab() == "multi" and len(w._picks) == 2 and not b3d.isChecked()
@@ -185,6 +212,40 @@ def test_3d_with_more_photos_picked_asks_one_or_all(tmp_path, demo_dir, import_a
         assert 0.4 < k < 0.6
         circle = pair.eyes[0]._marks[2]
         assert circle is None or circle[2] == pytest.approx(row["circle_r"] * k, rel=0.02)
+
+        # up to four eyes: each with its own 깊이 막대 · 배율 막대; more: none over the eyes — the wheel
+        # magnifies, and one 깊이 막대 lying above the eyes cuts all of them
+        from fundusview.ui.pair3d import BARS_MAX
+        assert BARS_MAX == 4
+        w._open_pair3d((photos * 4)[:4])
+        app.processEvents()
+        assert all(bar.isVisible() for bar in pair.depth_bars[:4] + pair.zoom_bars[:4])
+        assert not pair.top_strip.isVisible() and not pair.top_depth_bar.isVisible()
+        pair.set_wheel("depth")
+        w._open_pair3d((photos * 5)[:5])
+        app.processEvents()
+        assert len(pair.image_ids) == 5 and grid_shape(5) == (2, 3)
+        assert not any(bar.isVisible() for bar in pair.depth_bars + pair.zoom_bars)
+        assert all(e.wheel_mode == "zoom" for e in pair.eyes)             # (whatever ☑ 휠 was)
+        top = pair.top_depth_bar
+        assert pair.top_strip.isVisible() and top.isVisible() and not top.vertical() and not top.checkable
+        assert top.parentWidget() is pair.top_strip and pair.top_strip.rect().contains(top.geometry())
+        assert pair.top_strip.geometry().bottom() < pair.cells[0].geometry().top()   # above the eyes
+        assert pair.depth_all.value() == w.s_cut.value()
+        pair.c_link.setChecked(False)                                     # (all of them, linked or not)
+        pair.depth_all.setValue(60)
+        assert all(e.cut == pytest.approx(0.6) for e in pair.eyes[:5]) and top.text() == "31%"
+        pair.c_link.setChecked(True)
+        g = top.geometry()
+        from PySide6.QtCore import QPoint, Qt
+        from PySide6.QtTest import QTest
+        QTest.mouseDClick(top, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(30, 10))
+        assert not top.vertical() and top.geometry() == g                 # it stays as it is
+        w._open_pair3d(photos[:3])                                        # fewer again: the bars are back
+        app.processEvents()
+        assert all(bar.isVisible() for bar in pair.depth_bars[:3] + pair.zoom_bars[:3])
+        assert not pair.top_strip.isVisible() and all(e.wheel_mode == "depth" for e in pair.eyes[:3])
+        assert all(d.value() == w.s_cut.value() for d in pair.depths)
     finally:
         w.close()
         db.close()
