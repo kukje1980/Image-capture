@@ -91,7 +91,7 @@ from .landmarks_view import LandmarkPhoto
 from .slit_scan import SLIT, ScanPhotoView, SlitScanShow, ViewTween
 from .thumbs import (DATE_ROLE, EYE_ROLE, KIND_ROLE, PICK_ROLE, SECOND_COLOR, SECOND_ROLE, SHOWN, EyeRail,
                      ThumbDelegate, ThumbStrip, eye_badge_html, eye_row)
-from .toolbars import CHECKABLE, CMDBAR, COMMANDS, MENUS, PROCESSING, SliderPopup, icon_for
+from .toolbars import CHECKABLE, CMDBAR, COMMANDS, MENUS, PROCESSING, SliderPopup, icon_for, rnfl_label
 from .widgets import ElidedLabel, Segmented, Switch, card, segment
 from .widgets import row as setting_row
 
@@ -515,6 +515,7 @@ class MainWindow(QMainWindow):
             a.triggered.connect(lambda _=False, k=k: self._set_preview_scale(k))
             self.peek_scale_acts[k] = a
         self._set_preview_scale(self.settings.preview_scale, save=False)
+        self._apply_rnfl_settings()            # G 필터: RNFL 강화 세기 (설정 → 일반)
         m.addAction(self.tb_cmd.toggleViewAction())
         m.addAction(self.tb_proc.toggleViewAction())
         m.addSeparator()
@@ -1844,6 +1845,22 @@ class MainWindow(QMainWindow):
         if self.current is not None:
             self._show_image(self.current["id"])
 
+    def _apply_rnfl_settings(self, refresh: bool = False) -> None:
+        """설정 → 일반: the strength of 녹색 + RNFL 강화 (0.5 … 0.9), said in the ▾ of the G 필터 too.
+        ``refresh``: photos shown with that filter are drawn again at the new strength."""
+        was = imaging.rnfl_k()
+        k = self.settings.rnfl_strength = imaging.set_rnfl_k(self.settings.rnfl_strength)
+        if self.settings.green_filter != "rnfl":
+            self.settings.green_filter = "green"
+        entry = self.menus["chan:green"].actions()[1]
+        entry.setText(rnfl_label(k))
+        entry.setToolTip(rnfl_label(k))
+        if refresh and k != was:
+            self._proc_cache.clear()
+            if self.current is not None:
+                self._apply_adjust()
+            self._refill_multis()
+
     def _open_settings(self) -> None:
         dlg = SettingsDialog(self.settings, self)
         if dlg.exec():
@@ -1857,6 +1874,7 @@ class MainWindow(QMainWindow):
             self._set_3d_detail(self.settings.view3d_detail, save=False)
             self.c_walkclick3d.setChecked(bool(self.settings.walk_click3d))   # 3D 마우스 휠
             self._set_wheel3d(self.settings.wheel3d, save=False)
+            self._apply_rnfl_settings(refresh=True)                          # G 필터: RNFL 강화 세기
             self.act_thumb_date.setChecked(bool(self.settings.thumb_date))   # 사진 목록: 날짜 · 종류
             self.act_thumb_kind.setChecked(bool(self.settings.thumb_kind))
             if self.settings.open_view != old_view and self.current is not None:
@@ -3430,6 +3448,8 @@ class MainWindow(QMainWindow):
             lit = "green" if self._channel == "rnfl" else self._channel   # (G 필터 is lit for ▾ RNFL 강화 too)
             if checked is False and ch == lit:            # clicked the lit filter again
                 ch = "rgb"
+            elif checked and ch == "green" and self.settings.green_filter == "rnfl":
+                ch = "rnfl"                               # 설정 → 일반: the G 필터 button gives RNFL 강화
             self._push_history()
             self._channel = ch
             self._apply_adjust()

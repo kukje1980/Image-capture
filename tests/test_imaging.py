@@ -144,3 +144,21 @@ def test_green_with_rnfl_contrast_is_the_wide_analysis_picture():
     hp = lambda x: x - cv2.GaussianBlur(x, (0, 0), 6)  # noqa: E731
     assert hp(out[..., 1].astype(float))[lit].std() > 1.3 * hp(plain)[lit].std()
     assert "RNFL" in imaging.CHANNEL_LABELS["rnfl"]
+
+
+def test_the_strength_of_rnfl_contrast_is_set_between_half_and_nine_tenths():
+    """설정 → 일반 → RNFL 강화 세기: 0.5 … 0.9 — the 녹색 + RNFL 강화 filter is 광각 분석's picture at that strength."""
+    from fundusview import glaucoma as G
+
+    rgb = synth_fundus(eye="OD", size=(320, 300), seed=5)
+    assert imaging.RNFL_K_RANGE == (0.5, 0.9) and imaging.rnfl_k() == 0.9
+    try:
+        assert imaging.set_rnfl_k(0.5) == 0.5 and imaging.rnfl_k() == 0.5
+        weak = imaging.adjust(rgb, channel="rnfl")
+        assert (weak == G.enhance_wide(rgb, True, 0.5)).all() and (weak == imaging.rnfl_green(rgb)).all()
+        assert (weak != imaging.rnfl_green(rgb, 0.9)).any()               # … weaker than at 0.9
+        assert imaging.set_rnfl_k(0.7) == 0.7
+        assert imaging.set_rnfl_k(0.2) == 0.5 and imaging.set_rnfl_k(3) == 0.9      # never outside
+        assert imaging.set_rnfl_k("x") == 0.9 and imaging.set_rnfl_k(None) == 0.9
+    finally:
+        imaging.set_rnfl_k(imaging.RNFL_K)
