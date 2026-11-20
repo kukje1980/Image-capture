@@ -1525,13 +1525,22 @@ function sightImg(b, a) {   // where the object's point falls on the retina: str
 }
 // the brain seen from the side (front to the left of the list): [0…1 front to back, 0…1 bottom to top]
 const BRAIN = {
-  outline: [[0.02, 0.52], [0.07, 0.80], [0.22, 0.95], [0.45, 1.0], [0.70, 0.95], [0.90, 0.78], [1.0, 0.52], [0.95, 0.33], [0.80, 0.26],
-    [0.64, 0.28], [0.52, 0.20], [0.36, 0.13], [0.20, 0.17], [0.11, 0.30], [0.04, 0.38]],
-  cerebellum: [[0.66, 0.24], [0.78, 0.27], [0.90, 0.22], [0.90, 0.10], [0.78, 0.04], [0.66, 0.10]],
-  stem: [[0.50, 0.24], [0.62, 0.24], [0.64, -0.08], [0.55, -0.08]],
-  folds: [[[0.16, 0.62], [0.30, 0.74], [0.34, 0.90]], [[0.40, 0.52], [0.50, 0.72], [0.48, 0.96]], [[0.62, 0.50], [0.70, 0.70], [0.68, 0.92]],
-    [[0.14, 0.36], [0.34, 0.40], [0.58, 0.36]], [[0.80, 0.42], [0.86, 0.58], [0.84, 0.76]]],
-  chiasm: [0.17, 0.22], lgn: [0.50, 0.40], radiation: [0.74, 0.50], cortex: [0.94, 0.47],
+  outline: [[0.0, 0.50], [0.03, 0.66], [0.10, 0.82], [0.22, 0.93], [0.38, 0.99], [0.55, 1.0], [0.72, 0.96], [0.86, 0.86], [0.96, 0.70],
+    [1.0, 0.54], [0.97, 0.40], [0.90, 0.32], [0.80, 0.30], [0.70, 0.31], [0.60, 0.24], [0.48, 0.17], [0.36, 0.14], [0.25, 0.17],
+    [0.19, 0.25], [0.20, 0.34], [0.14, 0.36], [0.06, 0.38], [0.01, 0.43]],
+  cerebellum: [[0.62, 0.27], [0.72, 0.31], [0.84, 0.30], [0.93, 0.23], [0.93, 0.12], [0.83, 0.04], [0.70, 0.05], [0.62, 0.14]],
+  stem: [[0.49, 0.26], [0.60, 0.27], [0.64, 0.10], [0.66, -0.12], [0.57, -0.14], [0.54, 0.06]],
+  // the furrows: the lateral (Sylvian) and central ones deeper, the rest finer
+  deep: [[[0.20, 0.36], [0.34, 0.42], [0.50, 0.50], [0.63, 0.58]], [[0.47, 0.99], [0.45, 0.82], [0.50, 0.66], [0.47, 0.54]],
+    [[0.85, 0.87], [0.82, 0.74], [0.84, 0.62]]],
+  folds: [[[0.40, 0.98], [0.38, 0.82], [0.42, 0.66], [0.39, 0.52]], [[0.55, 0.99], [0.53, 0.84], [0.57, 0.70], [0.55, 0.60]],
+    [[0.10, 0.76], [0.20, 0.84], [0.33, 0.85]], [[0.07, 0.58], [0.18, 0.66], [0.33, 0.67]], [[0.08, 0.46], [0.18, 0.50], [0.30, 0.52]],
+    [[0.26, 0.28], [0.42, 0.29], [0.58, 0.36], [0.72, 0.43]], [[0.31, 0.20], [0.46, 0.215], [0.60, 0.29]],
+    [[0.61, 0.82], [0.70, 0.80], [0.79, 0.70]], [[0.64, 0.66], [0.72, 0.62], [0.78, 0.52]], [[0.66, 0.93], [0.74, 0.88]],
+    [[0.90, 0.72], [0.94, 0.58], [0.91, 0.44]], [[0.86, 0.50], [0.92, 0.48], [0.97, 0.50]], [[0.16, 0.90], [0.24, 0.80]],
+    [[0.27, 0.95], [0.30, 0.74]], [[0.74, 0.40], [0.82, 0.38], [0.88, 0.40]]],
+  folia: [0.09, 0.13, 0.17, 0.21, 0.25],
+  chiasm: [0.17, 0.22], lgn: [0.50, 0.40], radiation: [0.74, 0.50], cortex: [0.93, 0.50],
 };
 function brainPoint([u, v]) { return [sightSide() * 1.0, -0.85 + v * 2.4, -2.15 - u * 3.3]; }
 function sightWay() {   // the signal's way: over the retina to the disc, along the nerve, through the brain
@@ -1629,15 +1638,60 @@ function paintSight(ctx, mvp, w, h, t) {
   const F = t < 13.5 ? ramp(t, 10.5, 13.5) : t < 15.8 ? 1 + (t - 13.5) / 2.3 : Math.min(3, 2 + (t - 15.8) / 1.8);
   const aBrain = ramp(t, 13.7, 15.1);
   if (aBrain > 0) {
-    const smooth = (P, n = 64) => catmull([...P, P[0], P[1]].map(brainPoint), n);
-    fill(smooth(BRAIN.stem, 24), [196, 150, 150], aBrain * 0.5, PINK);
-    fill(smooth(BRAIN.cerebellum, 40), [206, 150, 156], aBrain * 0.55, PINK);
-    fill(smooth(BRAIN.outline, 96), [222, 160, 168], aBrain * 0.5, PINK);
-    for (const f of BRAIN.folds) line(catmull(f.map(brainPoint), 16).map(toScreen), PINK, aBrain * 0.55, lw * 0.7, false);
-    const lit = ramp(t, 17.0, 18.2) * (0.75 + 0.25 * Math.sin(t * 5));
-    spot(toScreen(brainPoint(BRAIN.cortex)), SIGNAL, aBrain * lit * 0.8, px * 0.13);
-    label(toScreen(brainPoint(BRAIN.cortex)), '시각 피질', aBrain, 2.3);
-    label(toScreen(brainPoint([0.45, 1.0])), '뇌', aBrain, -1.0);
+    // the brain from its side: brainstem, cerebellum with its leaves, the cerebrum with its furrows; shaded from above
+    const closed = (P, n) => catmull([...P, P[0], P[1]].map(brainPoint), n).map(toScreen);
+    const path = (pts) => { ctx.beginPath(); ctx.moveTo(...pts[0]); for (const q of pts.slice(1)) ctx.lineTo(...q); ctx.closePath(); };
+    const B = (uv) => toScreen(brainPoint(uv));
+    const shade = (hi, lo, r, stops) => {
+      const g = ctx.createRadialGradient(hi[0], hi[1], 0, hi[0], hi[1], Math.max(1, Math.hypot(lo[0] - hi[0], lo[1] - hi[1]) * r));
+      stops.forEach(([at, c]) => g.addColorStop(at, rgba(c, 1)));
+      return g;
+    };
+    const stem = closed(BRAIN.stem, 32), cbl = closed(BRAIN.cerebellum, 56), out = closed(BRAIN.outline, 160);
+    const hi = B([0.36, 0.84]), lo = B([0.95, 0.15]), ch = B([0.76, 0.26]), cl = B([0.80, 0.02]);
+    if (![...stem, ...cbl, ...out, hi, lo, ch, cl].some((q) => !q)) {
+      ctx.save(); ctx.globalAlpha = aBrain * 0.96; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+      const edge = (pts, width) => { path(pts); ctx.strokeStyle = 'rgba(78,36,46,0.9)'; ctx.lineWidth = width; ctx.stroke(); };
+      path(stem); ctx.fillStyle = shade(B([0.55, 0.22]), B([0.62, -0.14]), 1, [[0, [226, 190, 176]], [1, [150, 104, 100]]]); ctx.fill(); edge(stem, lw * 0.6);
+      path(cbl); ctx.fillStyle = shade(ch, cl, 1.25, [[0, [224, 168, 156]], [0.6, [186, 122, 118]], [1, [118, 70, 74]]]); ctx.fill();
+      ctx.save(); path(cbl); ctx.clip();   // the leaves of the cerebellum
+      for (const v of BRAIN.folia) {
+        const row = catmull([[0.58, v + 0.03], [0.70, v - 0.01], [0.82, v - 0.015], [0.96, v + 0.03]].map(brainPoint), 20).map(toScreen);
+        line(row, [96, 52, 58], 0.75, lw * 0.5, false);
+      }
+      ctx.restore(); edge(cbl, lw * 0.6);
+      path(out);
+      ctx.fillStyle = shade(hi, lo, 1.05, [[0, [255, 214, 204]], [0.35, [240, 176, 172]], [0.75, [206, 132, 138]], [1, [140, 80, 92]]]);
+      ctx.shadowColor = 'rgba(0,0,0,0.55)'; ctx.shadowBlur = px * 0.12; ctx.shadowOffsetY = px * 0.04; ctx.fill();
+      ctx.shadowColor = 'transparent';
+      ctx.save(); path(out); ctx.clip();
+      // the furrows: a dark line with a light lip under it, so the folds between them stand out rounded
+      const furrow = (P, width, dark) => {
+        const pts = catmull(P.map(brainPoint), 8 * P.length).map(toScreen);
+        if (pts.some((q) => !q)) return;
+        line(pts.map(([x, y]) => [x + width * 0.9, y + width * 1.1]), [255, 226, 218], 0.42, width * 1.3, false);
+        line(pts, [104, 48, 62], dark, width, false);
+      };
+      for (const f of BRAIN.folds) furrow(f, lw * 0.75, 0.62);
+      for (const f of BRAIN.deep) furrow(f, lw * 1.25, 0.85);
+      // the rim darker (the brain is round), a soft light from above
+      ctx.lineWidth = px * 0.16; ctx.strokeStyle = 'rgba(92,40,56,0.22)'; path(out); ctx.stroke();
+      const sheen = ctx.createLinearGradient(...B([0.4, 1.0]), ...B([0.4, 0.55]));
+      sheen.addColorStop(0, 'rgba(255,255,255,0.20)'); sheen.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = sheen; path(out); ctx.fill();
+      // the visual cortex (occipital lobe) lights up as the signal arrives
+      const lit = ramp(t, 17.0, 18.2) * (0.8 + 0.2 * Math.sin(t * 5)), vc = B(BRAIN.cortex);
+      if (lit > 0 && vc) {
+        const g = ctx.createRadialGradient(vc[0], vc[1], 0, vc[0], vc[1], px * 0.75);
+        g.addColorStop(0, `rgba(255,244,150,${0.95 * lit})`); g.addColorStop(0.35, `rgba(255,214,90,${0.55 * lit})`); g.addColorStop(1, 'rgba(255,200,60,0)');
+        ctx.fillStyle = g; path(out); ctx.fill();
+      }
+      ctx.restore();
+      edge(out, lw * 0.75);
+      ctx.restore();
+      label(B([0.93, 0.50]), '시각 피질', aBrain, 2.6);
+      label(B([0.45, 1.0]), '뇌', aBrain, -1.0);
+    }
   }
   if (F > 0) {
     const way = sightWay(), aWay = 0.5;
@@ -1645,6 +1699,10 @@ function paintSight(ctx, mvp, w, h, t) {
     if (F > 1) line(way.nerve.slice(0, 1 + Math.ceil(Math.min(1, F - 1) * 31)).map(toScreen), SIGNAL, aWay, lw);
     if (F > 2) line(way.brain.slice(0, 1 + Math.ceil(Math.min(1, F - 2) * 47)).map(toScreen), SIGNAL, aWay, lw);
     label(toScreen(way.nerve[20]), '시신경', ramp(t, 13.6, 14.6), 1.6);
+    if (F > 2) for (const [k, name] of [['chiasm', '시신경 교차'], ['lgn', '외측 슬상체']]) {
+      const q = toScreen(brainPoint(BRAIN[k])), a = ramp(F, 2.05, 2.4);
+      spot(q, [255, 246, 190], a * 0.8, lw * 1.3); label(q, name, a * 0.9, 1.5);
+    }
     spot(toScreen(way.fibres[0][24]), SIGNAL, ramp(F, 0.9, 1.0) * 0.5, lw * 1.6);   // the optic disc
     for (let j = 0; j < 12; j++) {
       for (let tail = 0; tail < 4; tail++) {
