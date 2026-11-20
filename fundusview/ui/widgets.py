@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 
-from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, QSize, Qt
-from PySide6.QtGui import QColor, QPainter
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QAbstractButton, QButtonGroup, QCheckBox, QFrame, QHBoxLayout, QLabel, QLayout, QPushButton, QSizePolicy,
     QVBoxLayout, QWidget,
@@ -376,3 +376,53 @@ class ElidedLabel(QLabel):
         self.ensurePolished()
         QLabel.setText(self, self.fontMetrics().elidedText(self._full, Qt.TextElideMode.ElideRight,
                                                            max(0, self.width() - self.PAD)))
+
+
+class RoundCorners(QWidget):
+    """Round corners for a rectangular pane (a big photo, a cell of photos): this lies over ``host``,
+    lets the mouse through, and paints over its four corners what is around the pane (``outside``) —
+    and, with ``border``, a round frame of that colour on its edge. The pane itself stays an ordinary
+    rectangle underneath (a view that scrolls cannot be clipped round any cheaper)."""
+
+    RADIUS = 12
+
+    def __init__(self, host: QWidget, radius: int | None = None, outside: str | None = None,
+                 border: str | None = None, width: int = 2):
+        super().__init__(host)
+        self.radius = self.RADIUS if radius is None else int(radius)
+        self.outside = QColor(outside) if outside else None      # None: the window's own colour
+        self.border = QColor(border) if border else None
+        self.width_ = width
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        host.installEventFilter(self)
+        self.setGeometry(host.rect())
+        self.show()
+        self.raise_()
+
+    def set_border(self, color: str | None) -> None:
+        self.border = QColor(color) if color else None
+        self.update()
+
+    def eventFilter(self, obj, e):
+        if obj is self.parentWidget():
+            if e.type() == QEvent.Type.Resize:
+                self.setGeometry(obj.rect())
+            if e.type() in (QEvent.Type.Resize, QEvent.Type.ChildAdded, QEvent.Type.Show):
+                self.raise_()                 # (over whatever the pane shows)
+        return False
+
+    def paintEvent(self, e) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        r = float(min(self.radius, self.width() / 2, self.height() / 2))
+        ears, inner = QPainterPath(), QPainterPath()
+        ears.addRect(QRectF(self.rect()))
+        inner.addRoundedRect(QRectF(self.rect()), r, r)
+        p.fillPath(ears.subtracted(inner), self.outside or self.palette().color(self.backgroundRole()))
+        if self.border is not None:
+            h = self.width_ / 2
+            p.setPen(QPen(self.border, self.width_))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawRoundedRect(QRectF(self.rect()).adjusted(h, h, -h, -h), r - h, r - h)
+        p.end()

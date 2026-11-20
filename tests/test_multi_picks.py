@@ -409,3 +409,37 @@ def test_the_photos_of_the_list_have_round_corners():
                  (photo.right(), photo.bottom())):
         assert not red(x, y)                                   # the corners: cut round
     assert Qt is not None
+
+
+def test_the_big_photo_panes_have_round_corners():
+    """0.10.11: a cell of Simple · Multi is round at its corners — what is around it is painted over them —
+    and so is its frame, blue on the cell selected."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QColor, QImage
+    from PySide6.QtWidgets import QApplication
+
+    from fundusview.ui import theme
+    from fundusview.ui.multi_view import _Cell
+    from fundusview.ui.widgets import RoundCorners
+
+    app = QApplication.instance() or QApplication([])
+    cell = _Cell()
+    cell.resize(300, 240)
+    cell.show()
+    app.processEvents()
+    assert isinstance(cell.round, RoundCorners) and cell.round.geometry() == cell.rect() and cell.round.radius == 12
+    assert cell.round.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)     # the mouse goes through
+    cell.round.outside = QColor("#ff00ff")
+    cell.select(True)
+    assert cell.round.border == QColor(theme.ACCENT)
+    img = QImage(cell.size(), QImage.Format.Format_ARGB32)
+    cell.render(img)
+    assert img.pixelColor(0, 0) == QColor("#ff00ff") and img.pixelColor(299, 239) == QColor("#ff00ff")
+    edge = img.pixelColor(150, 0)                                   # the frame, on a straight edge
+    assert edge.blue() > 200 and edge.red() < 80
+    cell.select(False)
+    assert cell.round.border == QColor(theme.CARD)
+    cell.resize(200, 160)
+    app.processEvents()
+    assert cell.round.geometry() == cell.rect()
+    cell.close()
