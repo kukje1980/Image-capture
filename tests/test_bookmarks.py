@@ -3,8 +3,8 @@
 The photo list under the photos shows one exam's photos (OD row · OS row, as before); the bookmarks
 over it — 전체 at the left, then one per exam date, newest first — pick the exam, and so does the wheel
 over the list. A patient opens on its newest exam, the newest OD | OS above. A photo of the list
-under the mouse is shown larger in a small pane just above it (미리 보기, v0.10.2 — the photos of
-the views stay) until the mouse leaves it; a click pins it (numbered) — several pinned: that many
+under the mouse grows where it is, the photos after it moving right, like the Dock of a Mac (미리 보기,
+v0.10.9 — the photos of the views stay) until the mouse leaves it; a click pins it (numbered) — several pinned: that many
 side by side — and a click on a pinned one lets it go."""
 import os
 
@@ -179,23 +179,48 @@ def test_a_photo_under_the_mouse_is_previewed_and_a_click_pins_it(win):
     assert pane.label.isVisible() and pane.view.y() <= 6           # (ImageView.geometry is something else)
     assert pane.view.x() <= pane.label.x() < 40 and pane.view.y() <= pane.label.y() < 40
     assert "클릭해서 고정" in w.lbl_status.text()
-    # … a small pane just above that photo of the list: a good deal larger than it there, but only a
-    # corner of the views (not the main photos' whole room)
+    # … like the Dock of a Mac: the photo grows where it is — twice its size in the list, its left edge
+    # and the bottom of its row where they were — and the photos after it in its row move right by
+    # the room it takes; the other row and the photos before it stay
+    from PySide6.QtCore import QPoint, QRect
+
     from fundusview.ui.main_window import THUMB_GRID
 
-    assert pane.parentWidget() is w.tabs and 3 * THUMB_GRID[0] < pane.width() <= 460
-    assert pane.width() < w.tabs.width() * 0.45 and pane.height() <= w.tabs.height() * 0.75
-    assert abs(pane.geometry().bottom() - w.tabs.height()) < 12            # at the bottom, by the list
-    thumb_x = w.thumbs.viewport().mapTo(w.tabs.parentWidget(), w.thumbs.visualItemRect(_item(w, rf3)).center()).x()
-    assert pane.geometry().left() >= 0 and pane.geometry().left() <= thumb_x - w.tabs.x() <= pane.geometry().right()
+    t, vp = w.thumbs, w.thumbs.viewport()
+    gw, gh = THUMB_GRID
+    k = t.row(_item(w, rf3))
+    cell = t.cell_rect(k)
+    at = QRect(vp.mapTo(pane.parentWidget(), cell.topLeft()), cell.size())
+    assert pane.parentWidget() is w.centralWidget() and w.settings.preview_scale == 2.0
+    assert (pane.width(), pane.height()) == (2 * gw, 2 * gh)
+    assert pane.geometry().left() == at.left() and pane.geometry().bottom() == at.bottom()
+    assert t.grown() == k and t.grown_rect() == cell.adjusted(0, 0, gw, 0)
+    row_of = {i: t._slots[i] for i in range(t.count())}
+    for i in range(t.count()):
+        pushed = row_of[i][0] == row_of[k][0] and row_of[i][1] > row_of[k][1]
+        assert t.visualItemRect(t.item(i)).left() - t.cell_rect(i).left() == (gw if pushed else 0) + 2, i
+    assert any(row_of[i][0] == row_of[k][0] and row_of[i][1] > row_of[k][1] for i in range(t.count()))
+    # … the mouse anywhere on the grown photo's room is on that photo (a click there is a click on it)
+    assert t.itemAt(cell.center() + QPoint(gw, 0)) is _item(w, rf3)
+    assert t.horizontalScrollBar().maximum() == 0                  # (the list scrolls no further for it)
     assert _cells(w) == ([od3, os3], od3) and w.multi.count == 2
     assert w.picks() == [od3, os3] and not w._own_picks() and w.current["id"] == od3
     assert _item(w, rf3).data(PICK_ROLE) == 0 and _item(w, od3).data(PICK_ROLE) == SHOWN
     # … another photo: that one; the mouse off the list: the pane is gone
     _hover(app, w, os3)
     assert pane.isVisible() and pane.image_id == os3 and "OS" in pane.label.text()
+    assert t.grown() == t.row(_item(w, os3))
+    # … a photo of the lower row grows into the row over it: there the photos from its column on move
+    # out of its way (it hides none)
+    k = t.row(_item(w, os3))
+    over = [i for i in range(t.count()) if row_of[i][0] == row_of[k][0] - 1 and row_of[i][1] >= row_of[k][1]]
+    assert over and all(t.visualItemRect(t.item(i)).left() - t.cell_rect(i).left() == 2 * gw + 2 for i in over)
+    assert not any(t.visualItemRect(t.item(i)).intersects(pane.geometry().translated(-vp.mapTo(
+        pane.parentWidget(), QPoint(0, 0)))) for i in range(t.count()) if i != k)
     _hover(app, w, None)
     assert w._peek is None and not pane.isVisible() and _cells(w) == ([od3, os3], od3)
+    assert t.grown() is None                               # … and every photo in its own place again
+    assert all(t.visualItemRect(t.item(i)).left() - t.cell_rect(i).left() == 2 for i in range(t.count()))
 
     # a click pins the photo looked at: the pane closes, the photo is above (alone: the first one)
     _hover(app, w, rf3)
@@ -225,7 +250,9 @@ def test_a_photo_under_the_mouse_is_previewed_and_a_click_pins_it(win):
     _hover(app, w, os2)
     w.resize(1300, 800)
     app.processEvents()
-    assert pane.isVisible() and pane.geometry().right() <= w.tabs.width() and pane.geometry().bottom() <= w.tabs.height()
+    k = t.row(_item(w, os2))
+    at = vp.mapTo(pane.parentWidget(), t.cell_rect(k).bottomLeft())
+    assert pane.isVisible() and (pane.geometry().left(), pane.geometry().bottom()) == (at.x(), at.y())
     _press(w, "view:multi")
     assert not pane.isVisible() and w._peek is None
     _press(w, "view:simple")
@@ -309,26 +336,54 @@ def test_the_left_button_on_a_photo_not_zoomed_yet_shows_the_loupe(win):
     assert w.view2d.click_loupe and not cell.zooms["disc"].click_loupe
 
 
-def test_the_size_of_the_preview_is_chosen_in_the_view_menu(win):
-    """보기 → 미리 보기 크기: 작게 · 보통 · 크게 · 아주 크게 — the pane grows and shrinks with it (never
-    past the views), remembered."""
+def test_how_large_the_preview_grows_is_chosen_in_the_view_menu(win):
+    """보기 → 미리 보기 배율: 1.5 · 2 · 2.5 · 3배 — the photo under the mouse grows that many times,
+    the photos after it make that much room, remembered."""
     from fundusview.config import Settings, config_dir
-    from fundusview.ui.peek import SIZES
+    from fundusview.ui.main_window import THUMB_GRID
+    from fundusview.ui.peek import SCALES
 
     app, w, db, refs, ids = win
     _open(app, w, refs["kim"])
-    pane = w.peek_pane
-    assert [px for px, _ in SIZES] == [300, 440, 600, 800] and w.settings.preview_size == 440
-    assert w.peek_size_acts[440].isChecked() and pane.side == 440
+    pane, t = w.peek_pane, w.thumbs
+    gw, gh = THUMB_GRID
+    assert SCALES == (1.5, 2.0, 2.5, 3.0) and w.settings.preview_scale == 2.0
+    assert w.peek_scale_acts[2.0].isChecked() and pane.scale == 2.0
     _hover(app, w, ids["rf3"])
-    widths = {}
-    for px in (300, 440, 600, 800):
-        w.peek_size_acts[px].trigger()
+    k = t.row(_item(w, ids["rf3"]))
+    for scale in SCALES:
+        w.peek_scale_acts[scale].trigger()
         app.processEvents()
-        assert w.settings.preview_size == px and pane.side == px and w.peek_size_acts[px].isChecked()
-        assert pane.isVisible() and pane.geometry().top() >= 0 and pane.geometry().right() <= w.tabs.width()
-        assert pane.geometry().bottom() <= w.tabs.height()
-        widths[px] = pane.width()
-    assert widths[300] < widths[440] < widths[600] <= widths[800] and widths[300] <= 320
-    assert Settings.load(config_dir() / "settings.json").preview_size == 800
-    w.peek_size_acts[440].trigger()
+        assert w.settings.preview_scale == scale and pane.scale == scale and w.peek_scale_acts[scale].isChecked()
+        assert pane.isVisible() and (pane.width(), pane.height()) == (round(gw * scale), round(gh * scale))
+        assert t.grown() == k and t.grown_rect().width() == gw + round(gw * (scale - 1))
+        assert pane.geometry().top() >= 0
+    assert Settings.load(config_dir() / "settings.json").preview_scale == 3.0
+    w.peek_scale_acts[2.0].trigger()
+    _hover(app, w, None)
+
+
+def test_the_preview_grows_step_by_step(win):
+    """With 부드러운 움직임 the photo grows from its size in the list to the 배율, the room in its row with it."""
+    from fundusview.ui import motion
+    from fundusview.ui.main_window import THUMB_GRID
+
+    app, w, db, refs, ids = win
+    _open(app, w, refs["kim"])
+    pane, t = w.peek_pane, w.thumbs
+    tk = motion.ticker()
+    motion.set_enabled(True)
+    tk.manual = True
+    try:
+        _hover(app, w, ids["rf3"])
+        assert pane.isVisible() and pane.width() == THUMB_GRID[0] and t.grown_rect().width() == THUMB_GRID[0]
+        tk.advance(0.05)
+        mid = pane.width()
+        assert THUMB_GRID[0] < mid < 2 * THUMB_GRID[0] and t.grown_rect().width() == mid
+        tk.advance(0.2)
+        assert pane.width() == 2 * THUMB_GRID[0] and t.grown_rect().width() == 2 * THUMB_GRID[0]
+        _hover(app, w, None)
+        assert not pane.isVisible() and t.grown() is None
+    finally:
+        tk.manual = False
+        motion.set_enabled(False)
