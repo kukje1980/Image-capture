@@ -24,6 +24,7 @@ from . import theme
 from .edge_nav import EdgeNav
 from .icons import icon as line_icon
 from .image_view import ImageView
+from .widgets import RoundCorners
 
 LAYOUTS = {1: (1, 1), 2: (1, 2), 4: (2, 2), 6: (2, 3), 9: (3, 3), 16: (4, 4)}
 CLOSEUP_MAX = 4                 # 황반 · 디스크 under the photos up to this many cells
@@ -80,6 +81,7 @@ class _Cell(QFrame):
         self.closeups.hide()
         lay.addWidget(self.closeups, 2)
         self.image_id: int | None = None
+        self.round = RoundCorners(self)     # the cell's corners are round, and so is its frame
         self.select(False)
 
     def select(self, on: bool) -> None:
@@ -87,6 +89,7 @@ class _Cell(QFrame):
         with its blue 보정 badge (MultiView._sync_badges)."""
         self.selected = on
         self.setStyleSheet("QFrame { border: 2px solid %s; }" % (theme.ACCENT if on else theme.CARD))
+        self.round.set_border(theme.ACCENT if on else theme.CARD)
 
 
 def _active_badge() -> QFrame:

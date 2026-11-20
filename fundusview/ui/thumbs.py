@@ -12,14 +12,17 @@ together. The eye is said once per row, at the left of the rows (``EyeRail``), n
 photo. Or all photos in one line — then each has its eye badge (OD blue · OS orange · OU purple ·
 미상 grey). (The main window leaves 미상 photos out of the list.)
 
-미리 보기 (the Dock of a Mac): the photo under the mouse grows where it is — ``set_grown`` makes room
-for it, the photos after it in its row move to the right; the large photo itself is ``peek.PeekPane``,
-laid over that room.
+미리 보기 (the Dock of a Mac): the photos of the row under the mouse grow toward the mouse — the one
+under it most, those beside it less and less — and move apart for it (``ThumbStrip.set_dock``). The
+row is then painted by ``DockOverlay``, which lies over the strip and the room above it (the photos
+grow upwards from the bottom of their row), not by the list.
 """
 from __future__ import annotations
 
+import math
+
 from PySide6.QtCore import QPoint, QRect, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPen, QPixmap, QPixmapCache
+from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPainterPath, QPen, QPixmap, QPixmapCache
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QListWidget, QStyle, QStyledItemDelegate,
                                QStyleOptionViewItem, QWidget)
 
@@ -100,17 +103,33 @@ class ThumbDelegate(QStyledItemDelegate):
         self.show_date = True               # 보기 → 사진 목록 표시 → 날짜
         self.show_kind = False              # … → 종류 (컬러 · 몽타주 …)
         self.show_eye = False               # one line: the eye on every photo (by eye the row says it)
+        self.docking = False                # True while the DockOverlay paints a grown photo with this
 
     def photo_rect(self, option, index) -> QRect:
         """Where the photo is painted: as large as fits the cell, centred."""
         area = option.rect.adjusted(self.PAD, self.PAD, -self.PAD, -self.PAD)
         icon = index.data(Qt.ItemDataRole.DecorationRole)
-        size = icon.actualSize(area.size()) if isinstance(icon, QIcon) and not icon.isNull() else QSize()
+        size = self._photo_size(icon)
         if size.isEmpty():
             return QRect(area)
+        size = size.scaled(area.size(), Qt.AspectRatioMode.KeepAspectRatio)   # (a grown cell: larger than stored)
         photo = QRect(0, 0, size.width(), size.height())
         photo.moveCenter(area.center())
         return photo
+
+    CORNER = 0.16                           # the photo's corners: round by this much of its shorter side
+
+    @classmethod
+    def corner(cls, photo: QRect) -> float:
+        return cls.CORNER * min(photo.width(), photo.height())
+
+    @staticmethod
+    def _photo_size(icon) -> QSize:
+        """The size of the stored photo of an item (empty: none)."""
+        if not isinstance(icon, QIcon) or icon.isNull():
+            return QSize()
+        sizes = icon.availableSizes()
+        return sizes[0] if sizes else QSize()
 
     @staticmethod
     def _chip(painter: QPainter, text: str, x: float, y: float, *, bottom: bool = False,
@@ -128,47 +147,73 @@ class ThumbDelegate(QStyledItemDelegate):
         return rect
 
     def paint(self, painter: QPainter, option, index) -> None:
+        strip = option.widget
+        if not self.docking and isinstance(strip, ThumbStrip) and strip.docked(index.row()):
+            return                           # 미리 보기: its row is painted by the DockOverlay, grown
         opt = QStyleOptionViewItem(option)
         self.initStyleOption(opt, index)
         icon = index.data(Qt.ItemDataRole.DecorationRole)
         opt.icon, opt.text = QIcon(), ""    # the style paints the cell only (hover · selected)
         opt.features &= ~(QStyleOptionViewItem.ViewItemFeature.HasDecoration
                           | QStyleOptionViewItem.ViewItemFeature.HasDisplay)
+        selected = bool(opt.state & QStyle.StateFlag.State_Selected)
+        hover = bool(opt.state & QStyle.StateFlag.State_MouseOver)
+        opt.state &= ~(QStyle.StateFlag.State_Selected | QStyle.StateFlag.State_MouseOver)   # (round, below)
         style = opt.widget.style() if opt.widget is not None else QApplication.style()
         style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, opt.widget)
         photo = self.photo_rect(option, index)
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        if hover and not selected:           # under the mouse: a soft light around the photo, round as it
+            glow = QColor(opt.palette.color(opt.palette.ColorRole.Highlight))  # (the photo shown is not framed:
+            glow.setAlpha(90)                                                   # only the picks are, in yellow)
+            r = self.corner(photo) + self.PAD
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(glow)
+            painter.drawRoundedRect(QRectF(photo).adjusted(-self.PAD, -self.PAD, self.PAD, self.PAD), r, r)
+        rr = self.corner(photo)              # the photo's corners are round (as the icons of the Dock)
         if isinstance(icon, QIcon) and not icon.isNull():
-            icon.paint(painter, photo)
+            shape = QPainterPath()
+            shape.addRoundedRect(QRectF(photo), rr, rr)
+            painter.setClipPath(shape, Qt.ClipOperation.IntersectClip)
+            size = self._photo_size(icon)
+            if size.width() >= photo.width():
+                icon.paint(painter, photo)
+            else:                            # grown past the stored photo: stretched to its place
+                painter.drawPixmap(photo, icon.pixmap(size))
+            painter.restore()
+            painter.save()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         rank = int(index.data(PICK_ROLE) or 0)
         if rank:                             # shown above: framed; on Multi with its pick number
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.setPen(QPen(QColor(PICK_COLOR), 3))
-            painter.drawRect(QRectF(photo).adjusted(1.5, 1.5, -1.5, -1.5))
+            painter.drawRoundedRect(QRectF(photo).adjusted(1.5, 1.5, -1.5, -1.5), rr - 1.5, rr - 1.5)
+        inset = 2.0 + rr * 0.3               # what is written on the photo keeps off its round corners
         f = QFont(opt.font)
         f.setBold(True)
         f.setPixelSize(10)
         painter.setFont(f)
         date, kind = index.data(DATE_ROLE) or "", index.data(KIND_ROLE) or ""
         if self.show_date and date:
-            self._chip(painter, date, photo.left() + 2, photo.top() + 2)
-        x = photo.left() + 2.0
+            self._chip(painter, date, photo.left() + inset, photo.top() + inset)
+        x = photo.left() + inset
         if self.show_eye:
             text, bg, fg = eye_badge(index.data(EYE_ROLE))
-            x = self._chip(painter, text, x, photo.bottom() - 1, bottom=True, bg=QColor(bg), fg=QColor(fg)).right() + 2
+            x = self._chip(painter, text, x, photo.bottom() + 1 - inset, bottom=True, bg=QColor(bg),
+                           fg=QColor(fg)).right() + 2
         if self.show_kind and kind:
-            self._chip(painter, kind, x, photo.bottom() - 1, bottom=True)
+            self._chip(painter, kind, x, photo.bottom() + 1 - inset, bottom=True)
         f.setPixelSize(12)
         painter.setFont(f)
         d = painter.fontMetrics().height() + 3
-        x = photo.right() - 2.0
+        x = photo.right() + 1 - inset
         for mark, bg, fg in ((str(rank) if rank > 0 else "", PICK_COLOR, "#111827"),
                              ("②" if index.data(SECOND_ROLE) else "", SECOND_COLOR, "#ffffff")):
             if not mark:
                 continue
-            dot = QRectF(x - d, photo.bottom() - d - 1.0, d, d)
+            dot = QRectF(x - d, photo.bottom() + 1 - inset - d, d, d)
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(bg))
             painter.drawEllipse(dot)
@@ -189,6 +234,7 @@ class ThumbStrip(QListWidget):
     """
     stepped = Signal(int)                    # ← (-1) / → (+1): the photo before / after (the window steps)
     rowsChanged = Signal()                   # the rows were laid out again (``EyeRail`` names them)
+    dockChanged = Signal()                   # 미리 보기: the grown row changed (``DockOverlay`` paints it)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -198,8 +244,8 @@ class ThumbStrip(QListWidget):
         self._by_eye = False
         self._slots: list[tuple[int, int]] = []     # (row, column) of every item
         self._shape = (1, 0)                         # rows and columns of the grid
-        self._grown: tuple[int, int, int] | None = None   # 미리 보기: (item, pixels of room more at its
-                                                     # right, rows over it the grown photo reaches into)
+        self._dock: tuple[int, float, float] | None = None   # 미리 보기: (row, the mouse's x, how much more)
+        self._dock_rects: list | None = None
         self._free_movement()
 
     def _free_movement(self) -> None:
@@ -246,66 +292,113 @@ class ThumbStrip(QListWidget):
             cols[k] += 1
         return slots, (max(1, len(line)), max(cols))
 
-    # -- 미리 보기: the photo under the mouse grows where it is, its row makes room -------------
-    def set_grown(self, i: int | None, extra: int = 0, up: int = 0) -> None:
-        """Item ``i`` has ``extra`` pixels of room more at its right: the photos after it in its
-        row lie that much further right (None: every photo in its own place again). The grown photo
-        reaches ``up`` rows over its own: there the photos from its column on move out of its way,
-        so it hides none. The list does not scroll further for it — what is pushed past the right
-        edge is back when the room goes."""
-        grown = ((int(i), max(0, int(extra)), max(0, int(up)))
-                 if i is not None and 0 <= int(i) < self.count() else None)
-        if grown == self._grown:
-            return
-        self._grown = grown
-        self._place_items()
-        self.viewport().update()
+    # -- 미리 보기: the row under the mouse grows toward the mouse, like the Dock of a Mac -------
+    DOCK_REACH = 2.2                         # the photos grow within this many cells of the mouse
 
-    def grown(self) -> int | None:
-        return self._grown[0] if self._grown is not None else None
+    def set_dock(self, row: int | None, x: float = 0.0, grow: float = 0.0) -> None:
+        """The photos of ``row`` grow toward ``x`` (viewport): the one there ``1 + grow`` times its
+        size, those within ``DOCK_REACH`` cells of it less and less. None: every photo as it is."""
+        dock = (int(row), float(x), max(0.0, float(grow))) if row is not None and self.count() else None
+        if dock == self._dock:
+            return
+        self._dock = dock
+        self._dock_rects = None
+        self.viewport().update()
+        self.dockChanged.emit()
 
     def cell_rect(self, i: int) -> QRect:
-        """The cell of item ``i`` in the viewport — its own place, wherever a grown photo pushed it."""
+        """The cell of item ``i`` in the viewport, as the list lays it out (not grown)."""
         if not 0 <= i < len(self._slots):
             return QRect()
         row, col = self._slots[i]
         gw, gh = self.gridSize().width(), self.gridSize().height()
         return QRect(col * gw - self.horizontalOffset(), row * gh - self.verticalOffset(), gw, gh)
 
-    def grown_rect(self) -> QRect:
-        """The cell of the grown photo with the room made for it (the mouse in it is on that photo)."""
-        if self._grown is None:
-            return QRect()
-        r = self.cell_rect(self._grown[0])
-        return r.adjusted(0, 0, self._grown[1], 0)
+    def dock_row(self) -> int | None:
+        return self._dock[0] if self._dock is not None else None
+
+    def docked(self, i: int) -> bool:
+        """Item ``i`` is in the row that is grown now (the ``DockOverlay`` paints it)."""
+        return self._dock is not None and 0 <= i < len(self._slots) and self._slots[i][0] == self._dock[0]
+
+    def row_at(self, y: int) -> int | None:
+        """The row of photos at ``y`` of the viewport (None: none there)."""
+        row = (y + self.verticalOffset()) // max(1, self.gridSize().height())
+        return int(row) if y >= 0 and 0 <= row < self._shape[0] and self.count() else None
+
+    def dock_rects(self) -> list[tuple[int, QRectF]]:
+        """(item, where it is painted in the viewport) of every photo of the grown row, left to right.
+        The place under the mouse stays under the mouse — the photos before it move left, those
+        after it right — but the row never starts left of where it starts ungrown: near its start
+        the photos only move right."""
+        if self._dock is None:
+            return []
+        if self._dock_rects is not None:
+            return self._dock_rects
+        row, x, grow = self._dock
+        gw, gh = float(self.gridSize().width()), float(self.gridSize().height())
+        items = sorted((col, i) for i, (r, col) in enumerate(self._slots) if r == row)
+        n = len(items)
+        m = x + self.horizontalOffset()                 # the mouse, in the row's own coordinates
+        reach = self.DOCK_REACH * gw
+
+        def widths(u: float) -> list[float]:
+            out = []
+            for k in range(n):
+                d = abs((k + 0.5) * gw - u)
+                out.append(gw * (1.0 + (grow * math.cos(math.pi * d / (2 * reach)) ** 2 if d < reach else 0.0)))
+            return out
+
+        def spot(u: float, ws: list[float]) -> float:
+            """Where the place ``u`` of the ungrown row lies in the grown one (the row starting at 0)."""
+            if u <= 0:
+                return u
+            k = min(n - 1, int(u // gw))
+            return sum(ws[:k]) + (u - k * gw) / gw * ws[k] if u < n * gw else sum(ws) + u - n * gw
+
+        ws = widths(m)
+        start = m - spot(m, ws)                         # the place under the mouse stays there
+        if start < 0:                                   # … unless the row would start left of its start:
+            lo, hi = 0.0, max(0.0, m)                   # then it starts there, and the photo the mouse is
+            for _ in range(30):                         # on is the one that lies under it
+                u = (lo + hi) / 2
+                if spot(u, widths(u)) < m:
+                    lo = u
+                else:
+                    hi = u
+            ws, start = widths((lo + hi) / 2), 0.0
+        out, left = [], start - self.horizontalOffset()
+        bottom = (row + 1) * gh - self.verticalOffset()
+        for (_col, i), w in zip(items, ws):
+            h = gh * w / gw
+            out.append((i, QRectF(left, bottom - h, w, h)))
+            left += w
+        self._dock_rects = out
+        return out
 
     def itemAt(self, *at):
         pos = at[0] if len(at) == 1 else QPoint(*at)
-        if self._grown is not None and self.grown_rect().contains(pos):
-            return self.item(self._grown[0])
+        if self._dock is not None and self.row_at(pos.y()) == self._dock[0]:
+            return next((self.item(i) for i, r in self.dock_rects() if r.left() <= pos.x() < r.right()), None)
         return super().itemAt(pos)
 
     def _place_items(self) -> None:
         if not self._slots:
             return
         gw, gh = self.gridSize().width(), self.gridSize().height()
-        at = self._slots[self._grown[0]] if self._grown is not None else None
         model = self.model()
         for i, (row, col) in enumerate(self._slots):
             index = model.index(i, 0)
             dx = max(0, (gw - self.rectForIndex(index).width()) // 2)    # centred in its cell, as Qt does
-            if at is not None and row == at[0] and col > at[1]:
-                dx += self._grown[1]
-            elif at is not None and self._grown[1] and at[0] - self._grown[2] <= row < at[0] and col >= at[1]:
-                dx += gw + self._grown[1]            # a row the grown photo lies over: out of its way
             self.setPositionForIndex(QPoint(col * gw + dx, row * gh), index)
         self.updateGeometries()
 
     def doItemsLayout(self) -> None:
         n = self.count()
         self._slots, self._shape = self._eye_slots() if self._by_eye else ([(0, i) for i in range(n)], (1, n))
-        if self._grown is not None and self._grown[0] >= n:
-            self._grown = None
+        if self._dock is not None and self._dock[0] >= self._shape[0]:
+            self._dock = None
+        self._dock_rects = None
         super().doItemsLayout()
         self.rowsChanged.emit()
         self._place_items()
@@ -321,6 +414,62 @@ class ThumbStrip(QListWidget):
         h.setPageStep(vp.width())
         h.setRange(0, max(0, cols * self.gridSize().width() - vp.width()))
         self.verticalScrollBar().setRange(0, 0)     # the strip is as high as its rows: the wheel goes sideways
+
+
+class DockOverlay(QWidget):
+    """미리 보기: the grown row of the strip (``ThumbStrip.set_dock``), painted over the strip and the
+    room above it — the photos grow upwards from the bottom of their row, like the icons of the Dock
+    of a Mac. It lets the mouse through: the strip under it takes the mouse."""
+
+    def __init__(self, strip: ThumbStrip, parent: QWidget):
+        super().__init__(parent)
+        self.strip = strip
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        strip.dockChanged.connect(self.follow)
+        strip.horizontalScrollBar().valueChanged.connect(lambda _v: self.follow())
+        strip.model().dataChanged.connect(lambda *_a: self.update())      # (picked, the second photo …)
+        self.hide()
+
+    def rects(self) -> list[tuple[int, QRect]]:
+        """(item, where it is painted here) of the grown row."""
+        vp = self.strip.viewport()
+        off = vp.mapTo(self.parentWidget(), QPoint(0, 0)) - self.pos()
+        return [(i, r.toRect().translated(off)) for i, r in self.strip.dock_rects()]
+
+    def follow(self) -> None:
+        """Over the strip, as wide as it, from as high as the grown photos reach to its bottom."""
+        rects = self.strip.dock_rects()
+        if not rects:
+            self.hide()
+            return
+        vp = self.strip.viewport()
+        at = vp.mapTo(self.parentWidget(), QPoint(0, 0))
+        top = min(0, math.floor(min(r.top() for _i, r in rects)))
+        self.setGeometry(at.x(), max(0, at.y() + top), vp.width(), vp.height() + at.y() - max(0, at.y() + top))
+        self.show()
+        self.raise_()
+        self.update()
+
+    def paintEvent(self, e) -> None:
+        strip, paint = self.strip, self.strip.itemDelegate()
+        p = QPainter(self)
+        under = strip.itemAt(strip.viewport().mapFromGlobal(self.cursor().pos()))
+        paint.docking = True
+        try:
+            for i, rect in self.rects():
+                opt = QStyleOptionViewItem()
+                opt.initFrom(strip)
+                opt.rect = rect
+                opt.state = QStyle.StateFlag.State_Enabled | QStyle.StateFlag.State_Active
+                if strip.item(i) is strip.currentItem():
+                    opt.state |= QStyle.StateFlag.State_Selected
+                if strip.item(i) is under:
+                    opt.state |= QStyle.StateFlag.State_MouseOver
+                paint.paint(p, opt, strip.model().index(i, 0))
+        finally:
+            paint.docking = False
+        p.end()
 
 
 class EyeRail(QWidget):
