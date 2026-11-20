@@ -3,8 +3,8 @@
 The photo list under the photos shows one exam's photos (OD row · OS row, as before); the bookmarks
 over it — 전체 at the left, then one per exam date, newest first — pick the exam, and so does the wheel
 over the list. A patient opens on its newest exam, the newest OD | OS above. A photo of the list
-under the mouse grows where it is, the photos after it moving right, like the Dock of a Mac (미리 보기,
-v0.10.9 — the photos of the views stay) until the mouse leaves it; a click pins it (numbered) — several pinned: that many
+and its neighbours grow toward the mouse like the icons of the Dock of a Mac (미리 보기, v0.10.11 — the
+photos of the views stay) until the mouse leaves the list; a click pins it (numbered) — several pinned: that many
 side by side — and a click on a pinned one lets it go."""
 import os
 
@@ -34,24 +34,47 @@ def _wheel(app, w, notches, modifiers=None):
     app.processEvents()
 
 
-def _hover(app, w, image_id):
-    """The mouse comes to rest on that photo of the list (None: it leaves the list)."""
+def _move(app, w, pos):
+    """The mouse moves to ``pos`` of the photo list, no button held (None: it leaves the list)."""
     from PySide6.QtCore import QEvent, QPointF, Qt
     from PySide6.QtGui import QMouseEvent
     from PySide6.QtWidgets import QApplication
 
     vp = w.thumbs.viewport()
-    if image_id is None:
+    if pos is None:
         QApplication.sendEvent(vp, QEvent(QEvent.Type.Leave))
-    else:                                      # (no button held, whatever QTest clicked last)
-        pos = QPointF(w.thumbs.visualItemRect(_item(w, image_id)).center())
+    else:
+        pos = QPointF(pos)
         QApplication.sendEvent(vp, QMouseEvent(QEvent.Type.MouseMove, pos, QPointF(vp.mapToGlobal(pos.toPoint())),
                                                Qt.MouseButton.NoButton, Qt.MouseButton.NoButton,
                                                Qt.KeyboardModifier.NoModifier))
     app.processEvents()
-    if w._peek_timer.isActive():               # (rested there long enough)
-        w._peek_timer.stop()
-        w._apply_peek()
+
+
+def _hover(app, w, image_id):
+    """The mouse comes onto that photo of the list (None: it leaves the list). The photos move as
+    they grow, so the mouse goes along the photo's row until that photo is the one under it."""
+    from PySide6.QtCore import QPoint
+
+    if image_id is None:
+        _move(app, w, None)
+        return None
+    t = w.thumbs
+    cell = t.cell_rect(t.row(_item(w, image_id)))
+    for x in [cell.center().x()] + list(range(2, t.viewport().width(), 6)):
+        at = QPoint(x, cell.center().y())
+        _move(app, w, at)
+        if w._peek == image_id:
+            return at
+    raise AssertionError(f"photo {image_id} never came under the mouse")
+
+
+def _press_at(app, w, at):
+    """A click where the mouse is on the list (the photo grown there takes it)."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    QTest.mouseClick(w.thumbs.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, at)
     app.processEvents()
 
 
@@ -160,123 +183,112 @@ def test_the_wheel_over_the_photo_list_turns_the_bookmarks(win):
     assert w.picks() == [os3, od2] and w.current["id"] == od2      # (the photo being adjusted stays, too)
 
 
-def test_a_photo_under_the_mouse_is_previewed_and_a_click_pins_it(win):
+def test_the_photos_under_the_mouse_grow_like_the_dock_and_a_click_pins(win):
+    from PySide6.QtCore import QPoint
+
+    from fundusview.ui.main_window import THUMB_GRID
     from fundusview.ui.thumbs import PICK_ROLE, SHOWN
 
     app, w, db, refs, ids = win
     _open(app, w, refs["kim"])
     od3, os3, rf3, od2, os2 = (ids[k] for k in ("od3", "os3", "rf3", "od2", "os2"))
-    pane = w.peek_pane
-    assert w.act_peek.isChecked() and w.settings.hover_preview and not pane.isVisible()
-    assert _cells(w) == ([od3, os3], od3)
-
-    # the mouse on a photo of the list: that photo large over the views, marked 미리 보기 — the photos
-    # under it stay as they are, nothing is pinned by it, and the photo being adjusted stays
-    _hover(app, w, rf3)
-    assert w._peek == rf3 and pane.isVisible() and pane.image_id == rf3 and pane.view.has_image()
-    # … only its eye on it (top left of the photo) — no line of text over the photo; what a click does: the status line
-    assert "OD" in pane.label.text() and "미리 보기" not in pane.label.text() and "2026" not in pane.label.text()
-    assert pane.label.isVisible() and pane.view.y() <= 6           # (ImageView.geometry is something else)
-    assert pane.view.x() <= pane.label.x() < 40 and pane.view.y() <= pane.label.y() < 40
-    assert "클릭해서 고정" in w.lbl_status.text()
-    # … like the Dock of a Mac: the photo grows where it is — twice its size in the list, its left edge
-    # and the bottom of its row where they were — and the photos after it in its row move right by
-    # the room it takes; the other row and the photos before it stay
-    from PySide6.QtCore import QPoint, QRect
-
-    from fundusview.ui.main_window import THUMB_GRID
-
-    t, vp = w.thumbs, w.thumbs.viewport()
+    t, vp, dock = w.thumbs, w.thumbs.viewport(), w.dock
     gw, gh = THUMB_GRID
+    assert w.act_peek.isChecked() and w.settings.hover_preview and not dock.isVisible() and t.dock_row() is None
+    assert _cells(w) == ([od3, os3], od3) and w.settings.preview_scale == 2.0
+
+    # the mouse on the list: the photos of the row under it grow toward it, like the icons of the Dock
+    # of a Mac — the one under the mouse twice its size, those beside it less and less; the photos of
+    # the views stay as they are, nothing is pinned by it, and the photo being adjusted stays
+    at = _hover(app, w, rf3)
     k = t.row(_item(w, rf3))
-    cell = t.cell_rect(k)
-    at = QRect(vp.mapTo(pane.parentWidget(), cell.topLeft()), cell.size())
-    assert pane.parentWidget() is w.centralWidget() and w.settings.preview_scale == 2.0
-    assert (pane.width(), pane.height()) == (2 * gw, 2 * gh)
-    assert pane.geometry().left() == at.left() and pane.geometry().bottom() == at.bottom()
-    assert t.grown() == k and t.grown_rect() == cell.adjusted(0, 0, gw, 0)
-    row_of = {i: t._slots[i] for i in range(t.count())}
-    for i in range(t.count()):
-        pushed = row_of[i][0] == row_of[k][0] and row_of[i][1] > row_of[k][1]
-        assert t.visualItemRect(t.item(i)).left() - t.cell_rect(i).left() == (gw if pushed else 0) + 2, i
-    assert any(row_of[i][0] == row_of[k][0] and row_of[i][1] > row_of[k][1] for i in range(t.count()))
-    # … the mouse anywhere on the grown photo's room is on that photo (a click there is a click on it)
-    assert t.itemAt(cell.center() + QPoint(gw, 0)) is _item(w, rf3)
-    assert t.horizontalScrollBar().maximum() == 0                  # (the list scrolls no further for it)
+    rects = dict(t.dock_rects())
+    assert w._peek == rf3 and dock.isVisible() and t.dock_row() == t._slots[k][0]
+    assert sorted(rects) == [i for i in range(t.count()) if t._slots[i][0] == t._slots[k][0]]
+    assert rects[k].left() <= at.x() < rects[k].right() and t.itemAt(at) is _item(w, rf3)
+    widths = [rects[i].width() for i in sorted(rects, key=lambda i: rects[i].left())]
+    assert max(widths) == rects[k].width() and 1.6 * gw < rects[k].width() <= 2 * gw
+    assert all(gw <= x <= 2 * gw for x in widths) and len(set(round(x) for x in widths)) > 1
+    for i, r in rects.items():                                  # as wide, as high; all on the bottom of their row
+        assert r.height() == pytest.approx(r.width() * gh / gw) and r.bottom() == pytest.approx(t.cell_rect(k).bottom() + 1)
+    order = sorted(rects, key=lambda i: rects[i].left())        # side by side, in the list's order, none over another
+    assert order == sorted(rects) and all(rects[a].right() == pytest.approx(rects[b].left())
+                                          for a, b in zip(order, order[1:]))
+    assert rects[order[0]].left() >= 0                           # (the row never starts left of its start)
+    # … painted over the list and the room above it (they grow upwards), the mouse let through
+    top = vp.mapTo(dock.parentWidget(), QPoint(0, 0))
+    assert dock.parentWidget() is w.centralWidget() and dock.geometry().bottom() == top.y() + vp.height() - 1
+    assert dock.geometry().top() < top.y() and dock.width() == vp.width()
+    assert {i for i, _r in dock.rects()} == set(rects)
+    assert "클릭해서 고정" in w.lbl_status.text()
     assert _cells(w) == ([od3, os3], od3) and w.multi.count == 2
     assert w.picks() == [od3, os3] and not w._own_picks() and w.current["id"] == od3
     assert _item(w, rf3).data(PICK_ROLE) == 0 and _item(w, od3).data(PICK_ROLE) == SHOWN
-    # … another photo: that one; the mouse off the list: the pane is gone
+    # … the photos follow the mouse: a little to the side, the same photo a little smaller, its neighbour larger
+    was = rects[k].width()
+    _move(app, w, at + QPoint(12, 0))
+    assert dict(t.dock_rects())[k].width() != was
+    # … the other row: that one grows, the first as it was; off the list: every photo as in the list
     _hover(app, w, os3)
-    assert pane.isVisible() and pane.image_id == os3 and "OS" in pane.label.text()
-    assert t.grown() == t.row(_item(w, os3))
-    # … a photo of the lower row grows into the row over it: there the photos from its column on move
-    # out of its way (it hides none)
-    k = t.row(_item(w, os3))
-    over = [i for i in range(t.count()) if row_of[i][0] == row_of[k][0] - 1 and row_of[i][1] >= row_of[k][1]]
-    assert over and all(t.visualItemRect(t.item(i)).left() - t.cell_rect(i).left() == 2 * gw + 2 for i in over)
-    assert not any(t.visualItemRect(t.item(i)).intersects(pane.geometry().translated(-vp.mapTo(
-        pane.parentWidget(), QPoint(0, 0)))) for i in range(t.count()) if i != k)
+    assert w._peek == os3 and t.dock_row() == t._slots[t.row(_item(w, os3))][0] != t._slots[k][0]
     _hover(app, w, None)
-    assert w._peek is None and not pane.isVisible() and _cells(w) == ([od3, os3], od3)
-    assert t.grown() is None                               # … and every photo in its own place again
-    assert all(t.visualItemRect(t.item(i)).left() - t.cell_rect(i).left() == 2 for i in range(t.count()))
+    assert w._peek is None and not dock.isVisible() and t.dock_row() is None and t.dock_rects() == []
+    assert _cells(w) == ([od3, os3], od3)
 
-    # a click pins the photo looked at: the pane closes, the photo is above (alone: the first one)
-    _hover(app, w, rf3)
-    _click(app, w, rf3)
-    assert w.picks() == [rf3] and w._peek is None and not pane.isVisible() and _cells(w) == ([rf3], rf3)
+    # a click pins the photo under the mouse — the grown one, wherever its cell is in the list; the row
+    # stays grown while the mouse is on it (the Dock)
+    at = _hover(app, w, rf3)
+    _press_at(app, w, at)
+    assert w.picks() == [rf3] and _cells(w) == ([rf3], rf3) and w._peek == rf3 and dock.isVisible()
     assert _item(w, rf3).data(PICK_ROLE) == 1 and w.lbl_picks.text() == "1장 고정"
-    _hover(app, w, rf3)                                    # (not again while the mouse stays on it)
-    assert not pane.isVisible()
-    # more photos pinned: as many above as are pinned — the pane never changes them
-    _hover(app, w, os3)
-    assert pane.isVisible() and pane.image_id == os3 and _cells(w) == ([rf3], rf3) and w.multi.count == 1
-    _click(app, w, os3)
-    assert w.picks() == [rf3, os3] and _cells(w) == ([rf3, os3], os3) and not pane.isVisible()
+    # more photos pinned: as many above as are pinned — looking at a photo never changes them
+    at = _hover(app, w, os3)
+    assert _cells(w) == ([rf3], rf3) and w.multi.count == 1
+    _press_at(app, w, at)
+    assert w.picks() == [rf3, os3] and _cells(w) == ([rf3, os3], os3)
+    _hover(app, w, None)
     w.set_book("2025-12-01")                               # … from another bookmark as well (2 × 2)
-    _hover(app, w, od2)
-    assert pane.image_id == od2 and _cells(w) == ([rf3, os3], os3)
-    _click(app, w, od2)
+    at = _hover(app, w, od2)
+    assert _cells(w) == ([rf3, os3], os3)
+    _press_at(app, w, at)
     assert w.picks() == [rf3, os3, od2] and _cells(w) == ([rf3, os3, od2], od2) and w.multi.count == 4
-    # a pinned photo under the mouse is looked at large, too (small cells): a click lets it go
+    # a pinned photo under the mouse: a click lets it go
     _hover(app, w, os2)
-    _hover(app, w, od2)
-    assert pane.isVisible() and pane.image_id == od2 and "클릭하면 뺍니다" in w.lbl_status.text()
-    _click(app, w, od2)
-    assert w.picks() == [rf3, os3] and not pane.isVisible()
+    at = _hover(app, w, od2)
+    assert "클릭하면 뺍니다" in w.lbl_status.text()
+    _press_at(app, w, at)
+    assert w.picks() == [rf3, os3]
 
-    # the pane follows the window's size, and goes with the view
+    # the grown row follows the window's size, and goes with the view
     _hover(app, w, os2)
     w.resize(1300, 800)
     app.processEvents()
-    k = t.row(_item(w, os2))
-    at = vp.mapTo(pane.parentWidget(), t.cell_rect(k).bottomLeft())
-    assert pane.isVisible() and (pane.geometry().left(), pane.geometry().bottom()) == (at.x(), at.y())
+    top = vp.mapTo(dock.parentWidget(), QPoint(0, 0))
+    assert dock.isVisible() and dock.geometry().bottom() == top.y() + vp.height() - 1 and dock.width() == vp.width()
     _press(w, "view:multi")
-    assert not pane.isVisible() and w._peek is None
+    assert not dock.isVisible() and w._peek is None and t.dock_row() is None
     _press(w, "view:simple")
 
-    # Detail: the mouse on the list previews as well (the big photo stays); a click shows the photo
+    # Detail: the photos grow under the mouse as well (the big photo stays); a click shows the photo
     _hover(app, w, None)
     w.set_book("2025-12-01")
     _click(app, w, os2, double=True)
-    assert w._tab() == "all" and w.current["id"] == os2 and not pane.isVisible()
+    assert w._tab() == "all" and w.current["id"] == os2
     _hover(app, w, None)
-    _hover(app, w, od2)
-    assert pane.isVisible() and pane.image_id == od2 and w.current["id"] == os2
-    _click(app, w, od2)
-    assert not pane.isVisible() and w.current["id"] == od2 and w._tab() == "all"
+    at = _hover(app, w, od2)
+    assert dock.isVisible() and w._peek == od2 and w.current["id"] == os2
+    _press_at(app, w, at)
+    assert w.current["id"] == od2 and w._tab() == "all"
     _hover(app, w, None)
 
-    # 보기 → 사진 목록에 마우스를 올리면 미리 보기: off — no pane (remembered); the click still pins
+    # 보기 → 사진 목록에 마우스를 올리면 미리 보기: off — nothing grows (remembered); the click still pins
     _press(w, "view:simple")
     w.set_book("2026-03-02")
     assert w.picks() == [od3, os3]
     w.act_peek.setChecked(False)
     assert not w.settings.hover_preview
-    _hover(app, w, rf3)
-    assert w._peek is None and not pane.isVisible()
+    _move(app, w, t.cell_rect(t.row(_item(w, rf3))).center())
+    assert w._peek is None and not dock.isVisible() and t.dock_row() is None
     _click(app, w, rf3)
     assert w.picks() == [rf3]
     w.act_peek.setChecked(True)
@@ -337,53 +349,66 @@ def test_the_left_button_on_a_photo_not_zoomed_yet_shows_the_loupe(win):
 
 
 def test_how_large_the_preview_grows_is_chosen_in_the_view_menu(win):
-    """보기 → 미리 보기 배율: 1.5 · 2 · 2.5 · 3배 — the photo under the mouse grows that many times,
-    the photos after it make that much room, remembered."""
+    """보기 → 미리 보기 배율: 1.5 · 2 · 2.5 · 3배 — the photo under the mouse grows that many times (those
+    beside it less), remembered."""
     from fundusview.config import Settings, config_dir
     from fundusview.ui.main_window import THUMB_GRID
     from fundusview.ui.peek import SCALES
 
     app, w, db, refs, ids = win
     _open(app, w, refs["kim"])
-    pane, t = w.peek_pane, w.thumbs
+    t = w.thumbs
     gw, gh = THUMB_GRID
     assert SCALES == (1.5, 2.0, 2.5, 3.0) and w.settings.preview_scale == 2.0
-    assert w.peek_scale_acts[2.0].isChecked() and pane.scale == 2.0
-    _hover(app, w, ids["rf3"])
+    assert w.peek_scale_acts[2.0].isChecked()
     k = t.row(_item(w, ids["rf3"]))
+    largest = {}
     for scale in SCALES:
         w.peek_scale_acts[scale].trigger()
         app.processEvents()
-        assert w.settings.preview_scale == scale and pane.scale == scale and w.peek_scale_acts[scale].isChecked()
-        assert pane.isVisible() and (pane.width(), pane.height()) == (round(gw * scale), round(gh * scale))
-        assert t.grown() == k and t.grown_rect().width() == gw + round(gw * (scale - 1))
-        assert pane.geometry().top() >= 0
+        assert w.settings.preview_scale == scale and w.peek_scale_acts[scale].isChecked()
+        _hover(app, w, ids["rf3"])
+        r = dict(t.dock_rects())[k]
+        largest[scale] = r.width()
+        assert 0.8 * scale * gw < r.width() <= scale * gw + 1e-6 and r.height() <= scale * gh + 1e-6
+        assert w.dock.isVisible() and w.dock.geometry().top() >= 0
+        _hover(app, w, None)
+    assert largest[1.5] < largest[2.0] < largest[2.5] < largest[3.0]
     assert Settings.load(config_dir() / "settings.json").preview_scale == 3.0
     w.peek_scale_acts[2.0].trigger()
-    _hover(app, w, None)
 
 
-def test_the_preview_grows_step_by_step(win):
-    """With 부드러운 움직임 the photo grows from its size in the list to the 배율, the room in its row with it."""
+def test_the_photos_grow_and_shrink_step_by_step(win):
+    """With 부드러운 움직임 the photos grow from their size in the list to the 배율 when the mouse comes onto
+    the list, and shrink back when it leaves."""
     from fundusview.ui import motion
     from fundusview.ui.main_window import THUMB_GRID
 
     app, w, db, refs, ids = win
     _open(app, w, refs["kim"])
-    pane, t = w.peek_pane, w.thumbs
+    t = w.thumbs
+    gw = THUMB_GRID[0]
+    k = t.row(_item(w, ids["rf3"]))
+    at = t.cell_rect(k).center()
+    largest = lambda: max(r.width() for _i, r in t.dock_rects())  # noqa: E731
     tk = motion.ticker()
     motion.set_enabled(True)
     tk.manual = True
     try:
-        _hover(app, w, ids["rf3"])
-        assert pane.isVisible() and pane.width() == THUMB_GRID[0] and t.grown_rect().width() == THUMB_GRID[0]
+        _move(app, w, at)
+        assert w.dock.isVisible() and largest() == pytest.approx(gw)          # (as in the list, to begin with)
         tk.advance(0.05)
-        mid = pane.width()
-        assert THUMB_GRID[0] < mid < 2 * THUMB_GRID[0] and t.grown_rect().width() == mid
+        mid = largest()
+        assert gw < mid < 1.9 * gw
         tk.advance(0.2)
-        assert pane.width() == 2 * THUMB_GRID[0] and t.grown_rect().width() == 2 * THUMB_GRID[0]
-        _hover(app, w, None)
-        assert not pane.isVisible() and t.grown() is None
+        full = largest()
+        assert mid < full <= 2 * gw
+        _move(app, w, None)                                                    # off the list: back, step by step
+        assert t.dock_row() is not None
+        tk.advance(0.05)
+        assert gw < largest() < full
+        tk.advance(0.2)
+        assert t.dock_row() is None and not w.dock.isVisible() and w._peek is None
     finally:
         tk.manual = False
         motion.set_enabled(False)

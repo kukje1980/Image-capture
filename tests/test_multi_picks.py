@@ -374,3 +374,38 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
         assert set(w.picks()) <= theirs and w._per_photo == {}
     finally:
         w.close()
+
+
+def test_the_photos_of_the_list_have_round_corners():
+    """0.10.11: a photo of the list is painted with round corners (as an icon of the Dock) — nothing of
+    it in the very corner of its place, the photo itself a little inside."""
+    from PySide6.QtCore import QRect, QSize, Qt
+    from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPixmap
+    from PySide6.QtWidgets import QApplication, QListWidgetItem, QStyleOptionViewItem
+
+    from fundusview.ui.thumbs import ThumbDelegate, ThumbStrip
+
+    app = QApplication.instance() or QApplication([])  # noqa: F841
+    t = ThumbStrip()
+    t.setGridSize(QSize(94, 72))
+    d = ThumbDelegate(t)
+    d.show_date = False
+    t.setItemDelegate(d)
+    pm = QPixmap(320, 240)
+    pm.fill(QColor("#ff0000"))
+    t.addItem(QListWidgetItem(QIcon(pm), ""))
+    img = QImage(94, 72, QImage.Format.Format_ARGB32)
+    img.fill(QColor("#0000ff"))
+    opt = QStyleOptionViewItem()
+    opt.rect = QRect(0, 0, 94, 72)
+    p = QPainter(img)
+    d.paint(p, opt, t.model().index(0, 0))
+    p.end()
+    photo = d.photo_rect(opt, t.model().index(0, 0))
+    assert d.corner(photo) == pytest.approx(0.16 * min(photo.width(), photo.height())) and d.corner(photo) > 6
+    red = lambda x, y: img.pixelColor(x, y).red() > 200 and img.pixelColor(x, y).blue() < 60  # noqa: E731
+    assert red(photo.center().x(), photo.center().y()) and red(photo.left() + 1, photo.center().y())
+    for x, y in ((photo.left(), photo.top()), (photo.right(), photo.top()), (photo.left(), photo.bottom()),
+                 (photo.right(), photo.bottom())):
+        assert not red(x, y)                                   # the corners: cut round
+    assert Qt is not None
