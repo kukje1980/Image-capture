@@ -352,7 +352,7 @@ function capMesh(center, T, U, V, rx, ry, n, uvOffset, sign = 1) {
   for (let j = 0; j < n; j++) idx.push(0, 1 + j, 2 + j);
   return mesh(pos, nrm, idx, uv);
 }
-function nerveMesh(p, lat, nSeg = 64, nLen = 48) {
+function nerveCurve(p, lat, nLen = 48) {   // the optic nerve's axis, from the disc back
   p = unit(p);
   const nasal = [lat === 'OS' ? -1 : 1, 0, 0];
   const P0 = mul(p, 0.975), P1 = mul(p, 1.30);
@@ -363,6 +363,11 @@ function nerveMesh(p, lat, nSeg = 64, nLen = 48) {
     const t = i / (nLen - 1), a = (1 - t) ** 3, b = 3 * (1 - t) ** 2 * t, d = 3 * (1 - t) * t * t, e = t ** 3;
     c.push(add(add(mul(P0, a), mul(P1, b)), add(mul(P2, d), mul(P3, e))));
   }
+  return c;
+}
+function nerveMesh(p, lat, nSeg = 64, nLen = 48) {
+  p = unit(p);
+  const c = nerveCurve(p, lat, nLen);
   const s = [0];
   for (let i = 1; i < nLen; i++) s.push(s[i - 1] + len(sub(c[i], c[i - 1])));
   const sEnd = s[nLen - 1];
@@ -506,6 +511,7 @@ const E = {
   // view
   mode: 'outside', cut: 0.25, showNerve: true, showMuscles: false, showGrid: false,
   half: 0, xray: 0, scan: null, scanDim: 1, scanBeam: 1, fovSweep: 0, fovAlpha: 0, fovRing: 0, black: false,
+  sight: null,                  // 보는 과정: { t } while it plays
   slitAxis: 'v', scanSign: -1,  // the slit's way over the photo: along its vertical ('v') or horizontal ('h') axis, from which end
   simple: 0,                    // 단순하게 보기: 0 the detailed look … 1 plain (tweened)
   reliefOn: false, reliefAmount: 0.45 * 0.08, hmap: null, hmapTex: null, hmapVer: 0,   // 망막 높낮이
@@ -929,7 +935,7 @@ const spin = {
   step(dt) {
     const t = now();
     const busy = E.drag != null || fling.running() || zoomGlide.running() || viewGlide.running() || journey.running() || E.mode !== 'outside'
-      || E.scan != null || show.playing || E.walk || len(viewBasis()[0]) < 1.1;   // (not inside the eye on the way in; the picked cornea stays facing you)
+      || E.scan != null || show.playing || sight.timerOn || E.walk || len(viewBasis()[0]) < 1.1;   // (not inside the eye on the way in; the picked cornea stays facing you)
     if (busy || this.yaw == null || Math.abs(E.yaw - this.yaw) > 1e-9) { E.touched = t; this.yaw = E.yaw; return E.autoRotate !== 0; }
     const k = clamp((t - E.touched - E.SPIN_WAIT) / 1.5, 0, 1);
     if (k > 0) { E.yaw = (E.yaw + E.autoRotate * k * k * (3 - 2 * k) * dt) % 360; this.yaw = E.yaw; redraw(); }
@@ -1235,6 +1241,7 @@ function paintOverlay(mvp) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   const ringAlpha = E.walk && E.mode === 'outside' ? 1 - ease((journey.j / JOURNEY_FRONT - 0.6) / 0.35) : 0;
   if (ringAlpha > 0) paintWalkRing(ctx, mvp, w, h, ringAlpha);
+  if (E.sight) paintSight(ctx, mvp, w, h, E.sight.t);
   const wanted = halfOn() && ((E.fovAlpha > 0.005 && E.fovSweep > 0) || (E.scan != null && E.scanBeam > 0.005));
   if (!wanted) return;
   const [k, off] = halfPlane(), eye = viewBasis()[0];
@@ -1325,15 +1332,16 @@ function frame(t) {
   lastT = t;
   ticker.step(dt);
   if (show.timerOn) show.tick();
-  const busy = ticker.anims.size > 0 || show.timerOn || E.drag != null;
+  if (sight.timerOn) sight.tick();
+  const busy = ticker.anims.size > 0 || show.timerOn || sight.timerOn || E.drag != null;
   if (busy && gap > 0.05 && ++slowFrames >= 2) { scale = Math.max(0.45, scale * 0.8); slowFrames = 0; }
   else if (gap < 0.03) { slowFrames = 0; if (busy && scale < 1) scale = Math.min(1, scale * 1.06); }
   if (dirty && R.ok) {
     dirty = false; render(busy ? [1, 0.8, 0.65, 0.5].find((q) => q <= scale + 1e-9) || 0.5 : 1);   // in steps: the canvas is resized seldom
     clearTimeout(sharpTimer);
-    if (busy && scale < 1) sharpTimer = setTimeout(() => { if (!(ticker.anims.size || show.timerOn || E.drag)) redraw(); }, 180);
+    if (busy && scale < 1) sharpTimer = setTimeout(() => { if (!(ticker.anims.size || show.timerOn || sight.timerOn || E.drag)) redraw(); }, 180);
   }
-  if (ticker.anims.size || show.timerOn || dirty) requestFrame(); else lastT = 0;
+  if (ticker.anims.size || show.timerOn || sight.timerOn || dirty) requestFrame(); else lastT = 0;
 }
 function render(s = 1) {
   resize(s);
@@ -1398,6 +1406,7 @@ const show = {
     this.apply(this.frame(0)); requestFrame();
   },
   stop() {
+    sight.stop();
     if (!this.timerOn) return;
     this.timerOn = false;
     const wasPlaying = this.playing; this.playing = false;
@@ -1464,6 +1473,252 @@ const show = {
     const t = now() - this.t0;
     this.apply(this.frame(t));
     if (this.playing && t >= this.T_TURN[1]) { this.playing = false; ui.where(''); ui.onScanFinished(); }
+  },
+};
+
+// ---------------------------------------------------------------------------------------------
+// 보는 과정: the whole eye looks at an object; its light goes through the cornea, the pupil and the lens
+// and falls on the retina upside down; the eye opens (깊이 50) and the retina — the patient's photo —
+// turns the light into electric signals, which run to the optic disc, along the optic nerve and to the
+// visual cortex at the back of the brain. A pure function of time, drawn over the 3D eye.
+// ---------------------------------------------------------------------------------------------
+const SIGHT_OBJECTS = {   // shapes on a card facing the eye: [across −0.5…0.5, up 0…1]
+  tree: { name: '나무', shapes: [
+    { c: [140, 95, 55], p: [[-0.07, 0], [0.07, 0], [0.07, 0.36], [-0.07, 0.36]] },
+    { c: [58, 150, 80], p: [[-0.40, 0.28], [0.40, 0.28], [0, 0.74]] },
+    { c: [80, 180, 100], p: [[-0.29, 0.56], [0.29, 0.56], [0, 1.0]] },
+    { c: [235, 64, 60], p: [[-0.24, 0.42], [-0.17, 0.35], [-0.10, 0.42], [-0.17, 0.49]] }] },
+  letter: { name: '시력표 E', shapes: [
+    { c: [244, 244, 238], p: [[-0.42, 0.04], [0.42, 0.04], [0.42, 0.96], [-0.42, 0.96]] },
+    { c: [28, 28, 32], p: [[-0.25, 0.15], [0.25, 0.15], [0.25, 0.29], [-0.11, 0.29], [-0.11, 0.43], [0.20, 0.43], [0.20, 0.57],
+      [-0.11, 0.57], [-0.11, 0.71], [0.25, 0.71], [0.25, 0.85], [-0.25, 0.85]] }] },
+  house: { name: '집', shapes: [
+    { c: [150, 150, 158], p: [[0.18, 0.62], [0.29, 0.62], [0.29, 0.95], [0.18, 0.95]] },
+    { c: [214, 180, 130], p: [[-0.34, 0], [0.34, 0], [0.34, 0.56], [-0.34, 0.56]] },
+    { c: [205, 72, 60], p: [[-0.46, 0.54], [0.46, 0.54], [0, 0.96]] },
+    { c: [110, 70, 42], p: [[-0.24, 0], [-0.05, 0], [-0.05, 0.32], [-0.24, 0.32]] },
+    { c: [120, 190, 235], p: [[0.08, 0.24], [0.24, 0.24], [0.24, 0.40], [0.08, 0.40]] }] },
+};
+const SIGHT = { ZO: 3.3, H: 1.5, NODAL: [0, 0, 0.42], OPEN: 0.5,   // the object, the eye's nodal point, 깊이 50
+  STEPS: [[0, '물체를 바라봅니다'], [1.9, '① 빛이 각막 · 동공 · 수정체를 지나며 꺾입니다'], [5.2, '② 망막에 거꾸로 된 상이 맺힙니다 (위아래 · 좌우 반대)'],
+    [7.6, '③ 시세포가 빛을 전기 신호로 바꿉니다'], [10.5, '④ 전기 신호가 신경섬유를 따라 시신경 유두로 모입니다'],
+    [13.6, '⑤ 시신경을 따라 뇌 뒤쪽의 시각 피질로 갑니다'], [17.6, '⑥ 뇌가 상을 바로 세워 ‘본다’고 느낍니다']] };
+const sightSide = () => (E.discDir ? (E.discDir[0] < 0 ? -1 : 1) : (E.laterality === 'OS' ? -1 : 1));   // the nasal side
+const slerp = (a, b, t) => {
+  const w = Math.acos(clamp(dot(a, b), -1, 1)), s = Math.sin(w);
+  return s < 1e-6 ? a.slice() : add(mul(a, Math.sin((1 - t) * w) / s), mul(b, Math.sin(t * w) / s));
+};
+function catmull(P, n) {   // a smooth line through the points
+  const out = [], at = (i) => P[clamp(i, 0, P.length - 1)];
+  for (let i = 0; i < n; i++) {
+    const x = i / (n - 1) * (P.length - 1), j = Math.min(P.length - 2, Math.floor(x)), t = x - j;
+    const [p0, p1, p2, p3] = [at(j - 1), at(j), at(j + 1), at(j + 2)];
+    out.push([0, 1, 2].map((k) => 0.5 * (2 * p1[k] + (p2[k] - p0[k]) * t + (2 * p0[k] - 5 * p1[k] + 4 * p2[k] - p3[k]) * t * t
+      + (3 * p1[k] - 3 * p2[k] + p3[k] - p0[k]) * t * t * t)));
+  }
+  return out;
+}
+const sightObj = (b, a) => [b * SIGHT.H, (a - 0.5) * SIGHT.H, SIGHT.ZO];
+function sightImg(b, a) {   // where the object's point falls on the retina: straight through the nodal point
+  const N = SIGHT.NODAL, d = unit(sub(N, sightObj(b, a))), R = K.R_RET * 0.985, nd = dot(N, d);
+  return add(N, mul(d, -nd + Math.sqrt(Math.max(0, nd * nd - (dot(N, N) - R * R)))));
+}
+// the brain seen from the side (front to the left of the list): [0…1 front to back, 0…1 bottom to top]
+const BRAIN = {
+  outline: [[0.02, 0.52], [0.07, 0.80], [0.22, 0.95], [0.45, 1.0], [0.70, 0.95], [0.90, 0.78], [1.0, 0.52], [0.95, 0.33], [0.80, 0.26],
+    [0.64, 0.28], [0.52, 0.20], [0.36, 0.13], [0.20, 0.17], [0.11, 0.30], [0.04, 0.38]],
+  cerebellum: [[0.66, 0.24], [0.78, 0.27], [0.90, 0.22], [0.90, 0.10], [0.78, 0.04], [0.66, 0.10]],
+  stem: [[0.50, 0.24], [0.62, 0.24], [0.64, -0.08], [0.55, -0.08]],
+  folds: [[[0.16, 0.62], [0.30, 0.74], [0.34, 0.90]], [[0.40, 0.52], [0.50, 0.72], [0.48, 0.96]], [[0.62, 0.50], [0.70, 0.70], [0.68, 0.92]],
+    [[0.14, 0.36], [0.34, 0.40], [0.58, 0.36]], [[0.80, 0.42], [0.86, 0.58], [0.84, 0.76]]],
+  chiasm: [0.17, 0.22], lgn: [0.50, 0.40], radiation: [0.74, 0.50], cortex: [0.94, 0.47],
+};
+function brainPoint([u, v]) { return [sightSide() * 1.0, -0.85 + v * 2.4, -2.15 - u * 3.3]; }
+function sightWay() {   // the signal's way: over the retina to the disc, along the nerve, through the brain
+  const D = unit(E.discDir || anatomicalDisc(E.laterality)), R = K.R_RET * 0.985;
+  const fibres = [[0, 0.5], [-0.3, 0.2], [0.3, 0.2], [-0.22, 0.8], [0.22, 0.8], [0, 0.95], [0, 0.05]].map(([b, a]) => {
+    const s = unit(sightImg(b, a)), line = [];
+    for (let i = 0; i <= 24; i++) line.push(mul(slerp(s, D, i / 24), R));
+    return line;
+  });
+  const nerve = nerveCurve(D, E.laterality, 32);
+  const brain = catmull([nerve[nerve.length - 1], brainPoint(BRAIN.chiasm), brainPoint(BRAIN.lgn), brainPoint(BRAIN.radiation), brainPoint(BRAIN.cortex)], 48);
+  return { fibres, nerve, brain };
+}
+const along = (line, x) => { const f = clamp(x, 0, 1) * (line.length - 1), i = Math.min(line.length - 2, Math.floor(f)); return [0, 1, 2].map((k) => lerp(line[i][k], line[i + 1][k], f - i)); };
+
+function paintSight(ctx, mvp, w, h, t) {
+  const toScreen = (p) => { const v = m4v(mvp, [p[0], p[1], p[2], 1]); return v[3] <= 1e-6 ? null : [(v[0] / v[3] + 1) * 0.5 * w, (1 - v[1] / v[3]) * 0.5 * h]; };
+  const o = toScreen(E.target), o1 = toScreen(add(E.target, viewBasis()[2]));
+  if (!o || !o1) return;
+  const px = Math.hypot(o1[0] - o[0], o1[1] - o[1]), lw = clamp(px / 90, 1.2, 3.2);   // one eye radius on the screen
+  const rgba = (c, a) => `rgba(${c[0]},${c[1]},${c[2]},${clamp(a, 0, 1)})`;
+  const line = (pts, color, alpha, width, glow = true) => {
+    pts = pts.filter(Boolean);
+    if (pts.length < 2 || alpha <= 0.003) return;
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    for (const [wm, a] of glow ? [[4.5, 0.10], [2.4, 0.25], [1, 1]] : [[1, 1]]) {
+      ctx.strokeStyle = rgba(color, alpha * a); ctx.lineWidth = width * wm;
+      ctx.beginPath(); ctx.moveTo(...pts[0]); for (const q of pts.slice(1)) ctx.lineTo(...q); ctx.stroke();
+    }
+  };
+  const spot = (p, color, alpha, r) => {
+    if (!p || alpha <= 0.003) return;
+    for (const [rm, a] of [[3.0, 0.14], [1.7, 0.38], [1, 1]]) { ctx.fillStyle = rgba(color, alpha * a); ctx.beginPath(); ctx.arc(p[0], p[1], r * rm, 0, 2 * PI); ctx.fill(); }
+  };
+  const fill = (pts, color, alpha, stroke = null) => {
+    pts = pts.map(toScreen);
+    if (pts.some((q) => !q) || alpha <= 0.003) return;
+    ctx.beginPath(); ctx.moveTo(...pts[0]); for (const q of pts.slice(1)) ctx.lineTo(...q); ctx.closePath();
+    ctx.fillStyle = rgba(color, alpha); ctx.fill();
+    if (stroke) { ctx.strokeStyle = rgba(stroke, alpha); ctx.lineWidth = lw * 0.8; ctx.lineJoin = 'round'; ctx.stroke(); }
+  };
+  const label = (p, text, alpha, dy = 0) => {
+    if (!p || alpha <= 0.01) return;
+    const size = clamp(px * 0.13, 11, 17);
+    ctx.font = `600 ${size}px ${getComputedStyle(document.body).fontFamily}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.lineJoin = 'round';
+    ctx.strokeStyle = `rgba(0,10,20,${alpha * 0.85})`; ctx.lineWidth = size / 3.2; ctx.strokeText(text, p[0], p[1] + dy * size);
+    ctx.fillStyle = `rgba(236,240,246,${alpha})`; ctx.fillText(text, p[0], p[1] + dy * size);
+  };
+  const shapes = (SIGHT_OBJECTS[sight.kind] || SIGHT_OBJECTS.tree).shapes;
+  const LIGHT = [[255, 214, 102], [120, 220, 255]], SIGNAL = [255, 236, 120], PINK = [236, 170, 176];
+
+  // the object, facing the eye
+  const aObj = ramp(t, 0.7, 1.7);
+  for (const s of shapes) fill(s.p.map(([b, a]) => sightObj(b, a)), s.c, aObj);
+  label(toScreen(sightObj(0, 0)), '물체', aObj * (1 - ramp(t, 12.5, 13.8)), 1.1);
+
+  // its light: from the top (warm) and the bottom (cool) through the cornea, the pupil and the lens — they cross
+  const head = ramp(t, 1.9, 4.6), aRay = lerp(1, 0.32, ramp(t, 7.6, 9.0)) * lerp(1, 0.4, ramp(t, 13.4, 14.6));
+  if (head > 0) {
+    [[0, 0.97], [0, 0.03]].forEach(([b, a], n) => {
+      const O = sightObj(b, a), I = sightImg(b, a);
+      for (const c of [-0.105, 0, 0.105]) {
+        const y = c * 1.15, way = [O, [0, y, K.CORNEA_CENTER_Z + Math.sqrt(Math.max(0, K.CORNEA_R ** 2 - y * y))], [0, c * 0.82, K.LENS_EQ_Z], I];
+        const L = [0]; for (let i = 1; i < way.length; i++) L.push(L[i - 1] + len(sub(way[i], way[i - 1])));
+        const reach = head * L[3], pts = [way[0]];
+        for (let i = 1; i < way.length; i++) {
+          if (reach >= L[i]) { pts.push(way[i]); continue; }
+          if (reach > L[i - 1]) pts.push(add(way[i - 1], mul(sub(way[i], way[i - 1]), (reach - L[i - 1]) / (L[i] - L[i - 1]))));
+          break;
+        }
+        const scr = pts.map(toScreen);
+        line(scr, LIGHT[n], aRay * (c === 0 ? 0.9 : 0.6), lw * 0.9);
+        ctx.setLineDash([lw * 2.5, lw * 6]); ctx.lineDashOffset = -t * 46;   // light on its way
+        line(scr, [255, 255, 255], aRay * 0.75, lw * 0.9, false);
+        ctx.setLineDash([]);
+        if (head < 1) spot(scr[scr.length - 1], LIGHT[n], aRay, lw * 1.5);
+      }
+    });
+  }
+
+  // the image on the retina: upside down, left and right swapped
+  const aImg = ramp(t, 5.6, 6.9);
+  for (const s of shapes) fill(s.p.map(([b, a]) => sightImg(b, a)), s.c, aImg * lerp(0.8, 0.45, ramp(t, 9.5, 11)));
+
+  // light → electric signal: the photoreceptors under the image fire
+  const aSpark = ramp(t, 7.6, 8.4) * lerp(1, 0.55, ramp(t, 13.4, 14.6));
+  if (aSpark > 0) {
+    for (let i = 0; i < 22; i++) {
+      const b = ((i * 0.618) % 1) - 0.5, a = (i * 0.377 + 0.13) % 1, f = Math.max(0, Math.sin(t * 8.5 + i * 2.4));
+      spot(toScreen(sightImg(b * 0.8, a)), SIGNAL, aSpark * f * f, lw * 0.9);
+    }
+  }
+
+  // the signal's way and the pulses on it
+  const F = t < 13.5 ? ramp(t, 10.5, 13.5) : t < 15.8 ? 1 + (t - 13.5) / 2.3 : Math.min(3, 2 + (t - 15.8) / 1.8);
+  const aBrain = ramp(t, 13.7, 15.1);
+  if (aBrain > 0) {
+    const smooth = (P, n = 64) => catmull([...P, P[0], P[1]].map(brainPoint), n);
+    fill(smooth(BRAIN.stem, 24), [196, 150, 150], aBrain * 0.5, PINK);
+    fill(smooth(BRAIN.cerebellum, 40), [206, 150, 156], aBrain * 0.55, PINK);
+    fill(smooth(BRAIN.outline, 96), [222, 160, 168], aBrain * 0.5, PINK);
+    for (const f of BRAIN.folds) line(catmull(f.map(brainPoint), 16).map(toScreen), PINK, aBrain * 0.55, lw * 0.7, false);
+    const lit = ramp(t, 17.0, 18.2) * (0.75 + 0.25 * Math.sin(t * 5));
+    spot(toScreen(brainPoint(BRAIN.cortex)), SIGNAL, aBrain * lit * 0.8, px * 0.13);
+    label(toScreen(brainPoint(BRAIN.cortex)), '시각 피질', aBrain, 2.3);
+    label(toScreen(brainPoint([0.45, 1.0])), '뇌', aBrain, -1.0);
+  }
+  if (F > 0) {
+    const way = sightWay(), aWay = 0.5;
+    for (const f of way.fibres) line(f.slice(0, 1 + Math.ceil(Math.min(1, F) * 24)).map(toScreen), SIGNAL, aWay * 0.7, lw * 0.6);
+    if (F > 1) line(way.nerve.slice(0, 1 + Math.ceil(Math.min(1, F - 1) * 31)).map(toScreen), SIGNAL, aWay, lw);
+    if (F > 2) line(way.brain.slice(0, 1 + Math.ceil(Math.min(1, F - 2) * 47)).map(toScreen), SIGNAL, aWay, lw);
+    label(toScreen(way.nerve[20]), '시신경', ramp(t, 13.6, 14.6), 1.6);
+    spot(toScreen(way.fibres[0][24]), SIGNAL, ramp(F, 0.9, 1.0) * 0.5, lw * 1.6);   // the optic disc
+    for (let j = 0; j < 12; j++) {
+      for (let tail = 0; tail < 4; tail++) {
+        const u = ((t * 0.55 + j * 0.25) % 3 + 3) % 3 - tail * 0.035, a = (1 - tail / 4) ** 2;
+        if (u < 0 || u > F) continue;
+        if (u < 1) for (const f of way.fibres) spot(toScreen(along(f, u)), SIGNAL, a * 0.9, lw * 0.85);
+        else spot(toScreen(along(u < 2 ? way.nerve : way.brain, u - Math.floor(u))), [255, 246, 190], a, lw * 1.5);
+      }
+    }
+  }
+
+  // seen: the brain turns the image the right way up
+  const aSeen = ramp(t, 18.0, 19.2);
+  if (aSeen > 0) {
+    const c = toScreen(brainPoint([0.5, 1.36])), from = toScreen(brainPoint(BRAIN.cortex)), s = px * 0.8;
+    if (c && from) {
+      for (const [k, r] of [[0.25, 0.05], [0.5, 0.08], [0.72, 0.11]]) {
+        ctx.fillStyle = `rgba(24,28,36,${aSeen * 0.85})`; ctx.strokeStyle = rgba(SIGNAL, aSeen * 0.8); ctx.lineWidth = lw * 0.7;
+        ctx.beginPath(); ctx.arc(lerp(from[0], c[0], k), lerp(from[1], c[1], k), s * r, 0, 2 * PI); ctx.fill(); ctx.stroke();
+      }
+      ctx.fillStyle = `rgba(24,28,36,${aSeen * 0.88})`; ctx.strokeStyle = rgba(SIGNAL, aSeen * 0.9); ctx.lineWidth = lw;
+      ctx.beginPath(); ctx.arc(c[0], c[1], s * 0.66, 0, 2 * PI); ctx.fill(); ctx.stroke();
+      for (const sh of shapes) {
+        ctx.beginPath();
+        sh.p.forEach(([b, a], i) => { const q = [c[0] + b * s * 0.9, c[1] - (a - 0.5) * s * 0.9]; if (i) ctx.lineTo(...q); else ctx.moveTo(...q); });
+        ctx.closePath(); ctx.fillStyle = rgba(sh.c, aSeen); ctx.fill();
+      }
+    }
+  }
+}
+
+const sight = {
+  T_END: 21.5, timerOn: false, playing: false, t0: 0, kind: 'tree', step: -1,
+  start() {
+    show.stop(); stopMotion(); journey.end();
+    Object.assign(E, { mode: 'outside', dark: 0, outFov: 38, scan: null, fovSweep: 0, fovAlpha: 0, fovRing: 0 });
+    this.from = { pose: pose(), cut: E.cut, half: E.half, xray: E.xray };
+    const s = sightSide(), P = (yaw, pitch, dist, target) => ({ yaw: ((s * yaw) % 360 + 360) % 360, pitch, dist, target });
+    this.poses = {
+      look: P(46, 10, fit(6.2, 2.7), [0, 0, 1.15]),            // the whole eye and the object
+      enter: P(50, 12, fit(4.4, 1.5), [0, 0, 0.2]),            // the light goes in
+      retina: P(32, 16, fit(4.0, 1.25), [0, 0, -0.1]),         // the eye opened: the image on the retina
+      brain: P(64, 12, fit(7.8, 3.7), [s * 0.5, 0.5, -2.1]),  // the nerve and the brain behind the eye
+    };
+    this.t0 = now(); this.step = -1; this.playing = true; this.timerOn = true;
+    this.apply(0); requestFrame();
+  },
+  stop() {
+    if (!this.timerOn) return;
+    this.timerOn = false; this.playing = false;
+    Object.assign(E, { sight: null, half: 0, xray: 0 });
+    ui.where(''); redraw(); ui.onSightStopped();
+  },
+  frame(t) {   // the camera and the cut: closed while the light goes in, then opened to 깊이 50
+    const p = this.poses, f = this.from;
+    let cam = lerpPose(f.pose, p.look, ramp(t, 0, 1.7));
+    if (t > 2.8) cam = lerpPose(p.look, p.enter, ramp(t, 2.8, 4.8));
+    if (t > 5.0) cam = lerpPose(p.enter, p.retina, ramp(t, 5.0, 6.8));
+    if (t > 13.4) cam = lerpPose(p.retina, p.brain, ramp(t, 13.4, 15.4));
+    const cut = t < 5.0 ? lerp(f.cut, 1, ramp(t, 0, 1.4)) : lerp(1, SIGHT.OPEN, ramp(t, 5.0, 6.6));
+    const k = ramp(t, 0, 1.2);
+    return { pose: cam, cut, half: lerp(f.half, 0, k), xray: lerp(f.xray, 0, k) };
+  },
+  apply(t) {
+    const f = this.frame(t);
+    Object.assign(E, { cut: f.cut, half: f.half, xray: f.xray, sight: { t }, yaw: f.pose.yaw, pitch: f.pose.pitch, dist: f.pose.dist, target: f.pose.target.slice() });
+    let step = 0; SIGHT.STEPS.forEach(([t0], i) => { if (t >= t0) step = i; });
+    if (step !== this.step) { this.step = step; ui.where(SIGHT.STEPS[step][1]); }
+    viewChanged();
+  },
+  tick() {
+    const t = now() - this.t0;
+    this.apply(t);
+    if (this.playing && t >= this.T_END) { this.playing = false; ui.onSightFinished(); }
   },
 };
 
@@ -1957,6 +2212,8 @@ const ui = {
     // 슬릿 스캔
     for (const b of document.querySelectorAll('[name=slitdir]')) b.addEventListener('change', () => this.onSlitDir(b.value));
     $('scan2').addEventListener('click', () => this.toggleScan());
+    for (const id of ['sight', 'sight2']) $(id).addEventListener('click', () => this.toggleSight());
+    $('sight-object').addEventListener('change', () => { sight.kind = $('sight-object').value; redraw(); });
     $('cut').addEventListener('input', () => this.onCut(+$('cut').value));
     $('glass').addEventListener('input', () => { E.glass = +$('glass').value / 100; redraw(); });
     $('xray').addEventListener('change', () => this.onXray($('xray').checked));
@@ -2129,7 +2386,7 @@ const ui = {
     this.status(`화각을 ${fov.toFixed(1)}°로 맞췄습니다 (황반–유두 4.5 mm 기준)`);
   },
   onCut(v) {
-    if (show.timerOn) show.stop();
+    show.stop();
     this.cutValues[this.view] = v;
     if (this.view !== 'front') { vt.finish(); E.half = 1 - v / 100; } else E.cut = v < 100 ? v / 100 : 1;
     redraw();
@@ -2152,7 +2409,7 @@ const ui = {
     this.applyFovMarks();
   },
   onXray(on) {
-    if (show.timerOn) show.stop();
+    show.stop();
     vt.go(null, E.half, on ? 1 : 0, 0.6);
   },
   applyFovMarks() {
@@ -2203,6 +2460,22 @@ const ui = {
     this.scanButtons('■ 멈춤');
     this.status('슬릿 스캔 — 안구를 누르거나 돌리면 멈춥니다');
   },
+  sightButtons(text) { $('sight').textContent = text; $('sight2').textContent = text; },
+  toggleSight() {
+    if (sight.playing) { sight.stop(); return; }
+    if (!photo.current) { this.status('사진을 먼저 고르세요'); return; }
+    show.stop(); vt.finish();
+    if (!$('mode-out').checked) { $('mode-out').checked = true; }
+    this.leaveJourney();
+    this.syncView('front');
+    $('nerve').checked = true; E.showNerve = true;
+    sight.kind = $('sight-object').value;
+    setTimeout(() => sight.start(), 30);
+    this.sightButtons('■ 멈춤');
+    this.status('보는 과정 — 안구를 누르거나 돌리면 멈춥니다');
+  },
+  onSightFinished() { this.sightButtons('▶ 보는 과정'); this.syncFromEye(); },
+  onSightStopped() { this.sightButtons('▶ 보는 과정'); this.syncFromEye(); this.applyFovMarks(); },
   syncFromEye() {
     if (E.half > 0.01) { this.cutValues.section = Math.round(100 * (1 - E.half)); this.syncView('section'); }
     else { this.cutValues.front = E.cut < 1 ? Math.round(E.cut * 100) : 100; this.syncView('front'); }
@@ -2262,14 +2535,14 @@ const ui = {
     const vel = new Velocity();
     const pointers = new Map();
     let press = null, pinch = null, click = false;
-    const interacted = () => { if (show.timerOn) show.stop(); if (vt.active()) vt.finish(); if (journey.running()) { journey.stop(); ui.onJourney(journey.j); } };
+    const interacted = () => { show.stop(); if (vt.active()) vt.finish(); if (journey.running()) { journey.stop(); ui.onJourney(journey.j); } };
     const CLICK_SLOP = 4;   // pixels a click may move and still be a click
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     canvas.addEventListener('pointerdown', (e) => {
       canvas.setPointerCapture(e.pointerId);
       pointers.set(e.pointerId, [e.offsetX, e.offsetY]);
       // a click that only catches something (a flick, ▶ 들어가기, a view glide, the slit scan) picks nothing
-      const busy = fling.running() || viewGlide.running() || journey.running() || show.timerOn || vt.active();
+      const busy = fling.running() || viewGlide.running() || journey.running() || show.timerOn || sight.timerOn || vt.active();
       stopMotion(); E.touched = now(); interacted();
       if (pointers.size === 2) {   // two fingers: pinch to zoom, move to pan
         const [a, b] = [...pointers.values()];
@@ -2360,7 +2633,7 @@ async function main() {
   ui.loadDemo(0);
   setAutoRotate($('spin').checked ? MD.spin : 0);
   viewChanged();
-  window.eye3d = { E, ui, show, journey, redraw, setAutoRotate, frontView, resetView, glideTo, motionOn, cameraMats, m4v, R, gl, renderNow: render,
+  window.eye3d = { E, ui, show, sight, journey, redraw, setAutoRotate, frontView, resetView, glideTo, motionOn, cameraMats, m4v, R, gl, renderNow: render,
     find: { pixelsOf, detectCircle, detectDisc, detectFovea, blur } };   // for checks from the console
 }
 main();

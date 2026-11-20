@@ -60,8 +60,9 @@ def test_the_page_is_built_in_one_file(tmp_path):
         assert p["src"].startswith("data:image/jpeg;base64,") and len(p["circle"]) == 3 and p["disc"] is not None
     assert photos["cam45_nasal"]["fovea"] is not None and photos["cam30_disc"]["fovea"] is None   # the macula off the photo
     for control in ('id="autofind"', 'id="simple"', 'id="surface"', 'id="height"', 'name="slitdir"', 'id="journey"',
-                    'id="walk"'):
+                    'id="walk"', 'id="sight"', 'id="sight-object"'):
         assert control in page, control
+    assert "function paintSight" in page and "시각 피질" in page          # 보는 과정: 물체 → 망막 → 뇌
     assert 'id="autofind" checked' in page                             # finding the macula and disc is the default
     assert "사진 펼치기" not in page and 'id="unwrap"' not in page and "가로 단면" not in page
     from fundusview.ui import eye_model as em

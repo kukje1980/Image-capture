@@ -15,6 +15,7 @@
   <span class="zoom" id="zoom" title="처음 보기 대비 확대 배율 · 더블클릭 또는 0: 처음 보기">배율 ×1.0</span>
   <span class="grow"></span>
   <button class="btn primary" id="scan" title="안구를 옆에서 반으로 자른 단면에 화각을 보이고, 슬릿이 사진을 위에서 아래로 훑는 동안 빛이 동공을 지나 같은 망막 위치에 닿는 모습을 보여 줍니다">▶ 슬릿 스캔</button>
+  <button class="btn primary" id="sight" title="안구가 물체를 바라보고, 빛이 동공을 지나 망막에 거꾸로 맺힌 뒤, 열린 안구(깊이 50)의 망막에서 전기 신호가 되어 시신경을 따라 뇌로 가는 과정을 보여 줍니다">▶ 보는 과정</button>
   <button class="btn" id="full" title="3D 안구를 화면 전체로 (Esc: 돌아가기 · Space: 슬릿 스캔)">크게 보기</button>
   <button class="btn toggle" id="panel" aria-pressed="true" title="오른쪽 설정 패널 보이기 / 숨기기">설정</button>
 </header>
@@ -125,6 +126,16 @@
         </div>
         <p class="slit-note" id="slit-note">위에서 아래로 — 세로 단면을 옆에서 봅니다</p>
         <button class="btn primary wide" id="scan2" title="고른 방향으로 슬릿이 사진을 훑는 동안 빛이 동공을 지나 같은 망막 위치에 닿는 모습을 보여 줍니다">▶ 슬릿 스캔</button>
+      </div>
+    </div>
+
+    <div class="group">
+      <h2 class="group-title">보는 과정</h2>
+      <div class="card">
+        <div class="row"><label class="row-label" for="sight-object">물체</label>
+          <select id="sight-object"><option value="tree">나무</option><option value="letter">시력표 E</option><option value="house">집</option></select></div>
+        <p class="slit-note">물체 → 빛 → 망막의 거꾸로 된 상 → 전기 신호 → 시신경 → 뇌</p>
+        <button class="btn primary wide" id="sight2" title="안구가 물체를 바라보고, 빛이 동공을 지나 망막에 맺힌 뒤, 열린 안구의 망막에서 전기 신호가 되어 뇌로 가는 과정을 보여 줍니다">▶ 보는 과정</button>
       </div>
     </div>
 
