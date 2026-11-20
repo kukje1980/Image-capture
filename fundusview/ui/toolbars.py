@@ -107,6 +107,11 @@ PROCESSING = (
     ("annot_undo", "지우기", "마지막 측정·글자 지우기 (Delete) — ▾ 로 모두", "annot_clear", "—"),
 )
 
+def rnfl_label(k: float = 0.9) -> str:
+    """The ▾ entry of the G 필터 for 녹색 + RNFL 강화 at strength ``k`` (설정 → 일반: 0.5 … 0.9)."""
+    return f"녹색 + RNFL 강화 ({k:g}) — 녹내장 분석 → 광각 분석의 레드프리와 같음"
+
+
 # Drop-down extras of a button (key, label)
 MENUS = {
     "op:sharpen": (("op:sharpen_light", "선명하게 (약)"), ("op:sharpen", "선명하게"),
@@ -114,7 +119,7 @@ MENUS = {
     "op:enhance": (("op:enhance", "국소 대비 향상"), ("op:equalize", "히스토그램 평활화"),
                    ("op:denoise", "노이즈 감소 (중간값)"), ("op:denoise_avg", "노이즈 감소 (평균)")),
     "chan:green": (("chan:green", "녹색 성분만 (흑백)"),
-                   ("chan:rnfl", "녹색 + RNFL 강화 (0.9) — 녹내장 분석 → 광각 분석의 레드프리와 같음")),
+                   ("chan:rnfl", rnfl_label())),
     "tool:cd_length": (("tool:cd_length", "C/D 비 (길이)"), ("tool:cd_area", "C/D 비 (면적)")),
     "rot_cw": (("rot_cw", "오른쪽으로 90°"), ("rot_ccw", "왼쪽으로 90°")),
     "tool:text": (("tool:text", "글자"), ("tool:arrow", "화살표 + 글자")),

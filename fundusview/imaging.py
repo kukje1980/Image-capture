@@ -385,13 +385,36 @@ def thumbnail(rgb: np.ndarray, size: int = 320) -> Image.Image:
 CHANNELS = ("rgb", "redfree", "red", "green", "blue", "rnfl")
 CHANNEL_LABELS = {"rgb": "컬러", "redfree": "Red-free (녹색)", "red": "적색 채널",
                   "green": "녹색 채널(흑백)", "blue": "청색 채널", "rnfl": "녹색 + RNFL 강화"}
-RNFL_K = 0.9            # G 필터 ▾ 녹색 + RNFL 강화: the strength of 녹내장 분석 → 광각 분석's RNFL 대비 강화
+RNFL_K = 0.9            # G 필터 ▾ 녹색 + RNFL 강화: the strength of 녹내장 분석 → 광각 분석's RNFL 대비 강화 …
+RNFL_K_RANGE = (0.5, 0.9)   # … or as set in 설정 → 일반 → RNFL 강화 세기 (Settings.rnfl_strength)
+_rnfl_k = RNFL_K
 
 
-def rnfl_green(rgb: np.ndarray, k: float = RNFL_K) -> np.ndarray:
+def clamp_rnfl_k(k) -> float:
+    """``k`` as a strength of RNFL 강화 that can be set: 0.5 … 0.9 (anything else: 0.9)."""
+    try:
+        k = float(k)
+    except (TypeError, ValueError):
+        return RNFL_K
+    return round(min(RNFL_K_RANGE[1], max(RNFL_K_RANGE[0], k)), 2) if k == k else RNFL_K
+
+
+def set_rnfl_k(k) -> float:
+    """The strength of the 녹색 + RNFL 강화 filter from now on (설정 → 일반); returns it as it is kept."""
+    global _rnfl_k
+    _rnfl_k = clamp_rnfl_k(k)
+    return _rnfl_k
+
+
+def rnfl_k() -> float:
+    return _rnfl_k
+
+
+def rnfl_green(rgb: np.ndarray, k: float | None = None) -> np.ndarray:
     """The green channel with its local contrast raised, which brings out the nerve fibre layer — grey;
     outside the image circle the photo as it is. The same picture as 녹내장 분석 → 광각 분석 with 레드프리
-    and RNFL 대비 강화 ``k`` (``glaucoma.enhance_wide``)."""
+    and RNFL 대비 강화 ``k`` (``glaucoma.enhance_wide``); None: the strength set (``set_rnfl_k``)."""
+    k = _rnfl_k if k is None else k
     h, w = rgb.shape[:2]
     g = rgb[..., 1].astype(np.float32)
     if cv2 is not None:

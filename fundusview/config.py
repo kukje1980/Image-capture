@@ -123,6 +123,10 @@ class Settings:
     hover_preview: bool = True
     # … how large: that many times its size in the list (보기 → 미리 보기 배율; peek.SCALES: 1.5 … 3)
     preview_scale: float = 2.0
+    # G 필터 (설정 → 일반): what the button gives — "green" the green channel alone, "rnfl" 녹색 + RNFL 강화
+    # (the ▾ of the button offers both anyway) — and how strong that RNFL 강화 is: 0.5 … 0.9
+    green_filter: str = "green"
+    rnfl_strength: float = 0.9
     # 카메라 각도 보정 (calibrate.py): the lens curve measured from the photos, {camera profile: radial_c}
     lens_curves: dict[str, float] = field(default_factory=dict)
     montage_fast: bool = False      # 몽타주 빠르게: the saved picture at most 2400 px instead of 4000

@@ -7,7 +7,7 @@ pytest.importorskip("PySide6")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
-def test_main_window_imports_and_lists(tmp_path, demo_dir, import_and_wait):
+def test_main_window_imports_and_lists(tmp_path, demo_dir, import_and_wait, monkeypatch):
     from PySide6.QtWidgets import QApplication
 
     from fundusview.config import Settings, WatchFolder
@@ -41,6 +41,44 @@ def test_main_window_imports_and_lists(tmp_path, demo_dir, import_and_wait):
         assert (mid[..., 0] == mid[..., 2]).all() and (mid[..., 0] == mid[..., 1]).all()   # grey on the retina
         w._on_action("chan:green", False)                               # the lit G 필터 clicked again
         assert w._channel == "rgb" and not w.acts["chan:green"].isChecked()
+        # 설정 → 일반: the G 필터 button gives one of its two pictures (처음 설정: 녹색 성분만), and RNFL 강화
+        # is as strong as set there (0.5 … 0.9) — the ▾ says it, a photo shown with it is drawn again
+        from fundusview import imaging
+        from fundusview.ui.dialogs import SettingsDialog
+
+        def settings(mode, k):
+            def ok(dlg):
+                assert dlg.rnfl_strength.minimum() == 0.5 and dlg.rnfl_strength.maximum() == 0.9
+                assert [dlg.green_filter.itemData(i) for i in range(dlg.green_filter.count())] == ["green", "rnfl"]
+                dlg.green_filter.setCurrentIndex(dlg.green_filter.findData(mode))
+                dlg.rnfl_strength.setValue(k)
+                return True
+            monkeypatch.setattr(SettingsDialog, "exec", ok)
+            w._open_settings()
+
+        assert s.green_filter == "green" and s.rnfl_strength == 0.9 and "(0.9)" in labels[1]
+        w._on_action("chan:green", True)                                # the button: the green channel alone
+        assert w._channel == "green"
+        w._on_action("chan:green", False)
+        try:
+            settings("rnfl", 0.5)
+            assert s.green_filter == "rnfl" and s.rnfl_strength == 0.5 and imaging.rnfl_k() == 0.5
+            assert Settings.load().green_filter == "rnfl" and Settings.load().rnfl_strength == 0.5
+            assert "(0.5)" in w.menus["chan:green"].actions()[1].text()
+            w._on_action("chan:green", True)                            # the button now: RNFL 강화, at 0.5
+            assert w._channel == "rnfl" and w.acts["chan:green"].isChecked()
+            weak = w.view2d._rgb.copy()
+            w._on_action("chan:green")                                  # (its ▾ still gives the plain green)
+            assert w._channel == "green"
+            w._on_action("chan:rnfl")
+            settings("rnfl", 0.9)                                       # stronger: the photo shown is drawn again
+            assert imaging.rnfl_k() == 0.9 and (w.view2d._rgb != weak).any()
+            w._on_action("chan:green", False)                           # the lit button again: colour
+            assert w._channel == "rgb"
+            settings("green", 3.0)                                      # (never past 0.9)
+            assert s.green_filter == "green" and s.rnfl_strength == 0.9
+        finally:
+            imaging.set_rnfl_k(imaging.RNFL_K)
         w._on_action("chan:redfree")
         # zooming: steps and wide-field regions from the 화면 맞춤 ▾ menu, the status-bar magnification
         w._on_action("zoom4")

@@ -41,6 +41,11 @@ OPEN_VIEWS = (("odos", "Simple — 최신 OD | OS 두 장을 나란히, 아래 �
               ("grid", "16장 보기 — 사진 16장을 한 화면에 (VK-2 방식), 골라서 [Multi]로 고른 사진만 보기"))
 
 
+# 설정 → 일반 → G 필터 (Settings.green_filter): what the G 필터 button gives
+GREEN_FILTERS = (("green", "녹색 성분만 (흑백)"),
+                 ("rnfl", "녹색 + RNFL 강화 — 신경섬유층이 잘 보이게 국소 대비를 높임"))
+
+
 # 3D 안구의 마우스 휠 (Settings.wheel3d): (key, short name, what it does)
 WHEEL3D = (("zoom", "확대", "커서가 가리키는 곳으로 확대 · 축소 (깊이는 3D 화면 위의 깊이 막대로)"),
            ("depth", "깊이", "자르는 깊이 — 앞으로 굴리면 깊게, 뒤로 굴리면 닫힘 (내부에서는 확대)"),
@@ -320,6 +325,19 @@ class SettingsDialog(QDialog):
                                   "[Multi]를 누르면 고른 사진만 보고, 다시 [Multi]를 누르면 16장으로 돌아옵니다.\n"
                                   "더블클릭하면 그 사진을 크게 봅니다(Detail).")
         f2.addRow("환자를 열면", self.open_view)
+        # G 필터: which of its two pictures the button gives, and how strong RNFL 강화 is
+        from .. import imaging
+        self.green_filter = _combo(GREEN_FILTERS, "rnfl" if settings.green_filter == "rnfl" else "green")
+        self.green_filter.setToolTip("툴바의 [G 필터]를 눌렀을 때 나오는 그림 — 버튼 옆 ▾ 에서는 언제나 둘 다 고를 수 있습니다")
+        f2.addRow("G 필터를 누르면", self.green_filter)
+        self.rnfl_strength = QDoubleSpinBox()
+        self.rnfl_strength.setRange(*imaging.RNFL_K_RANGE)
+        self.rnfl_strength.setSingleStep(0.05)
+        self.rnfl_strength.setDecimals(2)
+        self.rnfl_strength.setValue(imaging.clamp_rnfl_k(settings.rnfl_strength))
+        self.rnfl_strength.setToolTip("녹색 + RNFL 강화의 세기: 0.5(약하게) … 0.9(강하게, 처음 설정)\n"
+                                      "녹내장 분석 → 광각 분석의 RNFL 대비 강화와 같은 값입니다")
+        f2.addRow("RNFL 강화 세기 (0.5 ~ 0.9)", self.rnfl_strength)
         # what is written on the photos of the photo list (also 보기 → 사진 목록 표시)
         self.thumb_date = QCheckBox("날짜")
         self.thumb_date.setChecked(bool(settings.thumb_date))
@@ -538,6 +556,8 @@ class SettingsDialog(QDialog):
         s.wheel3d = self.wheel3d.currentData()
         s.walk_click3d = self.walk_click3d.isChecked()
         s.open_view = self.open_view.currentData()
+        s.green_filter = self.green_filter.currentData()
+        s.rnfl_strength = round(self.rnfl_strength.value(), 2)
         s.thumb_date = self.thumb_date.isChecked()
         s.thumb_kind = self.thumb_kind.isChecked()
         s.custom_filename_patterns = [p for p in self.patterns.toPlainText().splitlines() if p.strip()]
