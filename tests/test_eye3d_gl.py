@@ -214,9 +214,12 @@ def test_section_view(eye, detail):
     k = v.half_plane()[0]
     m = v.meridian()
     # in the section plane, top of the wall: the sclera is a thin white line there (0.10.9: a third of
-    # what it was, about a pixel at this size) — the brightest pixel around its place
+    # what it was, about a pixel at this size) — the brightest pixel around its place …
+    # … so it is looked at from close by, where it is a few pixels wide on any graphics card
+    _render(eye, detail, half=1.0, black=True, pose={**v.section_pose(), "dist": 1.0, "target": tuple(m * 0.97)})
     img, c = v._last_img, _screen(v, m * (1.0 - em.SCLERA_T / 2))
     sclera = max((img.pixelColor(c[0] + dx, c[1] + dy).getRgb()[:3] for dx in (-1, 0, 1) for dy in (-1, 0, 1)), key=min)
+    _render(eye, detail, half=1.0, black=True, pose=v.section_pose())
     assert min(sclera) > 150                                          # white sclera, as in a real eye
     choroid = _at(v, m * (1.0 - em.SCLERA_T - em.CHOROID_T / 2))      # under it: the dark red choroid
     assert choroid[0] > choroid[2] + 20 and sum(choroid) < sum(sclera) * 0.6
