@@ -22,7 +22,7 @@ import math
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout, QWidget
 
-from .depth_bar import DepthBar, TopDepthBar, ZoomBar
+from .depth_bar import LYING_H, DepthBar, TopDepthBar, ZoomBar
 from .eye3d import EyeView
 from .widgets import Switch
 
@@ -85,7 +85,7 @@ class Pair3D(QWidget):
         self._bars_on = True                # each eye has its own two bars (up to BARS_MAX eyes)
         self.top_strip = QWidget()
         self.top_strip.setObjectName("depthStrip3d")
-        self.top_strip.setFixedHeight(TopDepthBar.HEIGHT + 4)
+        self.top_strip.setFixedHeight(LYING_H + 8)
         self.depth_all = QSlider(Qt.Orientation.Horizontal, self)
         self.depth_all.hide()
         self.depth_all.setRange(*DEPTH_RANGE)
