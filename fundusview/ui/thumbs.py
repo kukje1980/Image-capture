@@ -11,6 +11,10 @@ it, and anything else (OU) in a third row only when there is any; the rows scrol
 together. The eye is said once per row, at the left of the rows (``EyeRail``), not on every
 photo. Or all photos in one line — then each has its eye badge (OD blue · OS orange · OU purple ·
 미상 grey). (The main window leaves 미상 photos out of the list.)
+
+미리 보기 (the Dock of a Mac): the photo under the mouse grows where it is — ``set_grown`` makes room
+for it, the photos after it in its row move to the right; the large photo itself is ``peek.PeekPane``,
+laid over that room.
 """
 from __future__ import annotations
 
@@ -181,7 +185,7 @@ class ThumbStrip(QListWidget):
     One list keeps one order for 이전 / 다음, the n/N on the photo and the multi view: the caller
     adds the photos OD first, then OS, then the rest, so reading the rows left to right, top to
     bottom is that order. Qt lays the items out in one line and ``doItemsLayout`` then moves each
-    to its eye's row (``setPositionForIndex`` needs a non-static movement; dragging stays off).
+    to its place (``setPositionForIndex`` needs a non-static movement; dragging stays off).
     """
     stepped = Signal(int)                    # ← (-1) / → (+1): the photo before / after (the window steps)
     rowsChanged = Signal()                   # the rows were laid out again (``EyeRail`` names them)
@@ -191,17 +195,22 @@ class ThumbStrip(QListWidget):
         self.setViewMode(QListWidget.ViewMode.IconMode)
         self.setFlow(QListWidget.Flow.LeftToRight)
         self.setWrapping(False)
-        self.setMovement(QListWidget.Movement.Static)
         self._by_eye = False
-        self._slots: list[tuple[int, int]] = []     # (row, column) of every item, by eye
-        self._shape = (1, 0)                         # rows and columns of the by-eye grid
+        self._slots: list[tuple[int, int]] = []     # (row, column) of every item
+        self._shape = (1, 0)                         # rows and columns of the grid
+        self._grown: tuple[int, int, int] | None = None   # 미리 보기: (item, pixels of room more at its
+                                                     # right, rows over it the grown photo reaches into)
+        self._free_movement()
 
-    def set_by_eye(self, on: bool) -> None:
-        self._by_eye = bool(on)
-        self.setMovement(QListWidget.Movement.Free if on else QListWidget.Movement.Static)
+    def _free_movement(self) -> None:
+        self.setMovement(QListWidget.Movement.Free)  # (the items are placed here: doItemsLayout)
         self.setDragEnabled(False)                   # (setMovement switches dragging on)
         self.setDragDropMode(QAbstractItemView.DragDropMode.NoDragDrop)
         self.viewport().setAcceptDrops(False)
+
+    def set_by_eye(self, on: bool) -> None:
+        self._by_eye = bool(on)
+        self._free_movement()
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.doItemsLayout()
@@ -237,26 +246,75 @@ class ThumbStrip(QListWidget):
             cols[k] += 1
         return slots, (max(1, len(line)), max(cols))
 
-    def doItemsLayout(self) -> None:
-        if self._by_eye:
-            self._slots, self._shape = self._eye_slots()
-        super().doItemsLayout()
-        self.rowsChanged.emit()
-        if not self._by_eye or not self._slots:
+    # -- 미리 보기: the photo under the mouse grows where it is, its row makes room -------------
+    def set_grown(self, i: int | None, extra: int = 0, up: int = 0) -> None:
+        """Item ``i`` has ``extra`` pixels of room more at its right: the photos after it in its
+        row lie that much further right (None: every photo in its own place again). The grown photo
+        reaches ``up`` rows over its own: there the photos from its column on move out of its way,
+        so it hides none. The list does not scroll further for it — what is pushed past the right
+        edge is back when the room goes."""
+        grown = ((int(i), max(0, int(extra)), max(0, int(up)))
+                 if i is not None and 0 <= int(i) < self.count() else None)
+        if grown == self._grown:
+            return
+        self._grown = grown
+        self._place_items()
+        self.viewport().update()
+
+    def grown(self) -> int | None:
+        return self._grown[0] if self._grown is not None else None
+
+    def cell_rect(self, i: int) -> QRect:
+        """The cell of item ``i`` in the viewport — its own place, wherever a grown photo pushed it."""
+        if not 0 <= i < len(self._slots):
+            return QRect()
+        row, col = self._slots[i]
+        gw, gh = self.gridSize().width(), self.gridSize().height()
+        return QRect(col * gw - self.horizontalOffset(), row * gh - self.verticalOffset(), gw, gh)
+
+    def grown_rect(self) -> QRect:
+        """The cell of the grown photo with the room made for it (the mouse in it is on that photo)."""
+        if self._grown is None:
+            return QRect()
+        r = self.cell_rect(self._grown[0])
+        return r.adjusted(0, 0, self._grown[1], 0)
+
+    def itemAt(self, *at):
+        pos = at[0] if len(at) == 1 else QPoint(*at)
+        if self._grown is not None and self.grown_rect().contains(pos):
+            return self.item(self._grown[0])
+        return super().itemAt(pos)
+
+    def _place_items(self) -> None:
+        if not self._slots:
             return
         gw, gh = self.gridSize().width(), self.gridSize().height()
+        at = self._slots[self._grown[0]] if self._grown is not None else None
         model = self.model()
         for i, (row, col) in enumerate(self._slots):
             index = model.index(i, 0)
             dx = max(0, (gw - self.rectForIndex(index).width()) // 2)    # centred in its cell, as Qt does
+            if at is not None and row == at[0] and col > at[1]:
+                dx += self._grown[1]
+            elif at is not None and self._grown[1] and at[0] - self._grown[2] <= row < at[0] and col >= at[1]:
+                dx += gw + self._grown[1]            # a row the grown photo lies over: out of its way
             self.setPositionForIndex(QPoint(col * gw + dx, row * gh), index)
         self.updateGeometries()
 
+    def doItemsLayout(self) -> None:
+        n = self.count()
+        self._slots, self._shape = self._eye_slots() if self._by_eye else ([(0, i) for i in range(n)], (1, n))
+        if self._grown is not None and self._grown[0] >= n:
+            self._grown = None
+        super().doItemsLayout()
+        self.rowsChanged.emit()
+        self._place_items()
+
     def updateGeometries(self) -> None:
         super().updateGeometries()
-        if not self._by_eye or not self.count():
+        if not self.count():
             return
-        # Qt still counts the one line it laid out first: the scroll range is that of the eye rows
+        # Qt counts where the items were ever put: the scroll range is that of the rows themselves
         rows, cols = self._shape
         vp = self.viewport()
         h = self.horizontalScrollBar()

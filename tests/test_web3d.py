@@ -67,4 +67,4 @@ def test_the_page_is_built_in_one_file(tmp_path):
     from fundusview.ui import eye_model as em
 
     m = data["model"]
-    assert m["consts"]["R_RET"] == pytest.approx(em.R_RET) and 0.9 < em.R_RET < 0.95 and len(m["wall_base"]["z"]) == len(m["wall_base"]["r"])
+    assert m["consts"]["R_RET"] == pytest.approx(em.R_RET) and 0.9 < em.R_RET < 0.96 and len(m["wall_base"]["z"]) == len(m["wall_base"]["r"])

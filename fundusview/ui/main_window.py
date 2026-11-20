@@ -5,8 +5,8 @@ Simple, its newest OD | OS (the first setting, v0.10.0), or on 16장 보기, its
 
 The photo list under the photos shows one exam's photos: the 날짜 책갈피 over it (one per exam
 date — 전체 at the left, then the newest, which is open first) pick the exam, and so does the wheel over
-the list (``set_book``). A photo of the list under the mouse is shown larger just above it (미리
-보기, peek.py — a small pane; the photos of the views stay as they are) and on Simple a click selects it, numbered —
+the list (``set_book``). A photo of the list under the mouse grows where it is, like the Dock of a Mac (미리
+보기, peek.py — the photos after it move right; the photos of the views stay as they are) and on Simple a click selects it, numbered —
 as many photos above as are selected; with none the newest OD | OS of the bookmark's exam. The patient list
 is the only one: the command toolbar's [환자 목록], the menu bar's 환자 목록 (Ctrl+0) and 환자 검색
 (Ctrl+F) bring that window up; the patient is the same in both windows.
@@ -83,7 +83,7 @@ from .edge_nav import EdgeNav
 from .keys import IS_MAC, keys
 from .multi_view import CLOSEUP_MAX, MultiView
 from .sample_compare import SampleCompareDialog
-from .peek import SIZES as PEEK_SIZES, PeekPane
+from .peek import SCALES as PEEK_SCALES, PeekPane, scale_name
 from .patient_list import SEX_LABEL, UNASSIGNED, PatientListWindow, age_on
 from .photo_grid import GridPhoto, PhotoGrid
 from .review_view import ReviewPage
@@ -122,6 +122,7 @@ THUMB_GRID = (94, 72)                        # 사진 목록(아래): a cell —
 LATEST = "latest"                            # 날짜 책갈피 of a patient just opened: its newest exam
 ALL_DATES = "*"                              # 날짜 책갈피 "전체": the photos of every exam in the list
 NO_DATE = ""                                 # … "날짜 없음": the photos without an exam date
+PEEK_GROW_S = 0.14                           # … and takes this long to grow where it is (like the Dock)
 PEEK_MS = 110                                # 미리 보기: the mouse rests this long on a photo of the list
 OV_ZOOM = 4.0                                # 확대 화면: 사진 전체 폭의 1/4 을 칸에 (×4)
 
@@ -501,19 +502,19 @@ class MainWindow(QMainWindow):
         self.act_peek = m.addAction("사진 목록에 마우스를 올리면 미리 보기")
         self.act_peek.setCheckable(True)
         self.act_peek.setChecked(bool(self.settings.hover_preview))
-        self.act_peek.setToolTip("아래 사진 목록의 사진에 마우스를 올리면 그 사진 바로 위에 좀 더 크게 보여 줍니다 "
-                                 "(클릭하면 고정)")
+        self.act_peek.setToolTip("아래 사진 목록의 사진에 마우스를 올리면 그 사진이 그 자리에서 커지고 옆 사진들은 "
+                                 "오른쪽으로 밀립니다 — Mac의 Dock처럼 (클릭하면 고정)")
         self.act_peek.toggled.connect(self._set_hover_preview)
-        sub = m.addMenu("미리 보기 크기")          # how large the photo of the list comes up under the mouse
-        self._peek_sizes = QActionGroup(self)
-        self.peek_size_acts = {}
-        for px, name in PEEK_SIZES:
-            a = sub.addAction(f"{name} ({px} 픽셀)")
+        sub = m.addMenu("미리 보기 배율")          # how large the photo of the list grows under the mouse
+        self._peek_scales = QActionGroup(self)
+        self.peek_scale_acts = {}
+        for k in PEEK_SCALES:
+            a = sub.addAction(scale_name(k))
             a.setCheckable(True)
-            self._peek_sizes.addAction(a)
-            a.triggered.connect(lambda _=False, px=px: self._set_preview_size(px))
-            self.peek_size_acts[px] = a
-        self._set_preview_size(self.settings.preview_size, save=False)
+            self._peek_scales.addAction(a)
+            a.triggered.connect(lambda _=False, k=k: self._set_preview_scale(k))
+            self.peek_scale_acts[k] = a
+        self._set_preview_scale(self.settings.preview_scale, save=False)
         m.addAction(self.tb_cmd.toggleViewAction())
         m.addAction(self.tb_proc.toggleViewAction())
         m.addSeparator()
@@ -657,7 +658,7 @@ class MainWindow(QMainWindow):
         self.thumb_paint.show_date = bool(self.settings.thumb_date)
         self.thumb_paint.show_kind = bool(self.settings.thumb_kind)
         self.thumbs.setItemDelegate(self.thumb_paint)
-        self.thumbs.setToolTip(keys("마우스를 올리면 그 사진을 크게 미리 보기 · Simple — 클릭: 고정(번호), 다시 클릭하면 빼기\n"
+        self.thumbs.setToolTip(keys("마우스를 올리면 그 사진이 그 자리에서 커집니다 (미리 보기) · Simple — 클릭: 고정(번호), 다시 클릭하면 빼기\n"
                                     "Detail · 3D — 클릭: 이 사진 보기 · 더블클릭: 크게 보기 (Detail) — Detail에서 더블클릭: 보던 화면으로\n"
                                     "휠: 이전 / 다음 날짜 책갈피 (Shift+휠: 옆으로 넘기기) · ← →: 이전 / 다음 사진\n"
                                     "Ctrl+클릭: 두 번째 사진(②) 선택/해제 — 비교 · 디스크 2장 · "
@@ -672,6 +673,9 @@ class MainWindow(QMainWindow):
         self.thumbs.setMouseTracking(True)
         self.thumbs.viewport().setMouseTracking(True)
         self._peek_timer = QTimer(self, singleShot=True, interval=PEEK_MS, timeout=self._apply_peek)
+        self._peek_grow = motion.Tween(self._grow_peek, PEEK_GROW_S)      # … and grows where it is
+        self._peek_factor = 1.0
+        self.thumbs.horizontalScrollBar().valueChanged.connect(lambda _v: self._place_peek())
         self.book_bar = QTabBar()
         self.book_bar.setObjectName("bookBar")
         self.book_bar.setExpanding(False)
@@ -786,7 +790,7 @@ class MainWindow(QMainWindow):
         self._pages = {"review": self.review, "all": self.page_all, "2d": self.page2d, "3d": self.page3d,
                        "multi": self.multi, "cmp": cmp_w, "grid": self.grid, "3d2": self.pair3d}
         self._ov_on = False
-        self.peek_pane = PeekPane(self.tabs)     # 미리 보기: the photo under the mouse, large over the views
+        self.peek_pane = PeekPane(centre)        # 미리 보기: the photo under the mouse, grown where it is
         self.tabs.installEventFilter(self)
         self._tab_fade = motion.Crossfade(self.tabs.findChild(QStackedWidget) or self.tabs)
         self.tabs.tabBar().tabBarClicked.connect(
@@ -2337,6 +2341,7 @@ class MainWindow(QMainWindow):
             self._review_dirty = True
             if self._tab() == "review":
                 self._fill_review()
+        self.thumbs.set_grown(None)            # (미리 보기: its photo is found again below, or it ends)
         self.thumbs.blockSignals(True)
         self.thumbs.clear()
         self.thumbs.blockSignals(False)
@@ -2429,6 +2434,9 @@ class MainWindow(QMainWindow):
             self._show_image(None)
         self._mark_pair()
         self._fit_thumb_height()
+        if self._peek is not None:             # 미리 보기: over its photo in the list as it is now
+            self._peek_grow.finish()
+            self._place_peek()
         if self.remote or self.share_server is not None:
             self._share_sig = self._photo_sig()
         self._mark_picks()
@@ -2548,51 +2556,87 @@ class MainWindow(QMainWindow):
     PEEK_TABS = ("multi", "all")               # 미리 보기 on Simple · Multi and Detail (the views with the list)
 
     def _apply_peek(self) -> None:
-        """The photo the mouse rests on, larger, in a small pane just above it (``PeekPane``) — the
-        photos of the views stay as they are. Any photo of the list: one selected already is looked at the same way."""
+        """The photo the mouse rests on grows where it is in the list (``PeekPane`` over its cell)
+        and the photos after it in its row move right, like the Dock of a Mac (so do those of the
+        row over it that it would hide) — the photos of the views stay as they are. Any photo of the list: one selected already is looked at the same way."""
         want = self._peek_want
         if self._tab() not in self.PEEK_TABS or not self.settings.hover_preview:
             want = None
         if want == self._peek:
             return
         row = self.db.get_image(want) if want is not None else None
-        rgb = self._multi_small(row, self._photo_state(want), 1) if row is not None else None
+        i = self._thumb_row(want)
+        rgb = self._multi_small(row, self._photo_state(want), 1) if row is not None and i is not None else None
         if rgb is None:
             self._end_peek()
             return
+        self._peek_grow.stop()
         self._peek = want
         own = self._own_picks() and want in self._picks
-        # … just above that photo of the list
-        item = next((self.thumbs.item(i) for i in range(self.thumbs.count())
-                     if self.thumbs.item(i).data(Qt.ItemDataRole.UserRole) == want), None)
-        x = (self.thumbs.viewport().mapTo(self.centralWidget(), self.thumbs.visualItemRect(item).center()).x()
-             - self.tabs.mapTo(self.centralWidget(), QPoint(0, 0)).x()) if item is not None else 0
-        side = self.peek_pane.side
-        if rgb.shape[1] < side and max(row["width"] or 0, row["height"] or 0) > rgb.shape[1]:
-            rgb = self._multi_small(row, self._photo_state(want), 1)      # (1400 px: enough for any size)
-        self.peek_pane.show_photo(want, eye_badge_html(row["laterality"]), rgb, x)     # (only the eye, on the photo)
+        self._peek_factor = 1.0
+        self.thumbs.set_grown(i, 0)
+        self.peek_pane.show_photo(want, eye_badge_html(row["laterality"]), rgb, self._peek_cell(i))  # (only the eye)
+        self._peek_grow.start()
         if self._tab() == "all":
             what = "클릭하면 이 사진을 봅니다"
         else:
             what = "고정한 사진입니다 — 클릭하면 뺍니다" if own else "이 사진이 맞으면 클릭해서 고정(선택)하세요"
         self.lbl_status.setText(f"미리 보기 — {what} · 마우스를 떼면 닫힙니다")
 
+    def _thumb_row(self, image_id: int | None) -> int | None:
+        """Where that photo is in the list (None: not in it)."""
+        return next((i for i in range(self.thumbs.count())
+                     if self.thumbs.item(i).data(Qt.ItemDataRole.UserRole) == image_id), None)
+
+    def _peek_cell(self, i: int) -> QRect:
+        """The cell of photo ``i`` of the list, in the widget the preview lies on."""
+        cell = self.thumbs.cell_rect(i)
+        return QRect(self.thumbs.viewport().mapTo(self.peek_pane.parentWidget(), cell.topLeft()), cell.size())
+
+    def _grow_peek(self, k: float) -> None:
+        """The previewed photo on its way from its size in the list (``k`` 0) to 미리 보기 배율 (1)."""
+        self._place_peek(1.0 + (self.peek_pane.scale - 1.0) * k)
+
+    def _place_peek(self, factor: float | None = None) -> None:
+        """The preview over its photo of the list, ``factor`` times as large (None: as it is), and
+        that much room for it in its row. Its photo no longer in the list: no preview."""
+        if self._peek is None:
+            return
+        i = self._thumb_row(self._peek)
+        if i is None:
+            self._end_peek()
+            return
+        if factor is not None:
+            self._peek_factor = factor
+        elif not self._peek_grow.running():
+            self._peek_factor = self.peek_pane.scale
+        f = self._peek_factor
+        self.thumbs.set_grown(i, round(self.thumbs.gridSize().width() * (f - 1.0)), math.ceil(f - 1.0))
+        self.peek_pane.place(self._peek_cell(i), f)
+
     def _end_peek(self) -> None:
-        """No preview any more (the mouse left the list, a click, another view)."""
+        """No preview any more (the mouse left the list, a click, another view): every photo of the
+        list in its own place again."""
         self._peek = self._peek_want = None
         self._peek_timer.stop()
         if getattr(self, "peek_pane", None) is not None:
+            self._peek_grow.stop()
+            self.thumbs.set_grown(None)
             self.peek_pane.clear()
 
-    def _set_preview_size(self, px: int, save: bool = True) -> None:
-        """보기 → 미리 보기 크기: the photo in the preview pane, ``px`` pixels across (one of the sizes
-        offered; anything else: the nearest)."""
-        px = min((s for s, _name in PEEK_SIZES), key=lambda s: abs(s - int(px or 0)))
-        self.settings.preview_size = self.peek_pane.side = px
-        self.peek_size_acts[px].setChecked(True)
-        if self.peek_pane.isVisible():
-            self.peek_pane.place()
-            self.peek_pane.view.fit()
+    def _set_preview_scale(self, scale: float, save: bool = True) -> None:
+        """보기 → 미리 보기 배율: the photo under the mouse grows to ``scale`` times its size in the
+        list (one of those offered; anything else: the nearest)."""
+        try:
+            scale = float(scale)
+        except (TypeError, ValueError):
+            scale = 2.0
+        scale = min(PEEK_SCALES, key=lambda k: abs(k - scale))
+        self.settings.preview_scale = self.peek_pane.scale = scale
+        self.peek_scale_acts[scale].setChecked(True)
+        if self._peek is not None:
+            self._peek_grow.stop()
+            self._place_peek(scale)
         if save:
             try:
                 self.settings.save()
@@ -2910,9 +2954,9 @@ class MainWindow(QMainWindow):
             return False
         if obj is self.menuBar() and e.type() == QEvent.Type.Resize:
             self._fit_banner()
-        if (e.type() == QEvent.Type.Resize and obj is getattr(self, "tabs", None)
-                and self.peek_pane.isVisible()):
-            self.peek_pane.place()
+        if (e.type() == QEvent.Type.Resize and self._peek is not None
+                and obj in (getattr(self, "tabs", None), self.thumbs.viewport())):
+            QTimer.singleShot(0, self._place_peek)             # (once the list is where it is now)
         if obj is self.thumbs.viewport() and e.type() == QEvent.Type.Resize and e.size().width() != e.oldSize().width():
             QTimer.singleShot(0, self._fit_thumb_height)       # wider strip: the scroll bar may go
         # Detail: the two enlarged panes keep their places when they change size
