@@ -2298,9 +2298,10 @@ class MainWindow(QMainWindow):
             keep = self._picks[0] if self._picks else None
         else:                            # the same patient again (its data edited …): the same photo
             keep = self.current["id"] if self.current is not None else None
-        if changed:                      # the list opens on the bookmark of the selected exam (the newest)
-            self._end_peek()
-            self._fill_thumbs(select_id=keep, book=self.patient_list.current_exam() or LATEST)
+        if changed:                      # the list opens on the bookmark of the selected exam (the newest) —
+            self._end_peek()             # or on 전체 (설정 → 일반 → 환자를 열면 사진 목록은)
+            book = ALL_DATES if self.settings.open_book == "all" else self.patient_list.current_exam() or LATEST
+            self._fill_thumbs(select_id=keep, book=book)
         else:
             self._fill_thumbs(select_id=keep)
         if changed:                      # Simple · Multi on screen: this patient's photos, not the last one's

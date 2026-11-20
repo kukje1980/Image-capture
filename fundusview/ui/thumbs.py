@@ -165,9 +165,9 @@ class ThumbDelegate(QStyledItemDelegate):
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
-        if selected or hover:                # the cell's colour around the photo, round as the photo
-            glow = QColor(opt.palette.color(opt.palette.ColorRole.Highlight))
-            glow.setAlpha(255 if selected else 90)
+        if hover and not selected:           # under the mouse: a soft light around the photo, round as it
+            glow = QColor(opt.palette.color(opt.palette.ColorRole.Highlight))  # (the photo shown is not framed:
+            glow.setAlpha(90)                                                   # only the picks are, in yellow)
             r = self.corner(photo) + self.PAD
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(glow)

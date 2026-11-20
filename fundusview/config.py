@@ -118,6 +118,9 @@ class Settings:
     # 목록은 날짜 책갈피로 · "grid" = 16장 보기 (VK-2 방식) — 사진 16장을 한 화면에, 골라서 [Multi]로
     # 고른 사진만 보기. Anything else (an older "overview") is 16장 보기.
     open_view: str = "odos"
+    # 환자를 열면 사진 목록은 (설정 → 일반): "latest" = 가장 최근 검사일의 사진 (처음 설정) · "all" = 전체
+    # (모든 검사일의 사진) — the 날짜 책갈피 the photo list opens on
+    open_book: str = "latest"
     # The photos of the list grow toward the mouse like the icons of the Dock of a Mac (보기 → 사진
     # 목록에 마우스를 올리면 미리 보기)
     hover_preview: bool = True

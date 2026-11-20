@@ -412,3 +412,34 @@ def test_the_photos_grow_and_shrink_step_by_step(win):
     finally:
         tk.manual = False
         motion.set_enabled(False)
+
+
+def test_the_list_opens_on_the_newest_exam_or_on_all_as_set(win, monkeypatch):
+    """설정 → 일반 → 환자를 열면 사진 목록은: 최신 검사 (처음 설정) — the newest exam's bookmark — or 전체: the
+    photos of every exam; the newest OD | OS above either way. Remembered."""
+    from fundusview.config import Settings, config_dir
+    from fundusview.ui.dialogs import SettingsDialog
+
+    app, w, db, refs, ids = win
+    od3, os3 = ids["od3"], ids["os3"]
+    assert w.settings.open_book == "latest"
+    _open(app, w, refs["kim"])
+    assert w._book == "2026-03-02" and w.thumbs.count() == 3 and _cells(w) == ([od3, os3], od3)
+
+    def choose(dlg):
+        assert [dlg.open_book.itemData(i) for i in range(dlg.open_book.count())] == ["latest", "all"]
+        dlg.open_book.setCurrentIndex(dlg.open_book.findData(want))
+        return True
+    monkeypatch.setattr(SettingsDialog, "exec", choose)
+    want = "all"
+    w._open_settings()
+    assert w.settings.open_book == "all" and Settings.load(config_dir() / "settings.json").open_book == "all"
+    other = next(k for k in refs if k != "kim")
+    _open(app, w, refs[other])
+    _open(app, w, refs["kim"])
+    assert w._book == "*" and w.thumbs.count() == 7 and _cells(w) == ([od3, os3], od3)
+    want = "latest"
+    w._open_settings()
+    _open(app, w, refs[other])
+    _open(app, w, refs["kim"])
+    assert w._book == "2026-03-02" and w.thumbs.count() == 3

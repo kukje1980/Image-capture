@@ -41,6 +41,11 @@ OPEN_VIEWS = (("odos", "Simple — 최신 OD | OS 두 장을 나란히, 아래 �
               ("grid", "16장 보기 — 사진 16장을 한 화면에 (VK-2 방식), 골라서 [Multi]로 고른 사진만 보기"))
 
 
+# 설정 → 일반 → 환자를 열면 사진 목록은 (Settings.open_book): the 날짜 책갈피 the photo list opens on
+OPEN_BOOKS = (("latest", "최신 검사 — 가장 최근 검사일(오늘 찍었으면 오늘)의 사진 먼저"),
+              ("all", "전체 — 모든 검사일의 사진을 한꺼번에"))
+
+
 # 설정 → 일반 → G 필터 (Settings.green_filter): what the G 필터 button gives
 GREEN_FILTERS = (("green", "녹색 성분만 (흑백)"),
                  ("rnfl", "녹색 + RNFL 강화 — 신경섬유층이 잘 보이게 국소 대비를 높임"))
@@ -325,6 +330,11 @@ class SettingsDialog(QDialog):
                                   "[Multi]를 누르면 고른 사진만 보고, 다시 [Multi]를 누르면 16장으로 돌아옵니다.\n"
                                   "더블클릭하면 그 사진을 크게 봅니다(Detail).")
         f2.addRow("환자를 열면", self.open_view)
+        self.open_book = _combo(OPEN_BOOKS, "all" if settings.open_book == "all" else "latest")
+        self.open_book.setToolTip("환자를 열 때 아래 사진 목록이 먼저 보여 주는 날짜 책갈피\n"
+                                  "최신 검사 (처음 설정): 가장 최근 검사일의 사진만 — 다른 날짜는 책갈피나 휠로 넘깁니다.\n"
+                                  "전체: 모든 검사일의 사진을 한 목록에. 위의 큰 화면에는 어느 쪽이든 최신 OD | OS가 나옵니다.")
+        f2.addRow("환자를 열면 사진 목록은", self.open_book)
         # G 필터: which of its two pictures the button gives, and how strong RNFL 강화 is
         from .. import imaging
         self.green_filter = _combo(GREEN_FILTERS, "rnfl" if settings.green_filter == "rnfl" else "green")
@@ -556,6 +566,7 @@ class SettingsDialog(QDialog):
         s.wheel3d = self.wheel3d.currentData()
         s.walk_click3d = self.walk_click3d.isChecked()
         s.open_view = self.open_view.currentData()
+        s.open_book = self.open_book.currentData()
         s.green_filter = self.green_filter.currentData()
         s.rnfl_strength = round(self.rnfl_strength.value(), 2)
         s.thumb_date = self.thumb_date.isChecked()
