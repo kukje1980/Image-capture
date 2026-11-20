@@ -13,7 +13,7 @@ def test_wall_profile_is_continuous_and_inside_the_globe():
     assert np.all(np.abs(np.diff(r)) < 0.003)                             # no steps (ora included)
     assert em.wall_base_radius(em.Z_ORA - 1e-6) == pytest.approx(em.wall_base_radius(em.Z_ORA + 1e-6), abs=1e-4)
     outer = np.sqrt(1.0 - z ** 2)
-    assert np.all(outer - r > 0.05)                                       # the wall has its thickness
+    assert np.all(outer - r > 0.04)                                       # the wall has its thickness
     assert em.wall_base_radius(em.IRIS_BACK_Z) == pytest.approx(em.IRIS_ROOT_R)
 
 
@@ -68,7 +68,7 @@ def test_nerve_leaves_the_globe_behind_the_disc():
     m = em.nerve_mesh(p, "OD")
     tube = m.uv[:, 0] <= 1.0
     radius = np.linalg.norm(m.pos[tube], axis=1)
-    assert radius.min() > em.R_RET + 0.05                    # never pokes into the eye
+    assert radius.min() > em.R_RET + 0.04                    # never pokes into the eye
     assert radius.max() > 1.6                                # an ≈ 11 mm stump
     cap = m.uv[:, 0] > 2.5
     assert cap.any() and np.all(np.abs(m.uv[cap, 0] - 4.0) <= 1.0 + 1e-6)
@@ -140,3 +140,9 @@ def test_textures_are_cached_on_disk(tmp_path, monkeypatch):
     again = em.load_textures(tmp_path)
     for k in first:
         np.testing.assert_array_equal(first[k], again[k])
+
+
+def test_the_sclera_is_drawn_a_third_as_thick_as_before():
+    """0.10.9: the white rim of the cut eye a third of what it was (0.018 → 0.006); choroid and retina as they were."""
+    assert em.SCLERA_T == pytest.approx(0.018 / 3) and em.CHOROID_T == em.RETINA_T == 0.021
+    assert em.R_RET == pytest.approx(1.0 - 0.006 - 0.042)

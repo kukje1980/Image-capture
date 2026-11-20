@@ -31,9 +31,10 @@ from PIL import Image, ImageDraw, ImageFilter
 
 MM = 1.0 / 12.0
 
-# eye wall (0.25 mm choroid, 0.25 mm retina). The sclera is drawn thinner than it is (≈ 0.2 mm
+# eye wall (0.25 mm choroid, 0.25 mm retina). The sclera is drawn much thinner than it is (≈ 0.07 mm
 # instead of 0.5 – 1 mm): at its true thickness the white rim of the cut eye looked too heavy
-SCLERA_T = 0.018
+# (0.018 until 0.10.8, a third of that since)
+SCLERA_T = 0.006
 CHOROID_T = 0.021
 RETINA_T = 0.021
 R_RET = 1.0 - SCLERA_T - CHOROID_T - RETINA_T

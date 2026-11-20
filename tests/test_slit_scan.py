@@ -78,7 +78,7 @@ def test_pick_in_the_section_view_finds_the_section_or_the_far_retina(app):
     o = v._view_basis()[0]
     hit = v._pick(o, -o / np.linalg.norm(o))            # straight at the centre: through the vitreous
     assert hit is not None and float(hit @ k) > 0.5 and np.linalg.norm(hit) == pytest.approx(em.R_RET)
-    d = np.array([0.0, 0.95, 0.0]) - o                  # at the wall in the section plane
+    d = np.array([0.0, (em.R_RET + 1.0) / 2, 0.0]) - o                  # at the wall in the section plane
     hit = v._pick(o, d / np.linalg.norm(d))
     assert hit is not None and abs(float(hit @ k)) < 1e-6 and em.R_RET <= np.linalg.norm(hit) <= 1.0
 

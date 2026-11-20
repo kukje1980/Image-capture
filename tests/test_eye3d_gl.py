@@ -72,15 +72,23 @@ def _render(eye, detail="detailed", **state):
     return lambda fx, fy: img.pixelColor(int(fx * (img.width() - 1)), int(fy * (img.height() - 1))).getRgb()[:3]
 
 
-def _at(v, p, r: int = 0):
-    """Mean colour of the last frame around the screen position of object point ``p``."""
+def _screen(v, p) -> tuple[int, int]:
+    """The pixel of the last frame object point ``p`` is drawn at."""
     import numpy as np
 
     img = v._last_img
     w, h = img.width(), img.height()
     q = v._camera(w / h)[0] @ np.array([p[0], p[1], p[2], 1.0], np.float32)
-    x, y = (q[0] / q[3] + 1) / 2 * (w - 1), (1 - q[1] / q[3]) / 2 * (h - 1)
-    cs = [img.pixelColor(int(round(x)) + dx, int(round(y)) + dy).getRgb()[:3]
+    return int(round((q[0] / q[3] + 1) / 2 * (w - 1))), int(round((1 - q[1] / q[3]) / 2 * (h - 1)))
+
+
+def _at(v, p, r: int = 0):
+    """Mean colour of the last frame around the screen position of object point ``p``."""
+    import numpy as np
+
+    img = v._last_img
+    x, y = _screen(v, p)
+    cs = [img.pixelColor(x + dx, y + dy).getRgb()[:3]
           for dx in range(-r, r + 1) for dy in range(-r, r + 1)]
     return tuple(sum(c[i] for c in cs) / len(cs) for i in range(3))
 
@@ -205,7 +213,10 @@ def test_section_view(eye, detail):
     _render(eye, detail, half=1.0, black=True, pose=v.section_pose())
     k = v.half_plane()[0]
     m = v.meridian()
-    sclera = _at(v, m * (1.0 - em.SCLERA_T / 2), 1)            # in the section plane, top of the wall
+    # in the section plane, top of the wall: the sclera is a thin white line there (0.10.9: a third of
+    # what it was, about a pixel at this size) — the brightest pixel around its place
+    img, c = v._last_img, _screen(v, m * (1.0 - em.SCLERA_T / 2))
+    sclera = max((img.pixelColor(c[0] + dx, c[1] + dy).getRgb()[:3] for dx in (-1, 0, 1) for dy in (-1, 0, 1)), key=min)
     assert min(sclera) > 150                                          # white sclera, as in a real eye
     choroid = _at(v, m * (1.0 - em.SCLERA_T - em.CHOROID_T / 2))      # under it: the dark red choroid
     assert choroid[0] > choroid[2] + 20 and sum(choroid) < sum(sclera) * 0.6
