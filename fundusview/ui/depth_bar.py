@@ -39,6 +39,7 @@ class FloatBar(QWidget):
     ORIENT = "v"             # as it is at first: "v" standing, "h" lying
     FILL_FROM_MAX = False    # the accent fill runs from the maximum's end to the handle (else from the minimum's)
     STEP = WHEEL_STEP
+    MOVABLE = True           # dragged over the eye and laid down / stood up by hand (else it stays as it is)
 
     placed = Signal()            # moved, or laid down / stood up, by hand (``state()`` to remember it)
     checkToggled = Signal(bool)  # ☑ 휠 pressed: what it should become (the owner answers with set_checked)
@@ -194,8 +195,10 @@ class FloatBar(QWidget):
             self.setCursor(Qt.CursorShape.PointingHandCursor)
         elif self._on_track(pos):
             self.setCursor(Qt.CursorShape.SizeVerCursor if self.vertical() else Qt.CursorShape.SizeHorCursor)
-        else:
+        elif self.MOVABLE:
             self.setCursor(Qt.CursorShape.OpenHandCursor)
+        else:
+            self.unsetCursor()
 
     def mousePressEvent(self, ev) -> None:
         if ev.button() == Qt.MouseButton.LeftButton:
@@ -208,7 +211,7 @@ class FloatBar(QWidget):
                 self._drag = True
                 self._before = self.slider.value()
                 self._set_from_pos(self._along(pos))
-            else:
+            elif self.MOVABLE:
                 self._move, self._moved = pos.toPoint(), False
                 self.setCursor(Qt.CursorShape.ClosedHandCursor)
             self.update()
@@ -240,7 +243,8 @@ class FloatBar(QWidget):
     def mouseDoubleClickEvent(self, ev) -> None:
         """Lie down ↔ stand up (not the eye's double click, which resets the view)."""
         check = self._check_rect()
-        if ev.button() == Qt.MouseButton.LeftButton and not (check is not None and check.contains(ev.position())):
+        if (self.MOVABLE and ev.button() == Qt.MouseButton.LeftButton
+                and not (check is not None and check.contains(ev.position()))):
             if self._before is not None:               # (the first press was on the track: as it was)
                 self.slider.setValue(self._before)
                 self._before = None
@@ -393,6 +397,27 @@ class DepthBar(FloatBar):
         """What the deep end is called: 깊게 (앞쪽 절개) or 절반 (세로 단면)."""
         self.min_text = text
         self.update()
+
+
+class TopDepthBar(DepthBar):
+    """The 깊이 막대 of all the eyes at once (여러 장 3D with many eyes): lying in a strip above them, in
+    its middle, where it stays (not dragged, not stood up)."""
+    ORIENT = "h"
+    MOVABLE = False
+    TIP = ("깊이 막대 — 끌어서 모든 안구를 자르는 깊이를 한꺼번에 정합니다 (닫힘 = 닫힌 안구, 반대쪽으로 "
+           "갈수록 깊게) · 막대 위에서 휠로도 조절")
+
+    def __init__(self, slider: QSlider, strip: QWidget):
+        super().__init__(slider, strip)
+        self.setObjectName("depthBarAll3d")
+
+    def _size(self) -> tuple[int, int]:
+        strip = self.parentWidget()
+        return max(220, min(560, strip.width() - 24)), LYING_H
+
+    def _home(self, w: int, h: int) -> tuple[int, int]:
+        strip = self.parentWidget()
+        return (strip.width() - w) // 2, (strip.height() - h) // 2
 
 
 class ZoomBar(FloatBar):
