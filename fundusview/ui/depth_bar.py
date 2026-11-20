@@ -40,6 +40,8 @@ class FloatBar(QWidget):
     FILL_FROM_MAX = False    # the accent fill runs from the maximum's end to the handle (else from the minimum's)
     STEP = WHEEL_STEP
     MOVABLE = True           # dragged over the eye and laid down / stood up by hand (else it stays as it is)
+    TITLE_W = 62.0           # lying: the room of the title and the figure (one above the other)
+    ONE_LINE = False         # lying: the title and the figure side by side (a thin bar)
 
     placed = Signal()            # moved, or laid down / stood up, by hand (``state()`` to remember it)
     checkToggled = Signal(bool)  # ☑ 휠 pressed: what it should become (the owner answers with set_checked)
@@ -85,7 +87,7 @@ class FloatBar(QWidget):
         if self.vertical():
             top = TOP + (CHECK_H if self.checkable else 0)
             return float(top), float(max(top + 40, self.height() - BOTTOM))
-        x0 = 10.0 + (36.0 if self.checkable else 0.0) + 62.0 + 42.0 + HANDLE_R
+        x0 = 10.0 + (36.0 if self.checkable else 0.0) + self.TITLE_W + 42.0 + HANDLE_R
         return x0, max(x0 + 40.0, self.width() - 10.0 - 42.0 - HANDLE_R)
 
     def handle_pos(self) -> float:
@@ -326,8 +328,12 @@ class FloatBar(QWidget):
                 check_box(x + 10.0, 12.0)
                 label(QRectF(x, 30.0, 34.0, 18.0), "휠", 11, self.checked, wheel_color)
                 x += 36.0
-            label(QRectF(x, 8.0, 62.0, 18.0), self.TITLE, 13, True, QColor(theme.TEXT))
-            label(QRectF(x, 28.0, 62.0, 22.0), self.text(), 15, True, accent_hi)
+            if self.ONE_LINE:
+                label(QRectF(x, 0.0, 38.0, h), self.TITLE, 12, True, QColor(theme.TEXT))
+                label(QRectF(x + 38.0, 0.0, self.TITLE_W - 38.0, h), self.text(), 13, True, accent_hi)
+            else:
+                label(QRectF(x, 8.0, 62.0, 18.0), self.TITLE, 13, True, QColor(theme.TEXT))
+                label(QRectF(x, 28.0, 62.0, 22.0), self.text(), 15, True, accent_hi)
             label(QRectF(a - HANDLE_R - 42.0, 0.0, 42.0, h), self.min_text, 11, False, text3)
             label(QRectF(b + HANDLE_R, 0.0, 42.0, h), self.max_text, 11, False, text3)
 
@@ -404,6 +410,9 @@ class TopDepthBar(DepthBar):
     its middle, where it stays (not dragged, not stood up)."""
     ORIENT = "h"
     MOVABLE = False
+    ONE_LINE = True
+    TITLE_W = 84.0
+    HEIGHT = 34              # thin: 깊이 and its figure on one line
     TIP = ("깊이 막대 — 끌어서 모든 안구를 자르는 깊이를 한꺼번에 정합니다 (닫힘 = 닫힌 안구, 반대쪽으로 "
            "갈수록 깊게) · 막대 위에서 휠로도 조절")
 
@@ -413,7 +422,7 @@ class TopDepthBar(DepthBar):
 
     def _size(self) -> tuple[int, int]:
         strip = self.parentWidget()
-        return max(220, min(560, strip.width() - 24)), LYING_H
+        return max(220, min(560, strip.width() - 24)), self.HEIGHT
 
     def _home(self, w: int, h: int) -> tuple[int, int]:
         strip = self.parentWidget()

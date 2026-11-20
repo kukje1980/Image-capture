@@ -232,6 +232,7 @@ def test_3d_with_more_photos_picked_asks_one_or_all(tmp_path, demo_dir, import_a
         assert top.parentWidget() is pair.top_strip and pair.top_strip.rect().contains(top.geometry())
         assert pair.top_strip.geometry().bottom() < pair.cells[0].geometry().top()   # above the eyes
         assert pair.depth_all.value() == w.s_cut.value()
+        assert top.height() <= 36 and pair.top_strip.height() <= 40                # a thin strip
         pair.c_link.setChecked(False)                                     # (all of them, linked or not)
         pair.depth_all.setValue(60)
         assert all(e.cut == pytest.approx(0.6) for e in pair.eyes[:5]) and top.text() == "31%"
