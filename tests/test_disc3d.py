@@ -251,3 +251,56 @@ def test_tab_estimates_the_cd_ratio_and_hands_the_cup_to_the_disc_tab(app):
     assert blank.metrics() is None and blank.lbl_cd.text() == "–" and "추정하지 못했습니다" in blank.lbl_cd2.text()
     assert not blank.b_apply.isEnabled() and blank.note() == "녹내장 분석 — 유두 3D (1장 추정)"
     assert GlaucomaDialog(None).surface.metrics() is None
+
+
+def test_tab_with_two_photos_gives_the_cd_of_each_and_the_change_between_two_days(app):
+    from fundusview.ui.glaucoma_dialog import GlaucomaDialog
+
+    left, right = _stereo_pair()
+    dlg = GlaucomaDialog(_photo(1, left), _photo(2, right))         # one day: two estimates and the stereo depth
+    dlg.stereo._timer.stop()
+    dlg.progress._timer.stop()
+    tab = dlg.surface
+    v = tab.both()
+    assert v["days"] is None and None not in (v["a"], v["b"], v["stereo"])
+    assert v["mean"] == pytest.approx((v["a"] + v["b"]) / 2) and v["spread"] == pytest.approx(abs(v["a"] - v["b"]))
+    text = tab.lbl_cd2.text()
+    assert f"사진 ① {v['a']:.2f}" in text and f"<b>스테레오 {v['stereo']:.2f}</b>" in text and "두 사진 평균" in text
+    assert tab.note().endswith(f"(두 사진 평균 {v['mean']:.2f})")
+    tab.set_source("b")
+    assert tab.metrics()["vertical"] == v["b"] and f"<b>사진 ② {v['b']:.2f}</b>" in tab.lbl_cd2.text()
+    # two days: the older one first, whichever was picked first, and the change to the newer one
+    then, now = _disc_picture(cup=0.4), _disc_picture(cup=0.7)
+    dlg = GlaucomaDialog(_photo(1, now, when="2026-01-15 10:00:00"), _photo(2, then, when="2024-03-02 09:00:00"))
+    dlg.stereo._timer.stop()
+    dlg.progress._timer.stop()
+    tab = dlg.surface
+    assert tab.follow_up and not tab.stereo_ok and tab.source == "a"   # two days are no stereo pair
+    tab.set_source("stereo")
+    assert "다른 날짜" in tab.status.text() and tab.metrics() is None
+    tab.set_source("a")
+    v = tab.both()
+    assert v["stereo"] is None
+    d = v["days"]
+    assert (d["old"], d["new"], d["old_day"], d["new_day"]) == ("b", "a", "2024-03-02", "2026-01-15")
+    assert d["change"] == pytest.approx(v["a"] - v["b"]) and 0.15 < d["change"] < 0.4
+    text = tab.lbl_cd2.text()
+    assert text.index("2024-03-02") < text.index("2026-01-15") and f"{d['change']:+.2f}" in text
+    assert "오차 범위" not in text and "두 사진 평균" not in text
+    tab.set_source("a")
+    assert tab.note().endswith(f"(2024-03-02 {v['b']:.2f} → 2026-01-15 {v['a']:.2f})")
+    same = GlaucomaDialog(_photo(1, now, when="2026-01-15 10:00:00"), _photo(2, now, when="2025-01-15 10:00:00"))
+    same.stereo._timer.stop()
+    same.progress._timer.stop()
+    assert "오차 범위" in same.surface.lbl_cd2.text() and GlaucomaDialog(_photo(1, now)).surface.both() is None
+
+
+def test_the_flat_retina_keeps_its_brightness_however_far_the_surface_is_turned():
+    tex = np.full((128, 128, 3), 150, np.uint8)
+    H = np.zeros((128, 128), np.float32)
+    H[40:88, 40:88] = -0.5
+    H = cv2.GaussianBlur(H, (0, 0), 4)
+    for yaw, pitch in ((0, 0), (30, -35), (-60, 60), (65, -65), (-65, -65)):
+        lit = disc3d.shade(tex, H, 40.0, disc3d.rotation(yaw, pitch))
+        assert abs(int(lit[5, 5, 0]) - 150) <= 1                    # away from the hollow: as taken
+        assert lit[40:88, 40:88].max() > 160 and lit[40:88, 40:88].min() < 140    # its walls: lit and shaded

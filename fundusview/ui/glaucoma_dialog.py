@@ -733,6 +733,7 @@ S3_ONE = "사진 한 장의 밝기로 추정한 모양입니다 (창백한 곳 =
 S3_HINT = "사진을 끌면 돌아갑니다. 깊이는 과장해서 보여 주는 상대값입니다."
 S3_CD = ("입체 표면에서 기준 깊이보다 깊은 곳을 컵(노란 선)으로 본 추정값입니다. 디스크 경계(초록 선)는 "
          "[디스크 C/D] 탭의 초록 선입니다 — 거기서 맞추면 여기도 따라옵니다.")
+S3_SPREAD = 0.10         # two photos' vertical C/D further apart than this: say so
 S3_NO_CUP = "컵이 뚜렷하지 않아 이 표면에서는 C/D를 추정하지 못했습니다 — [디스크 C/D] 탭에서 직접 맞추세요."
 
 
@@ -749,7 +750,9 @@ class Surface3DTab(_Tab):
         self.disc_tab = disc_tab                         # its green outline is the disc margin here
         self._cup: dict = {}
         eyes = {p.eye for p in self.photos if p.eye}
-        self.stereo_ok = len(self.photos) == 2 and len(eyes) < 2      # (OD with OS is no stereo pair)
+        days = {p.day for p in self.photos if p.day}
+        self.follow_up = len(self.photos) == 2 and len(days) == 2     # two days: a follow-up, not a stereo pair
+        self.stereo_ok = len(self.photos) == 2 and len(eyes) < 2 and not self.follow_up   # (nor is OD with OS)
         self.source = "stereo" if self.stereo_ok else "a"
         self.field = "normal"
         self.yaw, self.pitch = -22.0, 14.0
@@ -859,19 +862,26 @@ class Surface3DTab(_Tab):
             self.sources.set(source)
         self._shape_changed()
 
-    def heights(self) -> np.ndarray | None:
-        if not self._tex:
+    def _surface(self, source: str) -> tuple[np.ndarray, dict] | None:
+        """The surface of ``source`` (a · b · stereo) and what is known of it."""
+        if not self._tex or (source != "a" and len(self._tex) < 2):
             return None
-        key = (self.source, self.sw_flip.isChecked())
+        key = (source, self.sw_flip.isChecked())
         if key not in self._heights:
             frac = 1.0 / self._factor()
-            if self.source == "stereo":
+            if source == "stereo":
                 self._heights[key] = disc3d.height_from_stereo(self._tex[0], self._tex[1], frac,
                                                                flip=self.sw_flip.isChecked())
             else:
                 info: dict = {}
-                self._heights[key] = (disc3d.height_from_photo(self._tex[self.source == "b"], frac, info=info), info)
-        H, self.info = self._heights[key]
+                self._heights[key] = (disc3d.height_from_photo(self._tex[source == "b"], frac, info=info), info)
+        return self._heights[key]
+
+    def heights(self) -> np.ndarray | None:
+        found = self._surface(self.source)
+        if found is None:
+            return None
+        H, self.info = found
         return H
 
     def _shape_changed(self) -> None:
@@ -888,6 +898,9 @@ class Surface3DTab(_Tab):
             if not self.info.get("enough", True):
                 text = (f"최대 시차 {px:.1f} px — 시차가 부족해 깊이가 믿을 만하지 않습니다. 두 사진 사이를 더 벌려 "
                         "다시 찍거나 [사진 ①] 한 장 추정으로 보세요.")
+            elif self.follow_up:
+                text = ("두 사진이 서로 다른 날짜입니다 — 그 사이의 변화가 시차로 잡혀 스테레오 깊이는 맞지 않습니다. "
+                        "[사진 ①] · [사진 ②]로 보고, 날짜별 C/D는 아래 경과에 나옵니다.")
             elif not self.stereo_ok:
                 text = "두 사진이 서로 다른 눈(OD · OS)입니다 — 스테레오 깊이는 같은 눈의 두 장에서만 맞습니다."
             elif not self.info.get("reliable", True):
@@ -971,15 +984,19 @@ class Surface3DTab(_Tab):
                     **{key: d[key] * k for key in ("top", "right", "bottom", "left")}}
         return G.outline({"cx": c, "cy": c, "rx": r * 0.95, "ry": r * 1.05})
 
-    def cup(self) -> tuple[dict, dict, np.ndarray] | None:
+    def cup(self, source: str | None = None) -> tuple[dict, dict, np.ndarray] | None:
         """(disc outline, cup outline, the cup's margin) in texture pixels — the cup as the surface
-        has it (``disc3d.cup_from_surface``) — or None: no surface, no cup seen in the photo, or
-        a stereo depth that is not to be trusted."""
-        H = self.heights()
-        if H is None or not self.info.get("cup", True) or not self.info.get("reliable", True):
+        of ``source`` (the one shown, if None) has it (``disc3d.cup_from_surface``) — or None: no
+        surface, no cup seen in the photo, or a stereo depth that is not to be trusted."""
+        source = source or self.source
+        surface = self._surface(source)
+        if surface is None or not surface[1].get("cup", True) or not surface[1].get("reliable", True):
             return None
+        if source == "stereo" and not self.stereo_ok:
+            return None
+        H = surface[0]
         disc = self.disc_outline()
-        key = (self.source, self.sw_flip.isChecked(), self.field, self.s_level.value(), tuple(disc.values()))
+        key = (source, self.sw_flip.isChecked(), self.field, self.s_level.value(), tuple(disc.values()))
         if key not in self._cup:
             k = H.shape[0] / disc3d.TEX_PX                # (the surface is coarser than the texture)
             small = {**{a: disc[a] * k for a in ("top", "right", "bottom", "left")},
@@ -990,13 +1007,35 @@ class Surface3DTab(_Tab):
                 cup = {**{a: cup[a] / k for a in ("top", "right", "bottom", "left")},
                        "cx": (cup["cx"] + 0.5) / k - 0.5, "cy": (cup["cy"] + 0.5) / k - 0.5}
                 found = (disc, cup, (edge + 0.5) / k - 0.5)
-            self._cup = {key: found}
+            if len(self._cup) > 12:                      # (a slider dragged: only the last ones are asked again)
+                self._cup.clear()
+            self._cup[key] = found
         return self._cup[key]
 
-    def metrics(self) -> dict | None:
-        """C/D of the cup read off the surface (``G.cdr_metrics``), or None."""
-        found = self.cup()
+    def metrics(self, source: str | None = None) -> dict | None:
+        """C/D of the cup read off the surface (``G.cdr_metrics``) — of the one shown, or of
+        ``source`` (a · b · stereo) — or None."""
+        found = self.cup(source)
         return G.cdr_metrics(found[0], found[1], self.eye() or "OD") if found else None
+
+    def both(self) -> dict | None:
+        """With two photos: vertical C/D of each one's own estimate, of the stereo depth, the mean
+        of the two photos and how far they are apart — ``{"a", "b", "stereo", "mean", "spread"}``
+        (None where there is none)."""
+        if len(self.photos) < 2:
+            return None
+        v = {k: (m["vertical"] if (m := self.metrics(k)) else None) for k in ("a", "b", "stereo")}
+        ab = [x for x in (v["a"], v["b"]) if x is not None]
+        v["mean"] = sum(ab) / 2 if len(ab) == 2 else None
+        v["spread"] = abs(ab[0] - ab[1]) if len(ab) == 2 else None
+        # two days: a follow-up — the older photo first, and the change to the newer one
+        days = [p.day for p in self.photos]
+        v["days"] = None
+        if days[0] and days[1] and days[0] != days[1]:
+            old, new = ("a", "b") if days[0] < days[1] else ("b", "a")
+            v["days"] = {"old": old, "new": new, "old_day": min(days), "new_day": max(days),
+                         "change": v[new] - v[old] if len(ab) == 2 else None}
+        return v
 
     def apply_to_disc_tab(self) -> None:
         """The cup found here becomes the yellow outline of the 디스크 C/D tab."""
@@ -1015,13 +1054,43 @@ class Surface3DTab(_Tab):
         self.b_apply.setEnabled(m is not None)
         if m is None:
             self.lbl_cd.setText("–")
-            self.lbl_cd2.setText(f"<span style='color:{theme.TEXT2}'>{S3_NO_CUP if self._tex else ''}</span>")
+            self.lbl_cd2.setText(f"<span style='color:{theme.TEXT2}'>{S3_NO_CUP if self._tex else ''}</span>"
+                                 + self._both_text())
             return
         v = m["vertical"]
         band = "0.7 이상" if v >= 0.7 else "0.5~0.7" if v >= 0.5 else "0.5 미만"
         self.lbl_cd.setText(f"{v:.2f}")
         self.lbl_cd2.setText(f"<span style='color:{theme.TEXT2}'>{band}</span><br>"
-                             f"수평 C/D <b>{m['horizontal']:.2f}</b> &nbsp;·&nbsp; 면적 C/D <b>{m['area']:.2f}</b>")
+                             f"수평 C/D <b>{m['horizontal']:.2f}</b> &nbsp;·&nbsp; 면적 C/D <b>{m['area']:.2f}</b>"
+                             + self._both_text())
+
+    def _both_text(self) -> str:
+        """Two photos: each one's vertical C/D side by side (the one shown in bold)."""
+        v = self.both()
+        if not v:
+            return ""
+        def cell(key, name):
+            text = f"{name} {v[key]:.2f}" if v[key] is not None else f"{name} –"
+            return f"<b>{text}</b>" if key == self.source else text
+        if v["days"]:                                     # a follow-up: then → now
+            d = v["days"]
+            out = (f"<br><br>경과 (수직 C/D)<br>{cell(d['old'], d['old_day'])} &nbsp;→&nbsp; "
+                   f"{cell(d['new'], d['new_day'])}")
+            if d["change"] is not None:
+                big = abs(d["change"]) > S3_SPREAD
+                out += (f"<br>변화 <b style='color:{theme.ORANGE if big else theme.TEXT}'>{d['change']:+.2f}</b>"
+                        + ("" if big else f" <span style='color:{theme.TEXT2}'>(추정 오차 범위 안)</span>"))
+                out += (f"<br><span style='color:{theme.TEXT2}'>같은 디스크 경계 · 같은 기준 깊이로 두 날짜를 잰 "
+                        "값입니다. 밝기 · 초점이 다르면 달라질 수 있어 [경과 비교] 탭의 깜빡임과 함께 보세요.</span>")
+            return out
+        out = "<br><br>수직 C/D — " + " &nbsp;·&nbsp; ".join(
+            cell(k, n) for k, n in (("a", "사진 ①"), ("b", "사진 ②"), ("stereo", "스테레오")))
+        if v["mean"] is not None:
+            out += f"<br>두 사진 평균 <b>{v['mean']:.2f}</b> (차이 {v['spread']:.2f})"
+            if v["spread"] > S3_SPREAD:
+                out += (f"<br><span style='color:{theme.ORANGE}'>두 사진의 값이 많이 다릅니다 — 초점 · 밝기가 "
+                        "다르거나 경계가 뚜렷하지 않습니다.</span>")
+        return out
 
     def _texture(self) -> np.ndarray:
         """The photo to lay on the surface, with the disc (green) and cup (yellow) lines on it."""
@@ -1052,7 +1121,17 @@ class Surface3DTab(_Tab):
     def note(self) -> str:
         m = self.metrics()
         return ("녹내장 분석 — 유두 3D " + ("(2장 스테레오)" if self.source == "stereo" else "(1장 추정)")
-                + (f" · 추정 수직 C/D {m['vertical']:.2f}" if m else ""))
+                + (f" · 추정 수직 C/D {m['vertical']:.2f}" if m else "")
+                + self._both_note())
+
+    def _both_note(self) -> str:
+        v = self.both()
+        if not v or v["mean"] is None:
+            return ""
+        if v["days"]:
+            d = v["days"]
+            return f" ({d['old_day']} {v[d['old']]:.2f} → {d['new_day']} {v[d['new']]:.2f})"
+        return f" (두 사진 평균 {v['mean']:.2f})"
 
     def image_ids(self) -> list[int]:
         if self.source == "stereo" or self._flickering():
