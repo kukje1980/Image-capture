@@ -1119,6 +1119,8 @@ class EyeView(QOpenGLWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        from .widgets import RoundCorners
+        self.round = RoundCorners(self)     # the 3D pane: round corners, as every pane of a photo
         fmt = QSurfaceFormat()
         fmt.setVersion(2, 1)
         fmt.setProfile(QSurfaceFormat.OpenGLContextProfile.CompatibilityProfile)

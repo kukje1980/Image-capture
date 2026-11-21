@@ -415,7 +415,7 @@ class RoundCorners(QWidget):
     def paintEvent(self, e) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        r = float(min(self.radius, self.width() / 2, self.height() / 2))
+        r = float(min(self.radius, self.width() / 5, self.height() / 5))     # (a small pane: less round)
         ears, inner = QPainterPath(), QPainterPath()
         ears.addRect(QRectF(self.rect()))
         inner.addRoundedRect(QRectF(self.rect()), r, r)

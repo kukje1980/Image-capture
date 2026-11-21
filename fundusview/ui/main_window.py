@@ -92,7 +92,7 @@ from .slit_scan import SLIT, ScanPhotoView, SlitScanShow, ViewTween
 from .thumbs import (DATE_ROLE, DockOverlay, EYE_ROLE, KIND_ROLE, PICK_ROLE, SECOND_COLOR, SECOND_ROLE, SHOWN, EyeRail,
                      ThumbDelegate, ThumbStrip, eye_badge_html, eye_row)
 from .toolbars import CHECKABLE, CMDBAR, COMMANDS, MENUS, PROCESSING, SliderPopup, icon_for, rnfl_label
-from .widgets import ElidedLabel, RoundCorners, Segmented, Switch, card, segment
+from .widgets import ElidedLabel, Segmented, Switch, card, segment
 from .widgets import row as setting_row
 
 THUMB_TEXT = Qt.ItemDataRole.UserRole + 1    # a thumbnail's text (date, kind) without the ② mark
@@ -718,7 +718,6 @@ class MainWindow(QMainWindow):
         self.view2d.activated.connect(self._leave_detail)   # loupe: the 돋보기 tool)
         self.view2d.toggle_captions(True)
         self.nav2d = EdgeNav(self.view2d)       # Detail: ◀ ▶ at the sides of the photo · ← / →
-        self.round2d = RoundCorners(self.view2d)   # the big photo's pane: round corners
         self.nav2d.stepped.connect(self._step)
         self.view2d.discPicked.connect(self._on_disc_picked)
         self.view2d.foveaPicked.connect(self._on_fovea_picked)
@@ -4846,7 +4845,6 @@ class MainWindow(QMainWindow):
         self.ov_macula = ImageView()
         self.ov_zoom = ImageView()                       # the disc
         for v, what in ((self.ov_macula, "황반"), (self.ov_zoom, "시신경 유두")):
-            RoundCorners(v, 10)
             v.set_navigator(False)
             v.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)   # a small pane:
             v.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)     # move by dragging

@@ -325,6 +325,9 @@ class _TimelineThumb(QAbstractButton):
 
     def __init__(self, row, parent=None):
         super().__init__(parent)
+        from .widgets import RoundCorners
+
+        RoundCorners(self, 8)    # round corners, as every pane of a photo
         self.image_id = row["id"]
         self.eye = row["laterality"] or ""
         self.shown = False

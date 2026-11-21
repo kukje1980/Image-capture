@@ -87,6 +87,9 @@ class _Preview(QLabel):
 
     def __init__(self):
         super().__init__()
+        from .widgets import RoundCorners
+
+        RoundCorners(self)    # round corners, as every pane of a photo
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setMinimumSize(860, 560)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
