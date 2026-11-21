@@ -168,14 +168,14 @@ def test_default_16_photos_pick_multi_and_back(app, window):
     w.view_acts["multi"].trigger()
     assert w._tab() == "grid" and w.picks() == [a, c, b]
 
-    # a double click opens the photo big in 모두 보기 (and does not pick it)
+    # a double click: Simple, the photos picked on it as they are (the photo double clicked is not picked)
     w.grid.set_page(0)
     d = order[7]
     _click(app, w, d, double=True)
-    assert w._tab() == "all" and w.current["id"] == d and d not in w.picks()
+    assert w._tab() == "multi" and w.acts["view:simple"].isChecked() and w.picks() == [a, c, b]
     assert w.thumbs.isVisible() and not w.grid_bar.isVisible()
     w._go("grid")
-    assert w.grid.page() == 0 and w.grid._current == d
+    assert w.grid.page() == 0
 
     # Ctrl+click: the second photo (②) next to the one shown
     _click(app, w, order[9], ctrl=True)

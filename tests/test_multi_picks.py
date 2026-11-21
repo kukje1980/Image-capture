@@ -346,7 +346,7 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
         app.processEvents()
         assert w.current["id"] == ids[0] and w._channel == "redfree" and w._ops == []
         # a photo opened large keeps its processing there, and back with the picked photos each has its own
-        QTest.mouseDClick(cells[0].view.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(20, 20))
+        w.acts["view:all"].trigger()                                 # (a double click on Multi: Simple)
         app.processEvents()
         assert w._tab() == "all" and w.current["id"] == ids[0] and w._channel == "redfree"
         w.acts["view:multi"].trigger()                               # (from Detail: the picked photos)

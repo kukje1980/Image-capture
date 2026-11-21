@@ -52,6 +52,7 @@ def grid_shape(n: int) -> tuple[int, int]:
 
 class Pair3D(QWidget):
     glError = Signal(str)
+    activated = Signal()               # a double click on one of the eyes (the window goes to Simple)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -67,7 +68,7 @@ class Pair3D(QWidget):
         self.c_link.setToolTip("켜면 한 안구를 돌리거나 확대할 때 다른 안구도 같이 움직입니다")
         self.c_link.toggled.connect(self._on_link)
         self.b_home = QPushButton("처음 보기")
-        self.b_home.setToolTip("모든 안구를 처음 보기로 (더블클릭 · 0)")
+        self.b_home.setToolTip("모든 안구를 처음 보기로 (0) · 안구를 더블클릭: Simple로")
         self.b_home.clicked.connect(self.reset_views)
         self.b_front = QPushButton("정면")
         self.b_front.setToolTip("모든 안구를 정면에서 보기")
@@ -128,6 +129,8 @@ class Pair3D(QWidget):
         eye.pick_walk = False
         eye.glError.connect(self.glError)
         eye.interacted.connect(lambda eye=eye: self._set_lead(eye))
+        eye.dblclick_leaves = True
+        eye.activated.connect(self.activated)
         if self.eyes:                      # the look the first ones have
             first = self.eyes[0]
             eye.set_detail(first.detail)

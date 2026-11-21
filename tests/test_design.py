@@ -225,7 +225,7 @@ def test_images_load_from_a_settings_folder_with_spaces(app, tmp_path, monkeypat
 
 
 def test_toolbar_icons_are_colour_tiles_with_white_glyphs(app):
-    """0.10.16: every toolbar icon is a rounded colour tile (photo thumbnails: a rounded photo) with
+    """0.10.18: every toolbar icon is a rounded colour tile (photo thumbnails: a rounded photo) with
     clear corners; the glyph alone (``plain``) stays a light line drawing with no tile behind it."""
     from fundusview.ui import icons
     from fundusview.ui.toolbars import COMMANDS, PROCESSING, icon_for

@@ -516,8 +516,21 @@ class MainWindow(QMainWindow):
             a.triggered.connect(lambda _=False, k=k: self._set_preview_scale(k))
             self.peek_scale_acts[k] = a
         self._set_preview_scale(self.settings.preview_scale, save=False)
+        self.act_hover_loupe = m.addAction("큰 사진에 마우스를 올리면 돋보기")
+        self.act_hover_loupe.setCheckable(True)
+        self.act_hover_loupe.setChecked(bool(self.settings.hover_loupe))
+        self.act_hover_loupe.setToolTip("Simple · Multi · Detail의 큰 사진에 마우스를 올리면 버튼을 누르지 않아도 그 자리에 "
+                                        "돋보기가 나옵니다 (사진 전체가 보일 때 — 휠로 확대한 뒤에는 드래그로 이동)")
+        self.act_hover_loupe.toggled.connect(self._set_hover_loupe)
         self._apply_rnfl_settings()            # G 필터: RNFL 강화 세기 (설정 → 일반)
         m.addAction(self.tb_cmd.toggleViewAction())
+        sub = m.addMenu("명령 툴바 위치")          # (as the right-click menu of the toolbar)
+        self.cmdbar_acts = {}
+        for where, label in self.CMDBAR_PLACES:
+            a = sub.addAction(label, lambda w=where: self.move_cmdbar(w))
+            a.setCheckable(True)
+            self.cmdbar_acts[where] = a
+        sub.aboutToShow.connect(lambda: [a.setChecked(k == self.cmdbar_where()) for k, a in self.cmdbar_acts.items()])
         m.addAction(self.tb_proc.toggleViewAction())
         m.addSeparator()
         m.addAction(A["captions"])
@@ -588,7 +601,7 @@ class MainWindow(QMainWindow):
 
         # -- centre: patient line + thumbnails + views ------------------------------
         centre = QWidget()
-        cl = QVBoxLayout(centre)
+        cl = self._centre_lay = QVBoxLayout(centre)
         cl.setContentsMargins(4, 6, 4, 0)
         cl.setSpacing(4)
         # the view icons (16장 · Simple · Multi · Detail · 3D · Montage · Glaucoma) sit in the menu bar,
@@ -661,7 +674,7 @@ class MainWindow(QMainWindow):
         self.thumb_paint.show_kind = bool(self.settings.thumb_kind)
         self.thumbs.setItemDelegate(self.thumb_paint)
         self.thumbs.setToolTip(keys("마우스를 올리면 Dock처럼 사진들이 커집니다 (미리 보기) · Simple — 클릭: 고정(번호), 다시 클릭하면 빼기\n"
-                                    "Detail · 3D — 클릭: 이 사진 보기 · 더블클릭: 크게 보기 (Detail) — Detail에서 더블클릭: 보던 화면으로\n"
+                                    "Detail · 3D — 클릭: 이 사진 보기 · 더블클릭: Simple로 (Simple에서 더블클릭: Detail)\n"
                                     "휠: 이전 / 다음 날짜 책갈피 (Shift+휠: 옆으로 넘기기) · ← →: 이전 / 다음 사진\n"
                                     "Ctrl+클릭: 두 번째 사진(②) 선택/해제 — 비교 · 디스크 2장 · "
                                     "오른쪽 클릭: 환자 지정·다시 분석"))
@@ -697,7 +710,7 @@ class MainWindow(QMainWindow):
         self.thumbs.customContextMenuRequested.connect(self._thumb_menu)
         # 16장 보기 (VK-2 방식): the photos of the strip, 16 on one screen — picked the same way
         self.grid = PhotoGrid()
-        self.grid.setToolTip(keys("클릭: 고르기(번호) · 다시 클릭: 빼기 · 더블클릭: 크게 보기 (Detail) · "
+        self.grid.setToolTip(keys("클릭: 고르기(번호) · 다시 클릭: 빼기 · 더블클릭: Simple로 · "
                                   "Ctrl+클릭: 두 번째 사진(②)\n골랐으면 왼쪽 툴바의 [Multi]: 고른 사진만 보기 "
                                   "(다시 [Multi]: 16장으로) · 휠: 다음 / 이전 16장"))
         self.grid.pressed.connect(lambda iid: self._press_photo(iid, stay=True))
@@ -714,8 +727,9 @@ class MainWindow(QMainWindow):
         self.view2d = ImageView()
         self.view2d.crossfade = True            # the next photo fades in over the last
         self.view2d.click_loupe = True          # not zoomed yet: the left button held shows the loupe
+        self.view2d.hover_loupe = bool(self.settings.hover_loupe)   # … and the mouse over it, no button, too
         self.view2d.dblclick_leaves = True      # Detail: a double click goes back where one was (the
-        self.view2d.activated.connect(self._leave_detail)   # loupe: the 돋보기 tool)
+        self.view2d.activated.connect(self._to_simple)      # loupe: the 돋보기 tool)
         self.view2d.toggle_captions(True)
         self.nav2d = EdgeNav(self.view2d)       # Detail: ◀ ▶ at the sides of the photo · ← / →
         self.nav2d.stepped.connect(self._step)
@@ -736,10 +750,11 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.page3d, "3D 안구")
         self.multi = MultiView()                 # Simple and Multi
         self.multi.selected.connect(self._select_from_multi)
-        self.multi.opened.connect(self.open_large)
+        self.multi.opened.connect(self._open_cell)
         self.multi.layoutChanged.connect(self._on_multi_layout)
         self.multi.stepped.connect(self._step_cell)
         self.multi.set_closeups(bool(self.settings.simple_closeups))     # 황반 · 디스크 as left last time
+        self.multi.set_hover_loupe(bool(self.settings.hover_loupe))
         self.tabs.addTab(self.multi, "다중 보기")
         cmp_w = QWidget()
         cmp_l = QVBoxLayout(cmp_w)
@@ -784,6 +799,7 @@ class MainWindow(QMainWindow):
         # 여러 장 3D: Simple's two photos (or the photos picked), each on its own 3D eye (pair3d.py)
         self.pair3d = Pair3D()
         self.pair3d.glError.connect(lambda msg: self.lbl_status.setText(f"3D를 그릴 수 없습니다: {msg}"))
+        self.pair3d.activated.connect(self._to_simple)
         self.tabs.addTab(self.pair3d, "여러 장 3D")
         self.tabs.setCurrentWidget(self.page_all)
         self._pages = {"review": self.review, "all": self.page_all, "2d": self.page2d, "3d": self.page3d,
@@ -886,9 +902,13 @@ class MainWindow(QMainWindow):
         self.tb_cmd.setAllowedAreas(Qt.ToolBarArea.LeftToolBarArea | Qt.ToolBarArea.RightToolBarArea
                                     | Qt.ToolBarArea.TopToolBarArea)
         self.tb_cmd.setToolTip("명령 툴바 — 맨 위의 점 손잡이를 끌어 오른쪽이나 화면 위쪽으로 옮깁니다 "
-                               "(오른쪽 클릭: 위치 고르기)")
+                               "(오른쪽 클릭: 위치 고르기 — 큰 사진 아래에도)")
         self.tb_cmd.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tb_cmd.customContextMenuRequested.connect(self._cmdbar_menu)
+        self._cmdbar_under = False               # … or in a row under the large photos, over the photo list
+        self._cmdbar_parked = False              # (closing: put back in the window's toolbar area, closeEvent)
+        if self.settings.cmdbar_area == "under":
+            self.move_cmdbar("under")
         self.tb_proc = self._toolbar("procbar", "영상 처리 툴바", Qt.ToolBarArea.BottomToolBarArea, PROCESSING, 30)
         self.tb_proc.visibilityChanged.connect(lambda v: self.acts["tools"].setChecked(v))
         self.acts["tools"].setChecked(True)
@@ -1149,12 +1169,14 @@ class MainWindow(QMainWindow):
         self.b_full3d.setToolTip("3D 안구와 사진을 화면 전체로 (Esc: 돌아가기 · Space: 슬릿 스캔)")
         self.b_full3d.clicked.connect(self._toggle_full_3d)
         self.eye3d = EyeView()                # (its tool tip and what the wheel does: _set_wheel3d)
+        self.eye3d.dblclick_leaves = True     # a double click: Simple (the start view: 0 · [처음 시점])
+        self.eye3d.activated.connect(self._to_simple)
         self.eye3d.depthWheel.connect(self._on_depth_wheel)
         self._depth_wheel = 0.0               # (the part of a slider step a fine wheel has not made up yet)
         self.lbl_zoom3d = QLabel("배율 ×1.0", bar)     # (not shown: owned by the bar, so it goes with the window)
         self.lbl_zoom3d.hide()
         self.lbl_zoom3d.setObjectName("hint3d")
-        self.lbl_zoom3d.setToolTip("처음 보기 대비 확대 배율 · 더블클릭 또는 0: 처음 보기")
+        self.lbl_zoom3d.setToolTip("처음 보기 대비 확대 배율 · 0: 처음 보기")
         # 확대 바: ×0.3 … ×16 on a logarithmic scale (the middle of the start view = ×1) — shown over the
         # eye as the 배율 막대 (below); the slider and the label are the value only
         self.s_zoom3d = QSlider(Qt.Orientation.Horizontal, bar)
@@ -1184,7 +1206,7 @@ class MainWindow(QMainWindow):
         vr.setContentsMargins(0, 0, 0, 0)
         vr.setSpacing(6)
         for label, tip, fn in (("정면", "정면에서 보기", lambda: self.eye3d.front_view(animate=True)),
-                               ("처음 시점", "처음 시점으로 (더블클릭 · 0)",
+                               ("처음 시점", "처음 시점으로 (0)",
                                 lambda: self.eye3d.reset_view(animate=True)),
                                ("화면 저장…", "지금 보이는 3D 화면을 그림으로 저장", self._save_3d)):
             b = QPushButton(label)
@@ -1347,7 +1369,7 @@ class MainWindow(QMainWindow):
         keys_label = QLabel("<b>드래그</b> 회전 (놓으면 관성으로 더 돕니다) · <b>휠</b> 자르는 깊이 (내부: 확대) · "
                             "<b>배율 막대</b> · <b>Ctrl+휠</b> · <b>오른쪽 드래그</b> 확대<br>"
                             "<b>Shift+드래그</b> 또는 <b>가운데 버튼</b> 이동 · "
-                            "<b>더블클릭</b> 처음 보기 · <b>←↑→↓ + − 0</b><br><b>트랙패드</b> 두 손가락 벌리기·오므리기 확대"
+                            "<b>더블클릭</b> Simple로 · <b>0</b> 처음 보기 · <b>←↑→↓ + −</b><br><b>트랙패드</b> 두 손가락 벌리기·오므리기 확대"
                             "<br><b>각막 클릭</b> 전안부 선택 → <b>휠</b> 각막부터 망막까지 들어가기·나오기 · "
                             "<b>왼쪽 드래그</b> 둘러보기 · <b>왼쪽 클릭</b> 그곳을 가운데로 · <b>Esc</b> 해제")
         keys_label.setObjectName("caption")
@@ -1499,14 +1521,14 @@ class MainWindow(QMainWindow):
         click = mode != "walk" and self.eye3d.pick_walk
         self.lbl_wheel3d.setText(line)
         self.eye3d.setToolTip(f"드래그: 회전 · {tip} · 오른쪽 드래그 · +/− · 가운데/Shift+드래그: 이동 · "
-                              "더블클릭·0: 처음 보기" + (" · 각막 클릭: 전안부 선택 (그동안 휠로 들어가기)" if click else ""))
+                              "0: 처음 보기 · 더블클릭: Simple로" + (" · 각막 클릭: 전안부 선택 (그동안 휠로 들어가기)" if click else ""))
         walk = ("<br><b>각막 클릭</b> 전안부 선택 → <b>휠</b> 각막부터 망막까지 들어가기·나오기 · " if click else
                 "<br>들어가는 중 " if mode == "walk" else "")
         if walk:
             walk += "<b>왼쪽 드래그</b> 둘러보기 · <b>왼쪽 클릭</b> 그곳을 가운데로 · <b>Esc</b> 해제"
         self.keys3d.setText(f"<b>드래그</b> 회전 (놓으면 관성으로 더 돕니다) · {keys_part} · <b>오른쪽 드래그</b> 확대<br>"
-                            "<b>Shift+드래그</b> 또는 <b>가운데 버튼</b> 이동 · <b>더블클릭</b> 처음 보기 · "
-                            "<b>←↑→↓ + − 0</b><br><b>트랙패드</b> 두 손가락 벌리기·오므리기 확대" + walk)
+                            "<b>Shift+드래그</b> 또는 <b>가운데 버튼</b> 이동 · <b>더블클릭</b> Simple로 · <b>0</b> 처음 보기 · "
+                            "<b>←↑→↓ + −</b><br><b>트랙패드</b> 두 손가락 벌리기·오므리기 확대" + walk)
 
     def _on_panel3d(self, on: bool) -> None:
         self.inspector.setVisible(on)
@@ -1531,28 +1553,52 @@ class MainWindow(QMainWindow):
         self.eye3d.update()
 
     def _reset_toolbars(self) -> None:
-        for tb, area in ((self.tb_cmd, Qt.ToolBarArea.LeftToolBarArea),
-                         (self.tb_proc, Qt.ToolBarArea.BottomToolBarArea)):
-            self.addToolBar(area, tb)
-            tb.setVisible(True)
-        self._remember_cmdbar()
+        self.move_cmdbar("left")
+        self.addToolBar(Qt.ToolBarArea.BottomToolBarArea, self.tb_proc)
+        self.tb_proc.setVisible(True)
 
     # where the command toolbar can be (Settings.cmdbar_area)
     CMDBAR_AREAS = {"left": Qt.ToolBarArea.LeftToolBarArea, "right": Qt.ToolBarArea.RightToolBarArea,
                     "top": Qt.ToolBarArea.TopToolBarArea}
 
+    CMDBAR_PLACES = (("left", "왼쪽에"), ("right", "오른쪽에"), ("top", "화면 위쪽에"), ("under", "큰 사진 아래에"))
+
     def move_cmdbar(self, where: str) -> None:
-        """The command toolbar on the left (as the VK-2), on the right or along the top."""
-        area = self.CMDBAR_AREAS.get(where)
-        if area is None:
-            return
-        self.addToolBar(area, self.tb_cmd)
-        self.tb_cmd.setVisible(True)
+        """The command toolbar on the left (as the VK-2), on the right, along the top — or "under":
+        in a row under the large photos, over the photo list (there it is not dragged: its right-click
+        menu moves it)."""
+        tb, lay = self.tb_cmd, self._centre_lay
+        if where == "under":
+            if not self._cmdbar_under:
+                self.removeToolBar(tb)
+                tb.setMovable(False)
+                tb.setOrientation(Qt.Orientation.Horizontal)
+                lay.insertWidget(lay.indexOf(self.strip_w), tb)
+                self._cmdbar_under = True
+        else:
+            area = self.CMDBAR_AREAS.get(where)
+            if area is None:
+                return
+            if self._cmdbar_under:
+                lay.removeWidget(tb)
+                tb.setMovable(True)
+                self._cmdbar_under = False
+            self.addToolBar(area, tb)
+        tb.setVisible(True)
+        tb.setToolTip("명령 툴바 — 오른쪽 클릭: 위치 고르기 (왼쪽 · 오른쪽 · 화면 위쪽 · 큰 사진 아래)" if self._cmdbar_under else
+                      "명령 툴바 — 맨 위의 점 손잡이를 끌어 오른쪽이나 화면 위쪽으로 옮깁니다 "
+                      "(오른쪽 클릭: 위치 고르기 — 큰 사진 아래에도)")
         self._remember_cmdbar()
 
-    def _remember_cmdbar(self) -> None:
+    def cmdbar_where(self) -> str:
+        """Where the command toolbar is: "left", "right", "top" or "under" (the large photos)."""
+        if self._cmdbar_under:
+            return "under"
         area = self.toolBarArea(self.tb_cmd)
-        where = next((k for k, a in self.CMDBAR_AREAS.items() if a == area), "left")
+        return next((k for k, a in self.CMDBAR_AREAS.items() if a == area), "left")
+
+    def _remember_cmdbar(self) -> None:
+        where = self.cmdbar_where()
         if self.settings.cmdbar_area != where:
             self.settings.cmdbar_area = where
             try:
@@ -1563,11 +1609,11 @@ class MainWindow(QMainWindow):
     def _cmdbar_menu(self, pos) -> None:
         """Right click on the command toolbar: where it goes."""
         menu = QMenu(self)
-        here = self.toolBarArea(self.tb_cmd)
-        for where, label in (("left", "왼쪽에"), ("right", "오른쪽에"), ("top", "화면 위쪽에")):
+        here = self.cmdbar_where()
+        for where, label in self.CMDBAR_PLACES:
             a = menu.addAction(f"명령 툴바 {label}", lambda w=where: self.move_cmdbar(w))
             a.setCheckable(True)
-            a.setChecked(self.CMDBAR_AREAS[where] == here)
+            a.setChecked(where == here)
         menu.exec(self.tb_cmd.mapToGlobal(pos))
 
     def _show_help(self) -> None:
@@ -1578,7 +1624,7 @@ class MainWindow(QMainWindow):
             "+/−: 확대·축소 · 0: 화면 맞춤 · 1: 100%<br>"
             "확대하면 오른쪽 위 미니맵에 전체 사진과 보이는 곳이 나옵니다 — 눌러서 이동<br>"
             "화면 맞춤 ▾ 또는 아래쪽 [배율]: 400·800%, 후극부·위/아래/코/귀쪽 주변부로 바로 확대<br>"
-            "더블클릭: Simple의 칸 · Multi의 사진은 Detail에서 크게, Detail의 큰 사진은 보던 화면으로 · "
+            "더블클릭: Simple의 사진은 Detail에서 크게, 그 밖의 화면(Detail · Multi · 16장 보기 · 3D)에서는 Simple로 · "
             "돋보기는 아래 툴바의 [돋보기] (누르는 동안)<br>"
             "오른쪽 클릭: 메뉴 (시신경 유두 · 황반 위치 지정, 돋보기 배율, 미니맵)<br><br>"
             "<b>3D 안구</b><br>"
@@ -1603,7 +1649,7 @@ class MainWindow(QMainWindow):
             "망막 위로 → 사진을 입힌 3D 안구 (누르면 멈춤) · 크게 보기: 화면 전체 (Space 재생, Esc 돌아가기)<br>"
             "드래그: 회전 (돌리다 놓으면 관성으로 더 돕니다) · Ctrl+휠 (내부에서는 휠): 커서가 가리키는 곳으로 확대 · "
             "가운데 버튼 또는 Shift+드래그: 이동<br>"
-            "+/−: 확대·축소 · 더블클릭 또는 0: 처음 보기<br>"
+            "+/−: 확대·축소 · 0: 처음 보기 · 더블클릭: Simple로<br>"
             "망막 입체: 표면 높낮이 — 혈관은 솟고 유두 함몰·황반 오목은 파여 보임, 입체 조명 — 그 높낮이에 비스듬한 빛 · "
             "단순하게 보기: 공막·홍채·수정체·시신경을 단순하게 그려 망막을 강조 · "
             "자동 회전: 손을 떼고 있으면 천천히 돕니다<br>"
@@ -2046,9 +2092,9 @@ class MainWindow(QMainWindow):
     SIMPLE_HINT = ("Simple — 최신 OD | OS · 아래 사진에 마우스를 올리면 미리 보기, 클릭하면 고정(번호) · 다시 클릭: 빼기 · "
                    "휠: 날짜 책갈피 · 더블클릭: 크게 보기 (Detail)")
     MULTI_HINT = ("16장 보기 — 사진을 클릭해 고르고(번호) 왼쪽 툴바의 [Multi]를 누르면 고른 사진만 봅니다 "
-                  "(다시 [Multi]: 16장으로) · 더블클릭: 크게 보기 (Detail) · 휠: 다음 / 이전 16장")
+                  "(다시 [Multi]: 16장으로) · 더블클릭: Simple로 · 휠: 다음 / 이전 16장")
     PICK_FIRST_HINT = "Multi — 먼저 16장 보기에서 사진을 클릭해 고르세요(번호). 그다음 [Multi]를 누르면 고른 사진만 나옵니다"
-    DETAIL_HINT = ("Detail — 다시 더블클릭(큰 사진 · 아래 사진 목록) · [Detail] 다시: 보던 화면으로 · 사진 좌우의 ◀ ▶ 또는 ← → 키: 이전 / 다음 사진 · "
+    DETAIL_HINT = ("Detail — 다시 더블클릭(큰 사진 · 아래 사진 목록): Simple로 · [Detail] 다시: 보던 화면으로 · 사진 좌우의 ◀ ▶ 또는 ← → 키: 이전 / 다음 사진 · "
                    "사진 목록을 클릭하면 그 사진")
 
     def _newest_pair(self, exam: str | None = None) -> list[int]:
@@ -2167,8 +2213,34 @@ class MainWindow(QMainWindow):
         self._go("all")
         self.lbl_status.setText(self.DETAIL_HINT)
 
+    def _to_simple(self) -> None:
+        """A double click on Detail's big photo (or a photo of the list there), on the 3D eye or on one
+        of 여러 장 3D: Simple — with the photos picked (pinned on Simple, numbered for Multi) as they
+        are; none picked: the newest OD | OS, as [Simple] gives."""
+        if self._tab() not in ("all", "3d", "3d2", "grid"):
+            return
+        self._exit_full_3d()
+        self._pick_pre = None
+        if self.current is None and not self._picks:
+            return                                # (no photo: nothing to show there)
+        if self._picks:
+            self._split_via = SIMPLE
+            self.open_picks()
+            self.lbl_status.setText(self.SIMPLE_HINT)
+        else:
+            self.show_simple()
+
+    def _open_cell(self, image_id: int) -> None:
+        """A double click on a cell of the 다중 보기 page: on Simple that photo large (Detail); on Multi
+        (the photos numbered in 16장 보기) Simple, as [Simple] gives — the newest OD | OS."""
+        if self._split_via == MULTI:
+            self._pick_pre = None
+            self.show_simple()
+        else:
+            self.open_large(image_id)
+
     def _leave_detail(self) -> None:
-        """A double click on Detail's big photo, or [Detail] again: back to the view it was opened from,
+        """[Detail] again: back to the view it was opened from,
         as it was — Simple · Multi with the same photos, 16장 보기, 3D; opened on Detail itself: 16장 보기."""
         if self._tab() != "all":
             return
@@ -2651,6 +2723,16 @@ class MainWindow(QMainWindow):
         if not on:
             self._end_peek()
 
+    def _set_hover_loupe(self, on: bool) -> None:
+        """보기 → 큰 사진에 마우스를 올리면 돋보기 (Simple · Multi cells, Detail's big photo)."""
+        self.settings.hover_loupe = bool(on)
+        try:
+            self.settings.save()
+        except OSError:
+            pass
+        self.view2d.set_hover_loupe(on)
+        self.multi.set_hover_loupe(on)
+
     def _view_ids(self) -> list[int]:
         """The photos on the Simple · Multi page: the selected ones (none: the newest OD | OS)."""
         return list(self._picks)
@@ -3015,11 +3097,11 @@ class MainWindow(QMainWindow):
             self._click_pick(image_id)        # (미리 보기 stays: the row is grown while the mouse is on it)
 
     def _open_photo(self, image_id: int) -> None:
-        """A double click on a photo of the strip or of 16장 보기: the photo large (Detail) — on Detail
-        already: back to the view it was opened from, as a double click on the large photo."""
-        if self._tab() == "all":
-            self._pick_pre = None
-            self._leave_detail()
+        """A double click on a photo of the strip or of 16장 보기: on Simple the photo large (Detail) —
+        anywhere else (Detail, 3D, 16장 보기, Multi) Simple, as a double click on the view itself."""
+        tab = self._tab()
+        if tab in ("all", "3d", "3d2"):
+            self._to_simple()
             return
         pre = self._pick_pre
         # (only the click of this double click: a click on the same photo a while ago stays done)
@@ -3030,7 +3112,12 @@ class MainWindow(QMainWindow):
             self._mark_picks()
             self._fit_multi_count()
         self._pick_pre = None
-        self.open_large(image_id)
+        if tab == "grid":
+            self._to_simple()
+        elif tab == "multi":
+            self._open_cell(image_id)
+        else:
+            self.open_large(image_id)
 
     def _pick_second(self, image_id: int) -> None:
         """Ctrl+click: toggle ``image_id`` as the second photo next to the shown one."""
@@ -5444,8 +5531,17 @@ class MainWindow(QMainWindow):
         self._closing = True
         self._show.stop()
         self._exit_full_3d()
-        area = self.toolBarArea(self.tb_cmd)          # the command toolbar where it was dragged to
-        self.settings.cmdbar_area = next((k for k, a in self.CMDBAR_AREAS.items() if a == area), "left")
+        if not self._cmdbar_parked:
+            self.settings.cmdbar_area = self.cmdbar_where()   # the command toolbar where it was dragged to
+        if self._cmdbar_under:
+            # under the large photos it is a child of the central widget: taken down with the window
+            # there, Qt crashed removing its actions (segmentation fault on exit). Back to the window's
+            # own toolbar area for that — where it is shown next time is what was saved above
+            self._cmdbar_parked = True
+            self._centre_lay.removeWidget(self.tb_cmd)
+            self.addToolBar(Qt.ToolBarArea.LeftToolBarArea, self.tb_cmd)
+            self.tb_cmd.hide()
+            self._cmdbar_under = False
         try:
             self.settings.save()
         except OSError:
