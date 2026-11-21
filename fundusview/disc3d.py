@@ -30,6 +30,7 @@ VESSEL_H = 0.14          # a vessel's top
 CUP_GAMMA = 2.2          # one photo: depth against pallor (1 = the whole pale disc is the hollow)
 SOLVE_PX = 320           # render: side of the grid the visible surface is solved on
 MIN_PARALLAX_PX = 1.0    # stereo: less parallax than this (at the analysis width) is no depth
+MIN_LIGHT_Z = 0.35       # shade: the light is never lower over the photo's plane than this
 LIGHT = (-0.45, -0.55, 0.70)     # the light in view space: from the upper left, towards the viewer
 
 
@@ -208,8 +209,12 @@ def shade(tex: np.ndarray, H: np.ndarray, depth_px: float, R: np.ndarray, streng
         gx = cv2.Sobel(z, cv2.CV_32F, 1, 0, ksize=3) / 8.0
         gy = cv2.Sobel(z, cv2.CV_32F, 0, 1, ksize=3) / 8.0
         L = R.T @ (np.asarray(LIGHT, np.float64) / np.linalg.norm(LIGHT))    # the light in the object's frame
+        if L[2] < MIN_LIGHT_Z:                                   # turned far: the light stays in front of the
+            xy = float(np.hypot(L[0], L[1]))                     # sheet (behind it the whole photo went dark)
+            L = np.array([L[0] / xy * math.sqrt(1.0 - MIN_LIGHT_Z ** 2), L[1] / xy * math.sqrt(1.0 - MIN_LIGHT_Z ** 2),
+                          MIN_LIGHT_Z])
         lit = (-gx * L[0] - gy * L[1] + L[2]) / np.sqrt(gx * gx + gy * gy + 1.0)
-        k = np.clip(1.0 + strength * (lit / max(float(L[2]), 0.25) - 1.0), 0.35, 1.6)
+        k = np.clip(1.0 + strength * (lit / float(L[2]) - 1.0), 0.35, 1.6)      # (the flat retina: as taken)
         out *= k[..., None]
     if contours:
         lv = Hf * 8.0                                                         # 8 lines from 0 to the deepest

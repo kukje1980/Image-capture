@@ -293,3 +293,14 @@ def test_tab_with_two_photos_gives_the_cd_of_each_and_the_change_between_two_day
     same.stereo._timer.stop()
     same.progress._timer.stop()
     assert "오차 범위" in same.surface.lbl_cd2.text() and GlaucomaDialog(_photo(1, now)).surface.both() is None
+
+
+def test_the_flat_retina_keeps_its_brightness_however_far_the_surface_is_turned():
+    tex = np.full((128, 128, 3), 150, np.uint8)
+    H = np.zeros((128, 128), np.float32)
+    H[40:88, 40:88] = -0.5
+    H = cv2.GaussianBlur(H, (0, 0), 4)
+    for yaw, pitch in ((0, 0), (30, -35), (-60, 60), (65, -65), (-65, -65)):
+        lit = disc3d.shade(tex, H, 40.0, disc3d.rotation(yaw, pitch))
+        assert abs(int(lit[5, 5, 0]) - 150) <= 1                    # away from the hollow: as taken
+        assert lit[40:88, 40:88].max() > 160 and lit[40:88, 40:88].min() < 140    # its walls: lit and shaded
