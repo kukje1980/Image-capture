@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from PySide6.QtCore import QPoint, QRect, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPen
+from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from . import theme
@@ -46,6 +46,7 @@ class PhotoGrid(QWidget):
     GAP = 6
     MARGIN = 6
     CAPTION = 22
+    ROUND = 14                  # a cell's corners (the photo in it: a little less) — round, as on a Mac
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -168,45 +169,52 @@ class PhotoGrid(QWidget):
             if k >= len(page):               # VK-2: the empty places of the page stay as frames
                 p.setPen(QPen(QColor(theme.SEP), 1))
                 p.setBrush(Qt.BrushStyle.NoBrush)
-                p.drawRoundedRect(cell.adjusted(0.5, 0.5, -0.5, -0.5), 6, 6)
+                p.drawRoundedRect(cell.adjusted(0.5, 0.5, -0.5, -0.5), self.ROUND, self.ROUND)
                 continue
             it = page[k]
             second = it.image_id == self._second
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QColor(theme.FILL if k == self._hover else theme.CARD))
-            p.drawRoundedRect(cell, 6, 6)
+            p.drawRoundedRect(cell, self.ROUND, self.ROUND)
             photo_area = cell.adjusted(4, 4, -4, -4)        # the whole cell: the caption lies on it
             photo = QRectF(photo_area)
             pm = thumb_pixmap(it.thumb)
-            p.fillRect(photo_area, QColor(theme.BLACK))
+            r = self.ROUND - 4.0                             # round as the cell around it (0.10.12)
+            p.setBrush(QColor(theme.BLACK))
+            p.drawRoundedRect(photo_area, r, r)
             if not pm.isNull() and photo_area.width() > 2 and photo_area.height() > 2:
                 s = min(photo_area.width() / pm.width(), photo_area.height() / pm.height())
                 photo = QRectF(0, 0, pm.width() * s, pm.height() * s)
                 photo.moveCenter(photo_area.center())
+                shape = QPainterPath()
+                shape.addRoundedRect(photo, r, r)
+                p.save()
+                p.setClipPath(shape, Qt.ClipOperation.IntersectClip)
                 p.drawPixmap(photo, pm, QRectF(pm.rect()))
-            paint_eye_badge(p, it.eye, photo.left() + 4, photo.top() + 4, px=13)
+                p.restore()
+            paint_eye_badge(p, it.eye, photo.left() + 6, photo.top() + 6, px=13)
             # the date · time (· kind) of the photo: in the top right corner of its cell
             p.setFont(f)
             text = ("② " if second else "") + it.caption
             text = p.fontMetrics().elidedText(text, Qt.TextElideMode.ElideRight, int(photo_area.width()) - 16)
             tw = p.fontMetrics().horizontalAdvance(text) + 12
-            cap = QRectF(photo_area.right() - tw - 2, photo_area.top() + 2, tw, self.CAPTION)
+            cap = QRectF(photo_area.right() - tw - 5, photo_area.top() + 5, tw, self.CAPTION)
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QColor(SECOND_COLOR) if second else QColor(0, 0, 0, 150))
-            p.drawRoundedRect(cap, 4, 4)
+            p.drawRoundedRect(cap, 6, 6)
             p.setPen(QColor(theme.TEXT if second or it.image_id == self._current else theme.TEXT2))
             p.drawText(cap, Qt.AlignmentFlag.AlignCenter, text)
             rank = self._picks.get(it.image_id, 0)
             if rank:                         # picked for the multi view: yellow frame and its number
                 p.setBrush(Qt.BrushStyle.NoBrush)
                 p.setPen(QPen(QColor(PICK_COLOR), 3))
-                p.drawRect(photo.adjusted(1.5, 1.5, -1.5, -1.5))
+                p.drawRoundedRect(photo.adjusted(1.5, 1.5, -1.5, -1.5), r - 1.5, r - 1.5)
                 nf = QFont(f)
                 nf.setBold(True)
                 nf.setPixelSize(15)
                 p.setFont(nf)
                 d = p.fontMetrics().height() + 8
-                dot = QRectF(photo.right() - d - 4, photo.top() + 4, d, d)
+                dot = QRectF(photo.right() - d - 6, photo.top() + 6, d, d)
                 if dot.intersects(cap):       # (a narrow cell: under the caption)
                     dot.moveTop(cap.bottom() + 4)
                 p.setPen(Qt.PenStyle.NoPen)
