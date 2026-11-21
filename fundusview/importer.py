@@ -278,23 +278,19 @@ class Importer:
             rgb, w, h = imaging.load_for_import(path)
         fx, fy = w / rgb.shape[1], h / rgb.shape[0]
         circle = imaging.detect_circle(rgb)
-        tmax_deg = math.degrees(theta_max(meta.fov_deg or profile.fov_deg,
-                                          meta.fov_type or profile.fov_type, profile.viewpoint))
-        disc = None
-        if meta.modality not in ("montage", "anterior"):
-            disc = imaging.detect_disc(rgb, circle, disc_frac=min(0.25, 3.8 / max(tmax_deg, 5.0)),
-                                       search=profile.disc_search)
+        disc = fovea = None             # together they say where the photo lies on the eye (3D)
         guessed = not meta.laterality and meta.modality not in ("montage", "anterior")
-        if guessed:
-            meta.set("laterality", imaging.laterality_from_disc(disc, circle), "disc-estimate")
-        fovea = None                    # with the disc it says where the photo lies on the eye (3D)
-        if disc is not None:
+        if meta.modality not in ("montage", "anterior"):
             cam = placement.Camera(*circle, meta.fov_deg or profile.fov_deg, meta.fov_type or profile.fov_type,
                                    meta.projection or profile.projection, profile.viewpoint,
                                    get_profile(profile.key).radial_c)   # (the measured lens curve)
-            # an eye the file does not name: the macula is looked for on both sides of the disc, and the
+            # the disc and the macula are found together (a bright lesion is not taken for the disc). An
+            # eye the file does not name: the macula is looked for on both sides of the disc, and the
             # side it is on (temporal of the disc) tells the eye better than where the disc lies
-            found = imaging.detect_fovea(rgb, cam, disc[:2], None if guessed else meta.laterality, with_side=True)
+            disc, found = imaging.detect_landmarks(rgb, cam, None if guessed else meta.laterality,
+                                                   search=profile.disc_search)
+            if guessed:
+                meta.set("laterality", imaging.laterality_from_disc(disc, circle), "disc-estimate")
             if found is not None:
                 fovea = found[:3]
                 if guessed and found[3] != meta.laterality:
@@ -337,6 +333,7 @@ class Importer:
                 meta_dict = meta.as_dict()
                 meta_dict["profile_name"] = profile.name
                 meta_dict["source_file"] = spath
+                meta_dict["landmarks"] = imaging.LANDMARKS_VERSION
                 image_id = self._insert(meta, profile, meta_dict, patient_ref, stored, display, thumb, spath,
                                         digest, w, h, circle, disc, fovea)
                 # A moved file no longer exists at its source path; index the source

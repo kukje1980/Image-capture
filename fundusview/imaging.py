@@ -286,6 +286,10 @@ def detect_fovea(rgb: np.ndarray, cam, disc, laterality: str | None = None, *,
     yy, xx = np.mgrid[0:h, 0:w]
     dirs, inside = cam.directions((xx + 0.5) * step, (yy + 0.5) * step)
     mask = (inside & (luminance(small.astype(np.float64)) > 8.0)).astype(np.float64)
+    # the macula is dark against the retina — not against a plaque of exudates or a scar beside it:
+    # what is brighter than the retina counts as retina (how dark is dark enough is still judged by
+    # the photo as it is)
+    cap = float(np.percentile(green[mask > 0], 90.0)) if mask.sum() >= 50 else 255.0
     best = None
     for side in sides:
         guess = placement.expected_fovea(cam, disc, side)
@@ -302,7 +306,9 @@ def detect_fovea(rgb: np.ndarray, cam, disc, laterality: str | None = None, *,
             g = cv2.morphologyEx(np.ascontiguousarray(green, np.float32), cv2.MORPH_OPEN,
                                  cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))).astype(np.float64)
         cover = np.maximum(_blur(mask, s_big), 1e-6)
-        dark = _blur(g * mask, s_big) / cover - _blur(g * mask, s_small) / np.maximum(_blur(mask, s_small), 1e-6)
+        gc = np.minimum(g, cap)
+        dark0 = _blur(g * mask, s_big) / cover - _blur(g * mask, s_small) / np.maximum(_blur(mask, s_small), 1e-6)
+        dark = _blur(gc * mask, s_big) / cover - _blur(gc * mask, s_small) / np.maximum(_blur(mask, s_small), 1e-6)
         valid = (mask > 0) & (cover > 0.85)
         if valid.sum() < 50:
             continue
@@ -310,7 +316,7 @@ def detect_fovea(rgb: np.ndarray, cam, disc, laterality: str | None = None, *,
         win = valid & (dist <= window_deg)
         if not win.any():
             continue
-        spread = float(dark[valid].std()) + 0.25
+        spread = float(dark0[valid].std()) + 0.25
         score = np.where(win, dark / spread * (0.55 + 0.45 * np.exp(-(dist / (0.7 * window_deg)) ** 2)), -1e9)
         iy, ix = np.unravel_index(int(np.argmax(score)), score.shape)
         peak = float(dark[iy, ix])
@@ -331,6 +337,97 @@ def detect_fovea(rgb: np.ndarray, cam, disc, laterality: str | None = None, *,
     if best is None or best[2] < 1.2:
         return None
     return best[:4] if with_side else best[:3]
+
+
+LANDMARKS_VERSION = 2       # how the disc and the macula are found (photos found an older way: again)
+
+
+def _vessel_map(small: np.ndarray, r: float, disc_frac: float) -> np.ndarray:
+    """Vessel strength on the small photo: the dark lines a closing fills (green channel), counted
+    only on retina of ordinary brightness — the dark gaps between bright spots are not vessels."""
+    g = small[..., 1].astype(np.float32) if small.ndim == 3 else small.astype(np.float32)
+    k = max(3, int(round(r * disc_frac * 0.45)) | 1)          # ≈ the widest vessel at the disc
+    if cv2 is not None:
+        closed = cv2.morphologyEx(np.ascontiguousarray(g), cv2.MORPH_CLOSE,
+                                  cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+    else:
+        from .relief import _rank_filter
+        closed = _rank_filter(_rank_filter(g, k // 2, np.maximum), k // 2, np.minimum)
+    return (closed - g).astype(np.float64), closed.astype(np.float64)
+
+
+def disc_candidates(rgb: np.ndarray, circle: tuple[float, float, float], *, disc_frac: float = 0.11,
+                    search: float = 0.7, reach: float = 0.9, count: int = 6) -> list[tuple[float, float, float, float, float]]:
+    """Places that could be the optic disc, the likeliest first: ``(x, y, contrast, brightness,
+    vessels)`` — the peaks of the local contrast :func:`detect_disc` goes by (z-scores against the field inside
+    ``search`` × radius, as there; the peaks out to ``reach`` × radius), each at least two disc diameters from the others; ``vessels`` is how much
+    more vessel runs through and around the place than over the field (z-score: the vessels of the
+    retina all come out of the disc). Hard exudates, scars and reflexes are among the candidates: a
+    bright patch with strong contrast is not yet a disc (:func:`detect_landmarks` picks)."""
+    small, step = _downsample(rgb, 384)
+    cx, cy, r = (v / step for v in circle)
+    lum = luminance(small.astype(np.float32))
+    dr = max(1.5, r * disc_frac)
+    mean = gaussian_blur(lum, dr)
+    sd = np.sqrt(np.maximum(gaussian_blur(lum * lum, dr) - mean * mean, 0))
+    h, w = lum.shape
+    yy, xx = np.mgrid[0:h, 0:w]
+    d2 = (xx - cx) ** 2 + (yy - cy) ** 2
+    inside = d2 <= (search * r) ** 2
+    if inside.sum() < 50:
+        return []
+    vals, means = sd[inside], mean[inside]
+    z = (sd - np.median(vals)) / (vals.std() + 1e-6)
+    zb = (mean - np.median(means)) / (means.std() + 1e-6)
+    z[d2 > (max(search, reach) * r) ** 2] = -1e9
+    th, closed = _vessel_map(small, r, disc_frac)
+    ordinary = closed <= np.percentile(closed[inside], 85.0)   # (not on a bright patch, nor between two)
+    field = (d2 <= (0.97 * r) ** 2).astype(np.float64)
+    cover = np.maximum(gaussian_blur(field, 2.5 * dr), 1e-6)
+    ves = gaussian_blur(np.where(ordinary, th, 0.0) * field, 2.5 * dr) / cover
+    zv = (ves - np.median(ves[inside])) / (ves[inside].std() + 1e-6)
+    out = []
+    for _ in range(count):
+        iy, ix = np.unravel_index(np.argmax(z), z.shape)
+        conf = float(z[iy, ix])
+        if conf < 3.0:
+            break
+        # (the dark macula with its reflex at the centre of a fovea-centred photo is not a disc)
+        if d2[iy, ix] >= (0.08 * r) ** 2 or zb[iy, ix] >= 1.0:
+            out.append(((ix + 0.5) * step, (iy + 0.5) * step, conf, float(zb[iy, ix]), float(zv[iy, ix])))
+        z[(xx - ix) ** 2 + (yy - iy) ** 2 <= (4.0 * dr) ** 2] = -1e9
+    return out
+
+
+def detect_landmarks(rgb: np.ndarray, cam, laterality: str | None = None, *, search: float = 0.7):
+    """The optic disc and the fovea together: ``(disc, fovea)`` — ``(x, y, confidence)`` or ``None``
+    each, the fovea with the eye its side tells as a fourth value (as :func:`detect_fovea` with
+    ``with_side``).
+
+    The strongest local contrast alone (:func:`detect_disc`) takes a plaque of hard exudates, a laser
+    scar or a reflex for the disc — and a disc further out than the device's ``search`` radius (the eye
+    turned away from the camera) is not looked at at all; the fovea is then looked for in the wrong
+    place, and in 3D the optic nerve leaves the eye beside the photo's disc. So every bright,
+    contrasty place of the whole field is a candidate (:func:`disc_candidates`), and the one is taken
+    that looks most like a disc *and* has a macula where a disc's macula lies (≈ 21.5° temporal, a
+    little below): contrast, brightness and how dark that macula is add up. Beyond ``search`` × radius
+    a candidate must earn it (the rim of the field has reflexes, lashes and the lid).
+    """
+    if cam is None or not cam.r:
+        return None, None
+    circle = (cam.cx, cam.cy, cam.r)
+    tmax = math.degrees(cam.tmax)
+    best = None
+    for x, y, conf, bright, ves in disc_candidates(rgb, circle, disc_frac=min(0.25, 3.8 / max(tmax, 5.0)),
+                                             search=search):
+        fovea = detect_fovea(rgb, cam, (x, y), laterality, with_side=True)
+        score = (min(conf, 8.0) + min(max(bright, 0.0), 2.0) + min(max(ves, -1.0), 2.0)
+                 + (1.5 * min(fovea[2], 6.0) if fovea else 0.0))
+        if math.hypot(x - cam.cx, y - cam.cy) > search * cam.r:
+            score -= 2.5
+        if best is None or score > best[0]:
+            best = (score, (x, y, conf), fovea)
+    return (None, None) if best is None else (best[1], best[2])
 
 
 def fundus_alpha(rgb: np.ndarray, circle: tuple[float, float, float] | None = None) -> np.ndarray:
