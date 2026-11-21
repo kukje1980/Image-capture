@@ -222,3 +222,29 @@ def test_images_load_from_a_settings_folder_with_spaces(app, tmp_path, monkeypat
         return sum(img.pixelColor(x, y).lightness() > 215 for x in range(22) for y in range(img.height()))
 
     assert white(qss) > white(qss.replace("check.png", "missing.png")) + 5      # the check mark is drawn
+
+
+def test_toolbar_icons_are_colour_tiles_with_white_glyphs(app):
+    """0.10.18: every toolbar icon is a rounded colour tile (photo thumbnails: a rounded photo) with
+    clear corners; the glyph alone (``plain``) stays a light line drawing with no tile behind it."""
+    from fundusview.ui import icons
+    from fundusview.ui.toolbars import COMMANDS, PROCESSING, icon_for
+
+    specs = [c[3] for c in COMMANDS] + [c[3] for c in PROCESSING if c]
+    for spec in specs:
+        img = icon_for(spec).pixmap(64, 64).toImage()
+        assert img.pixelColor(0, 0).alpha() == 0 and img.pixelColor(63, 63).alpha() == 0, spec   # round corners
+        assert img.pixelColor(32, 5).alpha() == 255 and img.pixelColor(5, 32).alpha() == 255, spec  # the tile
+        if not spec.startswith("fundus:"):
+            assert spec in icons.TILE_OF or spec.startswith("multi"), spec       # a colour chosen for it
+            top, bottom = icons.tile_colors(spec)
+            edge = img.pixelColor(32, 57)
+            assert abs(edge.red() - bottom.red()) < 40 and abs(edge.blue() - bottom.blue()) < 40, spec
+            white = sum(img.pixelColor(x, y).lightness() > 240 for x in range(10, 54) for y in range(10, 54))
+            assert white > 40, spec                                             # the glyph, in white
+    # neighbours on the command toolbar differ in colour where it helps to tell them apart
+    assert icons.tile_colors("simple") != icons.tile_colors("multi16") != icons.tile_colors("detail")
+    assert icons.tile_colors("exit")[1].red() > 200
+    plain = icons.icon("prev", plain=True).pixmap(64, 64).toImage()
+    assert plain.pixelColor(32, 5).alpha() == 0 and plain.pixelColor(5, 32).alpha() == 0
+    assert any(plain.pixelColor(x, 32).alpha() == 255 for x in range(64))

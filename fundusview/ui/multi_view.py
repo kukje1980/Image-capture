@@ -105,7 +105,7 @@ def _active_badge() -> QFrame:
     bl = QHBoxLayout(badge)
     bl.setContentsMargins(6, 1, 8, 1)
     bl.setSpacing(3)
-    pm = line_icon("tools").pixmap(13, 13)
+    pm = line_icon("tools", plain=True).pixmap(13, 13)
     p = QPainter(pm)                                   # the icon in white on the blue
     p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
     p.fillRect(pm.rect(), Qt.GlobalColor.white)

@@ -32,7 +32,7 @@ class EdgeNav(QObject):
             b = QToolButton(view)                 # (over the viewport, not in it: a scrolled photo takes
                                                   # the viewport's own children along)
             b.setObjectName("edgeNav")
-            b.setIcon(icon(name))
+            b.setIcon(icon(name, plain=True))
             b.setIconSize(QSize(22, 22))
             b.setFixedSize(SIZE, SIZE)
             b.setFocusPolicy(Qt.FocusPolicy.NoFocus)        # the keys stay with the photo

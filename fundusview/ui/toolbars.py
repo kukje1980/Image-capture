@@ -25,10 +25,11 @@ from functools import lru_cache
 
 import numpy as np
 from PySide6.QtCore import QPoint, Qt, Signal
-from PySide6.QtGui import QIcon, QImage, QPainter, QPainterPath, QPixmap
+from PySide6.QtGui import QBrush, QColor, QIcon, QImage, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout
 
 from .. import imaging
+from . import icons
 from .icons import icon as line_icon
 from .image_view import TOOL_HINTS
 
@@ -176,17 +177,29 @@ def _effect(name: str) -> np.ndarray:
 
 @lru_cache(maxsize=None)
 def fundus_icon(name: str) -> QIcon:
+    """The sample photo with effect ``name``, in the rounded square of the other toolbar icons."""
     rgb = np.ascontiguousarray(_effect(name))
     h, w = rgb.shape[:2]
     img = QImage(rgb.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()
-    pm = QPixmap(w, h)
+    k = 2                                             # (sharp on a Retina screen too)
+    pm = QPixmap(icons.S * k, icons.S * k)
     pm.fill(Qt.GlobalColor.transparent)
     p = QPainter(pm)
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+    p.scale(k, k)
+    tile, radius = icons.TILE, icons.TILE_RADIUS
     clip = QPainterPath()
-    clip.addEllipse(1, 1, w - 2, h - 2)
+    clip.addRoundedRect(tile, radius, radius)
     p.setClipPath(clip)
-    p.drawImage(0, 0, img)
+    p.fillPath(clip, QColor(0, 0, 0))
+    p.drawImage(tile.adjusted(1, 1, -1, -1), img)
+    p.setClipping(False)
+    edge = QLinearGradient(0, tile.top(), 0, tile.bottom())      # a light edge, as on the colour tiles
+    edge.setColorAt(0.0, QColor(255, 255, 255, 110))
+    edge.setColorAt(1.0, QColor(255, 255, 255, 40))
+    p.setPen(QPen(QBrush(edge), 1.4))
+    p.drawRoundedRect(tile.adjusted(0.7, 0.7, -0.7, -0.7), radius - 0.7, radius - 0.7)
     p.end()
     return QIcon(pm)
 
