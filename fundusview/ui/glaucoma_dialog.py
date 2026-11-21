@@ -731,6 +731,9 @@ class DiscTab(_Tab):
 # -- 3D ----------------------------------------------------------------------------------------------
 S3_ONE = "사진 한 장의 밝기로 추정한 모양입니다 (창백한 곳 = 깊은 곳). 실제 깊이를 잰 것이 아닙니다."
 S3_HINT = "사진을 끌면 돌아갑니다. 깊이는 과장해서 보여 주는 상대값입니다."
+S3_CD = ("입체 표면에서 기준 깊이보다 깊은 곳을 컵(노란 선)으로 본 추정값입니다. 디스크 경계(초록 선)는 "
+         "[디스크 C/D] 탭의 초록 선입니다 — 거기서 맞추면 여기도 따라옵니다.")
+S3_NO_CUP = "컵이 뚜렷하지 않아 이 표면에서는 C/D를 추정하지 못했습니다 — [디스크 C/D] 탭에서 직접 맞추세요."
 
 
 class Surface3DTab(_Tab):
@@ -740,9 +743,11 @@ class Surface3DTab(_Tab):
     ROCK_YAW, ROCK_PITCH, ROCK_S = 16.0, 6.0, 4.0        # 자동으로 흔들기: degrees each way, seconds a swing
     LIMIT = 65.0                                         # how far the surface turns (degrees)
 
-    def __init__(self, photo: Photo | None, second: Photo | None = None, parent=None):
+    def __init__(self, photo: Photo | None, second: Photo | None = None, parent=None, disc_tab=None):
         super().__init__(NEED_ONE, parent)
         self.photos = [p for p in (photo, second) if p is not None]
+        self.disc_tab = disc_tab                         # its green outline is the disc margin here
+        self._cup: dict = {}
         eyes = {p.eye for p in self.photos if p.eye}
         self.stereo_ok = len(self.photos) == 2 and len(eyes) < 2      # (OD with OS is no stereo pair)
         self.source = "stereo" if self.stereo_ok else "a"
@@ -800,6 +805,26 @@ class Surface3DTab(_Tab):
         self.b_tilt.clicked.connect(lambda: self.set_view(-22.0, 14.0))
         self.side.addWidget(card("보기", self.s_depth, self.sw_auto, self.sw_light, self.sw_contour, self.sw_ana,
                                  _pair_row(self.b_front, self.b_tilt)))
+        self.lbl_cd = QLabel("–")
+        f = QFont(self.lbl_cd.font())
+        f.setPixelSize(30)
+        f.setBold(True)
+        self.lbl_cd.setFont(f)
+        self.lbl_cd2 = QLabel()
+        self.lbl_cd2.setTextFormat(Qt.TextFormat.RichText)
+        self.lbl_cd2.setWordWrap(True)
+        self.s_level = _Slider("컵 기준 깊이", 10, 80, disc3d.CUP_LEVEL * 100, 5, lambda v: f"{v:.0f}%")
+        self.s_level.setToolTip("가장 깊은 곳까지의 깊이 중 이만큼보다 깊은 곳을 컵으로 봅니다 — 올리면 컵이 작아집니다")
+        self.s_level.changed.connect(lambda _v: self._draw())
+        self.sw_lines = Switch("디스크 · 컵 선")
+        self.sw_lines.setChecked(True)
+        self.sw_lines.toggled.connect(lambda _on: self._draw())
+        self.b_apply = _button("디스크 C/D 탭에 적용", tip="이 컵 경계를 [디스크 C/D] 탭의 노란 선으로 옮깁니다 — "
+                                                       "거기서 다듬고 림 두께 · ISNT를 봅니다")
+        self.b_apply.clicked.connect(self.apply_to_disc_tab)
+        self.b_apply.setVisible(disc_tab is not None)
+        self.side.addWidget(card("수직 C/D (추정)", self.lbl_cd, self.lbl_cd2, self.s_level, self.sw_lines,
+                                 self.b_apply, _note(S3_CD)))
         self.side.addStretch(1)
         self.view.pressed.connect(self._press)
         self.view.moved.connect(self._move)
@@ -844,7 +869,8 @@ class Surface3DTab(_Tab):
                 self._heights[key] = disc3d.height_from_stereo(self._tex[0], self._tex[1], frac,
                                                                flip=self.sw_flip.isChecked())
             else:
-                self._heights[key] = (disc3d.height_from_photo(self._tex[self.source == "b"], frac), {})
+                info: dict = {}
+                self._heights[key] = (disc3d.height_from_photo(self._tex[self.source == "b"], frac, info=info), info)
         H, self.info = self._heights[key]
         return H
 
@@ -931,6 +957,85 @@ class Surface3DTab(_Tab):
     def depth_px(self) -> float:
         return self.s_depth.value() / 100.0 * disc3d.DEPTH_DD * disc3d.TEX_PX / self._factor()
 
+    # -- C/D from the surface --------------------------------------------------------------------
+    def disc_outline(self) -> dict:
+        """The disc margin in texture pixels: the green outline of the 디스크 C/D tab (of the same
+        photo, whatever field that tab shows), or a disc of the expected size in the middle."""
+        c, r = (disc3d.TEX_PX - 1) / 2.0, disc3d.TEX_PX / self._factor() / 2.0
+        t = self.disc_tab
+        if t is not None and t.disc is not None and t.img is not None:
+            side = float(t.img.shape[0])
+            k = r / (side / {k: f for k, _, f in DISC_FIELDS}[t.field] / 2.0)
+            d = t.disc
+            return {"cx": c + (d["cx"] - side / 2.0) * k, "cy": c + (d["cy"] - side / 2.0) * k,
+                    **{key: d[key] * k for key in ("top", "right", "bottom", "left")}}
+        return G.outline({"cx": c, "cy": c, "rx": r * 0.95, "ry": r * 1.05})
+
+    def cup(self) -> tuple[dict, dict, np.ndarray] | None:
+        """(disc outline, cup outline, the cup's margin) in texture pixels — the cup as the surface
+        has it (``disc3d.cup_from_surface``) — or None: no surface, no cup seen in the photo, or
+        a stereo depth that is not to be trusted."""
+        H = self.heights()
+        if H is None or not self.info.get("cup", True) or not self.info.get("reliable", True):
+            return None
+        disc = self.disc_outline()
+        key = (self.source, self.sw_flip.isChecked(), self.field, self.s_level.value(), tuple(disc.values()))
+        if key not in self._cup:
+            k = H.shape[0] / disc3d.TEX_PX                # (the surface is coarser than the texture)
+            small = {**{a: disc[a] * k for a in ("top", "right", "bottom", "left")},
+                     "cx": (disc["cx"] + 0.5) * k - 0.5, "cy": (disc["cy"] + 0.5) * k - 0.5}
+            found = disc3d.cup_from_surface(H, small, self.s_level.value() / 100.0)
+            if found is not None:
+                cup, edge = found
+                cup = {**{a: cup[a] / k for a in ("top", "right", "bottom", "left")},
+                       "cx": (cup["cx"] + 0.5) / k - 0.5, "cy": (cup["cy"] + 0.5) / k - 0.5}
+                found = (disc, cup, (edge + 0.5) / k - 0.5)
+            self._cup = {key: found}
+        return self._cup[key]
+
+    def metrics(self) -> dict | None:
+        """C/D of the cup read off the surface (``G.cdr_metrics``), or None."""
+        found = self.cup()
+        return G.cdr_metrics(found[0], found[1], self.eye() or "OD") if found else None
+
+    def apply_to_disc_tab(self) -> None:
+        """The cup found here becomes the yellow outline of the 디스크 C/D tab."""
+        found, t = self.cup(), self.disc_tab
+        if not found or t is None or t.disc is None:
+            return
+        c, r = (disc3d.TEX_PX - 1) / 2.0, disc3d.TEX_PX / self._factor() / 2.0
+        side = float(t.img.shape[0])
+        k = (side / {k: f for k, _, f in DISC_FIELDS}[t.field] / 2.0) / r
+        cup = found[1]
+        t.set_ellipses(t.disc, {"cx": side / 2.0 + (cup["cx"] - c) * k, "cy": side / 2.0 + (cup["cy"] - c) * k,
+                                **{key: cup[key] * k for key in ("top", "right", "bottom", "left")}})
+
+    def _report(self) -> None:
+        m = self.metrics()
+        self.b_apply.setEnabled(m is not None)
+        if m is None:
+            self.lbl_cd.setText("–")
+            self.lbl_cd2.setText(f"<span style='color:{theme.TEXT2}'>{S3_NO_CUP if self._tex else ''}</span>")
+            return
+        v = m["vertical"]
+        band = "0.7 이상" if v >= 0.7 else "0.5~0.7" if v >= 0.5 else "0.5 미만"
+        self.lbl_cd.setText(f"{v:.2f}")
+        self.lbl_cd2.setText(f"<span style='color:{theme.TEXT2}'>{band}</span><br>"
+                             f"수평 C/D <b>{m['horizontal']:.2f}</b> &nbsp;·&nbsp; 면적 C/D <b>{m['area']:.2f}</b>")
+
+    def _texture(self) -> np.ndarray:
+        """The photo to lay on the surface, with the disc (green) and cup (yellow) lines on it."""
+        tex = self._tex[self.shown_photo()]
+        found = self.cup() if self.sw_lines.isChecked() else None
+        if not found:
+            return tex
+        tex = tex.copy()
+        for pts, col in ((disc3d.outline_points(found[0]), DISC_COLOR), (found[2], CUP_COLOR)):
+            line = [np.round(pts * 8).astype(np.int32)]
+            cv2.polylines(tex, line, True, (20, 20, 20), 5, cv2.LINE_AA, shift=3)      # (seen on a pale cup too)
+            cv2.polylines(tex, line, True, (col.red(), col.green(), col.blue()), 2, cv2.LINE_AA, shift=3)
+        return tex
+
     def compose(self):
         H = self.heights()
         if H is None:
@@ -938,13 +1043,16 @@ class Surface3DTab(_Tab):
         yaw, pitch = self._angles()
         kw = dict(light=1.0 if self.sw_light.isChecked() else 0.0, contours=self.sw_contour.isChecked())
         draw = disc3d.anaglyph if self.sw_ana.isChecked() else disc3d.render
-        return draw(self._tex[self.shown_photo()], H, self.depth_px(), yaw, pitch, **kw)
+        return draw(self._texture(), H, self.depth_px(), yaw, pitch, **kw)
 
     def _draw(self) -> None:
+        self._report()
         self.view.set_rgb(self.compose())
 
     def note(self) -> str:
-        return "녹내장 분석 — 유두 3D " + ("(2장 스테레오)" if self.source == "stereo" else "(1장 추정)")
+        m = self.metrics()
+        return ("녹내장 분석 — 유두 3D " + ("(2장 스테레오)" if self.source == "stereo" else "(1장 추정)")
+                + (f" · 추정 수직 C/D {m['vertical']:.2f}" if m else ""))
 
     def image_ids(self) -> list[int]:
         if self.source == "stereo" or self._flickering():
@@ -1229,7 +1337,8 @@ class GlaucomaDialog(QDialog):
         self.tabs.setObjectName("views")
         self.tabs.setDocumentMode(True)
         self.disc = DiscTab(current)
-        self.surface = Surface3DTab(current, second)
+        self.surface = Surface3DTab(current, second, disc_tab=self.disc)
+        self.surface.b_apply.clicked.connect(lambda: self.tabs.setCurrentWidget(self.disc))
         self.wide = WideTab(current)
         self.stereo = StereoTab(pair)
         self.progress = ProgressTab(pair)
