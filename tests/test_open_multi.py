@@ -393,21 +393,24 @@ def test_a_double_click_opens_detail_and_another_goes_back(win):
     w._step(1)
     dclick(w.view2d)
     assert w._tab() == "multi" and w.picks() == [od3, os3, od2]
-    # 16장 보기 ([Multi] on Simple): a photo double clicked — Detail; double clicked again — Simple
+    # 16장 보기 ([Multi] on Simple): a photo double clicked — Simple, the photos picked as they are
     _press(w, "view:multi")
     assert w._tab() == "grid"
     w.grid.activated.emit(od2)
     app.processEvents()
-    assert w._tab() == "all" and w.current["id"] == od2
+    assert w._tab() == "multi" and _lit(w) == ["view:simple"] and w.picks() == [od3, os3, od2]
+    # Detail opened from 16장 보기 · from Multi ([Detail]): the big photo double clicked — Simple
+    _press(w, "view:multi")
+    assert w._tab() == "grid"
+    _press(w, "view:all")
+    assert w._tab() == "all"
     dclick(w.view2d)
     assert w._tab() == "multi" and _lit(w) == ["view:simple"] and w.picks() == [od3, os3, od2]
     _press(w, "view:multi")
-    assert w._tab() == "grid"
-    # Multi (the picked photos only): a cell double clicked — Detail; double clicked again — Simple
     _press(w, "view:multi")
     assert w._tab() == "multi" and _lit(w) == ["view:multi"]
-    dclick(next(c for c in w.multi.cells if c.image_id == od2).view)
-    assert w._tab() == "all" and w.current["id"] == od2 and _lit(w) == ["view:all"]
+    _press(w, "view:all")
+    assert w._tab() == "all" and _lit(w) == ["view:all"]
     dclick(w.view2d)
     assert w._tab() == "multi" and _lit(w) == ["view:simple"] and _cells(w)[0] == [od3, os3, od2]
     # [Detail] pressed on 3D, the big photo double clicked: Simple; the 3D eye double clicked: Simple
@@ -443,6 +446,13 @@ def test_a_double_click_opens_detail_and_another_goes_back(win):
     assert w._tab() == "all"
     w.view_acts["all"].trigger()
     assert w._tab() == "grid" and _lit(w) == []
+    # Multi (the picked photos only): a cell double clicked — Simple, as [Simple]: the newest OD | OS
+    _press(w, "view:multi")
+    assert w._tab() == "multi" and _lit(w) == ["view:multi"] and _cells(w)[0] == [od3, os3, od2]
+    dclick(next(c for c in w.multi.cells if c.image_id == od2).view)
+    assert w._tab() == "multi" and _lit(w) == ["view:simple"] and w.picks() == [od3, os3]
+    dclick(next(c for c in w.multi.cells if c.image_id == os3).view)       # … and on Simple: Detail
+    assert w._tab() == "all" and w.current["id"] == os3
 
 
 def test_a_new_photo_takes_its_eyes_place(win):

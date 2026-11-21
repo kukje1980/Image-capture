@@ -674,7 +674,7 @@ class MainWindow(QMainWindow):
         self.thumb_paint.show_kind = bool(self.settings.thumb_kind)
         self.thumbs.setItemDelegate(self.thumb_paint)
         self.thumbs.setToolTip(keys("마우스를 올리면 Dock처럼 사진들이 커집니다 (미리 보기) · Simple — 클릭: 고정(번호), 다시 클릭하면 빼기\n"
-                                    "Detail · 3D — 클릭: 이 사진 보기 · 더블클릭: 크게 보기 (Detail) — Detail에서 더블클릭: Simple로\n"
+                                    "Detail · 3D — 클릭: 이 사진 보기 · 더블클릭: Simple로 (Simple에서 더블클릭: Detail)\n"
                                     "휠: 이전 / 다음 날짜 책갈피 (Shift+휠: 옆으로 넘기기) · ← →: 이전 / 다음 사진\n"
                                     "Ctrl+클릭: 두 번째 사진(②) 선택/해제 — 비교 · 디스크 2장 · "
                                     "오른쪽 클릭: 환자 지정·다시 분석"))
@@ -710,7 +710,7 @@ class MainWindow(QMainWindow):
         self.thumbs.customContextMenuRequested.connect(self._thumb_menu)
         # 16장 보기 (VK-2 방식): the photos of the strip, 16 on one screen — picked the same way
         self.grid = PhotoGrid()
-        self.grid.setToolTip(keys("클릭: 고르기(번호) · 다시 클릭: 빼기 · 더블클릭: 크게 보기 (Detail) · "
+        self.grid.setToolTip(keys("클릭: 고르기(번호) · 다시 클릭: 빼기 · 더블클릭: Simple로 · "
                                   "Ctrl+클릭: 두 번째 사진(②)\n골랐으면 왼쪽 툴바의 [Multi]: 고른 사진만 보기 "
                                   "(다시 [Multi]: 16장으로) · 휠: 다음 / 이전 16장"))
         self.grid.pressed.connect(lambda iid: self._press_photo(iid, stay=True))
@@ -750,7 +750,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.page3d, "3D 안구")
         self.multi = MultiView()                 # Simple and Multi
         self.multi.selected.connect(self._select_from_multi)
-        self.multi.opened.connect(self.open_large)
+        self.multi.opened.connect(self._open_cell)
         self.multi.layoutChanged.connect(self._on_multi_layout)
         self.multi.stepped.connect(self._step_cell)
         self.multi.set_closeups(bool(self.settings.simple_closeups))     # 황반 · 디스크 as left last time
@@ -1623,7 +1623,7 @@ class MainWindow(QMainWindow):
             "+/−: 확대·축소 · 0: 화면 맞춤 · 1: 100%<br>"
             "확대하면 오른쪽 위 미니맵에 전체 사진과 보이는 곳이 나옵니다 — 눌러서 이동<br>"
             "화면 맞춤 ▾ 또는 아래쪽 [배율]: 400·800%, 후극부·위/아래/코/귀쪽 주변부로 바로 확대<br>"
-            "더블클릭: Simple의 칸 · Multi의 사진은 Detail에서 크게, Detail의 큰 사진 · 3D 안구는 Simple로 · "
+            "더블클릭: Simple의 사진은 Detail에서 크게, 그 밖의 화면(Detail · Multi · 16장 보기 · 3D)에서는 Simple로 · "
             "돋보기는 아래 툴바의 [돋보기] (누르는 동안)<br>"
             "오른쪽 클릭: 메뉴 (시신경 유두 · 황반 위치 지정, 돋보기 배율, 미니맵)<br><br>"
             "<b>3D 안구</b><br>"
@@ -2091,7 +2091,7 @@ class MainWindow(QMainWindow):
     SIMPLE_HINT = ("Simple — 최신 OD | OS · 아래 사진에 마우스를 올리면 미리 보기, 클릭하면 고정(번호) · 다시 클릭: 빼기 · "
                    "휠: 날짜 책갈피 · 더블클릭: 크게 보기 (Detail)")
     MULTI_HINT = ("16장 보기 — 사진을 클릭해 고르고(번호) 왼쪽 툴바의 [Multi]를 누르면 고른 사진만 봅니다 "
-                  "(다시 [Multi]: 16장으로) · 더블클릭: 크게 보기 (Detail) · 휠: 다음 / 이전 16장")
+                  "(다시 [Multi]: 16장으로) · 더블클릭: Simple로 · 휠: 다음 / 이전 16장")
     PICK_FIRST_HINT = "Multi — 먼저 16장 보기에서 사진을 클릭해 고르세요(번호). 그다음 [Multi]를 누르면 고른 사진만 나옵니다"
     DETAIL_HINT = ("Detail — 다시 더블클릭(큰 사진 · 아래 사진 목록): Simple로 · [Detail] 다시: 보던 화면으로 · 사진 좌우의 ◀ ▶ 또는 ← → 키: 이전 / 다음 사진 · "
                    "사진 목록을 클릭하면 그 사진")
@@ -2216,7 +2216,7 @@ class MainWindow(QMainWindow):
         """A double click on Detail's big photo (or a photo of the list there), on the 3D eye or on one
         of 여러 장 3D: Simple — with the photos picked (pinned on Simple, numbered for Multi) as they
         are; none picked: the newest OD | OS, as [Simple] gives."""
-        if self._tab() not in ("all", "3d", "3d2"):
+        if self._tab() not in ("all", "3d", "3d2", "grid"):
             return
         self._exit_full_3d()
         self._pick_pre = None
@@ -2228,6 +2228,15 @@ class MainWindow(QMainWindow):
             self.lbl_status.setText(self.SIMPLE_HINT)
         else:
             self.show_simple()
+
+    def _open_cell(self, image_id: int) -> None:
+        """A double click on a cell of the 다중 보기 page: on Simple that photo large (Detail); on Multi
+        (the photos numbered in 16장 보기) Simple, as [Simple] gives — the newest OD | OS."""
+        if self._split_via == MULTI:
+            self._pick_pre = None
+            self.show_simple()
+        else:
+            self.open_large(image_id)
 
     def _leave_detail(self) -> None:
         """[Detail] again: back to the view it was opened from,
@@ -3087,9 +3096,10 @@ class MainWindow(QMainWindow):
             self._click_pick(image_id)        # (미리 보기 stays: the row is grown while the mouse is on it)
 
     def _open_photo(self, image_id: int) -> None:
-        """A double click on a photo of the strip or of 16장 보기: the photo large (Detail) — on Detail
-        already: back to the view it was opened from, as a double click on the large photo."""
-        if self._tab() == "all":
+        """A double click on a photo of the strip or of 16장 보기: on Simple the photo large (Detail) —
+        anywhere else (Detail, 3D, 16장 보기, Multi) Simple, as a double click on the view itself."""
+        tab = self._tab()
+        if tab in ("all", "3d", "3d2"):
             self._to_simple()
             return
         pre = self._pick_pre
@@ -3101,7 +3111,12 @@ class MainWindow(QMainWindow):
             self._mark_picks()
             self._fit_multi_count()
         self._pick_pre = None
-        self.open_large(image_id)
+        if tab == "grid":
+            self._to_simple()
+        elif tab == "multi":
+            self._open_cell(image_id)
+        else:
+            self.open_large(image_id)
 
     def _pick_second(self, image_id: int) -> None:
         """Ctrl+click: toggle ``image_id`` as the second photo next to the shown one."""
