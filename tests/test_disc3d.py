@@ -124,7 +124,7 @@ def test_tab_with_one_photo(app):
     dlg = GlaucomaDialog(_photo(1, _disc_picture()), save_record=lambda *a: saved.append(a) or 5)
     tab = dlg.surface
     assert tab.has_image() and tab.sources is None and tab.source == "a" and not tab._timer.isActive()
-    assert "추정" in tab.status.text() and tab.note() == "녹내장 분석 — 유두 3D (1장 추정)"
+    assert "추정" in tab.status.text() and tab.note().startswith("녹내장 분석 — 유두 3D (1장 추정)")
     assert tab.image_ids() == [1] and tab.eye() == "OD"
     tab.set_view(0, 0)                                              # (stops the rocking)
     assert not tab.sw_auto.isChecked()
@@ -157,7 +157,7 @@ def test_tab_with_two_photos_stereo_and_flicker(app):
     dlg.progress._timer.stop()
     tab = dlg.surface
     assert tab.source == "stereo" and tab.stereo_ok and "시차" in tab.status.text()
-    assert tab.note() == "녹내장 분석 — 유두 3D (2장 스테레오)" and tab.image_ids() == [1, 2] and tab.eye() == "OD"
+    assert tab.note().startswith("녹내장 분석 — 유두 3D (2장 스테레오)") and tab.image_ids() == [1, 2] and tab.eye() == "OD"
     H = tab.heights()
     assert H[H.shape[0] // 2, H.shape[1] // 2] < -0.4
     tab.sw_flip.setChecked(True)
@@ -194,3 +194,60 @@ def test_tab_with_two_photos_stereo_and_flicker(app):
     assert odos.surface.source == "a" and not odos.surface.stereo_ok
     odos.surface.set_source("stereo")
     assert "다른 눈" in odos.surface.status.text() and odos.surface.eye() is None
+
+
+def test_cup_read_off_the_surface_follows_the_cup():
+    n, frac = 256, 1 / 3.5
+    c, r = (n - 1) / 2, frac * n / 2
+    disc = {"cx": c, "cy": c, "rx": r, "ry": r}
+    seen = {}
+    for cup in (0.3, 0.5, 0.7, 0.85):
+        info = {}
+        H = disc3d.height_from_photo(_disc_picture(cup=cup), frac, info=info)
+        out, edge = disc3d.cup_from_surface(H, disc)
+        m = G.cdr_metrics(disc, out)
+        assert info["cup"] and m["vertical"] == pytest.approx(cup, abs=0.1) == m["horizontal"]
+        assert edge.shape[1] == 2 and np.hypot(*(edge - (out["cx"], out["cy"])).T).max() < r
+        seen[cup] = m["area"]
+    assert seen[0.3] < seen[0.5] < seen[0.7] < seen[0.85]
+    H = disc3d.height_from_photo(_disc_picture(), frac)
+    wide, narrow = (G.cdr_metrics(disc, disc3d.cup_from_surface(H, disc, lv)[0])["vertical"] for lv in (0.15, 0.6))
+    assert wide > narrow                                            # a deeper level: a smaller cup
+    info = {}
+    flat = disc3d.height_from_photo(np.full((N, N, 3), 120, np.uint8), frac, info=info)
+    assert info["cup"] is False                                     # nothing pale: no cup to measure
+    assert disc3d.cup_from_surface(np.zeros((n, n), np.float32), disc) is None
+    pts = disc3d.outline_points({"cx": 10, "cy": 20, "top": 4, "right": 3, "bottom": 6, "left": 5}, 8)
+    assert pts[0] == pytest.approx((13, 20)) and pts[2] == pytest.approx((10, 26)) and pts[4] == pytest.approx((5, 20))
+
+
+def test_tab_estimates_the_cd_ratio_and_hands_the_cup_to_the_disc_tab(app):
+    from fundusview.ui.glaucoma_dialog import GlaucomaDialog
+
+    dlg = GlaucomaDialog(_photo(1, _disc_picture(cup=0.6)))
+    tab = dlg.surface
+    tab.set_view(0, 0)
+    m = tab.metrics()
+    assert m["vertical"] == pytest.approx(0.6 / 1.05, abs=0.08)     # (the disc tab's outline starts 1.05 tall)
+    assert tab.lbl_cd.text() == f"{m['vertical']:.2f}" and "수평 C/D" in tab.lbl_cd2.text()
+    assert tab.note().endswith(f"추정 수직 C/D {m['vertical']:.2f}")
+    lines = tab.compose()
+    tab.sw_lines.setChecked(False)
+    assert not (tab.compose() == lines).all()                       # the disc and cup lines are on the surface
+    tab.s_level.set(60)
+    assert tab.metrics()["vertical"] < m["vertical"]
+    tab.s_level.set(30)
+    d = dict(dlg.disc.disc)                                         # the disc margin is the disc tab's green line
+    dlg.disc.set_ellipses({**d, "top": d["top"] * 1.25, "bottom": d["bottom"] * 1.25}, dlg.disc.cup)
+    assert tab.metrics()["vertical"] == pytest.approx(m["vertical"] / 1.25, abs=0.02)
+    dlg.disc.set_field("wide")                                      # … whatever field either tab shows
+    tab.set_field("near")
+    assert tab.metrics()["vertical"] == pytest.approx(0.6 / 1.05, abs=0.08)
+    tab.b_apply.click()
+    assert dlg.tabs.currentWidget() is dlg.disc
+    assert dlg.disc.metrics()["vertical"] == pytest.approx(tab.metrics()["vertical"], abs=0.01)
+    assert dlg.disc.metrics()["area"] == pytest.approx(tab.metrics()["area"], abs=0.01)
+    blank = GlaucomaDialog(_photo(1, np.full((N, N, 3), 120, np.uint8))).surface    # no cup to see
+    assert blank.metrics() is None and blank.lbl_cd.text() == "–" and "추정하지 못했습니다" in blank.lbl_cd2.text()
+    assert not blank.b_apply.isEnabled() and blank.note() == "녹내장 분석 — 유두 3D (1장 추정)"
+    assert GlaucomaDialog(None).surface.metrics() is None

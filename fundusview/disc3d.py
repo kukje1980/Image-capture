@@ -52,9 +52,10 @@ def _edge_taper(n: int) -> np.ndarray:
     return np.minimum(w[:, None], w[None, :])
 
 
-def height_from_photo(crop: np.ndarray, disc_frac: float, n: int = 256) -> np.ndarray:
+def height_from_photo(crop: np.ndarray, disc_frac: float, n: int = 256, info: dict | None = None) -> np.ndarray:
     """Estimated heights (``n``², -1…1) of a square picture centred on the optic disc, whose
-    disc is ``disc_frac`` of the picture's side across.
+    disc is ``disc_frac`` of the picture's side across. ``info`` (a dict) is told ``"cup"``: whether
+    a pale cup was seen (False: the hollow is only a stand-in, nothing to measure).
 
     The cup: brightness of green + blue (vessels closed out, smoothed) between the level of the
     rim and the brightest part of the disc. Around it the rim, and the vessels on top.
@@ -78,6 +79,8 @@ def height_from_photo(crop: np.ndarray, disc_frac: float, n: int = 256) -> np.nd
     inside = r < 0.75
     lo = float(np.median(smooth[ring])) if ring.any() else float(smooth.mean())
     hi = float(np.percentile(smooth[inside], 99.0)) if inside.any() else lo
+    if info is not None:
+        info["cup"] = hi - lo > 6.0
     if hi - lo > 6.0:                                           # a pale cup stands out from the rim
         # the whole disc is paler than the retina, the cup paler still: deep only towards the palest
         # part, so that the rim slopes in and the cup is not the disc cut out
@@ -137,6 +140,52 @@ def height_from_stereo(a: np.ndarray, b: np.ndarray, disc_frac: float, n: int = 
     info = {"parallax": parallax, "flipped": flipped, "enough": enough, "noise": noise, "signal": signal,
             "reliable": enough and noise <= 0.5 * signal}
     return np.clip(H * _edge_taper(n), -1.0, 1.0).astype(np.float32), info
+
+
+CUP_LEVEL = 0.30         # the cup's margin: this part of the way down to its deepest point
+MIN_CUP_DEPTH = 0.12     # a hollow shallower than this (of height 1) is no cup to measure
+
+
+def outline_points(e: dict, k: int = 120) -> np.ndarray:
+    """``k`` points round an outline (``glaucoma.outline``: four quarter ellipses), as (k, 2) x, y."""
+    o = G.outline(e)
+    a = np.linspace(0.0, 2.0 * math.pi, k, endpoint=False)
+    c, s = np.cos(a), np.sin(a)                                  # (y down: s > 0 is below the centre)
+    x = o["cx"] + np.where(c >= 0, o["right"], o["left"]) * c
+    y = o["cy"] + np.where(s >= 0, o["bottom"], o["top"]) * s
+    return np.stack([x, y], axis=1)
+
+
+def cup_from_surface(H: np.ndarray, disc: dict, level: float = CUP_LEVEL) -> tuple[dict, np.ndarray] | None:
+    """The cup read off the surface ``H``: the hollow inside the ``disc`` outline (in pixels of ``H``)
+    that lies deeper than ``level`` of the way from the retina's level down to the deepest point —
+    the one piece of it that holds that point. Returns its outline (``glaucoma.outline``: centre and
+    the reach up · right · down · left, so that ``glaucoma.cdr_metrics`` takes it) and its margin as
+    (k, 2) points, or None when there is no hollow to speak of.
+
+    An estimate as good as the surface: from one photo that is the pale part of the disc, from a
+    stereo pair the part the parallax puts deepest."""
+    n = H.shape[0]
+    inside = np.zeros((n, n), np.uint8)
+    cv2.fillPoly(inside, [np.round(outline_points(disc)).astype(np.int32)], 1)
+    if not inside.any():
+        return None
+    Hs = cv2.GaussianBlur(H, (0, 0), max(1.0, n / 200.0))        # (a vessel across the cup is not its margin)
+    deep = np.where(inside > 0, Hs, np.inf)
+    iy, ix = np.unravel_index(int(np.argmin(deep)), deep.shape)
+    bottom = float(deep[iy, ix])
+    if bottom > -MIN_CUP_DEPTH:
+        return None
+    mask = ((deep <= float(np.clip(level, 0.02, 0.98)) * bottom)).astype(np.uint8)
+    _, labels = cv2.connectedComponents(mask, connectivity=4)
+    mask = (labels == labels[iy, ix]).astype(np.uint8)
+    ys, xs = np.nonzero(mask)
+    cx, cy = float(xs.mean()), float(ys.mean())
+    cup = {"cx": cx, "cy": cy, "top": cy - ys.min() + 0.5, "bottom": ys.max() - cy + 0.5,
+           "left": cx - xs.min() + 0.5, "right": xs.max() - cx + 0.5}
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    edge = max(contours, key=len).reshape(-1, 2).astype(np.float32)
+    return cup, edge
 
 
 def rotation(yaw_deg: float, pitch_deg: float) -> np.ndarray:
