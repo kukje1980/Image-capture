@@ -42,6 +42,7 @@ from PySide6.QtWidgets import (
 
 from .. import measure
 from . import motion
+from .widgets import RoundCorners
 
 TOOLS = {
     "pan": "이동", "zoom": "확대/축소", "loupe": "돋보기", "length": "길이 측정", "angle": "각도 측정",
@@ -169,6 +170,8 @@ class ImageView(QGraphicsView):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setScene(QGraphicsScene(self))
+        self.round = RoundCorners(self)      # every pane of a photo has round corners (hide it where the
+                                             # pane lies in a frame that is round itself: a cell of Simple)
         self.setRenderHints(QPainter.RenderHint.SmoothPixmapTransform | QPainter.RenderHint.Antialiasing)
         self.setDragMode(QGraphicsView.DragMode.NoDrag)
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.NoAnchor)

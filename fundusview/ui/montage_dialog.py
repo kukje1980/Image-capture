@@ -122,6 +122,9 @@ class MontageCanvas(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        from .widgets import RoundCorners
+
+        RoundCorners(self)    # round corners, as every pane of a photo
         self.setMinimumSize(480, 380)
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -369,6 +372,9 @@ class PointView(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        from .widgets import RoundCorners
+
+        RoundCorners(self)    # round corners, as every pane of a photo
         self.setMinimumSize(360, 320)
         self.setCursor(Qt.CursorShape.CrossCursor)
         self._img: QImage | None = None

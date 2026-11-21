@@ -27,6 +27,9 @@ class LandmarkPhoto(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        from .widgets import RoundCorners
+
+        RoundCorners(self)    # round corners, as every pane of a photo
         sp = QSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         sp.setHeightForWidth(True)
         self.setSizePolicy(sp)

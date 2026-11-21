@@ -31,7 +31,7 @@ from .. import glaucoma as G
 from . import theme
 from .image_view import from_qimage, to_qimage
 from .keys import keys
-from .widgets import Segmented, Switch, card, segment
+from .widgets import RoundCorners, Segmented, Switch, card, segment
 
 DISC_COLOR, CUP_COLOR = QColor(theme.GREEN), QColor(theme.YELLOW)
 NEED_PAIR = keys("사진 두 장이 필요합니다.\n\n사진 목록에서 한 장을 클릭하고 두 번째 사진을 Ctrl+클릭(②)한 뒤\n"
@@ -71,6 +71,7 @@ class _View(QWidget):
 
     def __init__(self, placeholder: str = "", parent=None):
         super().__init__(parent)
+        RoundCorners(self)    # round corners, as every pane of a photo
         self._img: QImage | None = None
         self._placeholder = placeholder
         self.overlay = None

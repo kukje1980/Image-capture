@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from .. import flat_montage as fm
 from .. import montage as mt
+from .widgets import RoundCorners
 from . import theme
 from .image_view import ImageView, to_qimage
 
@@ -53,6 +54,7 @@ class FlatCanvas(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        RoundCorners(self)    # round corners, as every pane of a photo
         self.setMinimumSize(480, 380)
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)

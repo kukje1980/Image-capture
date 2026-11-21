@@ -76,6 +76,9 @@ class ScanPhotoView(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        from .widgets import RoundCorners
+
+        RoundCorners(self)    # round corners, as every pane of a photo
         self.setMinimumSize(160, 120)
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
         self._pix: QPixmap | None = None
