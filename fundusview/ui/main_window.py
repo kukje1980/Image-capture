@@ -906,6 +906,7 @@ class MainWindow(QMainWindow):
         self.tb_cmd.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tb_cmd.customContextMenuRequested.connect(self._cmdbar_menu)
         self._cmdbar_under = False               # … or in a row under the large photos, over the photo list
+        self._cmdbar_parked = False              # (closing: put back in the window's toolbar area, closeEvent)
         if self.settings.cmdbar_area == "under":
             self.move_cmdbar("under")
         self.tb_proc = self._toolbar("procbar", "영상 처리 툴바", Qt.ToolBarArea.BottomToolBarArea, PROCESSING, 28)
@@ -5530,7 +5531,17 @@ class MainWindow(QMainWindow):
         self._closing = True
         self._show.stop()
         self._exit_full_3d()
-        self.settings.cmdbar_area = self.cmdbar_where()   # the command toolbar where it was dragged to
+        if not self._cmdbar_parked:
+            self.settings.cmdbar_area = self.cmdbar_where()   # the command toolbar where it was dragged to
+        if self._cmdbar_under:
+            # under the large photos it is a child of the central widget: taken down with the window
+            # there, Qt crashed removing its actions (segmentation fault on exit). Back to the window's
+            # own toolbar area for that — where it is shown next time is what was saved above
+            self._cmdbar_parked = True
+            self._centre_lay.removeWidget(self.tb_cmd)
+            self.addToolBar(Qt.ToolBarArea.LeftToolBarArea, self.tb_cmd)
+            self.tb_cmd.hide()
+            self._cmdbar_under = False
         try:
             self.settings.save()
         except OSError:

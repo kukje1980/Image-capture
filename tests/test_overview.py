@@ -296,6 +296,11 @@ def test_the_command_toolbar_moves_to_the_right_or_the_top(tmp_path, demo_dir):
             assert w3.cmdbar_where() == "under" and w3.tb_cmd.orientation() == Qt.Orientation.Horizontal
         finally:
             w3.close()
+        # (closed: it is back in the window's own toolbar area — taken down under the photos Qt crashed —
+        # and what is remembered stays, however often the window is closed)
+        w3.close()
+        assert not w3._cmdbar_under and w3.settings.cmdbar_area == "under"
+        assert Settings.load(config_dir() / "settings.json").cmdbar_area == "under"
         assert w.settings.cmdbar_area == "under"
         w.move_cmdbar("right")
         app.processEvents()
