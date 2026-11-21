@@ -42,7 +42,7 @@ from fundusview.ui import eye_model as em  # noqa: E402
 PROGRAMS = {          # as EyeView.initializeGL composes them (the detailed look)
     "bg": (("BG_VERT",), ("BG_FRAG",)),
     "sclera": (("VERT",), ("COMMON", "SCLERA_LIB", "MAPPING_LIB", "RETINA_LIB", "SCLERA_FRAG")),
-    "cornea": (("VERT",), ("COMMON", "SCLERA_LIB", "IRIS_LIB", "CORNEA_FRAG")),
+    "cornea": (("VERT",), ("COMMON", "SCLERA_LIB", "IRIS_LIB", "MAPPING_LIB", "RETINA_LIB", "CORNEA_FRAG")),
     "wall": (("VERT",), ("COMMON", "MAPPING_LIB", "RETINA_LIB", "WALL_FRAG")),
     "tissue": (("VERT",), ("COMMON", "IRIS_LIB", "WALL_LAYERS_LIB", "TISSUE_FRAG")),
     "clear": (("VERT",), ("COMMON", "CLEAR_FRAG")),
