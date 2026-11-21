@@ -879,7 +879,7 @@ class MainWindow(QMainWindow):
         specs = {c[0]: c for c in COMMANDS}
         self.tb_cmd = self._toolbar("cmdbar", "명령 툴바", self.CMDBAR_AREAS.get(self.settings.cmdbar_area,
                                                                              Qt.ToolBarArea.LeftToolBarArea),
-                                    [specs[k] for k in CMDBAR], 26)
+                                    [specs[k] for k in CMDBAR], 28)
         # it moves: dragged by the handle (dots) at its top to the right edge or along the top, or put
         # there from its right-click menu; where it is, is remembered
         self.tb_cmd.setMovable(True)
@@ -889,7 +889,7 @@ class MainWindow(QMainWindow):
                                "(오른쪽 클릭: 위치 고르기)")
         self.tb_cmd.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tb_cmd.customContextMenuRequested.connect(self._cmdbar_menu)
-        self.tb_proc = self._toolbar("procbar", "영상 처리 툴바", Qt.ToolBarArea.BottomToolBarArea, PROCESSING, 28)
+        self.tb_proc = self._toolbar("procbar", "영상 처리 툴바", Qt.ToolBarArea.BottomToolBarArea, PROCESSING, 30)
         self.tb_proc.visibilityChanged.connect(lambda v: self.acts["tools"].setChecked(v))
         self.acts["tools"].setChecked(True)
         self.acts["list"].setChecked(False)
