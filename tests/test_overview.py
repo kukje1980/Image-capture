@@ -281,6 +281,26 @@ def test_the_command_toolbar_moves_to_the_right_or_the_top(tmp_path, demo_dir):
         assert tb.x() > w.width() // 2 and w.settings.cmdbar_area == "right"
         w.move_cmdbar("bottom")                                  # (not a place for it: nothing happens)
         assert w.toolBarArea(tb) == Qt.ToolBarArea.RightToolBarArea
+        # 큰 사진 아래에 (its right-click menu · 보기 → 명령 툴바 위치): a row under the large photos, over
+        # the photo list — remembered, a window opened later has it there; from there to an edge again
+        w.move_cmdbar("under")
+        app.processEvents()
+        assert w.cmdbar_where() == "under" and w.settings.cmdbar_area == "under" and tb.isVisible()
+        assert Settings.load(config_dir() / "settings.json").cmdbar_area == "under"
+        assert tb.orientation() == Qt.Orientation.Horizontal and not tb.isMovable()
+        top = lambda x: x.mapTo(w, x.rect().topLeft()).y()
+        assert top(w.tabs) + w.tabs.height() <= top(tb) and top(tb) + tb.height() <= top(w.strip_w)
+        assert tb.widgetForAction(w.acts["view:simple"]).isVisible()
+        w3 = MainWindow(Settings.load(config_dir() / "settings.json"), db)
+        try:
+            assert w3.cmdbar_where() == "under" and w3.tb_cmd.orientation() == Qt.Orientation.Horizontal
+        finally:
+            w3.close()
+        assert w.settings.cmdbar_area == "under"
+        w.move_cmdbar("right")
+        app.processEvents()
+        assert w.toolBarArea(tb) == Qt.ToolBarArea.RightToolBarArea and tb.orientation() == Qt.Orientation.Vertical
+        assert tb.isMovable() and tb.isVisible() and tb.x() > w.width() // 2 and w.settings.cmdbar_area == "right"
         # a window opened later starts with it there; 보기 → 툴바 기본 위치로: the left again
         w2 = MainWindow(Settings.load(config_dir() / "settings.json"), db)
         try:

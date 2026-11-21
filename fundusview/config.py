@@ -106,7 +106,8 @@ class Settings:
     # Photo list under the views: 1 = one line; otherwise by eye — OD row on top, OS row under it
     # (newest first in each; an older 3 means by eye too)
     thumb_rows: int = 2
-    # where the command toolbar is (dragged by the handle at its top): "left", "right" or "top"
+    # where the command toolbar is (dragged by the handle at its top): "left", "right", "top" — or "under"
+    # (its right-click menu: in a row under the large photos, over the photo list)
     cmdbar_area: str = "left"
     # … and what is written on its photos (보기 → 사진 목록 표시): the exam date, the kind of photo
     # (컬러 · 몽타주 …). The eye is said once per row, at its left.
