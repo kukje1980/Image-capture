@@ -516,6 +516,12 @@ class MainWindow(QMainWindow):
             a.triggered.connect(lambda _=False, k=k: self._set_preview_scale(k))
             self.peek_scale_acts[k] = a
         self._set_preview_scale(self.settings.preview_scale, save=False)
+        self.act_hover_loupe = m.addAction("큰 사진에 마우스를 올리면 돋보기")
+        self.act_hover_loupe.setCheckable(True)
+        self.act_hover_loupe.setChecked(bool(self.settings.hover_loupe))
+        self.act_hover_loupe.setToolTip("Simple · Multi · Detail의 큰 사진에 마우스를 올리면 버튼을 누르지 않아도 그 자리에 "
+                                        "돋보기가 나옵니다 (사진 전체가 보일 때 — 휠로 확대한 뒤에는 드래그로 이동)")
+        self.act_hover_loupe.toggled.connect(self._set_hover_loupe)
         self._apply_rnfl_settings()            # G 필터: RNFL 강화 세기 (설정 → 일반)
         m.addAction(self.tb_cmd.toggleViewAction())
         m.addAction(self.tb_proc.toggleViewAction())
@@ -714,6 +720,7 @@ class MainWindow(QMainWindow):
         self.view2d = ImageView()
         self.view2d.crossfade = True            # the next photo fades in over the last
         self.view2d.click_loupe = True          # not zoomed yet: the left button held shows the loupe
+        self.view2d.hover_loupe = bool(self.settings.hover_loupe)   # … and the mouse over it, no button, too
         self.view2d.dblclick_leaves = True      # Detail: a double click goes back where one was (the
         self.view2d.activated.connect(self._leave_detail)   # loupe: the 돋보기 tool)
         self.view2d.toggle_captions(True)
@@ -740,6 +747,7 @@ class MainWindow(QMainWindow):
         self.multi.layoutChanged.connect(self._on_multi_layout)
         self.multi.stepped.connect(self._step_cell)
         self.multi.set_closeups(bool(self.settings.simple_closeups))     # 황반 · 디스크 as left last time
+        self.multi.set_hover_loupe(bool(self.settings.hover_loupe))
         self.tabs.addTab(self.multi, "다중 보기")
         cmp_w = QWidget()
         cmp_l = QVBoxLayout(cmp_w)
@@ -2650,6 +2658,16 @@ class MainWindow(QMainWindow):
             pass
         if not on:
             self._end_peek()
+
+    def _set_hover_loupe(self, on: bool) -> None:
+        """보기 → 큰 사진에 마우스를 올리면 돋보기 (Simple · Multi cells, Detail's big photo)."""
+        self.settings.hover_loupe = bool(on)
+        try:
+            self.settings.save()
+        except OSError:
+            pass
+        self.view2d.set_hover_loupe(on)
+        self.multi.set_hover_loupe(on)
 
     def _view_ids(self) -> list[int]:
         """The photos on the Simple · Multi page: the selected ones (none: the newest OD | OS)."""

@@ -159,6 +159,7 @@ class MultiView(QWidget):
             self.topbar.hide()
         self.cells: list[_Cell] = []
         self.closeups_on = False             # 황반 · 디스크 under the photos (set_closeups)
+        self.hover_loupe = False             # the loupe under the mouse over a whole photo (set_hover_loupe)
 
     @property
     def count(self) -> int:
@@ -189,6 +190,7 @@ class MultiView(QWidget):
         rows, cols = LAYOUTS[self.count]
         while len(self.cells) < rows * cols:
             cell = _Cell()
+            cell.view.hover_loupe = self.hover_loupe
             cell.view.clicked.connect(lambda c=cell: self._select(c))
             cell.view.activated.connect(lambda c=cell: c.image_id is not None and self.opened.emit(c.image_id))
             cell.nav.stepped.connect(lambda d, c=cell: c.image_id is not None and self.stepped.emit(c.image_id, d))
@@ -247,6 +249,12 @@ class MultiView(QWidget):
     def closeups_shown(self) -> bool:
         """황반 · 디스크 are under the photos now (switched on, and few enough cells for them)."""
         return self.closeups_on and self.count <= CLOSEUP_MAX
+
+    def set_hover_loupe(self, on: bool) -> None:
+        """보기 → 큰 사진에 마우스를 올리면 돋보기: over a whole photo (not zoomed) the loupe, no button."""
+        self.hover_loupe = bool(on)
+        for cell in self.cells:
+            cell.view.set_hover_loupe(on)
 
     def set_closeups(self, on: bool) -> None:
         self.closeups_on = bool(on)

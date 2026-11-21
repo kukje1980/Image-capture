@@ -336,6 +336,12 @@ def test_the_left_button_on_a_photo_not_zoomed_yet_shows_the_loupe(win):
     QTest.mouseMove(vp, at + QPoint(40, 10))                               # it follows the mouse
     assert abs(view._loupe.geometry().center().x() - at.x() - 40) <= 1
     QTest.mouseRelease(vp, Qt.MouseButton.LeftButton, pos=at + QPoint(40, 10))
+    assert view._fit and view._drag is None            # (let go: the loupe of the mouse over the photo stays)
+    view.set_hover_loupe(False)                        # without 큰 사진에 마우스를 올리면 돋보기: only while held
+    assert not view._loupe.isVisible()
+    QTest.mousePress(vp, Qt.MouseButton.LeftButton, pos=at)
+    assert view._loupe.isVisible()
+    QTest.mouseRelease(vp, Qt.MouseButton.LeftButton, pos=at)
     assert not view._loupe.isVisible() and view._fit
     # zoomed in: the left button moves the photo, no loupe
     view.zoom_to(view._fit_zoom() * 3)
@@ -346,6 +352,57 @@ def test_the_left_button_on_a_photo_not_zoomed_yet_shows_the_loupe(win):
     view.fit()
     # Detail's big photo the same; other views (the 황반 · 디스크 panes …) as before
     assert w.view2d.click_loupe and not cell.zooms["disc"].click_loupe
+
+
+def test_the_mouse_over_a_photo_not_zoomed_yet_shows_the_loupe_without_a_button(win):
+    """Simple · Multi cells and Detail's big photo: with the whole photo on screen the loupe is under
+    the mouse as soon as it is over the photo — no button; off the photo, once zoomed in, or with
+    보기 → 큰 사진에 마우스를 올리면 돋보기 off (remembered) there is none."""
+    from PySide6.QtCore import QEvent, QPoint, Qt
+    from PySide6.QtTest import QTest
+    from fundusview.config import Settings
+
+    app, w, db, refs, ids = win
+    _open(app, w, refs["kim"])
+    cell = next(c for c in w.multi.cells if c.image_id == ids["os3"])
+    view, vp = cell.view, cell.view.viewport()
+    at = QPoint(vp.width() // 2, vp.height() // 2)
+    assert Settings().hover_loupe and w.act_hover_loupe.isChecked() and view.hover_loupe and w.view2d.hover_loupe
+    assert not cell.zooms["disc"].hover_loupe and not view._loupe.isVisible()
+    QTest.mouseMove(vp, at)
+    assert view._loupe.isVisible() and abs(view._loupe.geometry().center().x() - at.x()) <= 1
+    QTest.mouseMove(vp, at + QPoint(40, 10))                               # it follows the mouse
+    assert abs(view._loupe.geometry().center().x() - at.x() - 40) <= 1
+    QTest.mouseMove(vp, QPoint(1, at.y()) if view.mapToScene(QPoint(1, at.y())).x() < 0 else QPoint(at.x(), 1))
+    assert not view._loupe.isVisible()                                     # beside the photo: none
+    QTest.mouseMove(vp, at)
+    # the button held is the loupe as before, and it stays when the button is let go
+    QTest.mousePress(vp, Qt.MouseButton.LeftButton, pos=at)
+    assert view._loupe.isVisible()
+    QTest.mouseRelease(vp, Qt.MouseButton.LeftButton, pos=at)
+    assert view._loupe.isVisible() and view._fit
+    app.sendEvent(vp, QEvent(QEvent.Type.Leave))                           # the mouse leaves: gone
+    assert not view._loupe.isVisible()
+    QTest.mouseMove(vp, at + QPoint(3, 3))
+    assert view._loupe.isVisible()
+    view.zoom_to(view._fit_zoom() * 3)                                     # zoomed in: none (a drag moves)
+    QTest.mouseMove(vp, at + QPoint(5, 5))
+    assert not view._fit and not view._loupe.isVisible()
+    view.fit()
+    QTest.mouseMove(vp, at)
+    assert view._loupe.isVisible()
+    view.set_tool("length")                                                # measuring: none
+    assert not view._loupe.isVisible()
+    view.set_tool("zoom")
+    assert view._loupe.isVisible()
+    w.act_hover_loupe.setChecked(False)                                    # 보기: off
+    assert not w.settings.hover_loupe and not view.hover_loupe and not w.view2d.hover_loupe
+    assert not view._loupe.isVisible()
+    QTest.mouseMove(vp, at + QPoint(10, 0))
+    assert not view._loupe.isVisible()
+    w.act_hover_loupe.setChecked(True)
+    QTest.mouseMove(vp, at)
+    assert view._loupe.isVisible()
 
 
 def test_how_large_the_preview_grows_is_chosen_in_the_view_menu(win):
