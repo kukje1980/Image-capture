@@ -8,4 +8,6 @@ pydicom>=3.0
 # DICOM decoders: VK-2 sends JPEG Baseline / JPEG Lossless (Process 14)
 pylibjpeg>=2.0
 pylibjpeg-libjpeg>=2.1
+# DICOM network: PACS 전송 (C-STORE) · 워크리스트 (MWL C-FIND)
+pynetdicom>=3.0
 watchdog>=4.0

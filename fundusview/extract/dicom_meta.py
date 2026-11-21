@@ -54,17 +54,23 @@ def _decode_bytes(raw: bytes) -> str:
     return raw.decode("latin-1", errors="replace")
 
 
-def _person_name(ds) -> str | None:
-    elem = ds.get("PatientName")
+def pn_text(ds, keyword: str = "PatientName") -> str:
+    """A person name as text, all its groups (``Alphabetic=Ideographic=Phonetic``) — also when its
+    bytes are Korean without a declared character set."""
+    elem = ds.get(keyword)
     if elem is None or not str(elem).strip():
-        return None
+        return ""
     declared = "SpecificCharacterSet" in ds
-    pn = elem
-    original = getattr(pn, "original_string", None)
+    original = getattr(elem, "original_string", None)
     if not declared and isinstance(original, (bytes, bytearray)) and any(b > 0x7F for b in original):
-        text = _decode_bytes(bytes(original))
-    else:
-        text = str(pn)
+        return _decode_bytes(bytes(original)).strip()
+    return str(elem).strip()
+
+
+def _person_name(ds) -> str | None:
+    text = pn_text(ds)
+    if not text:
+        return None
     # Multi-group PN: Alphabetic=Ideographic=Phonetic. Prefer the Hangul one.
     groups = [g for g in text.split("=") if g.strip()]
     for g in groups:

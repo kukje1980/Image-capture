@@ -90,6 +90,7 @@ class PatientListWindow(QDialog):
     editRequested = Signal()                # 정보 수정
     deleteRequested = Signal()              # 환자 삭제
     importRequested = Signal()              # 사진 가져오기
+    worklistRequested = Signal()            # 워크리스트 (the day's orders of the worklist server)
     filesDropped = Signal(list)             # files / folders dropped on the window
     shown = Signal(bool)                    # the window came up / went away
 
@@ -129,6 +130,12 @@ class PatientListWindow(QDialog):
         self.lbl_count.setObjectName("caption")
         head.addWidget(self.lbl_count)
         head.addStretch(1)
+        self.btn_worklist = QPushButton("워크리스트")
+        self.btn_worklist.setObjectName("plain")
+        self.btn_worklist.setToolTip("워크리스트 서버의 오늘 예약 환자 (Ctrl+L) — 두 번 누르면 그 환자를 엽니다\n"
+                                     "서버는 설정 → DICOM 에서 정합니다")
+        self.btn_worklist.clicked.connect(self.worklistRequested.emit)
+        head.addWidget(self.btn_worklist)
         root.addLayout(head)
         cond = QFrame()
         cond.setObjectName("card")

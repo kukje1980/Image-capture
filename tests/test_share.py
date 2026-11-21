@@ -302,3 +302,13 @@ def test_two_windows_share_one_library(tmp_path, demo_dir, import_and_wait):
         server_win.close()
         db.close()
     assert server_win.share_server is None
+
+
+def test_worklist_order_is_kept_on_the_server(shared):
+    """워크리스트 on a connected viewer: the order is stored with the server's database."""
+    db, server, remote, _, errors = shared
+    order = {"patient_id": "W1", "name": "홍길동", "date": "2026-11-21", "accession": "ACC-1", "study_uid": "1.2.3"}
+    remote.save_order(order)
+    row = remote.order_for("W1", "2026-11-21")
+    assert json.loads(row["data_json"]) == order and json.loads(db.order_for("W1", "2026-11-21")["data_json"]) == order
+    assert remote.order_for("W1", "2026-11-22") is None and not errors

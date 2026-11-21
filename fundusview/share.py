@@ -48,9 +48,9 @@ MODE_OFF, MODE_SERVER, MODE_CLIENT = "off", "server", "client"
 # Database methods another computer may call, and which of them change something.
 READS = ("get_patient", "find_patient", "list_patients", "count_patients", "get_image", "image_by_sha",
          "images_for_patient", "count_unassigned", "unassigned_summary", "recent_logs", "patients_named",
-         "patients_examined")
+         "patients_examined", "order_for")
 WRITES = ("upsert_patient", "update_patient", "delete_patient", "merge_patients", "update_image",
-          "delete_image", "log")
+          "delete_image", "log", "save_order")
 # Where the files are is the server's own business: another computer never sets a path.
 PATH_COLUMNS = ("file_path", "display_path", "thumb_path", "original_path", "sha256")
 FILE_KINDS = {"file": "file_path", "display": "display_path", "thumb": "thumb_path"}
@@ -582,6 +582,12 @@ class RemoteDatabase:
 
     def delete_image(self, image_id: int) -> None:
         self._call("delete_image", image_id)
+
+    def save_order(self, order: dict) -> None:
+        self._call("save_order", order)
+
+    def order_for(self, patient_id: str, exam_date: str):
+        return self._call("order_for", patient_id, exam_date)
 
     def log(self, level: str, message: str, path: str = "") -> None:
         self._call("log", level, message, path)

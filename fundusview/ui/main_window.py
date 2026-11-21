@@ -69,6 +69,7 @@ from ..samples import SampleLibrary
 from .. import share
 from ..watcher import ImportService
 from .dialogs import WHEEL3D, ImageDialog, PatientDialog, SettingsDialog, source_label
+from .dicom_dialogs import DicomSendDialog, WorklistDialog
 from .disc_pair import DiscPairDialog
 from .glaucoma_dialog import GlaucomaDialog, Photo
 from .depth_bar import DepthBar, ZoomBar
@@ -448,6 +449,10 @@ class MainWindow(QMainWindow):
     def _build_menus(self) -> None:
         mb = self.menuBar()
         A = self.acts
+        self.act_worklist = QAction("워크리스트 (예약 환자)…", self)
+        self.act_worklist.setShortcut(QKeySequence("Ctrl+L"))
+        self.act_worklist.setStatusTip(keys("워크리스트 서버의 오늘 예약 환자 — 두 번 누르면 그 환자를 엽니다 (Ctrl+L)"))
+        self.act_worklist.triggered.connect(lambda: self.open_worklist())
         m = mb.addMenu("파일(&F)")
         for a in self.menus["import"].actions():
             m.addAction(a)
@@ -462,6 +467,16 @@ class MainWindow(QMainWindow):
         m.addAction(A["glaucoma"])
         m.addAction("몽타주 만들기 (고른 사진)…", lambda: self.open_montage())
         m.addAction(A["print"])
+        m.addSeparator()
+        sub = m.addMenu("DICOM (PACS)")              # dicomnet.py: 설정 → DICOM
+        sub.addAction("보고 있는 사진 전송…", lambda: self.dicom_send("current"))
+        sub.addAction("고른 사진 전송…", lambda: self.dicom_send("picked"))
+        sub.addAction("이 검사일의 사진 전송…", lambda: self.dicom_send("exam"))
+        sub.addAction("이 환자의 사진 모두 전송…", lambda: self.dicom_send("patient"))
+        sub.addSeparator()
+        sub.addAction("보고 있는 사진을 DICOM 파일로 저장…", self.save_dicom_file)
+        sub.addSeparator()
+        sub.addAction(self.act_worklist)
         m.addSeparator()
         m.addAction("원본 폴더 열기", self._open_folder)
         m.addSeparator()
@@ -564,6 +579,7 @@ class MainWindow(QMainWindow):
 
         m = mb.addMenu("환자(&P)")
         m.addAction(self.act_patients)
+        m.addAction(self.act_worklist)
         m.addAction(A["search"])
         m.addAction(A["edit"])
         m.addAction("환자 정보 수정…", self._edit_patient)
@@ -887,6 +903,7 @@ class MainWindow(QMainWindow):
         self.patient_list.editRequested.connect(self._edit_patient)
         self.patient_list.deleteRequested.connect(self._delete_patient)
         self.patient_list.importRequested.connect(self._import_files)
+        self.patient_list.worklistRequested.connect(lambda: self.open_worklist())
         self.patient_list.filesDropped.connect(self.review_import)
         self.patient_list.shown.connect(lambda on: self.acts["list"].setChecked(on))
         self.review.examPicked.connect(self.patient_list.set_exam)
@@ -1662,7 +1679,7 @@ class MainWindow(QMainWindow):
             "보기 → 부드러운 움직임: 끄면 확대·회전·전환이 바로 바뀝니다 (원격 접속 등 느린 화면)<br><br>"
             "<b>단축키</b><br>"
             "← / → 또는 PageUp / PageDown: 이전 / 다음 사진 · Ctrl+1: Simple · Ctrl+2: Multi (16장) · Ctrl+3: 3D · "
-            "Ctrl+5: Detail · Ctrl+0: 환자 목록<br>"
+            "Ctrl+5: Detail · Ctrl+0: 환자 목록 · Ctrl+L: 워크리스트<br>"
             "Ctrl+Z: 처리 실행 취소 · Delete: 마지막 측정 지우기 · Ctrl+C: 화면 복사<br>"
             "Ctrl+F: 환자 검색 · Ctrl+P: 인쇄<br><br>"
             "<b>환자 목록 (따로 뜨는 창, 처음에 나옴)</b><br>"
@@ -2327,6 +2344,96 @@ class MainWindow(QMainWindow):
         if not self._list_shown:                 # the program opens with the patient list in front
             self._list_shown = True
             QTimer.singleShot(0, lambda: None if self._closing else self.show_patient_list())
+
+    # =====================================================================
+    # DICOM: 워크리스트 · PACS 전송 (dicomnet.py, 설정 → DICOM)
+    # =====================================================================
+    def open_worklist(self) -> WorklistDialog:
+        """환자 → 워크리스트 (Ctrl+L): the day's orders of the worklist server in a window of their own."""
+        dlg = getattr(self, "_worklist_dlg", None)
+        if dlg is None:
+            dlg = self._worklist_dlg = WorklistDialog(self.db, self.settings, self)
+            dlg.opened.connect(self._on_worklist_patient)
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
+        return dlg
+
+    def _on_worklist_patient(self, ref) -> None:
+        """A patient was opened from the worklist: on screen here — with photos as [사진 보기] shows
+        them, without any yet ready for the photos to come (사진 가져오기 offers this patient)."""
+        self.refresh_patients()
+        self._select_patient_ref(ref)
+        patient = self.db.get_patient(ref)
+        if patient is None:
+            return
+        self._worklist_dlg.hide()
+        if self._images():
+            self.open_patient(ref)
+            return
+        self.patient_list.hide()
+        self._raise_main()
+        self.lbl_status.setText(f"워크리스트 환자: {patient['patient_id']} {patient['name'] or ''} — 아직 사진이 "
+                                "없습니다. [사진 가져오기]로 넣는 사진은 이 환자로 지정할 수 있습니다")
+
+    def _dicom_rows(self, which: str, image_id: int | None = None) -> list:
+        """The photos a DICOM 전송 command means: "one" (``image_id``), "current", "picked" (the
+        numbered ones; none: the one on screen), "exam" (the day of the photo on screen), "patient"."""
+        if which == "one":
+            row = self.db.get_image(image_id) if image_id is not None else None
+            return [row] if row is not None else []
+        if which == "picked":
+            rows = [self.db.get_image(i) for i in self._picked_ids()]
+            rows = [r for r in rows if r is not None]
+            if rows:
+                return rows
+            which = "current"
+        if which == "current":
+            return [self.current] if self.current is not None else []
+        rows = list(self._images())
+        if which == "exam":
+            day = self.current["exam_date"] if self.current is not None else self.patient_list.current_exam()
+            rows = [r for r in rows if r["exam_date"] == day]
+        return rows
+
+    def dicom_send(self, which: str = "current", image_id: int | None = None, *, run: bool = True):
+        """파일 → DICOM (PACS) · a photo's right-click menu: the send window for those photos."""
+        rows = self._dicom_rows(which, image_id)
+        if not rows:
+            self.lbl_status.setText("전송할 사진이 없습니다 — 환자를 열고 사진을 고르세요")
+            return None
+        dlg = DicomSendDialog(self.db, self.settings, rows, self._dialog_parent())
+        if run:
+            dlg.exec()
+            sent = sum(1 for r in dlg.results.values() if r.ok)
+            if sent:
+                self.lbl_status.setText(f"DICOM 전송: {sent}장을 PACS로 보냈습니다")
+        return dlg
+
+    def save_dicom_file(self, dest: str | None = None) -> None:
+        """파일 → DICOM (PACS) → DICOM 파일로 저장: the photo on screen as the DICOM file that would be sent."""
+        from .. import dicomnet
+
+        row = self.current
+        if row is None:
+            self.lbl_status.setText("저장할 사진이 없습니다")
+            return
+        patient = self.db.get_patient(row["patient_ref"]) if row["patient_ref"] else None
+        if patient is None:
+            self.lbl_status.setText("환자가 지정되지 않은 사진입니다 — 먼저 환자를 지정하세요 (정보 수정)")
+            return
+        if dest is None:
+            stem = Path(row["original_path"] or row["file_path"]).stem
+            dest, _ = QFileDialog.getSaveFileName(self._dialog_parent(), "DICOM 파일로 저장", f"{stem}.dcm",
+                                                  "DICOM (*.dcm)")
+        if not dest:
+            return
+        order = dicomnet.order_of(self.db.order_for(patient["patient_id"], row["exam_date"] or ""))
+        try:
+            dicomnet.save_dicom(dicomnet.item_of(row, patient, order), self.settings, dest)
+            self.lbl_status.setText(f"DICOM 파일로 저장했습니다: {dest}")
+        except Exception as exc:
+            self.lbl_status.setText(f"DICOM 파일로 저장하지 못했습니다 — {exc}")
 
     def _dialog_parent(self) -> QWidget:
         """A dialog asked for from the patient list opens over it."""
@@ -3174,6 +3281,10 @@ class MainWindow(QMainWindow):
             menu.addAction("녹내장 분석 (② 사진과)…", lambda: self.open_glaucoma())
             menu.addAction("두 번째 사진(②) 선택 해제", lambda: self._pick_second(self.compare["id"]))
         menu.addAction("원본 폴더 열기", lambda: (self._show_image(iid), self._open_folder()))
+        if len(pinned) >= 2 and iid in pinned:
+            menu.addAction(f"DICOM 전송 — 고른 사진 {len(pinned)}장 (PACS)…", lambda: self.dicom_send("picked"))
+        else:
+            menu.addAction("DICOM 전송 (PACS)…", lambda: self.dicom_send("one", iid))
         menu.addSeparator()
         menu.addAction("다시 분석 (원·시신경 검출)", lambda: self._reanalyse(iid))
         menu.addAction("목록에서 제거…", lambda: self._remove_image(iid))

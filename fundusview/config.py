@@ -149,6 +149,21 @@ class Settings:
     share_port: int = 8765
     share_key: str = ""             # 접속 암호 (the server's; on a client: the password of its server)
     server_url: str = ""            # client: http://<server>:<port>
+    # DICOM (dicomnet.py, 설정 → DICOM): this program's own AE title, the PACS photos are sent to
+    # (C-STORE) and the worklist server the day's orders are asked from (MWL C-FIND)
+    dicom_ae: str = "FUNDUSVIEWER"
+    pacs_host: str = ""
+    pacs_port: int = 104
+    pacs_ae: str = ""
+    mwl_host: str = ""
+    mwl_port: int = 104
+    mwl_ae: str = ""
+    mwl_modality: str = "OP"        # the orders asked for, and the Modality of the photos sent ("" = every order)
+    mwl_own_station: bool = False   # only the orders scheduled for this program's AE title
+    dicom_charset: str = "ISO 2022 IR 149"   # Hangul names: "ISO 2022 IR 149" (KS X 1001) or "ISO_IR 192" (UTF-8)
+    dicom_sop: str = "op"           # JPEG / PNG photos go as "op" Ophthalmic Photography or "sc" Secondary Capture
+    dicom_jpeg: bool = True         # a JPEG photo is sent as it is (JPEG Baseline) when the PACS takes that
+    dicom_institution: str = ""     # Institution Name written into the photos sent
 
     @property
     def library(self) -> Path:
