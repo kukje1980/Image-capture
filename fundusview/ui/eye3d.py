@@ -1106,6 +1106,8 @@ class EyeView(QOpenGLWidget):
     glError = Signal(str)
     zoomChanged = Signal(float)        # magnification relative to the start view
     interacted = Signal()              # the user dragged, zoomed or pressed a view key
+    activated = Signal()               # a double click while ``dblclick_leaves`` (the window leaves the view)
+    dblclick_leaves = False            # a double click is only reported (else: the start view)
     depthWheel = Signal(float)         # wheel notches over the eye seen from outside (``wheel_mode`` "depth")
     journeyChanged = Signal(float)     # 들어가며 보기: where on the way (0 the whole eye … 1 the retina)
     walkChanged = Signal(bool)         # 휠로 들어가기: the anterior segment picked (the wheel walks in) or let go
@@ -3128,7 +3130,10 @@ class EyeView(QOpenGLWidget):
     def mouseDoubleClickEvent(self, e):
         self.interacted.emit()
         self._drag = None
-        self.reset_view(animate=True)
+        if self.dblclick_leaves:
+            self.activated.emit()
+        else:
+            self.reset_view(animate=True)
 
     def keyPressEvent(self, e):
         k = e.key()

@@ -106,7 +106,8 @@ class Settings:
     # Photo list under the views: 1 = one line; otherwise by eye — OD row on top, OS row under it
     # (newest first in each; an older 3 means by eye too)
     thumb_rows: int = 2
-    # where the command toolbar is (dragged by the handle at its top): "left", "right" or "top"
+    # where the command toolbar is (dragged by the handle at its top): "left", "right", "top" — or "under"
+    # (its right-click menu: in a row under the large photos, over the photo list)
     cmdbar_area: str = "left"
     # … and what is written on its photos (보기 → 사진 목록 표시): the exam date, the kind of photo
     # (컬러 · 몽타주 …). The eye is said once per row, at its left.
@@ -124,6 +125,9 @@ class Settings:
     # The photos of the list grow toward the mouse like the icons of the Dock of a Mac (보기 → 사진
     # 목록에 마우스를 올리면 미리 보기)
     hover_preview: bool = True
+    # The large photos (Simple · Multi · Detail): the loupe under the mouse while it is over the whole
+    # photo, not zoomed yet — no button needed (보기 → 큰 사진에 마우스를 올리면 돋보기)
+    hover_loupe: bool = True
     # … how large: that many times its size in the list (보기 → 미리 보기 배율; peek.SCALES: 1.5 … 3)
     preview_scale: float = 2.0
     # G 필터 (설정 → 일반): what the button gives — "green" the green channel alone, "rnfl" 녹색 + RNFL 강화

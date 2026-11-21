@@ -9,6 +9,8 @@ Mouse
     ``dblclick_loupe``: 비교): it follows the mouse — through drags and zooms too —
     until the next double click or Esc. With ``dblclick_leaves`` (Detail's big photo) a
     double click only says so (``activated``: Detail is left); elsewhere it fits.
+  * with ``hover_loupe`` (Simple · Multi cells, Detail's big photo) the loupe is under the mouse
+    whenever it is over the whole photo (not zoomed yet), no button needed.
   * left button depends on the active tool: 확대/축소 · 이동 (default, above), 돋보기 (hold for a loupe; wheel while holding changes its power),
     길이 / 각도 / C/D 비 (길이·면적) measurements, 글자 / 화살표+글자
     annotations, 회색조 분석 (hold: grey-level profile of the row under the
@@ -226,6 +228,8 @@ class ImageView(QGraphicsView):
         self.loupe_mag, self.loupe_size = 3.0, 260
         self.dblclick_loupe = False      # 확대/축소 · 이동: a double click turns a loupe on that follows the mouse
         self.click_loupe = False         # … the left button held on the whole photo (not zoomed): the loupe
+        self.hover_loupe = False         # … the mouse over the whole photo (not zoomed), no button: the loupe
+        self._mouse_in = False           # the mouse is over the view (``hover_loupe``)
         self.dblclick_leaves = False     # 확대/축소 · 이동: a double click is only reported (Detail: back where one was)
         self.step_keys = False           # ← / → ask for the photo before / after (``stepped``) instead of scrolling
         self._loupe_on = False
@@ -552,8 +556,10 @@ class ImageView(QGraphicsView):
                 and e.gestureType() == Qt.NativeGestureType.ZoomNativeGesture):
             self.pinch(e.value(), e.position().toPoint())
             return True
-        if e.type() == QEvent.Type.Leave and getattr(self, "_loupe_on", False) and self._drag is None:
-            self._loupe.hide()                         # back when the mouse comes in again
+        if e.type() == QEvent.Type.Leave and hasattr(self, "_loupe"):
+            self._mouse_in = False
+            if self._drag is None:
+                self._loupe.hide()                     # back when the mouse comes in again
         return super().viewportEvent(e)
 
     def rotate90(self, clockwise: bool = True) -> None:
@@ -618,6 +624,7 @@ class ImageView(QGraphicsView):
         self.set_loupe(False)
         self.tool = tool if tool in TOOLS else "zoom"
         self._restore_cursor()
+        self._refresh_loupe()
 
     def _restore_cursor(self) -> None:
         cursors = {"pan": Qt.CursorShape.OpenHandCursor, "zoom": Qt.CursorShape.OpenHandCursor,
@@ -717,11 +724,27 @@ class ImageView(QGraphicsView):
         else:
             self._loupe.hide()
 
+    def set_hover_loupe(self, on: bool) -> None:
+        """The loupe under the mouse while it is over the whole photo (not zoomed), no button held."""
+        self.hover_loupe = bool(on)
+        if not on and not self._loupe_on and self._drag is None:
+            self._loupe.hide()
+        self._refresh_loupe()
+
+    def _hover_loupe_now(self) -> bool:
+        """``hover_loupe``: the mouse is on the photo, all of it on screen, with 확대/축소 · 이동."""
+        return (self.hover_loupe and self._mouse_in and self._fit and self.tool in ("pan", "zoom")
+                and self.isEnabled() and self._pix.sceneBoundingRect().contains(self.mapToScene(self._mouse_at)))
+
     def _refresh_loupe(self) -> None:
-        """The double-click loupe shows what is under the mouse now (after a zoom, a move, a new photo)."""
-        if not getattr(self, "_loupe_on", False):
+        """The double-click loupe — and the one of ``hover_loupe`` — shows what is under the mouse now
+        (after a zoom, a move, a new photo)."""
+        if not (getattr(self, "_loupe_on", False) or getattr(self, "hover_loupe", False)):
             return
-        if self.has_image() and self.viewport().rect().contains(self._mouse_at):
+        if self._drag is not None and self._drag.get("kind") == "loupe":
+            return                                     # (held down: it shows itself)
+        if (self.has_image() and self.viewport().rect().contains(self._mouse_at)
+                and (self._loupe_on or self._hover_loupe_now())):
             self._show_loupe(self._mouse_at)
         else:
             self._loupe.hide()
@@ -858,6 +881,7 @@ class ImageView(QGraphicsView):
     def mouseMoveEvent(self, e):
         pos = e.position().toPoint()
         self._mouse_at = pos
+        self._mouse_in = True
         sp = self.mapToScene(pos)
         d = self._drag
         if d is None:
@@ -901,6 +925,7 @@ class ImageView(QGraphicsView):
             self._context_menu(e.globalPosition().toPoint(), sp)
         elif kind == "loupe":
             self._loupe.hide()
+            self._refresh_loupe()                     # (``hover_loupe``: it stays under the mouse)
         elif kind == "profile":
             for it in self._profile:
                 self.scene().removeItem(it)
