@@ -124,7 +124,8 @@ def test_tab_with_one_photo(app):
     dlg = GlaucomaDialog(_photo(1, _disc_picture()), save_record=lambda *a: saved.append(a) or 5)
     tab = dlg.surface
     assert tab.has_image() and tab.sources is None and tab.source == "a" and not tab._timer.isActive()
-    assert "추정" in tab.status.text() and tab.note().startswith("녹내장 분석 — 유두 3D (1장 추정)")
+    assert tab.method == "hybrid"                                   # (설정 → 일반: 하이브리드 at first)
+    assert "추정" in tab.status.text() and tab.note().startswith("녹내장 분석 — 유두 3D (1장 추정 · 하이브리드)")
     assert tab.image_ids() == [1] and tab.eye() == "OD"
     tab.set_view(0, 0)                                              # (stops the rocking)
     assert not tab.sw_auto.isChecked()
@@ -157,7 +158,8 @@ def test_tab_with_two_photos_stereo_and_flicker(app):
     dlg.progress._timer.stop()
     tab = dlg.surface
     assert tab.source == "stereo" and tab.stereo_ok and "시차" in tab.status.text()
-    assert tab.note().startswith("녹내장 분석 — 유두 3D (2장 스테레오)") and tab.image_ids() == [1, 2] and tab.eye() == "OD"
+    assert tab.note().startswith("녹내장 분석 — 유두 3D (2장 스테레오 · 혈관 꺾임)") and tab.image_ids() == [1, 2]
+    assert tab.eye() == "OD" and "혈관 꺾임을 찾지 못해" in tab.status.text()     # (a straight vessel: no bend)
     H = tab.heights()
     assert H[H.shape[0] // 2, H.shape[1] // 2] < -0.4
     tab.sw_flip.setChecked(True)
@@ -250,7 +252,9 @@ def test_tab_estimates_the_cd_ratio_and_hands_the_cup_to_the_disc_tab(app):
     assert dlg.disc.metrics()["area"] == pytest.approx(tab.metrics()["area"], abs=0.01)
     blank = GlaucomaDialog(_photo(1, np.full((N, N, 3), 120, np.uint8))).surface    # no cup to see
     assert blank.metrics() is None and blank.lbl_cd.text() == "–" and "추정하지 못했습니다" in blank.lbl_cd2.text()
-    assert not blank.b_apply.isEnabled() and blank.note() == "녹내장 분석 — 유두 3D (1장 추정)"
+    assert not blank.b_apply.isEnabled() and blank.note() == "녹내장 분석 — 유두 3D (1장 추정 · 하이브리드)"
+    blank.set_method("pallor")
+    assert blank.note() == "녹내장 분석 — 유두 3D (1장 추정)"
     assert GlaucomaDialog(None).surface.metrics() is None
 
 
@@ -428,7 +432,9 @@ def test_tab_shows_the_three_estimates_alone_and_side_by_side(app):
     dlg = GlaucomaDialog(_big_photo(1, _cupped_picture()))
     tab = dlg.surface
     tab.set_view(-20, 10)                                           # (stops the rocking)
-    assert tab.method == "pallor" and tab.status.text() == S3_ONE and not tab.methods.isHidden()
+    assert tab.method == "hybrid" and tab.methods.key() == "hybrid" and not tab.sw_bends.isHidden()
+    tab.set_method("pallor")
+    assert tab.status.text() == S3_ONE and not tab.methods.isHidden()
     assert tab.sw_bends.isHidden() and not len(tab.bends()[0])
     v = tab.by_method()
     assert v["pallor"] < 0.55 and v["vessels"] == pytest.approx(0.7 / 1.05, abs=0.08)
@@ -464,19 +470,102 @@ def test_tab_shows_the_three_estimates_alone_and_side_by_side(app):
     assert "[밝기]와 같은 모양" in plain.status.text() and plain.metrics()["vertical"] == plain.by_method()["pallor"]
 
 
-def test_the_stereo_depth_has_no_estimate_to_choose(app):
+def test_the_window_opens_on_the_estimate_set_in_the_settings(app):
+    from fundusview.config import Settings
     from fundusview.ui.glaucoma_dialog import GlaucomaDialog
 
-    left, right = _stereo_pair()
-    dlg = GlaucomaDialog(_photo(1, left), _photo(2, right))
+    assert Settings().disc3d_method == "hybrid"
+    for method in disc3d.METHODS:
+        tab = GlaucomaDialog(_big_photo(1, _cupped_picture()), method=method).surface
+        assert tab.method == method and tab.methods.key() == method
+        assert tab.metrics()["vertical"] == tab.by_method()[method]
+    assert GlaucomaDialog(_big_photo(1, _cupped_picture()), method="what").surface.method == "hybrid"
+    # … and the stereo depth on the one set there too (처음 설정: 시차 + 혈관 꺾임)
+    assert Settings().disc3d_stereo_method == "parallax_vessels"
+    left, right = _cupped_stereo_pair()
+    for method in disc3d.STEREO_METHODS:
+        dlg = GlaucomaDialog(_big_photo(1, left), _big_photo(2, right), stereo_method=method)
+        dlg.stereo._timer.stop()
+        dlg.progress._timer.stop()
+        tab = dlg.surface
+        assert tab.source == "stereo" and tab.stereo_method == method and tab.stereo_methods.key() == method
+        assert tab.metrics()["vertical"] == tab.by_method()[method]
+    assert GlaucomaDialog(_big_photo(1, left), stereo_method="what").surface.stereo_method == "parallax_vessels"
+
+
+def _cupped_stereo_pair(bend=True, cup=0.7, shift=8.0):
+    """``_cupped_picture`` and the same seen from beside: the hollow (its wall at ``cup``) moved."""
+    left = _cupped_picture(cup=cup, pallor=0.4, bend=bend)
+    n = left.shape[0]
+    yy, xx = np.mgrid[0:n, 0:n].astype(np.float32)
+    r = np.hypot(xx - (n - 1) / 2, yy - (n - 1) / 2) / (n / 3.5 / 2)
+    k = np.clip((cup + 0.08 - r) / 0.16, 0, 1)
+    return left, cv2.remap(left, xx - shift * k * k * (3 - 2 * k), yy, cv2.INTER_LINEAR)
+
+
+def test_stereo_depth_with_the_cup_margin_where_the_vessels_bend():
+    frac = 1 / 3.5
+    left, right = _cupped_stereo_pair()
+    plain, info = disc3d.height_from_stereo(left, right, frac)
+    both, info2 = disc3d.height_stereo_vessels(left, right, frac)
+    assert info["reliable"] and info2["reliable"] and info2["parallax"] == info["parallax"]
+    assert info2["bends"]["vessels"] >= 7 and info2["support"] > 0.6
+    n = both.shape[0]
+    assert both[n // 2, n // 2] < -0.8 and abs(both[n // 8, n // 8]) < 0.25        # the parallax's depth
+    wall = _vertical_cd(both)["vertical"]
+    assert wall == pytest.approx(0.7, abs=0.06)                    # the margin where the vessels bend …
+    assert abs(_vertical_cd(plain)["vertical"] - 0.7) > abs(wall - 0.7)            # … nearer than the parallax's
+    up, i_up = disc3d.height_stereo_vessels(left, right, frac, flip=True)    # 깊이 뒤집기: raised — no hollow
+    assert up[n // 2, n // 2] > 0.5 and i_up["no_hollow"] and i_up["support"] == 0.0    # for the bends to wall
+    assert np.array_equal(up, disc3d.height_from_stereo(left, right, frac, flip=True)[0])
+    flat, flat_info = _cupped_stereo_pair(bend=False)               # straight vessels: the parallax itself
+    H, i3 = disc3d.height_stereo_vessels(flat, flat_info, frac)
+    assert np.array_equal(H, disc3d.height_from_stereo(flat, flat_info, frac)[0]) and i3["support"] == 0.0
+    # each photo's bends half: a bend the two share counts in full
+    one = disc3d.find_bends(left, frac)
+    merged = disc3d.merge_bends(one, disc3d.find_bends(right, frac))
+    assert len(merged["r"]) == len(one["r"]) + len(disc3d.find_bends(right, frac)["r"])
+    assert merged["weight"].sum() == pytest.approx((one["weight"].sum() + disc3d.find_bends(right, frac)["weight"].sum()) / 2)
+    alone = disc3d.merge_bends(one, disc3d.find_bends(flat, frac))
+    assert alone["weight"].sum() == pytest.approx(one["weight"].sum() / 2) and alone["vessels"] == one["vessels"]
+
+
+def test_tab_stereo_depth_with_or_without_the_bends(app):
+    from fundusview.ui.glaucoma_dialog import GlaucomaDialog, S3_COMPARE_PX, S3_GAP
+
+    left, right = _cupped_stereo_pair()
+    dlg = GlaucomaDialog(_big_photo(1, left), _big_photo(2, right))
     dlg.stereo._timer.stop()
     dlg.progress._timer.stop()
     tab = dlg.surface
-    assert tab.source == "stereo" and tab.methods.isHidden() and tab.sw_compare.isHidden() and tab.sw_bends.isHidden()
-    tab.sw_compare.setChecked(True)
-    assert not tab.comparing() and tab.compose().shape == (disc3d.TEX_PX, disc3d.TEX_PX, 3)
-    tab.set_source("a")                                             # one photo of the two: the estimates are back
-    assert not tab.methods.isHidden() and tab.comparing()
+    tab.set_view(-20, 10)
+    assert tab.source == "stereo" and tab.stereo_method == "parallax_vessels"       # (처음: 시차 + 혈관 꺾임)
+    assert tab.methods.isHidden() and not tab.stereo_methods.isHidden() and not tab.sw_bends.isHidden()
+    assert "컵 경계는 혈관이 꺾이는 곳" in tab.status.text() and "시차" in tab.status.text()
+    v = tab.by_method()
+    assert set(v) == {"parallax", "parallax_vessels"} and v["parallax_vessels"] == pytest.approx(0.7 / 1.05, abs=0.08)
+    assert tab.metrics()["vertical"] == v["parallax_vessels"] and tab.both()["stereo"] == v["parallax_vessels"]
+    assert "깊이 방식별 수직 C/D" in tab.lbl_cd2.text() and f"<b>시차 + 혈관 꺾임 {v['parallax_vessels']:.2f}</b>" in tab.lbl_cd2.text()
+    assert tab.note().startswith("녹내장 분석 — 유두 3D (2장 스테레오 · 혈관 꺾임) · 추정 수직 C/D")
+    pts, used = tab.bends()
+    assert len(pts) >= 8 and used.any()
+    tab.set_stereo_method("parallax")                               # the parallax alone, as before
+    assert tab.note().startswith("녹내장 분석 — 유두 3D (2장 스테레오) · 추정 수직 C/D") and not len(tab.bends()[0])
+    assert tab.sw_bends.isHidden() and tab.metrics()["vertical"] == v["parallax"] and "꺾임" not in tab.status.text()
+    tab.set_stereo_method("parallax_vessels")
+    tab.sw_flip.setChecked(True)                                    # raised: the bends are not used
+    assert "쓰지 않았습니다" in tab.status.text()
+    tab.sw_flip.setChecked(False)
+    tab.set_stereo_method("parallax")
+    tab.sw_compare.setChecked(True)                                 # 둘 나란히: the two, turned alike
+    assert tab.comparing() and tab.sw_compare.text() == "둘 나란히 비교"
+    two = tab.compose()
+    assert two.shape == (S3_COMPARE_PX, 2 * S3_COMPARE_PX + S3_GAP, 3)
+    assert tab.note() == ("녹내장 분석 — 유두 3D (2장 스테레오 · 둘 나란히) · 수직 C/D "
+                          f"시차 {v['parallax']:.2f} · 시차 + 혈관 꺾임 {v['parallax_vessels']:.2f}")
+    tab.set_source("a")                                             # one photo of the two: its three estimates
+    assert not tab.methods.isHidden() and tab.stereo_methods.isHidden() and tab.sw_compare.text() == "셋 나란히 비교"
+    assert tab.compose().shape == (S3_COMPARE_PX, 3 * S3_COMPARE_PX + 2 * S3_GAP, 3)
     tab.sw_compare.setChecked(False)
     tab.set_method("vessels")
     assert tab.note().startswith("녹내장 분석 — 유두 3D (1장 추정 · 혈관 꺾임)")

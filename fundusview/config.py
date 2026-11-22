@@ -134,6 +134,12 @@ class Settings:
     # (the ▾ of the button offers both anyway) — and how strong that RNFL 강화 is: 0.5 … 0.9
     green_filter: str = "green"
     rnfl_strength: float = 0.9
+    # 녹내장 분석 → 3D 입체 (설정 → 일반): how one photo's shape is estimated when the window opens —
+    # "hybrid" 하이브리드 (처음 설정) · "vessels" 혈관 꺾임 · "pallor" 밝기 (disc3d.METHODS); the tab can switch
+    disc3d_method: str = "hybrid"
+    # … and the stereo depth of two photos (설정 → 일반): "parallax_vessels" 시차 + 혈관 꺾임 (처음 설정) ·
+    # "parallax" 시차 (disc3d.STEREO_METHODS); the tab can switch
+    disc3d_stereo_method: str = "parallax_vessels"
     # 카메라 각도 보정 (calibrate.py): the lens curve measured from the photos, {camera profile: radial_c}
     lens_curves: dict[str, float] = field(default_factory=dict)
     montage_fast: bool = False      # 몽타주 빠르게: the saved picture at most 2400 px instead of 4000
