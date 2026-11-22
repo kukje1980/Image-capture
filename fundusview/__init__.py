@@ -5,6 +5,6 @@ Runs on Windows 10/11 and macOS 14+ (PySide6; the Mac app as built needs what it
 see ``macos_bundle.py``). See ``README.md``.
 """
 
-__version__ = "0.12.1"
+__version__ = "0.12.2"
 APP_NAME = "FundusViewer"
 APP_TITLE = "안저 사진 뷰어 (Fundus Viewer)"
