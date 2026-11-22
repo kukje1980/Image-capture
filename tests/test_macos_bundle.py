@@ -156,18 +156,13 @@ def test_check_app_writes_the_version_for_the_download_page(tmp_path, capsys):
     assert "(x86_64)" in out and "26.0" in out                    # the binding labels are reported
 
 
-def test_download_page_names_every_mac_build():
-    """The release notes have a @MAC_MIN_<label>@ for each Mac build the workflow makes (Apple
-    Silicon only: no Intel build is published), and build_mac.sh names the dmg and the version
-    file with the same labels."""
+def test_only_the_windows_build_is_published():
+    """No Mac build is made or published by the workflow any more (0.11.0): the download page names
+    the Windows zip only. build_mac.sh still makes the app and the dmg on a Mac."""
     workflow = (ROOT / ".github" / "workflows" / "fundus-viewer.yml").read_text(encoding="utf-8")
-    labels = re.findall(r"^\s+label:\s*(\w+)\s*$", workflow, re.M)
-    assert labels == ["AppleSilicon"]
+    assert "build-mac:" not in workflow and "macos-" not in workflow
+    assert "needs: [build-windows]" in workflow and "FundusViewer-windows.zip" in workflow
     notes = (ROOT / "docs" / "release_notes.md").read_text(encoding="utf-8")
-    assert sorted(re.findall(r"@MAC_MIN_(\w+)@", notes)) == sorted(labels)
+    assert "@MAC_MIN_" not in notes and ".dmg" not in notes.split("### 버전")[0]
     script = (ROOT / "build_mac.sh").read_text(encoding="utf-8")
-    for label in labels:
-        assert f'LABEL="{label}"' in script
     assert 'DMG="dist/FundusViewer-mac-$LABEL.dmg"' in script and 'mac-min-$LABEL.txt' in script
-    assert "dist/FundusViewer-mac-${{ matrix.label }}.dmg" in workflow
-    assert "dist/mac-min-${{ matrix.label }}.txt" in workflow
