@@ -30,6 +30,14 @@ def win(tmp_path):
     w = MainWindow(s, db)
     w.patient_list.select_delay = 0          # a selection goes through at once (no key stepping here)
     w.show()
+    # start-up (200 ms, then the folder search in a thread) writes into the status line when it is
+    # through: on a slow runner that came in the middle of a test and replaced the text it looked at
+    import time
+    end = time.time() + 20
+    while not w.started and time.time() < end:
+        app.processEvents()
+        time.sleep(0.01)
+    assert w.started
     app.processEvents()
     yield app, w, db, refs, ids
     w.close()

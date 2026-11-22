@@ -363,6 +363,7 @@ class MainWindow(QMainWindow):
         self._closing = False
         self._small: OrderedDict[tuple, np.ndarray] = OrderedDict()   # reduced photos of the multi cells (id, side)
         self._list_shown = False             # the 환자 목록 window came up with the main window
+        self.started = False                 # _startup and its folder search are through (_on_detected)
         self.setWindowTitle(f"{APP_TITLE}  v{__version__}")
         self.resize(1600, 960)
         self.setAcceptDrops(True)
@@ -1737,6 +1738,7 @@ class MainWindow(QMainWindow):
         if self.remote:                         # the server watches the cameras' folders
             if self.settings.last_patient and self._patient_ref is None:
                 self._restore_last_patient()
+            self.started = True
             return
         auto = self.settings.auto_detect
         threading.Thread(target=lambda: self.bridge.detected.emit(autosetup.detect() if auto else []),
@@ -1752,6 +1754,7 @@ class MainWindow(QMainWindow):
             self._show_opening()
 
     def _on_detected(self, found) -> None:
+        self.started = True                     # start-up is through: nothing of it changes the status line later
         if self._closing:                       # the answer came after the window (and the database) closed
             return
         added = autosetup.apply(self.settings, found)
