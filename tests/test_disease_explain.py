@@ -50,7 +50,7 @@ def test_the_programs_samples_go_in_once_with_their_credits(tmp_path):
 def test_the_bundled_samples_are_openly_licensed_photos_of_the_diseases():
     items = SampleLibrary.builtin_list()
     data = json.loads((BUILTIN_DIR / BUILTIN_INDEX).read_text("utf-8"))
-    assert len(items) == len(data["photos"]) >= 12            # every listed file is there
+    assert len(items) == len(data["photos"]) >= 20            # every listed file is there
     names = {it["file"] for it in items}
     assert names == {p.name for p in BUILTIN_DIR.iterdir() if p.suffix.lower() in (".jpg", ".png")}
     for it in items:
@@ -59,8 +59,10 @@ def test_the_bundled_samples_are_openly_licensed_photos_of_the_diseases():
         assert it["source"].startswith("https://commons.wikimedia.org/wiki/File:"), it
         with Image.open(BUILTIN_DIR / it["file"]) as im:
             assert max(im.size) <= 1400 and min(im.size) >= 300
+        if "oct" in it["file"]:                                  # not a fundus photo: the note says so
+            assert it["note"].startswith("OCT 단면 (안저 사진 아님"), it
     covered = {it["disease"] for it in items}
-    assert len(covered) >= 7
+    assert len(covered) >= 11
     assert (BUILTIN_DIR / "CREDITS.md").is_file()
 
 
