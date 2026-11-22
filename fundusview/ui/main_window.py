@@ -165,22 +165,28 @@ class _FullScreen3D(QWidget):
 class Preloader(QObject):
     """Decodes photos ahead of time on a worker thread — the next and the previous photo of the
     strip — so stepping through an exam never waits for a file (a 24-megapixel JPEG takes 0.3 s)."""
-    loaded = Signal(int, object)          # image id, RGB array (None: could not be read)
+    loaded = Signal(int, object, int)     # image id, RGB array, cache generation
 
     def __init__(self, parent=None):
         super().__init__(parent)
         from concurrent.futures import ThreadPoolExecutor
 
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="fundus-preload")
-        self._busy: set[int] = set()
-        self.loaded.connect(lambda image_id, _: self._busy.discard(image_id))
+        self.generation = 0
+        self._busy: set[tuple[int, int]] = set()
+        self.loaded.connect(lambda image_id, _, generation: self._busy.discard((image_id, generation)))
 
     def request(self, image_id: int, path: str) -> None:
-        if image_id not in self._busy:
-            self._busy.add(image_id)
-            self._pool.submit(self._run, image_id, path)
+        key = (image_id, self.generation)
+        if key not in self._busy:
+            self._busy.add(key)
+            self._pool.submit(self._run, image_id, path, self.generation)
 
-    def _run(self, image_id: int, path) -> None:
+    def invalidate(self) -> None:
+        self.generation += 1
+        self._busy.clear()
+
+    def _run(self, image_id: int, path, generation: int) -> None:
         try:
             if callable(path):             # a photo of a server (share.py): fetched here, off the window
                 path = path()
@@ -188,7 +194,7 @@ class Preloader(QObject):
         except Exception:                  # shown (with the reason) when the photo is opened
             rgb = None
         try:
-            self.loaded.emit(image_id, rgb)
+            self.loaded.emit(image_id, rgb, generation)
         except RuntimeError:               # the window is gone
             pass
 
@@ -1160,6 +1166,7 @@ class MainWindow(QMainWindow):
         for wdg in (self.sp_fov, self.c_fovtype, self.c_proj, self.sp_roll):
             wdg.setFixedWidth(148)
         b_save_map = QPushButton("화각·투영 저장")
+        self.b_save_map = b_save_map
         b_save_map.setObjectName("plain")
         b_save_map.setToolTip("이 사진의 화각·투영을 저장해 다음에도 이대로 엽니다")
         b_save_map.clicked.connect(self._save_mapping)
@@ -1831,8 +1838,11 @@ class MainWindow(QMainWindow):
         threading.Thread(target=ask, name="fundus-share-poll", daemon=True).start()
 
     def _photo_sig(self):
-        return (self._patient_ref, tuple((r["id"], r["exam_date"], r["laterality"], r["modality"], r["note"])
-                                         for r in self._images()))
+        # dict(row) reads metadata without resolving RemoteRow's lazy photo paths.
+        patient = (self.db.get_patient(self._patient_ref)
+                   if self._patient_ref not in (None, UNASSIGNED) else None)
+        return (self._patient_ref, tuple(sorted(dict(patient).items())) if patient is not None else None,
+                tuple(tuple(sorted(dict(r).items())) for r in self._images()))
 
     def _on_shared_change(self) -> None:
         """Another computer changed the library: the patient list, and the open patient's photos
@@ -1841,8 +1851,32 @@ class MainWindow(QMainWindow):
             return
         self.refresh_patients()
         if self._patient_ref is not None and self._photo_sig() != self._share_sig:
-            self._fill_dates()
-            self._fill_thumbs(select_id=self.current["id"] if self.current else None)
+            pair_ids = list(self.pair3d.image_ids) if self._tab() == "3d2" else []
+            compare_id = self.compare["id"] if self.compare is not None else None
+            self.compare = None
+            self.pair3d.clear()
+            self._fovea_tried.clear()
+            self._preloader.invalidate()
+            self._cache.clear()
+            self._small.clear()
+            self._proc_cache.clear()
+            # Rebuild the current row, placement and close-ups from the server's metadata;
+            # an old queued preload must not put previous pixels back after invalidation.
+            self._set_patient(self._patient_ref)
+            candidate = self.db.get_image(compare_id) if compare_id is not None else None
+            owner = None if self._patient_ref == UNASSIGNED else self._patient_ref
+            if candidate is not None and self._patient_ref is not None and candidate["patient_ref"] == owner:
+                self.compare = candidate
+            self._fill_compare()
+            self._mark_pair()
+            self._refill_multis()
+            self.review.set_photos(self._images(), self.patient_list.current_exam(), force=True)
+            self._review_dirty = False
+            if pair_ids:
+                valid = {r["id"] for r in self._images()}
+                if all(i in valid for i in pair_ids):
+                    self._open_pair3d(pair_ids)
+            self._share_sig = self._photo_sig()
 
     def _toggle_watch(self, on: bool) -> None:
         if on:
@@ -2458,6 +2492,8 @@ class MainWindow(QMainWindow):
             ref = None                         # deleted or merged away
         changed = ref != self._patient_ref
         if changed:
+            self.current = None
+            self._clear_image_views(patient=True)
             self.compare = None                # the second pick belongs to the previous patient
             self._picks, self._per_photo, self._pick_pre = [], {}, None   # so do the photos picked
         self._patient_ref = ref
@@ -3392,12 +3428,54 @@ class MainWindow(QMainWindow):
             if path is not None:
                 self._preloader.request(iid, path)
 
-    def _on_preloaded(self, image_id: int, rgb) -> None:
-        if rgb is None or image_id in self._cache:
+    def _on_preloaded(self, image_id: int, rgb, generation: int) -> None:
+        if generation != self._preloader.generation or rgb is None or image_id in self._cache:
             return
         self._cache_put(image_id, rgb)
         if self.current is not None and self.current["id"] in self._cache:
             self._cache.move_to_end(self.current["id"])     # the photo on screen stays the newest
+
+    def _clear_image_views(self, *, patient: bool = False) -> None:
+        """Remove a photo and its geometry together, including hidden/secondary panels."""
+        self._preload_timer.stop()
+        self._closeup_timer.stop()
+        self._ov3d_timer.stop()
+        self._show.stop()
+        self._3d_dirty = False
+        for view in (self.view2d, self.ov_macula, self.ov_zoom, *self.cmp_views):
+            view.set_rgb(None)
+            view.set_captions()
+            view.geometry = None
+            view.set_overlays(None, None, None)
+        for label in self.cmp_labels:
+            label.setText("")
+        self.eye3d.set_image(None)
+        self.eye3d.set_landmarks(None, None, None, None)
+        self.eye3d.field_from_cover = False
+        self.scan_photo.set_image(None)
+        self.scan_photo.set_scan(None)
+        self.photo3d.set_photo(None)
+        self.photo3d.set_marks(None, None, None)
+        self._set_marking3d(None)
+        self.pair3d.clear()
+        self._ov_img, self._ov_targets = None, {}
+        for roi in self._ov_rois.values():
+            roi.setVisible(False)
+        self.lbl_info.setText("")
+        self.lbl_info.setToolTip("")
+        self.lbl_3d.setText("")
+        self.lbl_photo3d.setText("")
+        self.lbl_found3d.setText("")
+        self.b_fit_fov.setEnabled(False)
+        for control in (self.sp_fov, self.c_fovtype, self.c_proj, self.sp_roll, self.b_save_map,
+                        self.c_device3d, self.c_eye3d, self.b_mark_fovea, self.b_mark_disc, self.b_redetect3d):
+            control.setEnabled(False)
+        if patient:
+            self.multi.clear()
+            self.ov_multi.clear()
+            self.grid.set_items([], None)
+            self.review.set_photos([])
+        self._sync_samples()
 
     def _show_image(self, image_id: int | None) -> None:
         row = self.db.get_image(image_id) if image_id is not None else None
@@ -3412,15 +3490,11 @@ class MainWindow(QMainWindow):
             self.compare = prev if prev is not None and prev["id"] != row["id"] else None
             self._mark_pair()
         if row is None:
-            self.view2d.set_rgb(None)
-            self.view2d.set_captions()
-            self.eye3d.set_image(None)
-            self.lbl_info.setText("")
-            self.lbl_info.setToolTip("")
+            self._clear_image_views(patient=True)
             return
         if self._load(row) is None:
-            self.view2d.set_rgb(None)
-            self.view2d.set_captions()
+            self._clear_image_views()
+            self._refill_multis()
             self.lbl_info.setText("<span style='color:#ff6961'>파일을 찾을 수 없음</span>")
             return
         # processing steps (sharpen, enhance ...) belong to the photo on screen
@@ -4154,6 +4228,9 @@ class MainWindow(QMainWindow):
     # -- 3D ----------------------------------------------------------------------
     def _load_mapping(self, row) -> None:
         prof = get_profile(row["profile"])
+        for control in (self.sp_fov, self.c_fovtype, self.c_proj, self.sp_roll, self.b_save_map,
+                        self.c_device3d, self.c_eye3d, self.b_mark_fovea, self.b_mark_disc, self.b_redetect3d):
+            control.setEnabled(True)
         for w in (self.sp_fov, self.c_fovtype, self.c_proj, self.sp_roll):
             w.blockSignals(True)
         self.sp_fov.setValue(row["fov_deg"] or prof.fov_deg)
@@ -4228,7 +4305,7 @@ class MainWindow(QMainWindow):
         self.lbl_status.setText(f"화각을 {fov:.1f}°로 맞췄습니다 (황반–유두 4.5 mm 기준) — [화각·투영 저장]으로 저장")
 
     def _save_mapping(self) -> None:
-        if self.current is None:
+        if self.current is None or not self.view2d.has_image():
             return
         self.db.update_image(self.current["id"], fov_deg=self.sp_fov.value(),
                              fov_type=self.c_fovtype.currentData(), projection=self.c_proj.currentData())
@@ -4894,11 +4971,11 @@ class MainWindow(QMainWindow):
         self._show.stop()                     # another photo: the presentation was about the last one
         row = self.current
         if row is None:
-            self.eye3d.set_image(None)
-            self.scan_photo.set_image(None)
+            self._clear_image_views(patient=True)
             return
         rgb = self._load(row)
         if rgb is None:
+            self._clear_image_views()
             return
         circle = (row["circle_cx"], row["circle_cy"], row["circle_r"]) if row["circle_r"] else imaging.detect_circle(rgb)
         tex = self._display_rgb(row) if self.c_adj3d.isChecked() else rgb
@@ -5455,30 +5532,42 @@ class MainWindow(QMainWindow):
         return new_id
 
     # -- glaucoma (녹내장 분석 — glaucoma.py, glaucoma_dialog.py) --------------------------------
+    @staticmethod
+    def _analysis_source_version(row):
+        return tuple(sorted(dict(row).items()))
+
+    @staticmethod
+    def _glaucoma_eye(row) -> str | None:
+        if row["laterality"] in ("OD", "OS"):
+            return row["laterality"]
+        if row["disc_x"] is not None and row["circle_r"]:
+            return imaging.laterality_from_disc((row["disc_x"], row["disc_y"]),
+                                                 (row["circle_cx"], row["circle_cy"], row["circle_r"]))
+        return None
+
     def _glaucoma_photo(self, row, rgb: np.ndarray) -> Photo:
         src = self._disc_source(row, rgb)
         fovea = (row["fovea_x"], row["fovea_y"]) if row["fovea_x"] is not None else None
-        return Photo(row["id"], rgb, src.eye, src.disc,
+        return Photo(row["id"], rgb, self._glaucoma_eye(row), src.disc,
                      discpair.disc_diameter_px(src.geometry, src.disc, (rgb.shape[1], rgb.shape[0])),
                      fovea, src.found == "saved", src.when, src.caption)
 
     def _glaucoma_series(self, first, eye: str | None, also=()) -> list:
         """시간별 비교: the photos of ``first``'s patient that show the optic disc of the same eye
         (``timeline.Shot`` — read only when shown). Photos made by the viewer and photos whose disc
-        was not found are left out; ``first`` and the photos of ``also`` are always in."""
+        was not found are left out; explicit choices may lack a disc, but must have the same eye."""
         from .. import timeline
 
+        if eye not in ("OD", "OS"):
+            return []
         rows = self.db.images_for_patient(first["patient_ref"]) if first["patient_ref"] is not None else [first]
         shots = []
         for row in rows:
             must = row["id"] == first["id"] or row["id"] in also
             if row["modality"] in ("anterior", "disc", "glaucoma", "montage"):
                 continue
-            row_eye = row["laterality"] if row["laterality"] in ("OD", "OS") else None
-            if row_eye is None and row["disc_x"] is not None and row["circle_r"]:
-                row_eye = imaging.laterality_from_disc((row["disc_x"], row["disc_y"]),
-                                                       (row["circle_cx"], row["circle_cy"], row["circle_r"]))
-            if not must and (row["disc_x"] is None or row_eye != eye):
+            row_eye = self._glaucoma_eye(row)
+            if row_eye != eye or (not must and row["disc_x"] is None):
                 continue
             prof = get_profile(row["profile"])
             fov = f"{row['fov_deg']:g}°" if row["fov_deg"] else ""
@@ -5486,7 +5575,8 @@ class MainWindow(QMainWindow):
                                              row["device"] or prof.name) if x)
             when = f"{row['exam_date'] or ''} {row['exam_time'] or ''}".strip()
             shots.append(timeline.Shot(row["id"], when, row_eye, caption,
-                                       lambda row=row: self._glaucoma_shot(row)))
+                                       lambda row=row: self._glaucoma_shot(row),
+                                       source_version=self._analysis_source_version(row)))
         return shots
 
     def _glaucoma_shot(self, row) -> Photo | None:
@@ -5507,10 +5597,14 @@ class MainWindow(QMainWindow):
         if self.current is None:
             return None, "사진을 고르세요."
         first = self.db.get_image(self.current["id"])
+        if first is None:
+            return None, "사진이 삭제되었습니다. 다시 선택하세요."
         if second_id is None or second_id == first["id"]:
             second_id = self.compare["id"] if self.compare is not None else None
         second = self.db.get_image(second_id) if second_id is not None else None
         rows = [first] + ([second] if second is not None and second["id"] != first["id"] else [])
+        if len(rows) == 2 and first["patient_ref"] is None:
+            return None, "여러 사진을 비교하려면 먼저 환자를 지정하세요."
         if len(rows) == 2 and first["patient_ref"] != second["patient_ref"]:
             return None, "서로 다른 환자의 사진입니다."
         photos = []
@@ -5526,9 +5620,17 @@ class MainWindow(QMainWindow):
         bits += [ph.caption for ph in photos]
         stem = "_".join(x for x in (p["patient_id"] if p is not None else "", "녹내장", first["exam_date"] or "") if x)
         prefer = self._multi_picks() if self._own_picks() else ()       # photos picked by hand: those first
+        series = self._glaucoma_series(first, photos[0].eye, [r["id"] for r in rows[1:]])
+        source_versions = {shot.image_id: shot.source_version for shot in series}
+        source_versions.update({row["id"]: self._analysis_source_version(row) for row in rows})
+
+        def save_record(rgb, note, eye, ids):
+            return self._save_glaucoma(rgb, note, eye, ids, expected_patient=first["patient_ref"],
+                                       expected_sources=source_versions)
+
         dlg = GlaucomaDialog(photos[0], photos[1] if len(photos) == 2 else None, title_line="  ·  ".join(bits),
-                             file_stem=safe_component(stem, "녹내장"), save_record=self._save_glaucoma, parent=self,
-                             series=self._glaucoma_series(first, photos[0].eye, [r["id"] for r in rows[1:]]),
+                             file_stem=safe_component(stem, "녹내장"), save_record=save_record, parent=self,
+                             series=series,
                              prefer=prefer, start=start)
         return dlg, ""
 
@@ -5539,12 +5641,25 @@ class MainWindow(QMainWindow):
             return
         dlg.exec()
 
-    def _save_glaucoma(self, rgb: np.ndarray, note: str, eye: str | None, image_ids) -> int:
+    def _save_glaucoma(self, rgb: np.ndarray, note: str, eye: str | None, image_ids,
+                       *, expected_patient=..., expected_sources=None) -> int:
         """Store an analysis picture as a new photo of the patient (modality ``glaucoma``)."""
         rows = [self.db.get_image(i) for i in image_ids]
+        if not rows or any(row is None for row in rows):
+            raise ValueError("원본 사진이 없거나 삭제되었습니다. 분석을 다시 여세요.")
+        refs = {row["patient_ref"] for row in rows}
+        if len(refs) != 1 or (expected_patient is not ... and refs != {expected_patient}):
+            raise ValueError("사진의 환자 소속이 바뀌었습니다. 분석을 다시 여세요.")
+        if expected_sources is not None and any(
+                self._analysis_source_version(row) != expected_sources.get(row["id"]) for row in rows):
+            raise ValueError("원본 사진 정보가 바뀌었습니다. 분석을 다시 여세요.")
+        if len(rows) > 1:
+            eyes = {self._glaucoma_eye(row) for row in rows}
+            if None in refs or eye not in ("OD", "OS") or eyes != {eye}:
+                raise ValueError("같은 눈(OD 또는 OS)이 확인된 사진만 함께 저장할 수 있습니다.")
         new_id = self.service.importer.add_derived(
             rows[0], rgb, note, suffix="녹내장", derived_from=[r["id"] for r in rows],
-            laterality=eye if eye in ("OD", "OS") else rows[0]["laterality"], modality="glaucoma",
+            laterality=eye if eye in ("OD", "OS") else None, modality="glaucoma",
             fov_deg=None, fov_type=None, projection=None, circle_cx=None, circle_cy=None, circle_r=None,
             disc_x=None, disc_y=None, fovea_x=None, fovea_y=None)
         self.refresh_patients()

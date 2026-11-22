@@ -57,6 +57,9 @@ class LandmarkPhoto(QWidget):
         ID a device burns into a corner is not shown."""
         if rgb is None:
             self._pix = None
+            self._scale = 1.0
+            self.circle = self.disc = self.fovea = None
+            self.set_picking(None)
             self.update()
             return
         h, w = rgb.shape[:2]

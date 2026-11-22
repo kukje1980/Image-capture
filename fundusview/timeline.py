@@ -28,6 +28,12 @@ REGIONS = (("near", "유두", 3.0), ("disc", "유두 주변", 5.0), ("wide", "�
 LIMIT = 60.0                 # the furthest a frame is moved to lie on the first one (px of the frame)
 
 
+def common_eye(photos) -> str | None:
+    """The one confirmed/resolved eye of every source, or None for mixed/unknown sources."""
+    eyes = {photo.eye for photo in photos}
+    return next(iter(eyes)) if len(eyes) == 1 and eyes <= {"OD", "OS"} else None
+
+
 @dataclass
 class Shot:
     """One photo that can go on the timeline. ``load()`` reads it (a ``glaucoma_dialog.Photo``, or
@@ -37,6 +43,7 @@ class Shot:
     eye: str | None = None
     caption: str = ""                  # device · field · kind
     load: Callable[[], object] | None = None
+    source_version: object | None = None     # immutable source metadata when this analysis was opened
 
     @property
     def day(self) -> str:

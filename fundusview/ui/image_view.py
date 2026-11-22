@@ -301,6 +301,9 @@ class ImageView(QGraphicsView):
             self._rot, self._fh, self._fv = 0, False, False
         self._rgb = rgb
         if rgb is None:
+            self._fade.stop()
+            self._fade_done()
+            self.geometry = None
             self._pix.setPixmap(QPixmap())
             self._circle.setVisible(False)
             self._disc.setVisible(False)

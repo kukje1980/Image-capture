@@ -317,8 +317,11 @@ class Pair3D(QWidget):
 
     def clear(self) -> None:
         self.image_ids = []
-        for eye in self.eyes:
+        for eye, label in zip(self.eyes, self.labels):
             eye.set_image(None)
+            eye.set_landmarks(None, None, None, None)
+            eye.field_from_cover = False
+            label.setText("")
 
     # -- they move together ----------------------------------------------------------------------
     def reset_views(self) -> None:
