@@ -67,9 +67,13 @@ def test_photos_are_copied_in_under_names_of_their_own_with_notes(tmp_path):
 
 
 @pytest.fixture
-def win(tmp_path):
+def win(tmp_path, monkeypatch):
     pytest.importorskip("PySide6")
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    import fundusview.samples as samples_mod
+
+    # (the program's own samples are tested in test_disease_explain.py: here the library starts empty)
+    monkeypatch.setattr(samples_mod, "BUILTIN_DIR", tmp_path / "no builtin samples")
     from PySide6.QtWidgets import QApplication
 
     from fundusview.config import Settings

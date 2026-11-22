@@ -38,7 +38,8 @@ hidden = (
 a = Analysis(
     ["run_viewer.py"],
     pathex=[SPECPATH],
-    datas=[("fundusview/ui/style.qss", "fundusview/ui")],
+    datas=[("fundusview/ui/style.qss", "fundusview/ui"),
+           ("fundusview/sample_photos", "fundusview/sample_photos")],   # 질환 샘플: the program's own sample photos
     hiddenimports=hidden,
     excludes=["tkinter", "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.Qt3DCore",
               "PySide6.QtQuick", "PySide6.QtQml", "PySide6.QtMultimedia", "matplotlib"],
