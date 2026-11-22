@@ -687,9 +687,40 @@ def test_macula_and_disc_under_the_photos_of_simple(win):
     assert not w.settings.simple_closeups and not any(c.closeups.isVisible() for c in w.multi.cells)
 
 
+def test_the_cell_title_lies_on_the_photo(win):
+    """Simple · Multi: a cell's number · OD/OS · date is on its photo's top-left corner, not in a bar above
+    it — the photo has the cell's whole height; a click there is the photo's (it selects the cell)."""
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+
+    app, w, db, refs, ids = win
+    _open(app, w, refs["kim"])
+    left, right = (c for c in w.multi.cells if c.isVisible())
+    for c in (left, right):
+        lab, view = c.label, c.view
+        assert lab.isVisible() and lab.parentWidget() is view          # on the photo pane ...
+        assert view.y() <= 4 and view.height() >= c.height() - 8        # ... which fills the cell
+        assert view.rect().contains(lab.geometry()) and lab.y() < 20
+        port = view.viewport()
+        assert view.childAt(lab.geometry().center()) is port            # the mouse goes through it
+    # the badge right after the title of the selected cell, on the same line
+    assert left.badge.isVisible() and not right.badge.isVisible()
+    b, lab = left.badge.geometry(), left.label.geometry()
+    assert b.left() > lab.right() and abs(b.center().y() - lab.center().y()) <= 2
+    # a click on the title of the other cell selects it
+    QTest.mouseClick(right.view.viewport(), Qt.MouseButton.LeftButton, pos=right.label.geometry().center())
+    app.processEvents()
+    assert right.selected and w.current["id"] == right.image_id and right.badge.isVisible()
+    # an empty cell has no title
+    w.multi.set_count(4)
+    app.processEvents()
+    empty = [c for c in w.multi.cells if c.isVisible() and c.image_id is None]
+    assert empty and not any(c.label.isVisible() for c in empty)
+
+
 def test_the_photo_being_adjusted_is_framed_in_blue_with_a_badge(win):
     """Simple · Multi: the photo the processing toolbar works on (the cell clicked last) is framed in blue
-    and has a small blue 보정 badge in its header (the badge with two photos or more)."""
+    and has a small blue 보정 badge right after its title (the badge with two photos or more)."""
     from PySide6.QtCore import QPoint, Qt
     from PySide6.QtTest import QTest
 
