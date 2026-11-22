@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS images (
     display_path  TEXT,            -- decoded viewable copy (DICOM -> PNG); NULL = file_path
     thumb_path    TEXT,
     original_path TEXT,
-    sha256        TEXT NOT NULL UNIQUE,
+    sha256        TEXT NOT NULL UNIQUE, -- raw bytes hash, or unique derived record identity
+    content_sha256 TEXT,              -- actual bytes hash for new derived records; NULL for legacy/raw
     width         INTEGER,
     height        INTEGER,
     circle_cx     REAL,            -- fundus image circle (pixels)
@@ -86,12 +87,13 @@ CREATE TABLE IF NOT EXISTS import_log (
 IMAGE_COLUMNS = (
     "patient_ref", "exam_date", "exam_time", "laterality", "modality", "device",
     "profile", "fov_deg", "fov_type", "projection", "file_path", "display_path", "thumb_path",
-    "original_path", "sha256", "width", "height", "circle_cx", "circle_cy",
+    "original_path", "sha256", "content_sha256", "width", "height", "circle_cx", "circle_cy",
     "circle_r", "disc_x", "disc_y", "fovea_x", "fovea_y", "meta_json", "note",
 )
 
 # columns added after the first release: (table, column, type) — libraries made before get them on opening
-ADDED_COLUMNS = (("images", "fovea_x", "REAL"), ("images", "fovea_y", "REAL"))
+ADDED_COLUMNS = (("images", "fovea_x", "REAL"), ("images", "fovea_y", "REAL"),
+                 ("images", "content_sha256", "TEXT"))
 
 
 def _now() -> str:
@@ -114,6 +116,7 @@ class Database:
                 have = {r["name"] for r in self._con.execute(f"PRAGMA table_info({table})")}
                 if column not in have:
                     self._con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
+            self._con.execute("CREATE INDEX IF NOT EXISTS ix_images_content ON images(content_sha256)")
             self._con.commit()
 
     def close(self) -> None:
@@ -147,7 +150,11 @@ class Database:
                 raise
             else:
                 if self._batch == 1:
-                    self._con.commit()
+                    try:
+                        self._con.commit()
+                    except BaseException:
+                        self._con.rollback()
+                        raise
             finally:
                 self._batch -= 1
 
@@ -264,7 +271,15 @@ class Database:
         return self._one("SELECT * FROM images WHERE id = ?", (image_id,))
 
     def image_by_sha(self, sha256: str) -> sqlite3.Row | None:
+        # Keep raw import deduplication exact. A derived file's content hash is deliberately
+        # separate: identical pixels can belong to different patients, eyes and examinations.
         return self._one("SELECT * FROM images WHERE sha256 = ?", (sha256,))
+
+    def derived_with_content(self, content_sha256: str) -> list[sqlite3.Row]:
+        """Candidates with these bytes, including legacy rows; verify context and provenance."""
+        return self._all("SELECT * FROM images WHERE content_sha256 = ?"
+                         " OR (content_sha256 IS NULL AND sha256 = ?) ORDER BY id",
+                         (content_sha256, content_sha256))
 
     def images_for_patient(self, ref: int | None) -> list[sqlite3.Row]:
         """Images of a patient, newest exam first; ``None`` = unassigned (미분류)."""

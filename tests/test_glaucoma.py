@@ -375,8 +375,10 @@ def test_main_window_flow(app, demo_dir, tmp_path, monkeypatch, import_and_wait)
 
         show(first["id"])
         pair, why = w._build_glaucoma(second["id"])
-        assert why == "" and pair.stereo.has_image() and pair.progress.has_image()
-        assert pair.stereo.image_ids() == [first["id"], second["id"]]
+        assert why == "" and pair.disc.has_image() and pair.surface.has_image()
+        same_eye = first["laterality"] in ("OD", "OS") and first["laterality"] == second["laterality"]
+        assert pair.stereo.has_image() == same_eye and pair.progress.has_image() == same_eye
+        assert pair.stereo.image_ids() == ([first["id"], second["id"]] if same_eye else [])
         for t in (pair.stereo, pair.progress):
             t._timer.stop()
 

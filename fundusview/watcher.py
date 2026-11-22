@@ -7,10 +7,10 @@
   ``POLL_SECONDS`` instead — change events over SMB are unreliable.
 * A periodic rescan of every folder is the safety net for missed events and
   for files that arrived while the viewer was closed.
-* Scans are cheap on large trees: files already handled are remembered as
-  ``path -> (size, mtime)`` (preloaded from the DB), and a directory whose
-  modification time has not changed since the last scan is not listed again
-  (new files always bump their directory's mtime).
+* Files already handled are remembered as ``path -> (size, mtime)`` (preloaded
+  from the DB). Network polls inspect file signatures even in unchanged
+  directories; periodic full scans recover missed native change events.
+  Other incremental scans can skip directories with an unchanged mtime.
 * One worker thread imports files in arrival order. Callbacks run on that
   thread — the GUI wraps them in Qt signals.
 """
@@ -181,7 +181,9 @@ class ImportService:
                 prev = self._dir_mtime.get(dirpath)
                 # Skip only if unchanged *and* settled well before the last
                 # listing (FAT/exFAT timestamps have 2 s resolution).
-                if not full and prev is not None and prev[0] == mt and mt < prev[1] - 3:
+                # A write to an existing file does not change its directory's mtime. Network
+                # polling has no event stream to catch it, so always inspect file signatures.
+                if not full and not folder.polling and prev is not None and prev[0] == mt and mt < prev[1] - 3:
                     continue
                 self._dir_mtime[dirpath] = (mt, time.time())
                 for name in filenames:
@@ -314,7 +316,7 @@ class ImportService:
         self._start_loop("fundus-poll", POLL_SECONDS, lambda: [self.scan_folder(f) for f in self._poll_folders],
                          first=lambda: self.scan_all(full=True))
         if self.settings.rescan_seconds > 0:
-            self._start_loop("fundus-rescan", self.settings.rescan_seconds, self.scan_all)
+            self._start_loop("fundus-rescan", self.settings.rescan_seconds, lambda: self.scan_all(full=True))
         self.on_status("폴더 감시 중")
         return errors
 

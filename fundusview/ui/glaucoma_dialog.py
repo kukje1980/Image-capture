@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 
 from .. import disc3d
 from .. import glaucoma as G
+from ..timeline import common_eye
 from . import theme
 from .image_view import from_qimage, to_qimage
 from .keys import keys
@@ -38,6 +39,7 @@ DISC_COLOR, CUP_COLOR = QColor(theme.GREEN), QColor(theme.YELLOW)
 NEED_PAIR = keys("사진 두 장이 필요합니다.\n\n사진 목록에서 한 장을 클릭하고 두 번째 사진을 Ctrl+클릭(②)한 뒤\n"
                  "[녹내장]을 다시 누르세요.")
 NEED_ONE = "분석할 사진이 없습니다."
+NEED_SAME_EYE = "같은 눈(OD 또는 OS)이 확인된 사진 두 장이 필요합니다.\n다른 눈이나 눈 미상 사진은 한 장씩 분석하세요."
 # what a pair tab shows of each photo: (key, label, width in disc diameters — 0: the whole photo)
 REGIONS = (("disc", "유두 주변", 5.0), ("wide", "넓게", 10.0), ("full", "사진 전체", 0.0))
 PAIR_PX = 720            # side of a disc-centred crop in the pair tabs
@@ -278,8 +280,9 @@ class _PairTab(_Tab):
     LIMIT_X, LIMIT_Y = 60.0, 60.0
 
     def __init__(self, pair, parent=None):
-        super().__init__(NEED_PAIR, parent)
-        self.pair = tuple(pair) if pair else None
+        valid = pair is not None and len(pair) == 2 and common_eye(pair) is not None
+        super().__init__(NEED_PAIR if not pair else NEED_SAME_EYE, parent)
+        self.pair = tuple(pair) if valid else None
         self.a = self.b = self._bs = None
         self.dx = self.dy = 0.0
         self.angle, self.scale = 0.0, 1.0      # the turn and size of b found by 자동 맞춤 (about the centre)
@@ -560,14 +563,14 @@ class DiscTab(_Tab):
     def __init__(self, photo: Photo | None, parent=None):
         super().__init__(NEED_ONE, parent)
         self.photo = photo
-        self.eye_key = "OS" if photo is not None and photo.eye == "OS" else "OD"
+        self.eye_key = photo.eye if photo is not None and photo.eye in ("OD", "OS") else None
         self.img = self.disc = self.cup = None
         self._drag = None
         self.field = "normal"
         self.hint.setText("초록 타원을 디스크 경계에, 노란 타원을 컵 경계에 맞추세요. "
                           "가운데 점은 통째로 옮기기, 가장자리 점(S · N · I · T)은 하나씩 따로 움직입니다.")
-        self.eyes = _Choice([("OD", "OD (우안)"), ("OS", "OS (좌안)")])
-        self.eyes.set(self.eye_key)
+        self.eyes = _Choice([("", "눈 미상"), ("OD", "OD (우안)"), ("OS", "OS (좌안)")])
+        self.eyes.set(self.eye_key or "")
         self.eyes.changed.connect(self.set_eye)
         self.fields = _Choice(DISC_FIELDS)
         self.fields.set("normal")
@@ -621,8 +624,8 @@ class DiscTab(_Tab):
         self._report()
 
     def set_eye(self, eye: str) -> None:
-        self.eye_key = eye
-        self.eyes.set(eye)
+        self.eye_key = eye if eye in ("OD", "OS") else None
+        self.eyes.set(self.eye_key or "")
         self._changed()
 
     def set_ellipses(self, disc: dict, cup: dict) -> None:
@@ -631,7 +634,7 @@ class DiscTab(_Tab):
         self._changed()
 
     def metrics(self) -> dict | None:
-        return G.cdr_metrics(self.disc, self.cup, self.eye_key) if self.disc else None
+        return G.cdr_metrics(self.disc, self.cup, self.eye_key or "OD") if self.disc else None
 
     def _handles(self) -> list:
         """The points of each outline: its centre (moves it) and S · N · I · T — each moves on its own,
@@ -691,6 +694,8 @@ class DiscTab(_Tab):
             p.drawEllipse(QPointF(x, y), 6 * u, 6 * u)
         d, right = self.disc, ("N" if self.eye_key == "OD" else "T")
         left = "T" if right == "N" else "N"
+        if self.eye_key is None:
+            right = left = "?"
         f = QFont()
         f.setPixelSize(max(8, round(15 * u)))
         f.setBold(True)
@@ -710,6 +715,9 @@ class DiscTab(_Tab):
         self.lbl_ratio.setText(f"<span style='color:{theme.TEXT2}'>{band}</span><br>"
                                f"수평 C/D <b>{m['horizontal']:.2f}</b> &nbsp;·&nbsp; 면적 C/D <b>{m['area']:.2f}</b>"
                                f" &nbsp;·&nbsp; 림 면적 <b>{(1 - m['area']) * 100:.0f}%</b>")
+        if self.eye_key is None:
+            self.lbl_rim.setText("눈(OD/OS)을 확인해야 비측·이측 림과 ISNT 순서를 표시할 수 있습니다.")
+            return
         rim = m["rim"]
         rows = "".join(f"<tr><td>{k} {ko}&nbsp;&nbsp;&nbsp;</td><td align='right'>"
                        f"{'경계 밖' if rim[k] < 0 else f'{rim[k]:.3f} DD'}</td></tr>"
@@ -750,10 +758,10 @@ class Surface3DTab(_Tab):
         self.photos = [p for p in (photo, second) if p is not None]
         self.disc_tab = disc_tab                         # its green outline is the disc margin here
         self._cup: dict = {}
-        eyes = {p.eye for p in self.photos if p.eye}
+        self.same_eye = len(self.photos) == 2 and common_eye(self.photos) is not None
         days = {p.day for p in self.photos if p.day}
-        self.follow_up = len(self.photos) == 2 and len(days) == 2     # two days: a follow-up, not a stereo pair
-        self.stereo_ok = len(self.photos) == 2 and len(eyes) < 2 and not self.follow_up   # (nor is OD with OS)
+        self.follow_up = self.same_eye and len(days) == 2
+        self.stereo_ok = self.same_eye and not self.follow_up
         self.source = "stereo" if self.stereo_ok else "a"
         self.field = "normal"
         self.yaw, self.pitch = -22.0, 14.0
@@ -773,6 +781,7 @@ class Surface3DTab(_Tab):
         self.sw_flip.setToolTip("컵이 솟아 보이면 켭니다 (어느 사진이 왼쪽에서 찍혔는지는 알 수 없습니다)")
         self.sw_flip.toggled.connect(lambda _on: self._shape_changed())
         self.sw_flick = Switch("두 사진 깜빡임")
+        self.sw_flick.setEnabled(self.same_eye)
         self.sw_flick.setToolTip("같은 표면 위에서 사진 ①과 ②를 번갈아 보여 줍니다")
         self.sw_flick.toggled.connect(lambda _on: self._restart())
         self.speed = _Slider("깜빡임 속도", 1, 6, 2, 1, lambda v: f"{v:.0f} Hz")
@@ -787,6 +796,7 @@ class Surface3DTab(_Tab):
                                     ("stereo", "2장 스테레오", "두 사진의 시차로 깊이 계산")])
             self.sources.set(self.source)
             self.sources.changed.connect(self.set_source)
+            self.sources.buttons[2].setEnabled(self.stereo_ok)
             rows = [self.sources, self.fields, self.sw_flip, self.sw_flick, self.speed, self.status]
         self.side.addWidget(card("모양 (깊이)", *rows, lines=False))
 
@@ -856,7 +866,11 @@ class Surface3DTab(_Tab):
         self._shape_changed()
 
     def set_source(self, source: str) -> None:
-        if source == "stereo" and len(self.photos) < 2:
+        if source == "stereo" and not self.stereo_ok:
+            self.status.setText(NEED_SAME_EYE if not self.same_eye else
+                                "서로 다른 날짜의 사진은 경과 비교에서 확인하세요.")
+            if self.sources is not None:
+                self.sources.set(self.source)
             return
         self.source = source
         if self.sources is not None:
@@ -865,6 +879,8 @@ class Surface3DTab(_Tab):
 
     def _surface(self, source: str) -> tuple[np.ndarray, dict] | None:
         """The surface of ``source`` (a · b · stereo) and what is known of it."""
+        if source == "stereo" and not self.stereo_ok:
+            return None
         if not self._tex or (source != "a" and len(self._tex) < 2):
             return None
         key = (source, self.sw_flip.isChecked())
@@ -936,7 +952,7 @@ class Surface3DTab(_Tab):
         return self.ROCK_YAW * math.sin(a), self.pitch * 0.5 + self.ROCK_PITCH * math.cos(a)
 
     def _flickering(self) -> bool:
-        return len(self._tex) == 2 and self.sw_flick.isChecked()
+        return self.same_eye and len(self._tex) == 2 and self.sw_flick.isChecked()
 
     def _restart(self) -> None:
         self.speed.setVisible(self._flickering())
@@ -1023,7 +1039,7 @@ class Surface3DTab(_Tab):
         """With two photos: vertical C/D of each one's own estimate, of the stereo depth, the mean
         of the two photos and how far they are apart — ``{"a", "b", "stereo", "mean", "spread"}``
         (None where there is none)."""
-        if len(self.photos) < 2:
+        if not self.same_eye:
             return None
         v = {k: (m["vertical"] if (m := self.metrics(k)) else None) for k in ("a", "b", "stereo")}
         ab = [x for x in (v["a"], v["b"]) if x is not None]
@@ -1041,6 +1057,8 @@ class Surface3DTab(_Tab):
     def apply_to_disc_tab(self) -> None:
         """The cup found here becomes the yellow outline of the 디스크 C/D tab."""
         found, t = self.cup(), self.disc_tab
+        if self.source == "b" and not self.same_eye:
+            return
         if not found or t is None or t.disc is None:
             return
         c, r = (disc3d.TEX_PX - 1) / 2.0, disc3d.TEX_PX / self._factor() / 2.0
@@ -1052,7 +1070,7 @@ class Surface3DTab(_Tab):
 
     def _report(self) -> None:
         m = self.metrics()
-        self.b_apply.setEnabled(m is not None)
+        self.b_apply.setEnabled(m is not None and (self.source != "b" or self.same_eye))
         if m is None:
             self.lbl_cd.setText("–")
             self.lbl_cd2.setText(f"<span style='color:{theme.TEXT2}'>{S3_NO_CUP if self._tex else ''}</span>"
@@ -1410,7 +1428,8 @@ class GlaucomaDialog(QDialog):
         self.setWindowTitle("녹내장 분석")
         self._save_record, self.file_stem = save_record, file_stem
         self.saved_id: int | None = None
-        pair = (current, second) if current is not None and second is not None else None
+        candidates = (current, second) if current is not None and second is not None else None
+        pair = candidates if candidates and common_eye(candidates) is not None else None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(10, 10, 10, 10)
@@ -1425,8 +1444,8 @@ class GlaucomaDialog(QDialog):
         self.surface = Surface3DTab(current, second, disc_tab=self.disc)
         self.surface.b_apply.clicked.connect(lambda: self.tabs.setCurrentWidget(self.disc))
         self.wide = WideTab(current)
-        self.stereo = StereoTab(pair)
-        self.progress = ProgressTab(pair)
+        self.stereo = StereoTab(candidates)
+        self.progress = ProgressTab(candidates)
         self.timeline = TimelineTab(series, current.image_id if current is not None else None, prefer)
         self.explain = ExplainTab()
         for tab, text in ((self.disc, "디스크 C/D"), (self.surface, "3D 입체"), (self.wide, "광각 분석"),
@@ -1475,7 +1494,15 @@ class GlaucomaDialog(QDialog):
         if rgb is None or self._save_record is None:
             self.status.setText("저장할 분석 화면이 없습니다")
             return None
-        self.saved_id = self._save_record(rgb, tab.note(), tab.eye(), tab.image_ids())
+        ids, eye = tab.image_ids(), tab.eye()
+        if len(ids) > 1 and eye not in ("OD", "OS"):
+            self.status.setText(NEED_SAME_EYE)
+            return None
+        try:
+            self.saved_id = self._save_record(rgb, tab.note(), eye, ids)
+        except (ValueError, LookupError) as exc:
+            self.status.setText(f"저장하지 못했습니다 — {exc}")
+            return None
         self.status.setText(f"환자 기록에 새 사진으로 저장했습니다 — {tab.note()}")
         return self.saved_id
 

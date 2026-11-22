@@ -193,7 +193,8 @@ def test_tab_with_two_photos_stereo_and_flicker(app):
     odos.progress._timer.stop()
     assert odos.surface.source == "a" and not odos.surface.stereo_ok
     odos.surface.set_source("stereo")
-    assert "다른 눈" in odos.surface.status.text() and odos.surface.eye() is None
+    assert "다른 눈" in odos.surface.status.text() and odos.surface.source == "a"
+    assert odos.surface.eye() == "OD" and not odos.stereo.has_image() and not odos.progress.has_image()
 
 
 def test_cup_read_off_the_surface_follows_the_cup():
@@ -277,7 +278,7 @@ def test_tab_with_two_photos_gives_the_cd_of_each_and_the_change_between_two_day
     tab = dlg.surface
     assert tab.follow_up and not tab.stereo_ok and tab.source == "a"   # two days are no stereo pair
     tab.set_source("stereo")
-    assert "다른 날짜" in tab.status.text() and tab.metrics() is None
+    assert "다른 날짜" in tab.status.text() and tab.source == "a" and tab.metrics() is not None
     tab.set_source("a")
     v = tab.both()
     assert v["stereo"] is None

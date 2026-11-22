@@ -239,6 +239,17 @@ class MultiView(QWidget):
         self.topbar.layout().setContentsMargins(0, 0, 0, 0)
         return self.topbar
 
+    def clear(self) -> None:
+        """Drop every cell's pixels, including cells hidden by a smaller layout."""
+        self.populate([], None)
+        for cell in self.cells:
+            cell.image_id = None
+            cell.label.setText("")
+            cell.view.set_rgb(None)
+            for view in cell.zooms.values():
+                view.set_rgb(None)
+            cell.select(False)
+
     def set_mode_text(self, text: str) -> None:
         """'고른 사진 3장' (picked photos) or '' (consecutive photos from the shown one)."""
         self.mode_text = text

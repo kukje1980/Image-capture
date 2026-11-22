@@ -27,7 +27,9 @@ import math
 import os
 import re
 import shutil
+import tempfile
 import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -298,7 +300,8 @@ class Importer:
             if found is not None:
                 fovea = found[:3]
                 if guessed and found[3] != meta.laterality:
-                    meta.set("laterality", found[3], "fovea-estimate")
+                    meta.laterality = found[3]
+                    meta.sources["laterality"] = "fovea-estimate"
         if (fx, fy) != (1.0, 1.0):      # back to the photo's own pixels
             circle = (circle[0] * fx, circle[1] * fy, circle[2] * (fx + fy) / 2)
             disc = (disc[0] * fx, disc[1] * fy, *disc[2:]) if disc is not None else None
@@ -419,25 +422,14 @@ class Importer:
         the image row's values (e.g. ``modality`` of a composed sheet)."""
         import io
         import json
-        from datetime import datetime
 
+        # Encode and analyse before creating any files, so failures leave no partial record.
         buf = io.BytesIO()
         Image.fromarray(rgb).save(buf, "PNG", compress_level=3)
         data = buf.getvalue()
         digest = hashlib.sha256(data).hexdigest()
-        dup = self.db.image_by_sha(digest)
-        if dup is not None:
-            return dup["id"]
-        patient = self.db.get_patient(row["patient_ref"]) if row["patient_ref"] else None
-        pid_dir = safe_component(patient["patient_id"] if patient else "", "_미분류")
-        dest_dir = self.library / "images" / pid_dir / (row["exam_date"] or "날짜없음")
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        stem = Path(row["original_path"] or row["file_path"]).stem
-        stored = dest_dir / safe_component(f"{stem}_{suffix}_{datetime.now():%H%M%S}.png", "edited.png")
-        stored.write_bytes(data)
-        thumb = self.library / "thumbs" / f"{digest[:24]}.jpg"
-        thumb.parent.mkdir(parents=True, exist_ok=True)
-        imaging.thumbnail(rgb).save(thumb, quality=88)
+        thumb_buf = io.BytesIO()
+        imaging.thumbnail(rgb).save(thumb_buf, "JPEG", quality=88)
         circle = imaging.detect_circle(rgb)
         meta = json.loads(row["meta_json"] or "{}")
         meta["derived_from"] = row["id"] if derived_from is None else derived_from
@@ -446,10 +438,86 @@ class Importer:
             patient_ref=row["patient_ref"], exam_date=row["exam_date"], exam_time=row["exam_time"],
             laterality=row["laterality"], modality=row["modality"], device=row["device"], profile=row["profile"],
             fov_deg=row["fov_deg"], fov_type=row["fov_type"], projection=row["projection"],
-            file_path=str(stored), thumb_path=str(thumb), original_path=str(stored), sha256=digest,
             width=w, height=h, circle_cx=circle[0], circle_cy=circle[1], circle_r=circle[2],
             meta_json=meta, note=note,
         )
-        image_id = self.db.insert_image(**{**values, **fields})
-        self.db.log("info", f"편집 영상 저장 — 원본 #{row['id']} → #{image_id}", str(stored))
-        return image_id
+        values.update(fields)
+        # Existing sha256 values and their unique index stay intact. New derived records use
+        # a unique record identity there and retain the actual file hash in content_sha256. Physical
+        # equality alone must never return a record belonging to another patient/eye/exam.
+        storage_fields = {"file_path", "display_path", "thumb_path", "original_path", "sha256", "content_sha256"}
+        identity_values = {k: v for k, v in values.items() if k not in storage_fields}
+        identity = hashlib.sha256(("derived-v1:" + digest + ":" + uuid.uuid4().hex).encode("ascii")).hexdigest()
+
+        def existing_record():
+            # Compare the current values too: a previous derived record may have been moved
+            # to another patient or had its eye/exam corrected since it was first saved.
+            for candidate in self.db.derived_with_content(digest):
+                current = dict(candidate)
+                try:
+                    current["meta_json"] = json.loads(current["meta_json"] or "{}")
+                except (ValueError, TypeError):
+                    continue
+                if all(current.get(key) == value for key, value in identity_values.items()):
+                    return candidate
+            return None
+
+        patient = self.db.get_patient(values["patient_ref"]) if values["patient_ref"] else None
+        pid_dir = safe_component(patient["patient_id"] if patient else "", "_미분류")
+        dest_dir = self.library / "images" / pid_dir / (values["exam_date"] or "날짜없음")
+        stem = Path(row["original_path"] or row["file_path"]).stem
+        made: list[Path] = []
+        kept = False
+        try:
+            dup = existing_record()
+            if dup is not None:
+                return dup["id"]
+            stored = _write_new_file(dest_dir, safe_component(f"{stem}_{suffix}")[:48], ".png", data)
+            made.append(stored)
+            thumb = _write_new_file(self.library / "thumbs", identity[:24], ".jpg", thumb_buf.getvalue())
+            made.append(thumb)
+            values.update(file_path=str(stored), display_path=None, thumb_path=str(thumb),
+                          original_path=str(stored), sha256=identity, content_sha256=digest)
+            # Recheck under the write lock after I/O: another sharing thread may have saved
+            # the same scoped record while these files were being prepared.
+            with self.db.batch():
+                dup = existing_record()
+                if dup is not None:
+                    return dup["id"]
+                image_id = self.db.insert_image(**values)
+                self.db.log("info", f"편집 영상 저장 — 원본 #{row['id']} → #{image_id}", str(stored))
+            kept = True
+            return image_id
+        finally:
+            if not kept:
+                for path in made:
+                    try:
+                        path.unlink()
+                    except OSError:
+                        pass
+
+
+def _write_new_file(directory: Path, prefix: str, suffix: str, data: bytes) -> Path:
+    """Publish a complete file under an exclusively reserved name; clean up on failure."""
+    directory.mkdir(parents=True, exist_ok=True)
+    final_fd, final_name = tempfile.mkstemp(prefix=prefix + "_", suffix=suffix, dir=directory)
+    os.close(final_fd)
+    final = Path(final_name)
+    pending: Path | None = None
+    try:
+        fd, name = tempfile.mkstemp(prefix="." + final.name + ".", suffix=".part", dir=directory)
+        pending = Path(name)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(pending, final)  # only our own exclusive reservation is replaced
+        return final
+    except BaseException:
+        for path in (pending, final):
+            if path is not None:
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+        raise
