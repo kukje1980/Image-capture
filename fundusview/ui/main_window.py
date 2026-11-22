@@ -301,6 +301,10 @@ class MainWindow(QMainWindow):
                 # 8: a patient opens on Simple — the newest OD | OS, the photo list under it by date
                 # (날짜 책갈피), a photo of the list previewed under the mouse and pinned with a click
                 settings.open_view = SIMPLE_MODE
+            if settings.ui_version < 9:
+                # 9: no loupe over the large photos without a button (as before 0.10.16: the left button
+                # held) — and the photo list grows like the Dock as soon as the mouse is on it
+                settings.hover_loupe, settings.hover_preview = False, True
             settings.ui_version = self.UI_VERSION
         else:
             relabel = False
@@ -351,6 +355,7 @@ class MainWindow(QMainWindow):
         self._dock_ends = (0.0, 0.0)         # … and where that is on its way from and to
         self._peek_scale = 2.0
         self._book_wheel = 0.0               # the wheel over the list, until it makes a whole notch
+        self._strip_press = False            # the left button went down on the photo list (a drag from it)
         self._multi_auto = True              # Simple, nothing picked: 화면 분할 fits the photos of the list
         self._split_via = SIMPLE             # the 다중 보기 page is Simple's or Multi's (which icon is lit,
                                              # what [Multi] does there)
@@ -544,7 +549,8 @@ class MainWindow(QMainWindow):
         self.act_hover_loupe.setCheckable(True)
         self.act_hover_loupe.setChecked(bool(self.settings.hover_loupe))
         self.act_hover_loupe.setToolTip("Simple · Multi · Detail의 큰 사진에 마우스를 올리면 버튼을 누르지 않아도 그 자리에 "
-                                        "돋보기가 나옵니다 (사진 전체가 보일 때 — 휠로 확대한 뒤에는 드래그로 이동)")
+                                        "돋보기가 나옵니다 (사진 전체가 보일 때 — 휠로 확대한 뒤에는 드래그로 이동)\n"
+                                        "처음에는 꺼져 있습니다 — 돋보기는 왼쪽 버튼을 누르고 있는 동안 나옵니다")
         self.act_hover_loupe.toggled.connect(self._set_hover_loupe)
         self._apply_rnfl_settings()            # G 필터: RNFL 강화 세기 (설정 → 일반)
         m.addAction(self.tb_cmd.toggleViewAction())
@@ -916,6 +922,8 @@ class MainWindow(QMainWindow):
         self.patient_list.worklistRequested.connect(lambda: self.open_worklist())
         self.patient_list.filesDropped.connect(self.review_import)
         self.patient_list.shown.connect(lambda on: self.acts["list"].setChecked(on))
+        # 미리 보기: the patient list goes away with the mouse resting on the photo list under it
+        self.patient_list.shown.connect(lambda on: on or QTimer.singleShot(0, self._grow_under_resting_mouse))
         self.review.examPicked.connect(self.patient_list.set_exam)
 
         # -- VK-2 toolbars ---------------------------------------------------------------
@@ -2672,6 +2680,8 @@ class MainWindow(QMainWindow):
         self._fit_thumb_height()
         if self._dock_at is not None:          # 미리 보기: the photos now under the mouse
             self._dock_at_cursor()
+        else:                                  # … the mouse resting on the list as it comes up: grown at once
+            self._grow_under_resting_mouse()
         if self.remote or self.share_server is not None:
             self._share_sig = self._photo_sig()
         self._mark_picks()
@@ -2831,6 +2841,31 @@ class MainWindow(QMainWindow):
             self._apply_dock()
         else:
             self._end_peek()
+
+    def _mouse_on_list(self) -> QPoint | None:
+        """Where the mouse is on the photo list (its viewport) when it is there and no other window lies
+        over it there; None otherwise."""
+        vp = self.thumbs.viewport()
+        if not vp.isVisible():
+            return None
+        at = QCursor.pos()
+        pos = vp.mapFromGlobal(at)
+        if not vp.rect().contains(pos):
+            return None
+        top = QApplication.widgetAt(at)      # (the 환자 목록 window over it: not on the list)
+        return pos if top is vp or (top is not None and vp.isAncestorOf(top)) else None
+
+    def _grow_under_resting_mouse(self) -> None:
+        """The photo list came up where the mouse already is (a patient opened, another view, the patient
+        list gone from over it): its photos grow like the Dock at once — the mouse need not move first."""
+        if self._closing or self._dock_at is not None:
+            return
+        try:
+            pos = self._mouse_on_list()
+        except RuntimeError:                 # closing down: the photo list is already gone
+            return
+        if pos is not None:
+            self._hover_list(pos)
 
     def _thumb_row(self, image_id: int | None) -> int | None:
         """Where that photo is in the list (None: not in it)."""
@@ -3198,11 +3233,20 @@ class MainWindow(QMainWindow):
             if e.type() == QEvent.Type.Wheel:
                 self._wheel_books(e)
                 return True
-            # 미리 보기: the photo under the mouse is shown above (Simple) until it is clicked
-            if e.type() == QEvent.Type.MouseMove and not e.buttons():
+            # 미리 보기: the photos under the mouse grow like the Dock as soon as it is on the list — when
+            # it comes onto it (no move needed), moves over it, until it leaves it
+            if (e.type() in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonDblClick,
+                             QEvent.Type.MouseButtonRelease) and e.button() == Qt.MouseButton.LeftButton):
+                self._strip_press = e.type() != QEvent.Type.MouseButtonRelease
+            if e.type() == QEvent.Type.MouseMove:
+                if self._strip_press and e.buttons() & Qt.MouseButton.LeftButton:
+                    return True                # (dragged over the photos: the click decides, not the way)
+                if not e.buttons() & ~Qt.MouseButton.LeftButton:
+                    # (the left button "held" without a press on the list — the double click on the
+                    # patient list that opened the patient, say — is the mouse only on it)
+                    self._hover_list(e.position().toPoint())
+            elif e.type() == QEvent.Type.Enter:
                 self._hover_list(e.position().toPoint())
-            elif e.type() == QEvent.Type.MouseMove and e.buttons() & Qt.MouseButton.LeftButton:
-                return True                    # (dragged over the photos: the click decides, not the way)
             elif e.type() == QEvent.Type.Leave:
                 self._hover_list(None)
         # Ctrl+click on a thumbnail picks the second photo (②) and leaves the shown one alone
@@ -4848,12 +4892,13 @@ class MainWindow(QMainWindow):
     # -- 효과: 입체 조명 · 자동 회전 -----------------------------------------------------------
     RELIEF = 0.6            # strength of 입체 조명
     SPIN = 10.0             # 자동 회전, degrees per second
-    UI_VERSION = 8          # 2: the dark look — 자세히, 유리 공막 and 자동 회전 from the start; 3: the 3D tab
+    UI_VERSION = 9          # 2: the dark look — 자세히, 유리 공막 and 자동 회전 from the start; 3: the 3D tab
                             # as the web page (자세히, 황반·유두 자동으로 찾기); 4: the 3D eye shows the
                             # original photo (망막 입체 — 표면 높낮이 and 입체 조명 — off from the start);
                             # 5: the 3D wheel zooms, the depth is on the 깊이 막대 beside the eye;
                             # 6: a patient opens on 16장 보기; 7: RetiCam-sized 일반 45° photos → RetiCam 176°;
-                            # 8: a patient opens on Simple (날짜 책갈피 · 미리 보기 · 클릭으로 고정)
+                            # 8: a patient opens on Simple (날짜 책갈피 · 미리 보기 · 클릭으로 고정);
+                            # 9: no loupe over the large photos without a button · 미리 보기 on
 
     def _on_relief(self, on: bool) -> None:
         self.settings.relief3d = bool(on)
@@ -5117,7 +5162,8 @@ class MainWindow(QMainWindow):
         if key != self._shown_view:
             self._pick_pre = None             # (a click before another view is no double click's first)
         self._shown_view = key
-        self._end_peek()                      # (미리 보기 was over the view before)
+        self._end_peek()                      # (미리 보기 was over the view before — and the mouse resting on
+        QTimer.singleShot(0, self._grow_under_resting_mouse)    # the list, it grows on this one at once)
         if key and key not in ("3d", "3d2"):
             self._last_view = key             # where the 3D icon goes back to
         if key != "3d2" and self.pair3d.image_ids:
