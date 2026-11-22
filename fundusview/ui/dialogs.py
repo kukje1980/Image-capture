@@ -51,6 +51,12 @@ GREEN_FILTERS = (("green", "녹색 성분만 (흑백)"),
                  ("rnfl", "녹색 + RNFL 강화 — 신경섬유층이 잘 보이게 국소 대비를 높임"))
 
 
+# 설정 → 일반 → 3D 입체 한 장 추정 (Settings.disc3d_method): 녹내장 분석 → 3D 입체 opens on this one
+DISC3D_METHODS = (("hybrid", "하이브리드 — 경계는 혈관 꺾임, 혈관이 없는 쪽과 바닥 모양은 밝기"),
+                  ("vessels", "혈관 꺾임 — 혈관이 꺾이는 곳 = 컵 경계 (색은 쓰지 않음)"),
+                  ("pallor", "밝기 — 창백한 곳 = 깊은 곳"))
+
+
 # 3D 안구의 마우스 휠 (Settings.wheel3d): (key, short name, what it does)
 WHEEL3D = (("zoom", "확대", "커서가 가리키는 곳으로 확대 · 축소 (깊이는 3D 화면 위의 깊이 막대로)"),
            ("depth", "깊이", "자르는 깊이 — 앞으로 굴리면 깊게, 뒤로 굴리면 닫힘 (내부에서는 확대)"),
@@ -348,6 +354,11 @@ class SettingsDialog(QDialog):
         self.rnfl_strength.setToolTip("녹색 + RNFL 강화의 세기: 0.5(약하게) … 0.9(강하게, 처음 설정)\n"
                                       "녹내장 분석 → 광각 분석의 RNFL 대비 강화와 같은 값입니다")
         f2.addRow("RNFL 강화 세기 (0.5 ~ 0.9)", self.rnfl_strength)
+        self.disc3d_method = _combo(DISC3D_METHODS, settings.disc3d_method)
+        self.disc3d_method.setToolTip("녹내장 분석 → 3D 입체에서 사진 한 장의 모양을 처음에 이 방법으로 추정합니다\n"
+                                      "(하이브리드가 처음 설정). 창에서는 언제나 밝기 · 혈관 꺾임 · 하이브리드를 바꿔 볼 수 있고,\n"
+                                      "[셋 나란히 비교]로 함께 볼 수 있습니다. 두 장 스테레오에는 쓰이지 않습니다.")
+        f2.addRow("3D 입체 한 장 추정", self.disc3d_method)
         # what is written on the photos of the photo list (also 보기 → 사진 목록 표시)
         self.thumb_date = QCheckBox("날짜")
         self.thumb_date.setChecked(bool(settings.thumb_date))
@@ -668,6 +679,7 @@ class SettingsDialog(QDialog):
         s.open_book = self.open_book.currentData()
         s.green_filter = self.green_filter.currentData()
         s.rnfl_strength = round(self.rnfl_strength.value(), 2)
+        s.disc3d_method = self.disc3d_method.currentData()
         s.thumb_date = self.thumb_date.isChecked()
         s.thumb_kind = self.thumb_kind.isChecked()
         s.custom_filename_patterns = [p for p in self.patterns.toPlainText().splitlines() if p.strip()]

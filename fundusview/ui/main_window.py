@@ -5631,7 +5631,7 @@ class MainWindow(QMainWindow):
         dlg = GlaucomaDialog(photos[0], photos[1] if len(photos) == 2 else None, title_line="  ·  ".join(bits),
                              file_stem=safe_component(stem, "녹내장"), save_record=save_record, parent=self,
                              series=series,
-                             prefer=prefer, start=start)
+                             prefer=prefer, start=start, method=self.settings.disc3d_method)
         return dlg, ""
 
     def open_glaucoma(self, second_id: int | None = None, start: str | None = None) -> None:

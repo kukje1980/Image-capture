@@ -124,7 +124,8 @@ def test_tab_with_one_photo(app):
     dlg = GlaucomaDialog(_photo(1, _disc_picture()), save_record=lambda *a: saved.append(a) or 5)
     tab = dlg.surface
     assert tab.has_image() and tab.sources is None and tab.source == "a" and not tab._timer.isActive()
-    assert "추정" in tab.status.text() and tab.note().startswith("녹내장 분석 — 유두 3D (1장 추정)")
+    assert tab.method == "hybrid"                                   # (설정 → 일반: 하이브리드 at first)
+    assert "추정" in tab.status.text() and tab.note().startswith("녹내장 분석 — 유두 3D (1장 추정 · 하이브리드)")
     assert tab.image_ids() == [1] and tab.eye() == "OD"
     tab.set_view(0, 0)                                              # (stops the rocking)
     assert not tab.sw_auto.isChecked()
@@ -250,7 +251,9 @@ def test_tab_estimates_the_cd_ratio_and_hands_the_cup_to_the_disc_tab(app):
     assert dlg.disc.metrics()["area"] == pytest.approx(tab.metrics()["area"], abs=0.01)
     blank = GlaucomaDialog(_photo(1, np.full((N, N, 3), 120, np.uint8))).surface    # no cup to see
     assert blank.metrics() is None and blank.lbl_cd.text() == "–" and "추정하지 못했습니다" in blank.lbl_cd2.text()
-    assert not blank.b_apply.isEnabled() and blank.note() == "녹내장 분석 — 유두 3D (1장 추정)"
+    assert not blank.b_apply.isEnabled() and blank.note() == "녹내장 분석 — 유두 3D (1장 추정 · 하이브리드)"
+    blank.set_method("pallor")
+    assert blank.note() == "녹내장 분석 — 유두 3D (1장 추정)"
     assert GlaucomaDialog(None).surface.metrics() is None
 
 
@@ -428,7 +431,9 @@ def test_tab_shows_the_three_estimates_alone_and_side_by_side(app):
     dlg = GlaucomaDialog(_big_photo(1, _cupped_picture()))
     tab = dlg.surface
     tab.set_view(-20, 10)                                           # (stops the rocking)
-    assert tab.method == "pallor" and tab.status.text() == S3_ONE and not tab.methods.isHidden()
+    assert tab.method == "hybrid" and tab.methods.key() == "hybrid" and not tab.sw_bends.isHidden()
+    tab.set_method("pallor")
+    assert tab.status.text() == S3_ONE and not tab.methods.isHidden()
     assert tab.sw_bends.isHidden() and not len(tab.bends()[0])
     v = tab.by_method()
     assert v["pallor"] < 0.55 and v["vessels"] == pytest.approx(0.7 / 1.05, abs=0.08)
@@ -462,6 +467,18 @@ def test_tab_shows_the_three_estimates_alone_and_side_by_side(app):
     assert "충분히 찾지 못했습니다" in plain.status.text() and plain.metrics() is None and plain.lbl_cd.text() == "–"
     plain.set_method("hybrid")
     assert "[밝기]와 같은 모양" in plain.status.text() and plain.metrics()["vertical"] == plain.by_method()["pallor"]
+
+
+def test_the_window_opens_on_the_estimate_set_in_the_settings(app):
+    from fundusview.config import Settings
+    from fundusview.ui.glaucoma_dialog import GlaucomaDialog
+
+    assert Settings().disc3d_method == "hybrid"
+    for method in disc3d.METHODS:
+        tab = GlaucomaDialog(_big_photo(1, _cupped_picture()), method=method).surface
+        assert tab.method == method and tab.methods.key() == method
+        assert tab.metrics()["vertical"] == tab.by_method()[method]
+    assert GlaucomaDialog(_big_photo(1, _cupped_picture()), method="what").surface.method == "hybrid"
 
 
 def test_the_stereo_depth_has_no_estimate_to_choose(app):

@@ -79,6 +79,27 @@ def test_main_window_imports_and_lists(tmp_path, demo_dir, import_and_wait, monk
             assert s.green_filter == "green" and s.rnfl_strength == 0.9
         finally:
             imaging.set_rnfl_k(imaging.RNFL_K)
+        # 설정 → 일반 → 3D 입체 한 장 추정: 녹내장 분석 → 3D 입체 opens on it (처음 설정: 하이브리드)
+        assert s.disc3d_method == "hybrid" and w._build_glaucoma()[0].surface.method == "hybrid"
+
+        def disc3d_method(method):
+            def ok(dlg):
+                items = [dlg.disc3d_method.itemData(i) for i in range(dlg.disc3d_method.count())]
+                assert items == ["hybrid", "vessels", "pallor"] and dlg.disc3d_method.currentData() == s.disc3d_method
+                dlg.disc3d_method.setCurrentIndex(dlg.disc3d_method.findData(method))
+                return True
+            monkeypatch.setattr(SettingsDialog, "exec", ok)
+            w._open_settings()
+
+        try:
+            disc3d_method("vessels")
+            assert s.disc3d_method == "vessels" and Settings.load().disc3d_method == "vessels"
+            dlg, _ = w._build_glaucoma()
+            assert dlg.surface.method == "vessels" and dlg.surface.methods.key() == "vessels"
+            dlg.close()
+        finally:
+            disc3d_method("hybrid")
+        assert Settings.load().disc3d_method == "hybrid"
         w._on_action("chan:redfree")
         # zooming: steps and wide-field regions from the 화면 맞춤 ▾ menu, the status-bar magnification
         w._on_action("zoom4")
