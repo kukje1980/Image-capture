@@ -341,7 +341,8 @@ def test_main_window_flow(app, demo_dir, tmp_path, monkeypatch, import_and_wait)
         w.show()
         btn = w.tb_cmd.widgetForAction(w.acts["glaucoma"])            # on the command toolbar, 디스크 2장 under ▾
         assert btn.text() == "Glaucoma" and "glaucoma" in MODALITY_LABELS
-        assert [a.text() for a in btn.menu().actions()] == ["녹내장 분석", "디스크 2장 (보험 청구용)"]
+        assert [a.text() for a in btn.menu().actions()] == ["녹내장 분석", "시간별 비교 (이 눈의 유두 사진 여러 장)",
+                                                              "디스크 2장 (보험 청구용)"]
         w.open_glaucoma()                                           # no photo yet
         assert said and said[-1] == ("녹내장 분석", "사진을 고르세요.")
         import_and_wait(app, w, [demo_dir / "PatientCapture", demo_dir / "RetiCam"])
@@ -437,7 +438,8 @@ def test_patient_explanation_tab(tmp_path):
         dlg.show()
         app.processEvents()
         names = [dlg.tabs.tabText(i) for i in range(dlg.tabs.count())]
-        assert names == ["디스크 C/D", "3D 입체", "광각 분석", "스테레오 보기", "경과 비교", "환자 설명"]
+        assert names == ["디스크 C/D", "3D 입체", "광각 분석", "스테레오 보기", "경과 비교", "시간별 비교",
+                         "환자 설명"]
         assert dlg.tabs.currentWidget() is dlg.disc                  # the analysis still comes first
         tab = dlg.explain
         dlg.tabs.setCurrentWidget(tab)

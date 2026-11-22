@@ -63,6 +63,7 @@ COMMANDS = (
                            "합칩니다\n반투명 겹치기 · 기준점 맞추기 · 3D 안구에서 보기", "montage", "—"),
     ("glaucoma", "Glaucoma", "녹내장 분석 — 보고 있는 사진의 디스크 C/D · 유두 3D 입체 · 광각 RNFL 분석,\n"
                              "두 번째 사진을 Ctrl+클릭(②)하면 스테레오 보기 · 경과 비교(깜빡임)\n"
+                             "▾ 시간별 비교: 같은 눈의 유두 사진 여러 장을 시간순으로 나란히 · 겹쳐서\n"
                              "▾ 디스크 2장: 두 사진의 시신경 유두만 확대해 한 장으로 (보험 청구용)", "glaucoma", "—"),
     ("print", "인쇄", "화면 영상과 환자 정보를 인쇄", "print", "PRINT"),
     ("settings", "설정", "감시 폴더·라이브러리·파일 이름 규칙", "settings", "—"),
@@ -126,7 +127,8 @@ MENUS = {
     "tool:text": (("tool:text", "글자"), ("tool:arrow", "화살표 + 글자")),
     "annot_undo": (("annot_undo", "마지막 측정 지우기"), ("annot_clear", "측정·글자 모두 지우기")),
     "multi": tuple((f"multi:{n}", f"{n}장") for n in (1, 2, 4, 6, 9, 16)),     # Simple's 화면 분할
-    "glaucoma": (("glaucoma", "녹내장 분석"), ("discpair", "디스크 2장 (보험 청구용)")),
+    "glaucoma": (("glaucoma", "녹내장 분석"), ("timeline", "시간별 비교 (이 눈의 유두 사진 여러 장)"),
+                 ("discpair", "디스크 2장 (보험 청구용)")),
     # None = separator; region:* zoom onto a part of an (ultra-)wide-field photo
     "fit": (("fit", "화면에 맞춤"), ("actual", "100% (실제 크기)"), ("zoom2", "200%"), ("zoom4", "400%"),
             ("zoom8", "800%"), None,
