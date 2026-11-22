@@ -172,14 +172,55 @@ jobs:
             echo "release notes: a Mac build's lowest macOS is missing" >&2; exit 1
           fi
           grep -n 'macOS' "$RUNNER_TEMP/notes.md" | head -n 5
+      # The release keeps its tag and its address: the tag is moved to this build and the files are
+      # replaced in place. Deleting the release and its tag and creating both again at once once left
+      # the new release a draft without its tag (0.12.5) — the download links answered 404 while the
+      # step said it had published. So the step checks the downloads before it calls it done.
       - name: Publish latest builds
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          TAG: fundus-viewer-latest
+          TITLE: 안저 사진 뷰어 (Windows · Mac 최신 빌드)
         run: |
           ls -l out
-          gh release delete fundus-viewer-latest --yes --cleanup-tag || true
-          gh release create fundus-viewer-latest out/* \
-            --target "$GITHUB_SHA" --prerelease \
-            --title "안저 사진 뷰어 (Windows · Mac 최신 빌드)" \
-            --notes-file "$RUNNER_TEMP/notes.md"
+          # 1. the tag at this build (moved; deleted and pushed again only where moving is refused)
+          git tag -f "$TAG" "$GITHUB_SHA"
+          git push -f origin "refs/tags/$TAG" || {
+            git push origin ":refs/tags/$TAG" || true
+            git push origin "refs/tags/$TAG"
+          }
+          # 2. drafts an earlier run left behind with this tag's name (they never got the tag)
+          gh api "repos/$GH_REPO/releases?per_page=100" \
+            --jq ".[] | select(.draft and .tag_name == \"$TAG\") | .id" |
+            while read -r id; do
+              echo "deleting draft release $id"
+              gh api -X DELETE "repos/$GH_REPO/releases/$id"
+            done
+          # 3. the release: its files replaced in place, or a new one on the tag
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" out/* --clobber
+            gh release edit "$TAG" --draft=false --prerelease --title "$TITLE" \
+              --notes-file "$RUNNER_TEMP/notes.md"
+          else
+            gh release create "$TAG" out/* --verify-tag --prerelease --title "$TITLE" \
+              --notes-file "$RUNNER_TEMP/notes.md"
+          fi
+          # 4. published, and every file downloadable without logging in
+          for try in 1 2 3 4 5 6; do
+            draft=$(gh release view "$TAG" --json isDraft --jq .isDraft || echo true)
+            ok=yes
+            for f in out/*; do
+              url="https://github.com/$GH_REPO/releases/download/$TAG/$(basename "$f")"
+              curl -fsSL -r 0-0 -o /dev/null "$url" || { echo "not downloadable yet: $url"; ok=no; }
+            done
+            if [ "$draft" = false ] && [ "$ok" = yes ]; then
+              echo "published: https://github.com/$GH_REPO/releases/tag/$TAG"
+              exit 0
+            fi
+            echo "not published yet (draft=$draft, downloads=$ok) — try $try of 6"
+            gh release edit "$TAG" --draft=false || true
+            sleep $((try * 10))
+          done
+          echo "the release is not downloadable: see https://github.com/$GH_REPO/releases" >&2
+          exit 1
