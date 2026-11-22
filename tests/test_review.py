@@ -798,7 +798,7 @@ def test_hand_off_to_2d_3d_and_glaucoma(win):
     assert w.thumbs.currentItem().data(0x0100) == ids["os3"] and w.strip_w.isVisible()
     # the 2D view's adjustments work as ever and do not reach the review
     w._on_action("chan:redfree")
-    assert w._channel == "redfree"
+    assert w._channel == "rnfl"
     _show_review(w)
     assert rv.view_mode == "color" and rv.slot_ids() == [ids["od3"], ids["os3"]]
     w._on_action("chan:redfree", False)

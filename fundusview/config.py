@@ -126,13 +126,18 @@ class Settings:
     # 목록에 마우스를 올리면 미리 보기)
     hover_preview: bool = True
     # The large photos (Simple · Multi · Detail): the loupe under the mouse while it is over the whole
-    # photo, not zoomed yet — no button needed (보기 → 큰 사진에 마우스를 올리면 돋보기)
-    hover_loupe: bool = True
-    # … how large: that many times its size in the list (보기 → 미리 보기 배율; peek.SCALES: 1.5 … 3)
+    # photo, not zoomed yet — no button needed (보기 → 큰 사진에 마우스를 올리면 돋보기; off from the start)
+    hover_loupe: bool = False
+    # 미리 보기 — how large: that many times its size in the list (설정 → 일반 · 보기 → 미리 보기 배율;
+    # peek.SCALES: 1.5 … 4)
     preview_scale: float = 2.0
-    # G 필터 (설정 → 일반): what the button gives — "green" the green channel alone, "rnfl" 녹색 + RNFL 강화
-    # (the ▾ of the button offers both anyway) — and how strong that RNFL 강화 is: 0.5 … 0.9
-    green_filter: str = "green"
+    # 사진 목록의 사진 크기 (설정 → 일반): the photos of the list that many times their usual size
+    # (peek.SIZES: 1 … 2)
+    thumb_size: float = 1.0
+    # Red-free (설정 → 일반): what the button gives — "rnfl" the green channel with RNFL 강화 (local
+    # contrast raised, grey; 처음 설정) or "plain" the green channel as it is — and how strong that
+    # RNFL 강화 is: 0.5 … 0.9. (The G 필터 is the green channel alone.)
+    redfree_mode: str = "rnfl"
     rnfl_strength: float = 0.9
     # 카메라 각도 보정 (calibrate.py): the lens curve measured from the photos, {camera profile: radial_c}
     lens_curves: dict[str, float] = field(default_factory=dict)

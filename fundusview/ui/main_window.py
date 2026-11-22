@@ -84,7 +84,7 @@ from .edge_nav import EdgeNav
 from .keys import IS_MAC, keys
 from .multi_view import CLOSEUP_MAX, MultiView
 from .sample_compare import SampleCompareDialog
-from .peek import SCALES as PEEK_SCALES, scale_name
+from .peek import SCALES as PEEK_SCALES, nearest_size, scale_name
 from .patient_list import SEX_LABEL, UNASSIGNED, PatientListWindow, age_on
 from .photo_grid import GridPhoto, PhotoGrid
 from .review_view import ReviewPage
@@ -92,7 +92,7 @@ from .landmarks_view import LandmarkPhoto
 from .slit_scan import SLIT, ScanPhotoView, SlitScanShow, ViewTween
 from .thumbs import (DATE_ROLE, DockOverlay, EYE_ROLE, KIND_ROLE, PICK_ROLE, SECOND_COLOR, SECOND_ROLE, SHOWN, EyeRail,
                      ThumbDelegate, ThumbStrip, eye_badge_html, eye_row)
-from .toolbars import CHECKABLE, CMDBAR, COMMANDS, MENUS, PROCESSING, SliderPopup, icon_for, rnfl_label
+from .toolbars import CHECKABLE, CMDBAR, COMMANDS, MENUS, PROCESSING, SliderPopup, icon_for, redfree_tip
 from .widgets import ElidedLabel, Segmented, Switch, card, segment
 from .widgets import row as setting_row
 
@@ -123,7 +123,8 @@ THUMB_GRID = (94, 72)                        # 사진 목록(아래): a cell —
 LATEST = "latest"                            # 날짜 책갈피 of a patient just opened: its newest exam
 ALL_DATES = "*"                              # 날짜 책갈피 "전체": the photos of every exam in the list
 NO_DATE = ""                                 # … "날짜 없음": the photos without an exam date
-PEEK_GROW_S = 0.14                           # 미리 보기: the photos of the list take this long to grow (the Dock)
+PEEK_GROW_S = 0.14                           # 미리 보기: the photos of the list take this long to shrink back (the
+                                             # Dock) — they are grown at once when the mouse comes onto the list
 OV_ZOOM = 4.0                                # 확대 화면: 사진 전체 폭의 1/4 을 칸에 (×4)
 
 
@@ -294,6 +295,10 @@ class MainWindow(QMainWindow):
                 # 8: a patient opens on Simple — the newest OD | OS, the photo list under it by date
                 # (날짜 책갈피), a photo of the list previewed under the mouse and pinned with a click
                 settings.open_view = SIMPLE_MODE
+            if settings.ui_version < 9:
+                # 9: no loupe under the mouse over the large photos unless switched on (보기) — what was
+                # asked for is the photo list growing at once; Red-free gives RNFL 강화 (설정 → 일반)
+                settings.hover_loupe = False
             settings.ui_version = self.UI_VERSION
         else:
             relabel = False
@@ -538,7 +543,7 @@ class MainWindow(QMainWindow):
         self.act_hover_loupe.setToolTip("Simple · Multi · Detail의 큰 사진에 마우스를 올리면 버튼을 누르지 않아도 그 자리에 "
                                         "돋보기가 나옵니다 (사진 전체가 보일 때 — 휠로 확대한 뒤에는 드래그로 이동)")
         self.act_hover_loupe.toggled.connect(self._set_hover_loupe)
-        self._apply_rnfl_settings()            # G 필터: RNFL 강화 세기 (설정 → 일반)
+        self._apply_rnfl_settings()            # Red-free: 강화 · 그 세기 (설정 → 일반)
         m.addAction(self.tb_cmd.toggleViewAction())
         sub = m.addMenu("명령 툴바 위치")          # (as the right-click menu of the toolbar)
         self.cmdbar_acts = {}
@@ -682,8 +687,9 @@ class MainWindow(QMainWindow):
         # the views (Simple · Multi · Detail · 3D), Montage and Glaucoma are on the command toolbar
         self.thumbs = ThumbStrip()                 # OD 위 줄 · OS 아래 줄 (or one line)
         self.thumbs.setObjectName("thumbStrip")
-        self.thumbs.setGridSize(QSize(*THUMB_GRID))          # low rows: the height saved goes to the photos
-        self.thumbs.setFixedHeight(THUMB_GRID[1] + 10)
+        self._thumb_size = nearest_size(self.settings.thumb_size)   # 설정 → 일반 → 사진 목록의 사진 크기
+        self.thumbs.setGridSize(QSize(*self._thumb_grid()))  # low rows: the height saved goes to the photos
+        self.thumbs.setFixedHeight(self._thumb_grid()[1] + 10)
         self.thumbs.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.thumbs.setResizeMode(QListWidget.ResizeMode.Adjust)
         self.thumb_paint = ThumbDelegate(self.thumbs)        # the date · kind on the photo (보기 → 사진 목록 표시)
@@ -1910,15 +1916,16 @@ class MainWindow(QMainWindow):
             self._show_image(self.current["id"])
 
     def _apply_rnfl_settings(self, refresh: bool = False) -> None:
-        """설정 → 일반: the strength of 녹색 + RNFL 강화 (0.5 … 0.9), said in the ▾ of the G 필터 too.
-        ``refresh``: photos shown with that filter are drawn again at the new strength."""
+        """설정 → 일반: what the Red-free button gives — with RNFL 강화 or the green channel as it is —
+        and the strength of that 강화 (0.5 … 0.9), both said in the button's tip. ``refresh``: photos
+        shown with it are drawn again at the new strength."""
         was = imaging.rnfl_k()
         k = self.settings.rnfl_strength = imaging.set_rnfl_k(self.settings.rnfl_strength)
-        if self.settings.green_filter != "rnfl":
-            self.settings.green_filter = "green"
-        entry = self.menus["chan:green"].actions()[1]
-        entry.setText(rnfl_label(k))
-        entry.setToolTip(rnfl_label(k))
+        if self.settings.redfree_mode != "plain":
+            self.settings.redfree_mode = "rnfl"
+        tip = redfree_tip(self.settings.redfree_mode, k)
+        self.acts["chan:redfree"].setToolTip(tip)
+        self.acts["chan:redfree"].setStatusTip(tip.split("\n")[0])
         if refresh and k != was:
             self._proc_cache.clear()
             if self.current is not None:
@@ -1938,7 +1945,9 @@ class MainWindow(QMainWindow):
             self._set_3d_detail(self.settings.view3d_detail, save=False)
             self.c_walkclick3d.setChecked(bool(self.settings.walk_click3d))   # 3D 마우스 휠
             self._set_wheel3d(self.settings.wheel3d, save=False)
-            self._apply_rnfl_settings(refresh=True)                          # G 필터: RNFL 강화 세기
+            self._apply_rnfl_settings(refresh=True)                          # Red-free: 강화 · 그 세기
+            self._set_thumb_size(self.settings.thumb_size)                   # 사진 목록: 사진 크기 · 미리 보기 배율
+            self._set_preview_scale(self.settings.preview_scale, save=False)
             self.act_thumb_date.setChecked(bool(self.settings.thumb_date))   # 사진 목록: 날짜 · 종류
             self.act_thumb_kind.setChecked(bool(self.settings.thumb_kind))
             if self.settings.open_view != old_view and self.current is not None:
@@ -2575,6 +2584,7 @@ class MainWindow(QMainWindow):
         if want is not None and all(i != want for i, _e, _d in self._listed):
             want = None                            # (gone: removed, another patient's)
         grid = []                              # 16장 보기: the same photos, of every date
+        gw, gh = self._thumb_grid()
         self.thumbs.blockSignals(True)
         for r in listed:
             mod_label = MODALITY_LABELS.get(r["modality"] or "", r["modality"] or "")
@@ -2588,7 +2598,7 @@ class MainWindow(QMainWindow):
             text = f"{r['exam_date'] or '날짜 없음'}\n{mod_label}".strip()
             it = QListWidgetItem(QIcon(QPixmap(r["thumb_path"] or "")), text)
             it.setData(Qt.ItemDataRole.UserRole, r["id"])
-            it.setSizeHint(QSize(THUMB_GRID[0] - 4, THUMB_GRID[1] - 2))
+            it.setSizeHint(QSize(gw - 4, gh - 2))
             it.setData(THUMB_TEXT, text)
             it.setData(DATE_ROLE, r["exam_date"] or "")
             it.setData(KIND_ROLE, mod_label)
@@ -2737,8 +2747,8 @@ class MainWindow(QMainWindow):
 
     def _hover_list(self, pos: QPoint | None) -> None:
         """The mouse is there on the photo list (None: it left the list). The photos of the row
-        under it grow toward it — the one under the mouse to 미리 보기 배율, those beside it less and
-        less — and follow it; off the list they shrink back."""
+        under it are grown toward it at once — the one under the mouse to 미리 보기 배율, those beside it
+        less and less — and follow it; off the list they shrink back."""
         row = None
         if pos is not None and self._tab() in self.PEEK_TABS and self.settings.hover_preview:
             row = self.thumbs.row_at(pos.y())
@@ -2747,13 +2757,11 @@ class MainWindow(QMainWindow):
                 self._dock_ends = (self._dock_amp, 0.0)
                 self._peek_grow.start()
             return
-        fresh = self._dock_at is None or self._dock_ends[1] != 1.0
         self._dock_at = (row, pos.x())
-        if fresh:
-            self._dock_ends = (self._dock_amp, 1.0)
-            self._peek_grow.start()
-        else:
-            self._apply_dock()
+        if self._dock_ends[1] != 1.0 or self._dock_amp != 1.0:   # the mouse came onto the list: grown at
+            self._peek_grow.stop()                                # once, full size (only the way back is
+            self._dock_amp, self._dock_ends = 1.0, (1.0, 1.0)     # a motion)
+        self._apply_dock()
 
     def _grow_peek(self, k: float) -> None:
         self._dock_amp = self._dock_ends[0] + (self._dock_ends[1] - self._dock_ends[0]) * k
@@ -2805,6 +2813,30 @@ class MainWindow(QMainWindow):
         if getattr(self, "dock", None) is not None:
             self._peek_grow.stop()
             self.thumbs.set_dock(None)
+
+    def _thumb_grid(self) -> tuple[int, int]:
+        """A cell of the photo list: THUMB_GRID, as large as 설정 → 일반 → 사진 목록의 사진 크기 says."""
+        return round(THUMB_GRID[0] * self._thumb_size), round(THUMB_GRID[1] * self._thumb_size)
+
+    def _set_thumb_size(self, size: float) -> None:
+        """설정 → 일반 → 사진 목록의 사진 크기: the photos of the list ``size`` times their usual size
+        (one of peek.SIZES; anything else: the nearest) — the list is as much higher."""
+        size = nearest_size(size)
+        self.settings.thumb_size = size
+        if size == self._thumb_size:
+            return
+        self._thumb_size = size
+        self._end_peek()
+        gw, gh = self._thumb_grid()
+        self.thumbs.setGridSize(QSize(gw, gh))
+        for i in range(self.thumbs.count()):
+            self.thumbs.item(i).setSizeHint(QSize(gw - 4, gh - 2))
+        self.thumbs.doItemsLayout()
+        self._fit_thumb_height()
+        self.eye_rail.update()
+        cur = self.thumbs.currentItem()
+        if cur is not None:
+            self.thumbs.scrollToItem(cur)
 
     def _set_preview_scale(self, scale: float, save: bool = True) -> None:
         """보기 → 미리 보기 배율: the photo under the mouse grows to ``scale`` times its size in the
@@ -3161,6 +3193,8 @@ class MainWindow(QMainWindow):
                 return True
             # 미리 보기: the photo under the mouse is shown above (Simple) until it is clicked
             if e.type() == QEvent.Type.MouseMove and not e.buttons():
+                self._hover_list(e.position().toPoint())
+            elif e.type() == QEvent.Type.Enter:    # (onto the list, before it moves there)
                 self._hover_list(e.position().toPoint())
             elif e.type() == QEvent.Type.MouseMove and e.buttons() & Qt.MouseButton.LeftButton:
                 return True                    # (dragged over the photos: the click decides, not the way)
@@ -3583,7 +3617,7 @@ class MainWindow(QMainWindow):
         """Light up the toolbar buttons whose effect is on the photo (VK-2 pushed state)."""
         A = self.acts
         for ch in ("red", "green", "blue", "redfree"):
-            A[f"chan:{ch}"].setChecked(self._channel == ch or (ch == "green" and self._channel == "rnfl"))
+            A[f"chan:{ch}"].setChecked(self._channel == ch or (ch == "redfree" and self._channel == "rnfl"))
         A["auto"].setChecked(self._auto)
         A["negative"].setChecked(self._invert)
         A["slideshow"].setChecked(self._slide_timer.isActive())
@@ -3623,11 +3657,11 @@ class MainWindow(QMainWindow):
             v.setFocus()
         elif key.startswith("chan:"):
             ch = key[5:]
-            lit = "green" if self._channel == "rnfl" else self._channel   # (G 필터 is lit for ▾ RNFL 강화 too)
+            lit = "redfree" if self._channel == "rnfl" else self._channel   # (Red-free is lit for its 강화)
             if checked is False and ch == lit:            # clicked the lit filter again
                 ch = "rgb"
-            elif checked and ch == "green" and self.settings.green_filter == "rnfl":
-                ch = "rnfl"                               # 설정 → 일반: the G 필터 button gives RNFL 강화
+            elif ch == "redfree" and self.settings.redfree_mode == "rnfl":
+                ch = "rnfl"                               # 설정 → 일반: Red-free with RNFL 강화 (처음 설정)
             self._push_history()
             self._channel = ch
             self._apply_adjust()
@@ -4719,12 +4753,13 @@ class MainWindow(QMainWindow):
     # -- 효과: 입체 조명 · 자동 회전 -----------------------------------------------------------
     RELIEF = 0.6            # strength of 입체 조명
     SPIN = 10.0             # 자동 회전, degrees per second
-    UI_VERSION = 8          # 2: the dark look — 자세히, 유리 공막 and 자동 회전 from the start; 3: the 3D tab
+    UI_VERSION = 9          # 2: the dark look — 자세히, 유리 공막 and 자동 회전 from the start; 3: the 3D tab
                             # as the web page (자세히, 황반·유두 자동으로 찾기); 4: the 3D eye shows the
                             # original photo (망막 입체 — 표면 높낮이 and 입체 조명 — off from the start);
                             # 5: the 3D wheel zooms, the depth is on the 깊이 막대 beside the eye;
                             # 6: a patient opens on 16장 보기; 7: RetiCam-sized 일반 45° photos → RetiCam 176°;
-                            # 8: a patient opens on Simple (날짜 책갈피 · 미리 보기 · 클릭으로 고정)
+                            # 8: a patient opens on Simple (날짜 책갈피 · 미리 보기 · 클릭으로 고정);
+                            # 9: 큰 사진에 마우스를 올리면 돋보기 off until switched on
 
     def _on_relief(self, on: bool) -> None:
         self.settings.relief3d = bool(on)

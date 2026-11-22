@@ -227,13 +227,13 @@ def test_simple_follows_the_clicks_and_starts_again_from_the_newest_od_and_os(wi
     assert w.picks() == [rf3, od2] and w.multi.count == 2 and _cells(w) == ([rf3, od2], od2)
     # each photo keeps its own processing: red-free on od2, not on rf3 — and again when it is back
     w._on_action("chan:redfree")
-    assert w._channel == "redfree"
+    assert w._channel == "rnfl"
     QTest_click(next(c for c in w.multi.cells if c.image_id == rf3).view.viewport())
     app.processEvents()
     assert w.current["id"] == rf3 and w._channel == "rgb"
     QTest_click(next(c for c in w.multi.cells if c.image_id == od2).view.viewport())
     app.processEvents()
-    assert w.current["id"] == od2 and w._channel == "redfree"
+    assert w.current["id"] == od2 and w._channel == "rnfl"
     w._on_action("chan:redfree", False)
 
     # a double click: that photo large (Detail) — the pinned ones stay as they were …
@@ -315,7 +315,7 @@ def test_simple_with_nothing_picked_and_multi_is_16_photos(win):
     _click(app, w, od1)
     assert w.picks() == [od3, od2, os2] and _cells(w) == ([od3, od2, os2], os2) and w._channel == "rgb"
     _click(app, w, od1)                                    # back: red-free as it was left
-    assert _cells(w) == ([od3, od2, os2, od1], od1) and w._channel == "redfree"
+    assert _cells(w) == ([od3, od2, os2, od1], od1) and w._channel == "rnfl"
     w._on_action("chan:redfree", False)
     _click(app, w, od1)
     _click(app, w, os2)

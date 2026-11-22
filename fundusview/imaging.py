@@ -384,8 +384,8 @@ def thumbnail(rgb: np.ndarray, size: int = 320) -> Image.Image:
 # ---------------------------------------------------------------------------
 CHANNELS = ("rgb", "redfree", "red", "green", "blue", "rnfl")
 CHANNEL_LABELS = {"rgb": "컬러", "redfree": "Red-free (녹색)", "red": "적색 채널",
-                  "green": "녹색 채널(흑백)", "blue": "청색 채널", "rnfl": "녹색 + RNFL 강화"}
-RNFL_K = 0.9            # G 필터 ▾ 녹색 + RNFL 강화: the strength of 녹내장 분석 → 광각 분석's RNFL 대비 강화 …
+                  "green": "녹색 채널(흑백)", "blue": "청색 채널", "rnfl": "Red-free 강화 (RNFL)"}
+RNFL_K = 0.9            # Red-free 강화: the strength of 녹내장 분석 → 광각 분석's RNFL 대비 강화 …
 RNFL_K_RANGE = (0.5, 0.9)   # … or as set in 설정 → 일반 → RNFL 강화 세기 (Settings.rnfl_strength)
 _rnfl_k = RNFL_K
 
@@ -448,7 +448,7 @@ def adjust(rgb: np.ndarray, *, brightness: float = 0.0, contrast: float = 1.0, g
     black / white input points (histogram dialog)."""
     if channel == "rgb":
         src = rgb
-    elif channel == "rnfl":     # G 필터 ▾ 녹색 + RNFL 강화 (the picture of 광각 분석)
+    elif channel == "rnfl":     # Red-free 강화 (the picture of 광각 분석)
         src = rnfl_green(rgb)
     elif channel == "redfree":  # green channel, shown as green-tinted grey
         g = np.ascontiguousarray(rgb[..., 1])

@@ -331,10 +331,12 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
         # processing applies to the selected cell's photo only
         before_second = cells[1].view._rgb.copy()
         w._on_action("chan:redfree")
-        assert w._channel == "redfree"
+        assert w._channel == "rnfl"
         assert (cells[1].view._rgb == before_second).all()          # the other cell is untouched
         g = cells[0].view._rgb
-        assert (g[..., 0] == g[..., 2]).all() and (g[..., 0] <= g[..., 1]).all()   # red-free = green-tinted grey
+        h, wd = g.shape[:2]
+        mid = g[h // 3:2 * h // 3, wd // 3:2 * wd // 3]                 # Red-free 강화: grey on the retina
+        assert (mid[..., 0] == mid[..., 2]).all() and (mid[..., 0] == mid[..., 1]).all()
         QTest.mouseClick(cells[1].view.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(20, 20))
         app.processEvents()
         assert w._tab() == "multi"                                   # a click selects the cell (it stays)
@@ -344,16 +346,17 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
         assert not (cells[1].view._rgb == before_second).all()      # sharpened, in its cell
         QTest.mouseClick(cells[0].view.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(20, 20))
         app.processEvents()
-        assert w.current["id"] == ids[0] and w._channel == "redfree" and w._ops == []
+        assert w.current["id"] == ids[0] and w._channel == "rnfl" and w._ops == []
         # a photo opened large keeps its processing there, and back with the picked photos each has its own
         w.acts["view:all"].trigger()                                 # (a double click on Multi: Simple)
         app.processEvents()
-        assert w._tab() == "all" and w.current["id"] == ids[0] and w._channel == "redfree"
+        assert w._tab() == "all" and w.current["id"] == ids[0] and w._channel == "rnfl"
         w.acts["view:multi"].trigger()                               # (from Detail: the picked photos)
         app.processEvents()
         cells = [c for c in w.multi.cells if c.isVisible()]
         assert w._tab() == "multi" and [c.image_id for c in cells] == [ids[0], ids[1]]
-        assert (cells[0].view._rgb[..., 0] == cells[0].view._rgb[..., 2]).all()      # still red-free
+        mid = cells[0].view._rgb[h // 3:2 * h // 3, wd // 3:2 * wd // 3]
+        assert (mid[..., 0] == mid[..., 1]).all() and (mid[..., 0] == mid[..., 2]).all()   # still red-free
         w._on_action("undo")                                         # each photo keeps its own undo
         assert w._channel == "rgb"
         assert w._per_photo[ids[1]]["state"]["ops"] == ["sharpen"]

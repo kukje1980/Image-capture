@@ -46,9 +46,9 @@ OPEN_BOOKS = (("latest", "최신 검사 — 가장 최근 검사일(오늘 찍�
               ("all", "전체 — 모든 검사일의 사진을 한꺼번에"))
 
 
-# 설정 → 일반 → G 필터 (Settings.green_filter): what the G 필터 button gives
-GREEN_FILTERS = (("green", "녹색 성분만 (흑백)"),
-                 ("rnfl", "녹색 + RNFL 강화 — 신경섬유층이 잘 보이게 국소 대비를 높임"))
+# 설정 → 일반 → Red-free를 누르면 (Settings.redfree_mode): what the Red-free button gives
+REDFREE_MODES = (("rnfl", "강화 — 신경섬유층 · 혈관이 잘 보이게 국소 대비를 높임 (처음 설정)"),
+                 ("plain", "녹색 채널 그대로 (강화 없음)"))
 
 
 # 3D 안구의 마우스 휠 (Settings.wheel3d): (key, short name, what it does)
@@ -335,19 +335,29 @@ class SettingsDialog(QDialog):
                                   "최신 검사 (처음 설정): 가장 최근 검사일의 사진만 — 다른 날짜는 책갈피나 휠로 넘깁니다.\n"
                                   "전체: 모든 검사일의 사진을 한 목록에. 위의 큰 화면에는 어느 쪽이든 최신 OD | OS가 나옵니다.")
         f2.addRow("환자를 열면 사진 목록은", self.open_book)
-        # G 필터: which of its two pictures the button gives, and how strong RNFL 강화 is
+        # Red-free: with RNFL 강화 or the green channel as it is, and how strong RNFL 강화 is
         from .. import imaging
-        self.green_filter = _combo(GREEN_FILTERS, "rnfl" if settings.green_filter == "rnfl" else "green")
-        self.green_filter.setToolTip("툴바의 [G 필터]를 눌렀을 때 나오는 그림 — 버튼 옆 ▾ 에서는 언제나 둘 다 고를 수 있습니다")
-        f2.addRow("G 필터를 누르면", self.green_filter)
+        self.redfree_mode = _combo(REDFREE_MODES, "plain" if settings.redfree_mode == "plain" else "rnfl")
+        self.redfree_mode.setToolTip("툴바의 [Red-free]를 눌렀을 때 나오는 그림 ([G 필터]는 언제나 녹색 성분만)")
+        f2.addRow("Red-free를 누르면", self.redfree_mode)
         self.rnfl_strength = QDoubleSpinBox()
         self.rnfl_strength.setRange(*imaging.RNFL_K_RANGE)
         self.rnfl_strength.setSingleStep(0.05)
         self.rnfl_strength.setDecimals(2)
         self.rnfl_strength.setValue(imaging.clamp_rnfl_k(settings.rnfl_strength))
-        self.rnfl_strength.setToolTip("녹색 + RNFL 강화의 세기: 0.5(약하게) … 0.9(강하게, 처음 설정)\n"
+        self.rnfl_strength.setToolTip("Red-free 강화의 세기: 0.5(약하게) … 0.9(강하게, 처음 설정)\n"
                                       "녹내장 분석 → 광각 분석의 RNFL 대비 강화와 같은 값입니다")
-        f2.addRow("RNFL 강화 세기 (0.5 ~ 0.9)", self.rnfl_strength)
+        f2.addRow("Red-free 강화 세기 (0.5 ~ 0.9)", self.rnfl_strength)
+        # the photo list: how large its photos are, and how large they grow under the mouse (미리 보기)
+        from .peek import SCALES, SIZES, nearest_size, scale_name
+        self.thumb_size = _combo([(k, f"{name} ({k:g}배)") for k, name in SIZES], nearest_size(settings.thumb_size))
+        self.thumb_size.setToolTip("아래 사진 목록에 나오는 사진의 크기 — 크게 하면 목록이 그만큼 높아집니다")
+        f2.addRow("사진 목록의 사진 크기", self.thumb_size)
+        self.preview_scale = _combo([(k, scale_name(k)) for k in SCALES],
+                                    min(SCALES, key=lambda k: abs(k - float(settings.preview_scale or 2.0))))
+        self.preview_scale.setToolTip("사진 목록에 마우스를 올렸을 때 마우스 아래 사진이 커지는 배율 "
+                                      "(보기 → 미리 보기 배율과 같음)")
+        f2.addRow("마우스를 올리면 커지는 배율", self.preview_scale)
         # what is written on the photos of the photo list (also 보기 → 사진 목록 표시)
         self.thumb_date = QCheckBox("날짜")
         self.thumb_date.setChecked(bool(settings.thumb_date))
@@ -666,7 +676,9 @@ class SettingsDialog(QDialog):
         s.walk_click3d = self.walk_click3d.isChecked()
         s.open_view = self.open_view.currentData()
         s.open_book = self.open_book.currentData()
-        s.green_filter = self.green_filter.currentData()
+        s.redfree_mode = self.redfree_mode.currentData()
+        s.thumb_size = self.thumb_size.currentData()
+        s.preview_scale = self.preview_scale.currentData()
         s.rnfl_strength = round(self.rnfl_strength.value(), 2)
         s.thumb_date = self.thumb_date.isChecked()
         s.thumb_kind = self.thumb_kind.isChecked()

@@ -250,12 +250,12 @@ def test_main_window_tools(app, tmp_path, demo_dir, import_and_wait):
         w._on_action("op:sharpen")
         w._on_action("op:enhance")
         w._on_action("chan:redfree")
-        assert w._ops == ["sharpen", "enhance"] and w._channel == "redfree"
+        assert w._ops == ["sharpen", "enhance"] and w._channel == "rnfl"
         assert w.acts["chan:redfree"].isChecked() and w.acts["op:sharpen"].isChecked()
         w.acts["chan:redfree"].trigger()      # clicking the lit filter again -> colour
         assert w._channel == "rgb" and not w.acts["chan:redfree"].isChecked()
         w.acts["chan:redfree"].trigger()
-        assert w._channel == "redfree"
+        assert w._channel == "rnfl"
         w._on_action("undo")
         assert w._channel == "rgb" and w._ops == ["sharpen", "enhance"]
         w._on_action("original")

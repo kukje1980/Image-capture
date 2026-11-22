@@ -124,7 +124,7 @@ def test_fovea_tells_an_unknown_eye(eye):
 
 
 def test_green_with_rnfl_contrast_is_the_wide_analysis_picture():
-    """G 필터 ▾ 녹색 + RNFL 강화: the green channel with the local contrast of 녹내장 분석 → 광각 분석 at 0.9 —
+    """Red-free 강화: the green channel with the local contrast of 녹내장 분석 → 광각 분석 at 0.9 —
     the same picture there and here; grey; outside the image circle the photo as it is."""
     import cv2
 

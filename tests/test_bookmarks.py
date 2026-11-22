@@ -329,6 +329,7 @@ def test_the_left_button_on_a_photo_not_zoomed_yet_shows_the_loupe(win):
     cell = next(c for c in w.multi.cells if c.image_id == ids["os3"])
     view, vp = cell.view, cell.view.viewport()
     at = QPoint(vp.width() // 2, vp.height() // 2)
+    w.act_hover_loupe.setChecked(True)                 # (보기 → 큰 사진에 마우스를 올리면 돋보기: on for this)
     assert view.click_loupe and view._fit and not view._loupe.isVisible()
     QTest.mousePress(vp, Qt.MouseButton.LeftButton, pos=at)
     assert view._loupe.isVisible() and w.current["id"] == ids["os3"]       # (the click selects the cell, too)
@@ -356,8 +357,8 @@ def test_the_left_button_on_a_photo_not_zoomed_yet_shows_the_loupe(win):
 
 def test_the_mouse_over_a_photo_not_zoomed_yet_shows_the_loupe_without_a_button(win):
     """Simple · Multi cells and Detail's big photo: with the whole photo on screen the loupe is under
-    the mouse as soon as it is over the photo — no button; off the photo, once zoomed in, or with
-    보기 → 큰 사진에 마우스를 올리면 돋보기 off (remembered) there is none."""
+    the mouse as soon as it is over the photo — no button — with 보기 → 큰 사진에 마우스를 올리면 돋보기 on
+    (off from the start, remembered); off the photo, once zoomed in, or with it off there is none."""
     from PySide6.QtCore import QEvent, QPoint, Qt
     from PySide6.QtTest import QTest
     from fundusview.config import Settings
@@ -367,7 +368,12 @@ def test_the_mouse_over_a_photo_not_zoomed_yet_shows_the_loupe_without_a_button(
     cell = next(c for c in w.multi.cells if c.image_id == ids["os3"])
     view, vp = cell.view, cell.view.viewport()
     at = QPoint(vp.width() // 2, vp.height() // 2)
-    assert Settings().hover_loupe and w.act_hover_loupe.isChecked() and view.hover_loupe and w.view2d.hover_loupe
+    assert not Settings().hover_loupe and not w.act_hover_loupe.isChecked() and not view.hover_loupe
+    QTest.mouseMove(vp, at)                                                # off from the start: no loupe
+    assert not view._loupe.isVisible()
+    QTest.mouseMove(vp, QPoint(2, 2))
+    w.act_hover_loupe.setChecked(True)
+    assert w.settings.hover_loupe and view.hover_loupe and w.view2d.hover_loupe
     assert not cell.zooms["disc"].hover_loupe and not view._loupe.isVisible()
     QTest.mouseMove(vp, at)
     assert view._loupe.isVisible() and abs(view._loupe.geometry().center().x() - at.x()) <= 1
@@ -416,7 +422,7 @@ def test_how_large_the_preview_grows_is_chosen_in_the_view_menu(win):
     _open(app, w, refs["kim"])
     t = w.thumbs
     gw, gh = THUMB_GRID
-    assert SCALES == (1.5, 2.0, 2.5, 3.0) and w.settings.preview_scale == 2.0
+    assert SCALES == (1.5, 2.0, 2.5, 3.0, 4.0) and w.settings.preview_scale == 2.0
     assert w.peek_scale_acts[2.0].isChecked()
     k = t.row(_item(w, ids["rf3"]))
     largest = {}
@@ -430,20 +436,25 @@ def test_how_large_the_preview_grows_is_chosen_in_the_view_menu(win):
         assert 0.8 * scale * gw < r.width() <= scale * gw + 1e-6 and r.height() <= scale * gh + 1e-6
         assert w.dock.isVisible() and w.dock.geometry().top() >= 0
         _hover(app, w, None)
-    assert largest[1.5] < largest[2.0] < largest[2.5] < largest[3.0]
-    assert Settings.load(config_dir() / "settings.json").preview_scale == 3.0
+    assert largest[1.5] < largest[2.0] < largest[2.5] < largest[3.0] < largest[4.0]
+    assert Settings.load(config_dir() / "settings.json").preview_scale == 4.0
     w.peek_scale_acts[2.0].trigger()
 
 
-def test_the_photos_grow_and_shrink_step_by_step(win):
-    """With 부드러운 움직임 the photos grow from their size in the list to the 배율 when the mouse comes onto
-    the list, and shrink back when it leaves."""
+def test_the_photos_are_grown_at_once_and_shrink_step_by_step(win):
+    """With 부드러운 움직임 too the photos are at the 배율 the moment the mouse comes onto the list — on its
+    Enter, before it moves there — and shrink back step by step when it leaves; back on the list while
+    they shrink: grown at once again."""
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QEnterEvent
+    from PySide6.QtWidgets import QApplication
+
     from fundusview.ui import motion
     from fundusview.ui.main_window import THUMB_GRID
 
     app, w, db, refs, ids = win
     _open(app, w, refs["kim"])
-    t = w.thumbs
+    t, vp = w.thumbs, w.thumbs.viewport()
     gw = THUMB_GRID[0]
     k = t.row(_item(w, ids["rf3"]))
     at = t.cell_rect(k).center()
@@ -453,22 +464,78 @@ def test_the_photos_grow_and_shrink_step_by_step(win):
     tk.manual = True
     try:
         _move(app, w, at)
-        assert w.dock.isVisible() and largest() == pytest.approx(gw)          # (as in the list, to begin with)
-        tk.advance(0.05)
-        mid = largest()
-        assert gw < mid < 1.9 * gw
-        tk.advance(0.2)
         full = largest()
-        assert mid < full <= 2 * gw
+        assert w.dock.isVisible() and 1.6 * gw < full <= 2 * gw and w._peek is not None   # at once
+        tk.advance(0.2)
+        assert largest() == pytest.approx(full)
         _move(app, w, None)                                                    # off the list: back, step by step
         assert t.dock_row() is not None
         tk.advance(0.05)
-        assert gw < largest() < full
-        tk.advance(0.2)
+        mid = largest()
+        assert gw < mid < full
+        _move(app, w, at)                                                      # back on it meanwhile: at once
+        assert largest() == pytest.approx(full)
+        tk.advance(0.3)
+        assert largest() == pytest.approx(full) and w.dock.isVisible()
+        _move(app, w, None)
+        tk.advance(0.3)
         assert t.dock_row() is None and not w.dock.isVisible() and w._peek is None
+        # the mouse comes onto the list (Enter), not moved there yet: grown already
+        p = QPointF(at)
+        QApplication.sendEvent(vp, QEnterEvent(p, p, QPointF(vp.mapToGlobal(at))))
+        app.processEvents()
+        assert w.dock.isVisible() and largest() == pytest.approx(full) and w._peek is not None
+        _move(app, w, None)
+        tk.advance(0.3)
+        assert t.dock_row() is None
     finally:
         tk.manual = False
         motion.set_enabled(False)
+
+
+def test_the_photos_of_the_list_are_as_large_as_set(win, monkeypatch):
+    """설정 → 일반 → 사진 목록의 사진 크기: 보통 · 조금 크게 · 크게 · 아주 크게 — the cells of the list and the
+    list itself that much larger, at once and remembered; 마우스를 올리면 커지는 배율 is set there too."""
+    from fundusview.config import Settings, config_dir
+    from fundusview.ui.dialogs import SettingsDialog
+    from fundusview.ui.main_window import THUMB_GRID
+    from fundusview.ui.peek import SIZES
+
+    app, w, db, refs, ids = win
+    _open(app, w, refs["kim"])
+    t = w.thumbs
+    gw, gh = THUMB_GRID
+    assert [k for k, _n in SIZES] == [1.0, 1.25, 1.5, 2.0] and w.settings.thumb_size == 1.0
+    assert (t.gridSize().width(), t.gridSize().height()) == (gw, gh)
+    usual = t.height()
+
+    def settings(size, scale):
+        def ok(dlg):
+            assert [dlg.thumb_size.itemData(i) for i in range(dlg.thumb_size.count())] == [k for k, _n in SIZES]
+            dlg.thumb_size.setCurrentIndex(dlg.thumb_size.findData(size))
+            dlg.preview_scale.setCurrentIndex(dlg.preview_scale.findData(scale))
+            return True
+        monkeypatch.setattr(SettingsDialog, "exec", ok)
+        w._open_settings()
+        app.processEvents()
+
+    try:
+        settings(2.0, 3.0)
+        assert w.settings.thumb_size == 2.0 and w.settings.preview_scale == 3.0 and w.peek_scale_acts[3.0].isChecked()
+        assert (t.gridSize().width(), t.gridSize().height()) == (2 * gw, 2 * gh) and t.height() > 1.8 * usual
+        k = t.row(_item(w, ids["rf3"]))
+        assert t.cell_rect(k).width() == 2 * gw and t.item(k).sizeHint().width() == 2 * gw - 4
+        loaded = Settings.load(config_dir() / "settings.json")
+        assert loaded.thumb_size == 2.0 and loaded.preview_scale == 3.0
+        _hover(app, w, ids["rf3"])                                     # … and they grow from that size
+        r = dict(t.dock_rects())[k]
+        assert 0.8 * 3 * 2 * gw < r.width() <= 3 * 2 * gw + 1e-6
+        _hover(app, w, None)
+        w.set_book(w._book_tabs()[0])                                  # a list filled again: the same size
+        assert all(t.item(i).sizeHint().height() == 2 * gh - 2 for i in range(t.count()))
+    finally:
+        settings(1.0, 2.0)
+    assert (t.gridSize().width(), t.gridSize().height()) == (gw, gh) and t.height() == usual
 
 
 def test_the_list_opens_on_the_newest_exam_or_on_all_as_set(win, monkeypatch):

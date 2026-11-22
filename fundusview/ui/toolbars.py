@@ -76,6 +76,18 @@ CMDBAR = ("list", "prev", "next", "view:simple", "view:multi", "view:all", "fit"
 VIEW_COMMANDS = ("view:simple", "view:multi", "view:all", "view3d")
 
 # VK-2 order first, then this viewer's extras. icon "fundus:<effect>" = photo thumbnail.
+# The Red-free button's tip, by what it gives (설정 → 일반 → Red-free를 누르면; ``k``: RNFL 강화 세기)
+REDFREE_TIPS = {
+    "rnfl": "Red-free 강화 — 녹색 채널에 국소 대비를 높여 신경섬유층(RNFL) · 혈관이 잘 보이게 (세기 {k:g})\n"
+            "다시 누르면 컬러 · 강화 없이 / 세기: 설정 → 일반",
+    "plain": "녹색 채널 — 혈관·출혈 (다시 누르면 컬러) · 강화 효과: 설정 → 일반 → Red-free를 누르면",
+}
+
+
+def redfree_tip(mode: str = "rnfl", k: float = 0.9) -> str:
+    return REDFREE_TIPS["rnfl" if mode == "rnfl" else "plain"].format(k=k)
+
+
 PROCESSING = (
     ("op:sharpen", "선명", "선명하게 (누를 때마다 누적) — ▾ 로 약·강", "fundus:sharpen", "SHARPEN"),
     ("adj:gamma", "감마", "감마 조정 (어두운 부분 밝게)", "fundus:gamma", "GAMMA"),
@@ -83,8 +95,7 @@ PROCESSING = (
     ("adj:contrast", "대비", "대비 조정", "fundus:contrast", "CONTST"),
     ("adj:bright", "밝기", "밝기 조정", "fundus:bright", "BRIGHT"),
     ("chan:red", "R 필터", "적색 성분만 (다시 누르면 컬러)", "fundus:red", "RED FILTER"),
-    ("chan:green", "G 필터", "녹색 성분만 — 흑백 (다시 누르면 컬러) — ▾ 로 녹색 + RNFL 강화 (광각 분석의 레드프리 0.9)",
-     "fundus:green", "GREEN FILTER"),
+    ("chan:green", "G 필터", "녹색 성분만 — 흑백 (다시 누르면 컬러)", "fundus:green", "GREEN FILTER"),
     ("chan:blue", "B 필터", "청색 성분만 (다시 누르면 컬러)", "fundus:blue", "BLUE FILTER"),
     ("negative", "네거티브", "반전 영상", "fundus:negative", "NEGATIVE"),
     ("flip_v", "상하반전", "위아래 뒤집기", "flip_v", "FLIP VRT"),
@@ -97,7 +108,7 @@ PROCESSING = (
     ("undo", "실행취소", "마지막 처리 되돌리기 (Ctrl+Z)", "undo", "UNDO"),
     ("original", "원본", "모든 처리·조정·측정 해제", "fundus:original", "ORIGINAL"),
     None,
-    ("chan:redfree", "Red-free", "녹색 채널 — 혈관·출혈 (다시 누르면 컬러)", "fundus:redfree", "—"),
+    ("chan:redfree", "Red-free", REDFREE_TIPS["rnfl"].format(k=0.9), "fundus:redfree", "—"),
     ("auto", "자동대비", "밝기 범위 자동 맞춤", "fundus:auto", "—"),
     ("histogram", "히스토그램", "히스토그램·레벨 조정", "histogram", "—"),
     ("tool:pan", "이동", TOOL_HINTS["pan"], "pan", "—"),
@@ -108,19 +119,12 @@ PROCESSING = (
     ("annot_undo", "지우기", "마지막 측정·글자 지우기 (Delete) — ▾ 로 모두", "annot_clear", "—"),
 )
 
-def rnfl_label(k: float = 0.9) -> str:
-    """The ▾ entry of the G 필터 for 녹색 + RNFL 강화 at strength ``k`` (설정 → 일반: 0.5 … 0.9)."""
-    return f"녹색 + RNFL 강화 ({k:g}) — 녹내장 분석 → 광각 분석의 레드프리와 같음"
-
-
 # Drop-down extras of a button (key, label)
 MENUS = {
     "op:sharpen": (("op:sharpen_light", "선명하게 (약)"), ("op:sharpen", "선명하게"),
                    ("op:sharpen_strong", "선명하게 (강)")),
     "op:enhance": (("op:enhance", "국소 대비 향상"), ("op:equalize", "히스토그램 평활화"),
                    ("op:denoise", "노이즈 감소 (중간값)"), ("op:denoise_avg", "노이즈 감소 (평균)")),
-    "chan:green": (("chan:green", "녹색 성분만 (흑백)"),
-                   ("chan:rnfl", rnfl_label())),
     "tool:cd_length": (("tool:cd_length", "C/D 비 (길이)"), ("tool:cd_area", "C/D 비 (면적)")),
     "rot_cw": (("rot_cw", "오른쪽으로 90°"), ("rot_ccw", "왼쪽으로 90°")),
     "tool:text": (("tool:text", "글자"), ("tool:arrow", "화살표 + 글자")),

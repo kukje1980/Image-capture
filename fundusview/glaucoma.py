@@ -285,7 +285,7 @@ def enhance_wide(img: np.ndarray, red_free: bool = True, k: float = 1.5) -> np.n
     """Red-free (the green channel) with local contrast, which brings out the nerve fibre layer."""
     if not red_free and k <= 0:
         return img.copy()
-    if red_free:                                                 # (the main window's G 필터 ▾ RNFL 강화 too)
+    if red_free:                                                 # (the main window's Red-free 강화 too)
         from .imaging import rnfl_green
         return rnfl_green(img, k)
     h, w = img.shape[:2]
