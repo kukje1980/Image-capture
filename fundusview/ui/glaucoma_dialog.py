@@ -744,6 +744,35 @@ S3_CD = ("입체 표면에서 기준 깊이보다 깊은 곳을 컵(노란 선)�
          "[디스크 C/D] 탭의 초록 선입니다 — 거기서 맞추면 여기도 따라옵니다.")
 S3_SPREAD = 0.10         # two photos' vertical C/D further apart than this: say so
 S3_NO_CUP = "컵이 뚜렷하지 않아 이 표면에서는 C/D를 추정하지 못했습니다 — [디스크 C/D] 탭에서 직접 맞추세요."
+# one photo: three ways to the shape (disc3d.METHODS)
+S3_METHODS = (("pallor", "밝기", "창백한 곳 = 깊은 곳"),
+              ("vessels", "혈관 꺾임", "혈관이 꺾이는 곳 = 컵 경계 (색은 쓰지 않음)"),
+              ("hybrid", "하이브리드", "혈관이 꺾이는 쪽은 그 경계, 혈관이 없는 쪽과 바닥 모양은 밝기"))
+S3_METHOD_NAMES = {k: name for k, name, _ in S3_METHODS}
+S3_COMPARE_PX = 420      # 셋 나란히 비교: each of the three views (px)
+S3_GAP = 8               # … and the gap between them
+BEND_USED = (63, 224, 255)       # a bend the margin goes through (the outermost of its vessel)
+BEND_INNER = (255, 92, 200)      # a vessel's other bends (down the wall: onto the floor)
+
+
+def s3_status(method: str, info: dict) -> str:
+    """What the one-photo shape of ``method`` stands on (the 3D tab's status line)."""
+    if method == "pallor":
+        return S3_ONE
+    b = info.get("bends") or {}
+    k, v = len(b.get("r", ())), b.get("vessels", 0)
+    found = f"꺾임 {k}곳 · 혈관 {v}개"
+    share = f"경계의 {info.get('support', 0.0):.0%}"
+    if method == "vessels":
+        if not info.get("cup"):
+            return (f"혈관 꺾임을 충분히 찾지 못했습니다 ({found}) — 디스크가 작게 찍혔거나 경계를 지나는 혈관이 "
+                    "적습니다. 그림의 오목한 곳은 자리만 채운 것입니다. [밝기]나 [하이브리드]로 보세요.")
+        return (f"혈관이 꺾이는 곳을 컵 경계로 본 모양입니다 ({found} · {share}가 꺾임에 가까움, 나머지는 이어 그림). "
+                "색은 쓰지 않으며 깊이는 정해 둔 모양입니다 — 실제 깊이를 잰 것이 아닙니다.")
+    if not info.get("support"):
+        return f"혈관 꺾임을 찾지 못해 ({found}) [밝기]와 같은 모양입니다. " + S3_ONE
+    return (f"경계는 혈관이 꺾이는 곳 ({found} · {share}), 혈관이 없는 쪽과 바닥 모양은 밝기로 추정한 모양입니다. "
+            "실제 깊이를 잰 것이 아닙니다.")
 
 
 class Surface3DTab(_Tab):
@@ -763,6 +792,7 @@ class Surface3DTab(_Tab):
         self.follow_up = self.same_eye and len(days) == 2
         self.stereo_ok = self.same_eye and not self.follow_up
         self.source = "stereo" if self.stereo_ok else "a"
+        self.method = "pallor"                           # one photo's estimate: 밝기 · 혈관 꺾임 · 하이브리드
         self.field = "normal"
         self.yaw, self.pitch = -22.0, 14.0
         self.info: dict = {}
@@ -790,14 +820,27 @@ class Surface3DTab(_Tab):
         self.fields.changed.connect(self.set_field)
         self.fields.setToolTip("화면에 담을 범위 — 유두 지름의 몇 배인지")
         self.status = _note()
-        rows = [self.fields, self.status]
+        self.methods = _Choice(S3_METHODS)
+        self.methods.set(self.method)
+        self.methods.changed.connect(self.set_method)
+        self.methods.setToolTip("사진 한 장으로 모양을 추정하는 방법")
+        self.sw_bends = Switch("꺾임 점")
+        self.sw_bends.setChecked(True)
+        self.sw_bends.setToolTip("혈관이 꺾인 곳 — 하늘색: 컵 경계로 쓴 곳 (혈관마다 가장 바깥), "
+                                 "분홍: 같은 혈관의 안쪽 꺾임 (벽을 내려가 바닥에 닿는 곳)")
+        self.sw_bends.toggled.connect(lambda _on: self._draw())
+        self.sw_compare = Switch("셋 나란히 비교")
+        self.sw_compare.setToolTip("밝기 · 혈관 꺾임 · 하이브리드를 나란히 — 함께 돌아갑니다")
+        self.sw_compare.toggled.connect(lambda _on: self._shape_changed())
+        rows = [self.methods, self.fields, self.sw_bends, self.sw_compare, self.status]
         if len(self.photos) == 2:
             self.sources = _Choice([("a", "사진 ①", "사진 ① 한 장으로 추정"), ("b", "사진 ②", "사진 ② 한 장으로 추정"),
                                     ("stereo", "2장 스테레오", "두 사진의 시차로 깊이 계산")])
             self.sources.set(self.source)
             self.sources.changed.connect(self.set_source)
             self.sources.buttons[2].setEnabled(self.stereo_ok)
-            rows = [self.sources, self.fields, self.sw_flip, self.sw_flick, self.speed, self.status]
+            rows = [self.sources, self.methods, self.fields, self.sw_bends, self.sw_compare, self.sw_flip,
+                    self.sw_flick, self.speed, self.status]
         self.side.addWidget(card("모양 (깊이)", *rows, lines=False))
 
         self.s_depth = _Slider("깊이 과장", 0, 200, 100, 5, lambda v: f"{v:.0f}%")
@@ -843,6 +886,7 @@ class Surface3DTab(_Tab):
         self.view.pressed.connect(self._press)
         self.view.moved.connect(self._move)
         self.view.released.connect(lambda: setattr(self, "_drag", None))
+        self.view.overlay = self._labels
         self.set_field("normal")
         if self.source == "stereo" and not self.info.get("reliable", True):
             self.set_source("a")                         # not a stereo pair after all: one photo's estimate
@@ -877,13 +921,25 @@ class Surface3DTab(_Tab):
             self.sources.set(source)
         self._shape_changed()
 
-    def _surface(self, source: str) -> tuple[np.ndarray, dict] | None:
-        """The surface of ``source`` (a · b · stereo) and what is known of it."""
+    def set_method(self, method: str) -> None:
+        """How one photo's shape is estimated: ``disc3d.METHODS`` (밝기 · 혈관 꺾임 · 하이브리드)."""
+        self.method = method
+        self.methods.set(method)
+        self._shape_changed()
+
+    def comparing(self) -> bool:
+        """셋 나란히 비교: the three one-photo estimates side by side (not for the stereo depth)."""
+        return self.sw_compare.isChecked() and self.source != "stereo" and bool(self._tex)
+
+    def _surface(self, source: str, method: str | None = None) -> tuple[np.ndarray, dict] | None:
+        """The surface of ``source`` (a · b · stereo) — one photo's by ``method`` (the one chosen,
+        if None) — and what is known of it."""
         if source == "stereo" and not self.stereo_ok:
             return None
         if not self._tex or (source != "a" and len(self._tex) < 2):
             return None
-        key = (source, self.sw_flip.isChecked())
+        method = method or self.method
+        key = (source, self.sw_flip.isChecked()) if source == "stereo" else (source, method)
         if key not in self._heights:
             frac = 1.0 / self._factor()
             if source == "stereo":
@@ -891,7 +947,8 @@ class Surface3DTab(_Tab):
                                                                flip=self.sw_flip.isChecked())
             else:
                 info: dict = {}
-                self._heights[key] = (disc3d.height_from_photo(self._tex[source == "b"], frac, info=info), info)
+                self._heights[key] = (disc3d.height_one_photo(self._tex[source == "b"], frac, method, info=info),
+                                      info)
         return self._heights[key]
 
     def heights(self) -> np.ndarray | None:
@@ -904,11 +961,14 @@ class Surface3DTab(_Tab):
     def _shape_changed(self) -> None:
         stereo = self.source == "stereo"
         self.sw_flip.setVisible(stereo)
+        for w in (self.methods, self.sw_compare):
+            w.setVisible(not stereo)
+        self.sw_bends.setVisible(not stereo and (self.method != "pallor" or self.sw_compare.isChecked()))
         self.heights()
         if not self._tex:
             self.status.setText("")
         elif not stereo:
-            self.status.setText(S3_ONE)
+            self.status.setText(s3_status(self.method, self.info))
         else:
             px = self.info.get("parallax", 0.0)
             text = f"두 사진의 시차로 계산한 깊이입니다 (최대 시차 {px:.1f} px · 상대값, 길이 아님)."
@@ -1001,19 +1061,22 @@ class Surface3DTab(_Tab):
                     **{key: d[key] * k for key in ("top", "right", "bottom", "left")}}
         return G.outline({"cx": c, "cy": c, "rx": r * 0.95, "ry": r * 1.05})
 
-    def cup(self, source: str | None = None) -> tuple[dict, dict, np.ndarray] | None:
+    def cup(self, source: str | None = None, method: str | None = None) -> tuple[dict, dict, np.ndarray] | None:
         """(disc outline, cup outline, the cup's margin) in texture pixels — the cup as the surface
-        of ``source`` (the one shown, if None) has it (``disc3d.cup_from_surface``) — or None: no
-        surface, no cup seen in the photo, or a stereo depth that is not to be trusted."""
+        of ``source`` (the one shown, if None; one photo's by ``method``, the one chosen if None) has
+        it (``disc3d.cup_from_surface``) — or None: no surface, no cup seen in the photo, or a stereo
+        depth that is not to be trusted."""
         source = source or self.source
-        surface = self._surface(source)
+        method = method or self.method
+        surface = self._surface(source, method)
         if surface is None or not surface[1].get("cup", True) or not surface[1].get("reliable", True):
             return None
         if source == "stereo" and not self.stereo_ok:
             return None
         H = surface[0]
         disc = self.disc_outline()
-        key = (source, self.sw_flip.isChecked(), self.field, self.s_level.value(), tuple(disc.values()))
+        key = (source, method if source != "stereo" else None, self.sw_flip.isChecked(), self.field,
+               self.s_level.value(), tuple(disc.values()))
         if key not in self._cup:
             k = H.shape[0] / disc3d.TEX_PX                # (the surface is coarser than the texture)
             small = {**{a: disc[a] * k for a in ("top", "right", "bottom", "left")},
@@ -1029,11 +1092,16 @@ class Surface3DTab(_Tab):
             self._cup[key] = found
         return self._cup[key]
 
-    def metrics(self, source: str | None = None) -> dict | None:
+    def metrics(self, source: str | None = None, method: str | None = None) -> dict | None:
         """C/D of the cup read off the surface (``G.cdr_metrics``) — of the one shown, or of
-        ``source`` (a · b · stereo) — or None."""
-        found = self.cup(source)
+        ``source`` (a · b · stereo) and one photo's ``method`` — or None."""
+        found = self.cup(source, method)
         return G.cdr_metrics(found[0], found[1], self.eye() or "OD") if found else None
+
+    def by_method(self) -> dict:
+        """One photo (the one shown): the vertical C/D of each way to its shape, ``{method: value or None}``."""
+        source = "a" if self.source == "stereo" else self.source
+        return {k: (m["vertical"] if (m := self.metrics(source, k)) else None) for k in disc3d.METHODS}
 
     def both(self) -> dict | None:
         """With two photos: vertical C/D of each one's own estimate, of the stereo depth, the mean
@@ -1074,14 +1142,25 @@ class Surface3DTab(_Tab):
         if m is None:
             self.lbl_cd.setText("–")
             self.lbl_cd2.setText(f"<span style='color:{theme.TEXT2}'>{S3_NO_CUP if self._tex else ''}</span>"
-                                 + self._both_text())
+                                 + self._methods_text() + self._both_text())
             return
         v = m["vertical"]
         band = "0.7 이상" if v >= 0.7 else "0.5~0.7" if v >= 0.5 else "0.5 미만"
         self.lbl_cd.setText(f"{v:.2f}")
         self.lbl_cd2.setText(f"<span style='color:{theme.TEXT2}'>{band}</span><br>"
                              f"수평 C/D <b>{m['horizontal']:.2f}</b> &nbsp;·&nbsp; 면적 C/D <b>{m['area']:.2f}</b>"
-                             + self._both_text())
+                             + self._methods_text() + self._both_text())
+
+    def _methods_text(self) -> str:
+        """One photo: the vertical C/D of each way to its shape side by side (the one shown in bold)."""
+        if self.source == "stereo" or not self._tex:
+            return ""
+        v = self.by_method()
+        cells = []
+        for key, name, _ in S3_METHODS:
+            text = f"{name} {v[key]:.2f}" if v[key] is not None else f"{name} –"
+            cells.append(f"<b>{text}</b>" if key == self.method else text)
+        return "<br><br>추정 방식별 수직 C/D<br>" + " &nbsp;·&nbsp; ".join(cells)
 
     def _both_text(self) -> str:
         """Two photos: each one's vertical C/D side by side (the one shown in bold)."""
@@ -1111,17 +1190,37 @@ class Surface3DTab(_Tab):
                         "다르거나 경계가 뚜렷하지 않습니다.</span>")
         return out
 
-    def _texture(self) -> np.ndarray:
-        """The photo to lay on the surface, with the disc (green) and cup (yellow) lines on it."""
+    def bends(self, method: str | None = None) -> tuple[np.ndarray, np.ndarray]:
+        """Where the vessels bend on the photo shown (texture pixels, (k, 2)) and whether each is
+        one the margin goes through (k,) — for 혈관 꺾임 · 하이브리드, else none."""
+        method = method or self.method
+        none = np.zeros((0, 2), np.float32), np.zeros(0, bool)
+        if method == "pallor" or self.source == "stereo" or self._flickering():
+            return none
+        surface = self._surface(self.source, method)
+        b = surface[1].get("bends") if surface is not None else None
+        if b is None or not len(b["weight"]):
+            return none
+        return b["xy"] * disc3d.TEX_PX, b["weight"] >= 0.4 * float(b["weight"].max())
+
+    def _texture(self, method: str | None = None) -> np.ndarray:
+        """The photo to lay on the surface, with the disc (green) and cup (yellow) lines on it, and
+        where the vessels bend (혈관 꺾임 · 하이브리드)."""
         tex = self._tex[self.shown_photo()]
-        found = self.cup() if self.sw_lines.isChecked() else None
-        if not found:
+        found = self.cup(method=method) if self.sw_lines.isChecked() else None
+        pts, used = self.bends(method) if self.sw_bends.isChecked() else (np.zeros((0, 2)), np.zeros(0, bool))
+        if not found and not len(pts):
             return tex
         tex = tex.copy()
-        for pts, col in ((disc3d.outline_points(found[0]), DISC_COLOR), (found[2], CUP_COLOR)):
-            line = [np.round(pts * 8).astype(np.int32)]
+        lines = ((disc3d.outline_points(found[0]), DISC_COLOR), (found[2], CUP_COLOR)) if found else ()
+        for line_pts, col in lines:
+            line = [np.round(line_pts * 8).astype(np.int32)]
             cv2.polylines(tex, line, True, (20, 20, 20), 5, cv2.LINE_AA, shift=3)      # (seen on a pale cup too)
             cv2.polylines(tex, line, True, (col.red(), col.green(), col.blue()), 2, cv2.LINE_AA, shift=3)
+        for (x, y), main in zip(pts, used):
+            c = (int(round(x * 8)), int(round(y * 8)))
+            cv2.circle(tex, c, 7 * 8, (20, 20, 20), 4, cv2.LINE_AA, shift=3)
+            cv2.circle(tex, c, 7 * 8, BEND_USED if main else BEND_INNER, 2, cv2.LINE_AA, shift=3)
         return tex
 
     def compose(self):
@@ -1131,15 +1230,43 @@ class Surface3DTab(_Tab):
         yaw, pitch = self._angles()
         kw = dict(light=1.0 if self.sw_light.isChecked() else 0.0, contours=self.sw_contour.isChecked())
         draw = disc3d.anaglyph if self.sw_ana.isChecked() else disc3d.render
+        if self.comparing():                             # 셋 나란히: the three estimates, turned alike
+            views = [draw(self._texture(key), self._surface(self.source, key)[0], self.depth_px(), yaw, pitch,
+                          out_px=S3_COMPARE_PX, **kw) for key in disc3d.METHODS]
+            gap = np.zeros((S3_COMPARE_PX, S3_GAP, 3), np.uint8)
+            return np.hstack([views[0], gap, views[1], gap, views[2]])
         return draw(self._texture(), H, self.depth_px(), yaw, pitch, **kw)
+
+    def _labels(self, p: QPainter) -> None:
+        """셋 나란히: each view's name and vertical C/D over it (the one chosen in orange)."""
+        if not self.comparing():
+            return
+        v = self.by_method()
+        f = QFont()
+        f.setPixelSize(17)
+        f.setBold(True)
+        p.setFont(f)
+        for i, (key, name, _) in enumerate(S3_METHODS):
+            text = f"{name}   C/D {v[key]:.2f}" if v[key] is not None else f"{name}   C/D –"
+            rect = QRectF(i * (S3_COMPARE_PX + S3_GAP) + 12, 8, S3_COMPARE_PX - 24, 28)
+            p.setPen(QColor(0, 0, 0, 200))
+            p.drawText(rect.translated(1.5, 1.5), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, text)
+            p.setPen(QColor(theme.ORANGE) if key == self.method else QColor("#ffffff"))
+            p.drawText(rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, text)
 
     def _draw(self) -> None:
         self._report()
         self.view.set_rgb(self.compose())
 
     def note(self) -> str:
+        if self.comparing():
+            v = self.by_method()
+            return ("녹내장 분석 — 유두 3D (1장 추정 · 셋 나란히) · 수직 C/D " + " · ".join(
+                f"{name} {v[k]:.2f}" if v[k] is not None else f"{name} –" for k, name, _ in S3_METHODS))
         m = self.metrics()
-        return ("녹내장 분석 — 유두 3D " + ("(2장 스테레오)" if self.source == "stereo" else "(1장 추정)")
+        kind = ("(2장 스테레오)" if self.source == "stereo" else "(1장 추정)" if self.method == "pallor"
+                else f"(1장 추정 · {S3_METHOD_NAMES[self.method]})")
+        return ("녹내장 분석 — 유두 3D " + kind
                 + (f" · 추정 수직 C/D {m['vertical']:.2f}" if m else "")
                 + self._both_note())
 
