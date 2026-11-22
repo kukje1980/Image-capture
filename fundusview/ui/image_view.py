@@ -168,6 +168,7 @@ class ImageView(QGraphicsView):
     clicked = Signal()           # any left press (multi-view selection, slideshow stop)
     activated = Signal()         # double click
     stepped = Signal(int)        # ← (-1) / → (+1) while ``step_keys``: the photo before / after
+    menuOpening = Signal(object)  # the right-click QMenu, still empty: the owner puts its own entries first
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1095,6 +1096,9 @@ class ImageView(QGraphicsView):
         if not self.has_image():
             return
         menu = QMenu(self)
+        self.menuOpening.emit(menu)                   # (a cell of Simple · Multi: 3D · Montage · Glaucoma …)
+        if not menu.isEmpty():
+            menu.addSeparator()
         act = QAction("여기를 시신경 유두로 지정 (3D 시신경 위치)", menu)
         act.triggered.connect(lambda: self.discPicked.emit(sp.x(), sp.y()))
         menu.addAction(act)
@@ -1117,6 +1121,9 @@ class ImageView(QGraphicsView):
             a.setChecked(abs(self.loupe_mag - m) < 0.01)
             a.triggered.connect(lambda _=False, m=m: setattr(self, "loupe_mag", float(m)))
             sub.addAction(a)
+        self._popup(menu, gpos)
+
+    def _popup(self, menu: QMenu, gpos: QPoint) -> None:
         menu.exec(gpos)
 
     # =====================================================================

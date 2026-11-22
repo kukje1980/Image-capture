@@ -8,7 +8,8 @@ click, in pick order) and the layout follows the number picked — or, with noth
 consecutive photos of the current patient starting at the shown one (down-scaled for speed).
 Click a cell to select it: the info panel, the other views and the image-processing toolbar
 follow, and the processing applies to that photo only. Double-click opens it large (Detail).
-Each cell can be zoomed (wheel) and panned (drag) on its own.
+Each cell can be zoomed (wheel) and panned (drag) on its own. A right click selects the cell and
+opens its menu, with the main window's entries (3D · Montage · Glaucoma …) first (``menuRequested``).
 
 황반 · 디스크 (``set_closeups``): under each photo its macula and optic disc enlarged, as on Detail —
 with at most ``CLOSEUP_MAX`` cells on screen (smaller cells have no room for them).
@@ -125,6 +126,7 @@ class MultiView(QWidget):
     opened = Signal(int)
     layoutChanged = Signal(int)
     stepped = Signal(int, int)          # (the photo of a cell, -1 / +1): ◀ ▶ at its sides · ← / →
+    menuRequested = Signal(int, object)  # (the photo of a cell, its right-click QMenu to put entries in)
 
     def __init__(self, parent=None, compact: bool = False):
         super().__init__(parent)
@@ -194,6 +196,7 @@ class MultiView(QWidget):
             cell.view.clicked.connect(lambda c=cell: self._select(c))
             cell.view.activated.connect(lambda c=cell: c.image_id is not None and self.opened.emit(c.image_id))
             cell.nav.stepped.connect(lambda d, c=cell: c.image_id is not None and self.stepped.emit(c.image_id, d))
+            cell.view.menuOpening.connect(lambda m, c=cell: self._menu(c, m))
             for z in cell.zooms.values():
                 z.clicked.connect(lambda c=cell: self._select(c))
                 z.activated.connect(lambda c=cell: c.image_id is not None and self.opened.emit(c.image_id))
@@ -284,6 +287,15 @@ class MultiView(QWidget):
         shown = [c for c in self.cells if c.image_id is not None and not c.isHidden()]
         for c in self.cells:
             c.badge.setVisible(len(shown) >= 2 and c in shown and c.selected)
+
+    def _menu(self, cell: _Cell, menu) -> None:
+        """Right click on a cell's photo: it is the selected one now, and the main window puts its
+        entries (3D · Montage · Glaucoma …) at the top of the menu."""
+        if cell.image_id is None:
+            return
+        if not cell.selected:
+            self._select(cell)
+        self.menuRequested.emit(cell.image_id, menu)
 
     def _select(self, cell: _Cell) -> None:
         if cell.image_id is None:
