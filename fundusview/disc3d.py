@@ -16,6 +16,7 @@ Heights run from -1 (deepest) to about +1, 0 = the retina around the disc; x rig
 """
 from __future__ import annotations
 
+import hashlib
 import math
 
 import cv2
@@ -53,13 +54,14 @@ def _edge_taper(n: int) -> np.ndarray:
     return np.minimum(w[:, None], w[None, :])
 
 
-def height_from_photo(crop: np.ndarray, disc_frac: float, n: int = 256, info: dict | None = None) -> np.ndarray:
-    """Estimated heights (``n``², -1…1) of a square picture centred on the optic disc, whose
-    disc is ``disc_frac`` of the picture's side across. ``info`` (a dict) is told ``"cup"``: whether
-    a pale cup was seen (False: the hollow is only a stand-in, nothing to measure).
+def _pallor(crop: np.ndarray, disc_frac: float, n: int) -> dict:
+    """What a one-photo shape stands on: the picture at ``n``², the disc radius ``rd`` (px), the
+    distance from the disc's centre in disc radii ``r`` and that centre ``(x, y)`` (px) — the
+    middle of the pale patch, when the disc sits a little off the picture's centre — and the
+    pallor ``cup`` (0…1, the palest part 1), or a shallow stand-in when ``seen`` is False.
 
     The cup: brightness of green + blue (vessels closed out, smoothed) between the level of the
-    rim and the brightest part of the disc. Around it the rim, and the vessels on top.
+    rim and the brightest part of the disc.
     """
     small = cv2.resize(crop, (n, n), interpolation=cv2.INTER_AREA).astype(np.float32)
     rd = max(disc_frac * n / 2.0, 2.0)                         # disc radius (px)
@@ -69,6 +71,7 @@ def height_from_photo(crop: np.ndarray, disc_frac: float, n: int = 256, info: di
     closed = cv2.morphologyEx(pale, cv2.MORPH_CLOSE, kernel)
     smooth = cv2.GaussianBlur(closed, (0, 0), rd * 0.10)
     r = _radius(n, disc_frac)
+    centre = ((n - 1) / 2.0, (n - 1) / 2.0)
     # the disc may sit a little off the picture's centre: measure from the pale patch itself
     w = np.clip(smooth - float(np.median(smooth)), 0.0, None) ** 2 * (r < 1.5)
     if float(w.sum()) > 0.0:
@@ -76,22 +79,34 @@ def height_from_photo(crop: np.ndarray, disc_frac: float, n: int = 256, info: di
         mx, my = float((w * xx).sum() / w.sum()), float((w * yy).sum() / w.sum())
         if math.hypot(mx - (n - 1) / 2.0, my - (n - 1) / 2.0) < 1.3 * rd:
             r = np.hypot(xx - mx, yy - my) / rd
+            centre = (mx, my)
     ring = (r > 0.85) & (r < 1.3)
     inside = r < 0.75
     lo = float(np.median(smooth[ring])) if ring.any() else float(smooth.mean())
     hi = float(np.percentile(smooth[inside], 99.0)) if inside.any() else lo
-    if info is not None:
-        info["cup"] = hi - lo > 6.0
-    if hi - lo > 6.0:                                           # a pale cup stands out from the rim
+    seen = hi - lo > 6.0
+    if seen:                                                    # a pale cup stands out from the rim
         # the whole disc is paler than the retina, the cup paler still: deep only towards the palest
         # part, so that the rim slopes in and the cup is not the disc cut out
         cup = np.clip((smooth - lo) / (hi - lo), 0.0, 1.0) ** CUP_GAMMA
     else:                                                       # no cup to see: a shallow bowl
         cup = 0.35 * _smoothstep(1.0 - r / 0.45)
+    return {"small": small, "rd": rd, "r": r, "centre": centre, "cup": cup, "seen": seen, "n": n}
+
+
+def _pallor_depth(p: dict) -> np.ndarray:
+    """The pallor as a hollow (0…1 down, 1 at the deepest where a cup was seen): only inside the
+    disc, with walls that slope rather than a cliff."""
+    cup, r, rd = p["cup"], p["r"], p["rd"]
     window = 1.0 - _smoothstep((r - 0.9) / 0.25)                # only inside the disc
     bowl = cv2.GaussianBlur(cup * window, (0, 0), rd * 0.09)    # walls that slope, not a cliff
-    H = -bowl / max(float(bowl.max()), 0.5) * float((cup * window).max()) + RIM_H * np.exp(-((r - 1.0) / 0.3) ** 2)
-    g = small[..., 1]
+    return bowl / max(float(bowl.max()), 0.5) * float((cup * window).max())
+
+
+def _finish(H: np.ndarray, p: dict) -> np.ndarray:
+    """The vessels on top of the surface ``H``, smoothed, flat at the picture's border."""
+    n, rd = p["n"], p["rd"]
+    g = p["small"][..., 1]
     vk = 2 * max(1, int(round(rd * 0.09))) + 1
     hat = cv2.morphologyEx(g, cv2.MORPH_BLACKHAT, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (vk, vk)))
     top = float(np.percentile(hat, 99.5))
@@ -99,6 +114,325 @@ def height_from_photo(crop: np.ndarray, disc_frac: float, n: int = 256, info: di
         H = H + VESSEL_H * cv2.GaussianBlur(np.clip((hat / top - 0.33) / 0.67, 0.0, 1.0), (0, 0), 1.2)
     H = cv2.GaussianBlur(H, (0, 0), max(0.8, rd * 0.035))
     return np.clip(H * _edge_taper(n), -1.0, 1.0).astype(np.float32)
+
+
+def height_from_photo(crop: np.ndarray, disc_frac: float, n: int = 256, info: dict | None = None) -> np.ndarray:
+    """Estimated heights (``n``², -1…1) of a square picture centred on the optic disc, whose
+    disc is ``disc_frac`` of the picture's side across — from its brightness (밝기): the paler,
+    the deeper. ``info`` (a dict) is told ``"cup"``: whether a pale cup was seen (False: the
+    hollow is only a stand-in, nothing to measure).
+
+    The cup: the pallor (``_pallor``). Around it the rim, and the vessels on top.
+    """
+    p = _pallor(crop, disc_frac, n)
+    if info is not None:
+        info["cup"] = p["seen"]
+    H = -_pallor_depth(p) + RIM_H * np.exp(-((p["r"] - 1.0) / 0.3) ** 2)
+    return _finish(H, p)
+
+
+# -- one photo: the cup's margin where the vessels bend (혈관 꺾임) ---------------------------------
+# A vessel on the disc lies on the tissue. Where the rim falls away into the cup it goes down the
+# wall too, and seen from the front that stretch is foreshortened: the vessel seems to turn (or
+# to step aside, "bayoneting") at the cup's margin. Those turns mark the margin whatever the colour
+# — in glaucoma the hollow is often wider than the pale part. They say where the wall is, not how
+# deep the floor lies.
+METHODS = ("pallor", "vessels", "hybrid")    # one photo: 밝기 · 혈관 꺾임 · 하이브리드
+BEND_DISC_PX = 170       # the disc's diameter (px) the vessels are traced at
+BEND_TURN = 30.0         # a vessel turning more than this (degrees) over a short stretch is a bend
+BEND_R = (0.25, 0.92)    # bends counted between these radii (disc radii): not the trunk, not the arcades
+BEND_MIN_WEIGHT = 1.2    # fewer bends than this (weighted): no margin from the vessels
+WALL = 0.20              # the cup's wall: this wide (disc radii), centred on the margin
+FLOOR = 0.60             # the hollow at its margin's foot (of the deepest), the rest by the floor's shape
+
+
+def _odd(x: float) -> int:
+    return 2 * max(1, int(round(x / 2.0))) + 1
+
+
+# the eight neighbours P2…P9 (N, NE, E, SE, S, SW, W, NW) of a pixel as the bits of one number
+_NEIGHBOURS = np.float32([[128, 1, 2], [64, 0, 4], [32, 16, 8]])
+_BITS = (np.arange(256)[:, None] >> np.arange(8)) & 1             # P2 … P9 of each number
+_CROSSINGS = ((_BITS == 0) & (np.roll(_BITS, -1, axis=1) == 1)).sum(1)   # 0 → 1 going round
+
+
+def _neighbour_code(img: np.ndarray) -> np.ndarray:
+    return cv2.filter2D(img.astype(np.float32), -1, _NEIGHBOURS, borderType=cv2.BORDER_CONSTANT).astype(np.int32)
+
+
+def _thin(mask: np.ndarray) -> np.ndarray:
+    """Zhang–Suen thinning of a boolean mask: lines one pixel wide along its middle."""
+    b = _BITS.sum(1)
+    p2, p4, p6, p8 = _BITS[:, 0], _BITS[:, 2], _BITS[:, 4], _BITS[:, 6]
+    base = (b >= 2) & (b <= 6) & (_CROSSINGS == 1)
+    lut = (base & (p2 * p4 * p6 == 0) & (p4 * p6 * p8 == 0),
+           base & (p2 * p4 * p8 == 0) & (p2 * p6 * p8 == 0))
+    img = mask.astype(np.uint8)
+    while True:
+        changed = False
+        for step in lut:
+            gone = (img > 0) & step[_neighbour_code(img)]
+            if gone.any():
+                img[gone] = 0
+                changed = True
+        if not changed:
+            return img > 0
+
+
+_STEPS4 = ((0, 1), (1, 0), (0, -1), (-1, 0))
+_STEPS8 = _STEPS4 + ((1, 1), (1, -1), (-1, 1), (-1, -1))
+
+
+def _trace(ys: np.ndarray, xs: np.ndarray) -> np.ndarray:
+    """The pixels of one thin line in order along it (as (k, 2) x, y), from one end."""
+    left = set(zip(ys.tolist(), xs.tolist()))
+    def neighbours(p):
+        return [(p[0] + dy, p[1] + dx) for dy, dx in _STEPS8 if (p[0] + dy, p[1] + dx) in left]
+    start = next((p for p in left if len(neighbours(p)) == 1), next(iter(left)))
+    path = [start]
+    left.discard(start)
+    while True:
+        y, x = path[-1]
+        nxt = next(((y + dy, x + dx) for dy, dx in _STEPS4 if (y + dy, x + dx) in left), None)
+        if nxt is None:                                         # (a straight neighbour first: no corner skipped)
+            nxt = next(((y + dy, x + dx) for dy, dx in _STEPS8 if (y + dy, x + dx) in left), None)
+        if nxt is None:
+            return np.float32([(x, y) for y, x in path])
+        path.append(nxt)
+        left.discard(nxt)
+
+
+_BENDS_SEEN: dict = {}    # the last few ``find_bends`` (혈관 꺾임 and 하이브리드 ask for the same photo's)
+
+
+def find_bends(crop: np.ndarray, disc_frac: float, centre: tuple[float, float] | None = None) -> dict:
+    """``_find_bends``, remembered for the last few pictures."""
+    key = (hashlib.blake2b(np.ascontiguousarray(crop).tobytes(), digest_size=16).digest(), crop.shape,
+           round(float(disc_frac), 6), None if centre is None else (round(centre[0], 4), round(centre[1], 4)))
+    if key not in _BENDS_SEEN:
+        if len(_BENDS_SEEN) >= 8:
+            _BENDS_SEEN.pop(next(iter(_BENDS_SEEN)))
+        _BENDS_SEEN[key] = _find_bends(crop, disc_frac, centre)
+    return _BENDS_SEEN[key]
+
+
+def _find_bends(crop: np.ndarray, disc_frac: float, centre: tuple[float, float] | None = None) -> dict:
+    """Where the vessels on the disc bend, in a square picture centred on the disc (``disc_frac``
+    of its side across; the disc's ``centre`` as fractions of the side, the middle if None).
+
+    Returns ``{"xy": (k, 2) as fractions of the side, "r": disc radii from the centre, "theta":
+    radians (x right, y down), "turn": degrees, "weight", "vessels": how many vessels bend}``.
+    One vessel can bend twice (down the wall, then onto the floor): its outermost bend — the top
+    of the wall, the cup's margin — counts in full, the others a little.
+    """
+    m = int(np.clip(round(BEND_DISC_PX / max(disc_frac, 1e-3)), 128, 768))       # (a small disc: traced larger)
+    img = cv2.resize(crop, (m, m), interpolation=cv2.INTER_AREA if m <= crop.shape[0] else cv2.INTER_CUBIC)
+    rd = disc_frac * m / 2.0
+    cx, cy = ((m - 1) / 2.0, (m - 1) / 2.0) if centre is None else (centre[0] * m, centre[1] * m)
+    yy, xx = np.mgrid[0:m, 0:m].astype(np.float32)
+    r = np.hypot(xx - cx, yy - cy) / max(rd, 1.0)
+    k = _odd(0.26 * rd)                                         # wider than the widest vessel on the disc
+    ball = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+
+    def darker(ch: int) -> np.ndarray:
+        """How much darker than around it (on the pale disc or not), in one colour."""
+        g = img[..., ch].astype(np.float32)
+        g = cv2.morphologyEx(g, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
+        g = cv2.GaussianBlur(g, (0, 0), 0.8)                    # (the light reflex along an artery, the grain)
+        shut = cv2.morphologyEx(g, cv2.MORPH_CLOSE, ball)
+        return (shut - g) / np.maximum(shut, 20.0)
+
+    hat, red = darker(1), darker(0)
+    # a vessel is dark in green but red in red; pigment (round the disc, in the rim) is dark in both
+    roi = (r < 1.35) & (img.max(axis=2) > 20) & ~((red > 0.08) & (red > 0.5 * hat))
+    empty = {"xy": np.zeros((0, 2), np.float32), "r": np.zeros(0), "theta": np.zeros(0), "turn": np.zeros(0),
+             "weight": np.zeros(0), "vessels": 0}
+    if roi.sum() < 50:
+        return empty
+    vals = hat[roi]
+    level = max(0.05, float(np.percentile(vals, 82)), 0.22 * float(np.percentile(vals, 99.5)))
+    # a faint stretch counts where it carries on from a clear one (a thin vessel on the pale cup)
+    vessel = ((hat > 0.6 * level) & roi).astype(np.uint8)
+    vessel = cv2.morphologyEx(vessel, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(vessel, connectivity=8)
+    clear = np.zeros(count, bool)
+    clear[np.unique(labels[(hat > level) & (vessel > 0)])] = True
+    drop = (stats[:, cv2.CC_STAT_AREA] < max(12, 0.5 * rd)) | ~clear
+    drop[0] = True
+    vessel[drop[labels]] = 0
+    if not vessel.any():
+        return empty
+    width = cv2.distanceTransform(vessel, cv2.DIST_L2, 3)       # half the vessel's width, inside it
+    skel = _thin(vessel > 0)
+    junction = skel & (_CROSSINGS[_neighbour_code(skel)] >= 3)  # three ways out: a branch or a crossing
+    # a line bends where it meets another, whatever the depth: no bend counts near a branch
+    off_junction = cv2.distanceTransform((~junction).astype(np.uint8), cv2.DIST_L2, 3)
+    junction = cv2.dilate(junction.astype(np.uint8), np.ones((3, 3), np.uint8)) > 0
+    lines = (skel & ~junction).astype(np.uint8)
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(lines, connectivity=8)
+    step = max(4, int(round(0.12 * rd)))                        # the stretch a turn is measured over
+    order = np.argsort(labels.ravel(), kind="stable")
+    starts = np.searchsorted(labels.ravel()[order], np.arange(count + 1))
+    typical = float(np.median(width[skel])) if skel.any() else 1.0
+    out = []
+    vessels = 0
+    shortest = max(2 * step + 3, int(round(0.45 * rd)))         # (a fleck of pigment, a stub: not a vessel)
+    for i in range(1, count):
+        if stats[i, cv2.CC_STAT_AREA] < shortest:
+            continue
+        idx = order[starts[i]:starts[i + 1]]
+        path = _trace(idx // m, idx % m)
+        if len(path) < shortest or float(hat[idx // m, idx % m].mean()) < level:
+            continue                                            # (a faint wandering line: grain, not a vessel)
+        pad = np.pad(path, ((3, 3), (0, 0)), mode="edge")
+        kern = np.exp(-0.5 * (np.arange(-3, 4) / 1.3) ** 2)
+        kern /= kern.sum()
+        sm = np.stack([np.convolve(pad[:, j], kern, mode="valid") for j in (0, 1)], axis=1)
+        v1 = sm[step:-step] - sm[:-2 * step]
+        v2 = sm[2 * step:] - sm[step:-step]
+        l1, l2 = np.hypot(*v1.T), np.hypot(*v2.T)
+        cosang = (v1 * v2).sum(1) / np.maximum(l1 * l2, 1e-6)
+        turn = np.degrees(np.arccos(np.clip(cosang, -1.0, 1.0)))
+        turn[(l1 < 0.6 * step) | (l2 < 0.6 * step)] = 0.0
+        found = []
+        for j in range(len(turn)):
+            lo, hi = max(0, j - step // 2), min(len(turn), j + step // 2 + 1)
+            if turn[j] >= BEND_TURN and turn[j] == turn[lo:hi].max():
+                x, y = sm[j + step]
+                rr = math.hypot(x - cx, y - cy) / max(rd, 1.0)
+                py, px = int(round(min(max(y, 0), m - 1))), int(round(min(max(x, 0), m - 1)))
+                if BEND_R[0] <= rr <= BEND_R[1] and off_junction[py, px] >= 1.5 * step:
+                    wv = float(width[py, px])
+                    w = min(1.5, 0.3 + (turn[j] - BEND_TURN) / 30.0) * float(np.clip(math.sqrt(max(wv, 0.5) / max(typical, 0.5)), 0.5, 1.4))
+                    found.append((x, y, rr, math.atan2(y - cy, x - cx), float(turn[j]), w))
+        if found:
+            vessels += 1
+            outer = max(range(len(found)), key=lambda q: found[q][2])
+            for q, f in enumerate(found):
+                out.append((*f[:5], f[5] if q == outer else 0.35 * f[5]))
+    if not out:
+        return empty
+    a = np.float64(out)
+    return {"xy": (a[:, :2] / m).astype(np.float32), "r": a[:, 2], "theta": a[:, 3], "turn": a[:, 4],
+            "weight": a[:, 5], "vessels": vessels}
+
+
+def margin_from_bends(bends: dict, k: int = 360) -> tuple[np.ndarray, np.ndarray] | None:
+    """The cup's margin through the bends: its radius (disc radii) at ``k`` angles round the disc
+    (from +x towards +y), a smooth closed curve (a Fourier series to the second order, nearer a
+    circle where the bends are few), and how well the bends back it there (0…1). None: too few
+    bends to speak of. A bend far off the curve the others agree on is let go."""
+    th, rr, w0 = bends["theta"], bends["r"], bends["weight"]
+    if float(w0.sum()) < BEND_MIN_WEIGHT or bends["vessels"] < 2:
+        return None
+    def design(t):
+        return np.stack([np.ones_like(t), np.cos(t), np.sin(t), np.cos(2 * t), np.sin(2 * t)], axis=1)
+    A = design(th)
+    ridge = np.diag([1e-6, 0.8, 0.8, 1.6, 1.6])                  # (few bends: nearer a circle)
+    w = w0.copy()
+    for _ in range(5):
+        coef = np.linalg.solve(A.T @ (A * w[:, None]) + ridge, A.T @ (w * rr))
+        res = rr - A @ coef
+        s = max(0.06, 1.4826 * float(np.median(np.abs(res))))
+        u = res / (3.5 * s)
+        w = w0 * np.where(np.abs(u) < 1.0, (1.0 - u * u) ** 2, 0.0)
+        if float(w.sum()) < 0.5 * BEND_MIN_WEIGHT:
+            return None
+    grid = np.linspace(0.0, 2.0 * math.pi, k, endpoint=False)
+    radius = np.clip(design(grid) @ coef, 0.15, 0.97)
+    gap = np.angle(np.exp(1j * (grid[:, None] - th[None, :])))  # (angle from each bend, -π…π)
+    support = 1.0 - np.exp(-(w[None, :] * np.exp(-(gap / 0.45) ** 2)).sum(1) / 0.8)
+    return radius.astype(np.float32), support.astype(np.float32)
+
+
+def _polar(p: dict) -> np.ndarray:
+    n = p["n"]
+    yy, xx = np.mgrid[0:n, 0:n].astype(np.float32)
+    return np.arctan2(yy - p["centre"][1], xx - p["centre"][0])
+
+
+def _around(values: np.ndarray, angle: np.ndarray) -> np.ndarray:
+    """``values`` at ``len(values)`` angles round the disc, read at each pixel's ``angle``."""
+    k = len(values)
+    pos = (angle % (2.0 * math.pi)) / (2.0 * math.pi) * k
+    i0 = np.floor(pos).astype(np.int32) % k
+    t = pos - np.floor(pos)
+    return (values[i0] * (1.0 - t) + values[(i0 + 1) % k] * t).astype(np.float32)
+
+
+def _walled(p: dict, radius: np.ndarray, floor: np.ndarray) -> np.ndarray:
+    """A hollow (0…1 down) whose wall is centred on the margin ``radius`` (at angles round the
+    disc): ``FLOOR`` at the foot of the wall, the rest by ``floor`` (0…1) — so the margin lies
+    at about ``CUP_LEVEL`` of the depth, where ``cup_from_surface`` reads it."""
+    r = p["r"]
+    edge = _around(radius, _polar(p))
+    inside = _smoothstep((WALL / 2.0 - (r - edge)) / WALL)
+    D = inside * (FLOOR + (1.0 - FLOOR) * np.clip(floor, 0.0, 1.0))
+    return D / max(float(D.max()), 1e-6)
+
+
+def height_from_vessels(crop: np.ndarray, disc_frac: float, n: int = 256, info: dict | None = None) -> np.ndarray:
+    """Heights (``n``², -1…1) with the cup's margin where the vessels bend (혈관 꺾임) — the colour
+    is not used. The floor is a plain bowl: the bends say where the wall is, not how deep.
+    ``info`` is told ``"cup"`` (False: too few bends, the hollow is a stand-in), ``"bends"``
+    (``find_bends``) and ``"support"`` (how much of the margin the bends back, 0…1)."""
+    p = _pallor(crop, disc_frac, n)
+    bends = find_bends(crop, disc_frac, (p["centre"][0] / n, p["centre"][1] / n))
+    margin = margin_from_bends(bends)
+    if margin is None:
+        D = 0.35 * _smoothstep(1.0 - p["r"] / 0.45)
+    else:
+        edge = _around(margin[0], _polar(p))
+        D = _walled(p, margin[0], 1.0 - (p["r"] / np.maximum(edge, 0.05)) ** 2)
+    if info is not None:
+        info.update(cup=margin is not None, bends=bends,
+                    support=float(margin[1].mean()) if margin is not None else 0.0)
+    inside = 1.0 - _smoothstep((p["r"] - 0.9) / 0.25) if margin is None else 1.0
+    H = -D * inside + RIM_H * np.exp(-((p["r"] - 1.0) / 0.3) ** 2) * (1.0 - np.clip(D / FLOOR, 0.0, 1.0))
+    return _finish(H, p)
+
+
+def height_hybrid(crop: np.ndarray, disc_frac: float, n: int = 256, info: dict | None = None) -> np.ndarray:
+    """Heights (``n``², -1…1) from both (하이브리드): where vessels bend, the cup's margin is there
+    and its floor is shaped by the pallor (the paler, the deeper); round the rest of the disc, where
+    no vessel says, the pallor alone (as ``height_from_photo``). No bends at all: the same as the
+    brightness. ``info``: ``"cup"``, ``"bends"``, ``"support"`` as ``height_from_vessels``."""
+    p = _pallor(crop, disc_frac, n)
+    bends = find_bends(crop, disc_frac, (p["centre"][0] / n, p["centre"][1] / n))
+    margin = margin_from_bends(bends)
+    pale = _pallor_depth(p)
+    if margin is None:
+        D = pale
+    else:
+        radius, support = margin
+        edge = _around(radius, _polar(p))
+        hollow = 1.0 - (p["r"] / np.maximum(edge, 0.05)) ** 2
+        if p["seen"]:
+            within = _smoothstep((WALL / 2.0 - (p["r"] - edge)) / WALL) > 0.5
+            top = float(pale[within].max()) if within.any() else 0.0
+            floor = 0.5 * hollow + 0.5 * pale / top if top > 0.05 else hollow
+            vessel_cup = _walled(p, radius, floor)
+            c = _around(support, _polar(p))
+            D = c * vessel_cup + (1.0 - c) * pale
+        else:                                                   # no pallor to fall back on: the vessels'
+            D = _walled(p, radius, hollow)
+    if info is not None:
+        info.update(cup=p["seen"] or margin is not None, bends=bends,
+                    support=float(margin[1].mean()) if margin is not None else 0.0)
+    H = -D + RIM_H * np.exp(-((p["r"] - 1.0) / 0.3) ** 2) * (1.0 - np.clip(D / FLOOR, 0.0, 1.0))
+    if margin is None:                                          # (the same surface as the brightness)
+        H = -D + RIM_H * np.exp(-((p["r"] - 1.0) / 0.3) ** 2)
+    return _finish(H, p)
+
+
+def height_one_photo(crop: np.ndarray, disc_frac: float, method: str = "pallor", n: int = 256,
+                     info: dict | None = None) -> np.ndarray:
+    """One photo's surface by ``method`` (``METHODS``): 밝기 · 혈관 꺾임 · 하이브리드."""
+    if method == "vessels":
+        return height_from_vessels(crop, disc_frac, n, info)
+    if method == "hybrid":
+        return height_hybrid(crop, disc_frac, n, info)
+    return height_from_photo(crop, disc_frac, n, info)
 
 
 def height_from_stereo(a: np.ndarray, b: np.ndarray, disc_frac: float, n: int = 256,
