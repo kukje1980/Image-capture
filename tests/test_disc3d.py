@@ -304,3 +304,178 @@ def test_the_flat_retina_keeps_its_brightness_however_far_the_surface_is_turned(
         lit = disc3d.shade(tex, H, 40.0, disc3d.rotation(yaw, pitch))
         assert abs(int(lit[5, 5, 0]) - 150) <= 1                    # away from the hollow: as taken
         assert lit[40:88, 40:88].max() > 160 and lit[40:88, 40:88].min() < 140    # its walls: lit and shaded
+
+
+# -- one photo: 밝기 · 혈관 꺾임 · 하이브리드 ----------------------------------------------------------
+BENDING = (20, 65, 110, 160, 200, 250, 290, 335)       # the vessels' directions (degrees, y down)
+
+
+def _cupped_picture(n=640, frac=1 / 3.5, cup=0.7, pallor=0.4, angles=BENDING, bend=True, pigment=False):
+    """A disc whose hollow reaches ``cup`` (disc radii) but whose pale part only ``pallor`` (as in
+    glaucoma): the vessels from its middle step aside where they go down the wall at ``cup``
+    (bayoneting) — or run straight on (``bend`` False). ``pigment``: a dark crescent and flecks
+    at the temporal margin, dark in red too (not vessels)."""
+    yy, xx = np.mgrid[0:n, 0:n].astype(np.float32)
+    c, rd = (n - 1) / 2, frac * n / 2
+    r = np.hypot(xx - c, yy - c) / rd
+    img = np.empty((n, n, 3), np.float32)
+    img[:] = (190, 80, 40)
+    img[r < 1.0] = (235, 150, 95)
+    img[r < pallor] = (255, 235, 200)
+    out = np.clip(cv2.GaussianBlur(img, (0, 0), 3 * n / 320), 0, 255).astype(np.uint8)
+    for a in angles:
+        t = np.radians(a)
+        rr = np.linspace(0.06, 1.7, 400)
+        k = 1.0 - np.clip((rr - (cup - 0.05)) / 0.05, 0.0, 1.0) if bend else np.zeros_like(rr)
+        ang = t + 0.22 * k * k * (3 - 2 * k)
+        pts = np.stack([c + rr * rd * np.cos(ang), c + rr * rd * np.sin(ang)], axis=1)
+        cv2.polylines(out, [np.round(pts * 8).astype(np.int32)], False, (175, 45, 40),
+                      max(2, round(3 * n / 320)), cv2.LINE_AA, shift=3)
+    if pigment:
+        arc = np.linspace(-0.9, 0.9, 60)
+        pts = np.stack([c + 1.05 * rd * np.cos(arc), c + 1.05 * rd * np.sin(arc)], axis=1)
+        cv2.polylines(out, [np.int32(pts)], False, (70, 45, 30), 7, cv2.LINE_AA)
+        for t in np.linspace(-0.7, 0.7, 5):
+            cv2.circle(out, (int(c + 0.95 * rd * np.cos(t)), int(c + 0.95 * rd * np.sin(t))), 5, (60, 40, 28), -1)
+    noise = cv2.GaussianBlur(np.random.default_rng(1).normal(0, 30, (n, n)).astype(np.float32), (0, 0), 1.5)
+    return np.clip(out.astype(np.float32) + noise[..., None], 0, 255).astype(np.uint8)
+
+
+def _vertical_cd(H, frac=1 / 3.5):
+    n = H.shape[0]
+    c, r = (n - 1) / 2, frac * n / 2
+    disc = G.outline({"cx": c, "cy": c, "rx": r, "ry": r})
+    found = disc3d.cup_from_surface(H, disc)
+    return G.cdr_metrics(disc, found[0]) if found else None
+
+
+def test_thinning_leaves_lines_one_pixel_wide():
+    mask = np.zeros((60, 80), bool)
+    mask[25:32, 5:75] = True                                        # a bar 7 px thick
+    line = disc3d._thin(mask)
+    assert line.sum() > 50 and (line[:, 12:68].sum(axis=0) == 1).all()
+    assert (np.nonzero(line[:, 40])[0] == 28).all()                 # along its middle
+    assert not disc3d._thin(np.zeros((10, 10), bool)).any()
+
+
+def test_bends_are_found_where_the_vessels_step_down_into_the_cup():
+    frac = 1 / 3.5
+    for cup in (0.5, 0.7, 0.85):
+        b = disc3d.find_bends(_cupped_picture(cup=cup, pallor=min(0.4, cup - 0.1)), frac)
+        assert b["vessels"] >= 7 and b["xy"].shape == (len(b["r"]), 2)
+        main = b["weight"] >= 0.4 * b["weight"].max()
+        assert np.median(b["r"][main]) == pytest.approx(cup, abs=0.06)
+        x, y = b["xy"].T * 640 - 319.5                              # (fractions of the picture's side)
+        assert np.hypot(x, y) / (640 * frac / 2) == pytest.approx(b["r"], abs=0.01)
+        radius, support = disc3d.margin_from_bends(b)
+        assert radius.shape == support.shape == (360,) and np.median(radius) == pytest.approx(cup, abs=0.05)
+        assert support.mean() > 0.6
+    for straight in (_cupped_picture(bend=False), _cupped_picture(bend=False, pigment=True), _disc_picture()):
+        b = disc3d.find_bends(straight, frac)                       # straight vessels, pigment: no bend
+        assert b["vessels"] == 0 and disc3d.margin_from_bends(b) is None
+    for n, field in ((320, 3.5), (640, 2.5), (640, 5.0)):           # other sizes and fields alike
+        b = disc3d.find_bends(_cupped_picture(n=n, frac=1 / field), 1 / field)
+        assert np.median(disc3d.margin_from_bends(b)[0]) == pytest.approx(0.7, abs=0.05)
+        assert disc3d.find_bends(_cupped_picture(n=n, frac=1 / field, bend=False), 1 / field)["vessels"] == 0
+    # vessels only above and below: the margin is backed there, not at the sides
+    b = disc3d.find_bends(_cupped_picture(angles=(70, 110, 250, 290)), frac)
+    radius, support = disc3d.margin_from_bends(b)
+    assert support[60:120].max() > 0.6 and support[240:300].max() > 0.6     # (y down: 90° is below)
+    assert support[0] < 0.3 and support[180] < 0.3
+    assert disc3d.margin_from_bends({**b, "weight": b["weight"] * 0.05}) is None     # too few to speak of
+
+
+def test_vessels_and_hybrid_read_a_cup_wider_than_its_pallor():
+    frac = 1 / 3.5
+    img = _cupped_picture(cup=0.7, pallor=0.4)
+    surfaces = {}
+    for method in disc3d.METHODS:
+        info = {}
+        H = disc3d.height_one_photo(img, frac, method, info=info)
+        assert H.shape == (256, 256) and H.dtype == np.float32 and H.min() >= -1.0 and info["cup"]
+        surfaces[method] = (H, info)
+    assert np.array_equal(surfaces["pallor"][0], disc3d.height_from_photo(img, frac))
+    cd = {k: _vertical_cd(H)["vertical"] for k, (H, _) in surfaces.items()}
+    assert cd["pallor"] < 0.55                                      # the pale part only
+    assert cd["vessels"] == pytest.approx(0.7, abs=0.07) and cd["hybrid"] == pytest.approx(0.7, abs=0.08)
+    for k in ("vessels", "hybrid"):
+        info = surfaces[k][1]
+        assert info["bends"]["vessels"] >= 7 and info["support"] > 0.6
+    # vessels only above and below: there the margin is theirs, at the sides the pallor's
+    partial = disc3d.height_hybrid(_cupped_picture(angles=(70, 110, 250, 290)), frac)
+    m = _vertical_cd(partial)
+    assert m["vertical"] == pytest.approx(0.7, abs=0.08) and m["horizontal"] < m["vertical"] - 0.1
+    # no bends: no cup from the vessels (a stand-in), and the hybrid is the brightness
+    straight = _cupped_picture(bend=False)
+    info = {}
+    disc3d.height_from_vessels(straight, frac, info=info)
+    assert info["cup"] is False and info["support"] == 0.0
+    info = {}
+    assert np.array_equal(disc3d.height_hybrid(straight, frac, info=info), disc3d.height_from_photo(straight, frac))
+    assert info["cup"] and info["support"] == 0.0
+
+
+def _big_photo(i, rgb):
+    from fundusview.ui.glaucoma_dialog import Photo
+    n = rgb.shape[0]
+    return Photo(i, rgb, "OD", (n / 2, n / 2), n / 3.5, None, True, "2026-01-15 10:00:00", "")
+
+
+def test_tab_shows_the_three_estimates_alone_and_side_by_side(app):
+    from fundusview.ui.glaucoma_dialog import (GlaucomaDialog, S3_COMPARE_PX, S3_GAP, S3_ONE)
+
+    dlg = GlaucomaDialog(_big_photo(1, _cupped_picture()))
+    tab = dlg.surface
+    tab.set_view(-20, 10)                                           # (stops the rocking)
+    assert tab.method == "pallor" and tab.status.text() == S3_ONE and not tab.methods.isHidden()
+    assert tab.sw_bends.isHidden() and not len(tab.bends()[0])
+    v = tab.by_method()
+    assert v["pallor"] < 0.55 and v["vessels"] == pytest.approx(0.7 / 1.05, abs=0.08)
+    assert v["hybrid"] == pytest.approx(v["vessels"], abs=0.06)
+    assert "추정 방식별 수직 C/D" in tab.lbl_cd2.text() and f"<b>밝기 {v['pallor']:.2f}</b>" in tab.lbl_cd2.text()
+    tab.set_method("vessels")
+    assert tab.metrics()["vertical"] == v["vessels"] and f"<b>혈관 꺾임 {v['vessels']:.2f}</b>" in tab.lbl_cd2.text()
+    assert "혈관이 꺾이는 곳" in tab.status.text() and "혈관 8개" in tab.status.text()
+    assert tab.note().startswith("녹내장 분석 — 유두 3D (1장 추정 · 혈관 꺾임) · 추정 수직 C/D")
+    pts, used = tab.bends()
+    assert len(pts) >= 8 and used.sum() >= 7 and not tab.sw_bends.isHidden()
+    marked = tab.compose()
+    tab.sw_bends.setChecked(False)                                  # the bends drawn on the photo
+    assert not (tab.compose() == marked).all()
+    tab.set_method("hybrid")
+    assert "하이브리드" in tab.note() and "밝기로 추정" in tab.status.text()
+    tab.b_apply.click()                                             # the hybrid's cup to the disc tab
+    assert dlg.disc.metrics()["vertical"] == pytest.approx(v["hybrid"], abs=0.01)
+    tab.sw_compare.setChecked(True)
+    assert tab.comparing() and not tab.sw_bends.isHidden()
+    three = tab.compose()
+    assert three.shape == (S3_COMPARE_PX, 3 * S3_COMPARE_PX + 2 * S3_GAP, 3)
+    shown = tab.render()                                            # (with each one's name and C/D over it)
+    assert shown.shape == three.shape and not (shown[:40] == three[:40]).all()
+    assert tab.note() == ("녹내장 분석 — 유두 3D (1장 추정 · 셋 나란히) · 수직 C/D "
+                          f"밝기 {v['pallor']:.2f} · 혈관 꺾임 {v['vessels']:.2f} · 하이브리드 {v['hybrid']:.2f}")
+    tab.sw_compare.setChecked(False)
+    assert tab.compose().shape == (disc3d.TEX_PX, disc3d.TEX_PX, 3)
+    plain = GlaucomaDialog(_big_photo(1, _cupped_picture(bend=False))).surface      # straight vessels
+    plain.set_method("vessels")
+    assert "충분히 찾지 못했습니다" in plain.status.text() and plain.metrics() is None and plain.lbl_cd.text() == "–"
+    plain.set_method("hybrid")
+    assert "[밝기]와 같은 모양" in plain.status.text() and plain.metrics()["vertical"] == plain.by_method()["pallor"]
+
+
+def test_the_stereo_depth_has_no_estimate_to_choose(app):
+    from fundusview.ui.glaucoma_dialog import GlaucomaDialog
+
+    left, right = _stereo_pair()
+    dlg = GlaucomaDialog(_photo(1, left), _photo(2, right))
+    dlg.stereo._timer.stop()
+    dlg.progress._timer.stop()
+    tab = dlg.surface
+    assert tab.source == "stereo" and tab.methods.isHidden() and tab.sw_compare.isHidden() and tab.sw_bends.isHidden()
+    tab.sw_compare.setChecked(True)
+    assert not tab.comparing() and tab.compose().shape == (disc3d.TEX_PX, disc3d.TEX_PX, 3)
+    tab.set_source("a")                                             # one photo of the two: the estimates are back
+    assert not tab.methods.isHidden() and tab.comparing()
+    tab.sw_compare.setChecked(False)
+    tab.set_method("vessels")
+    assert tab.note().startswith("녹내장 분석 — 유두 3D (1장 추정 · 혈관 꺾임)")
