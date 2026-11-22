@@ -599,8 +599,12 @@ class MainWindow(QMainWindow):
         self.act_samples = m.addAction("질환 샘플과 비교…", self.open_samples)
         self.act_samples.setShortcut(QKeySequence("Ctrl+D"))
         self.act_samples.setToolTip("보고 있는 사진을 질환별 샘플 사진과 나란히 비교 (Ctrl+D)")
+        self.act_explain = m.addAction("질환 설명 그림…", self.open_disease_explain)
+        self.act_explain.setShortcut(QKeySequence("Ctrl+Shift+D"))
+        self.act_explain.setToolTip("고른 질환을 단계별 그림으로 환자에게 설명 (Ctrl+Shift+D)")
         m.addAction("보고 있는 사진을 질환 샘플로 등록…", self.register_sample)
         m.addSeparator()
+        m.addAction("프로그램 기본 샘플 다시 넣기", self.restore_builtin_samples)
         m.addAction("질환 샘플 보관 폴더 열기", lambda: QDesktopServices.openUrl(
             QUrl.fromLocalFile(str(self.samples.root.mkdir(parents=True, exist_ok=True) or self.samples.root))))
 
@@ -5356,6 +5360,10 @@ class MainWindow(QMainWindow):
     def samples(self) -> SampleLibrary:
         if self._samples is None or self._samples.root.parent != self.settings.library:
             self._samples = SampleLibrary(self.settings.library)
+            try:                                 # the program's own samples, the first time
+                self._samples.install_builtin()
+            except OSError:
+                pass
         return self._samples
 
     def _sample_photo(self, masked: bool = False) -> tuple[np.ndarray, str] | None:
@@ -5393,6 +5401,23 @@ class MainWindow(QMainWindow):
         dlg.raise_()
         dlg.activateWindow()
         return dlg
+
+    def open_disease_explain(self) -> SampleCompareDialog:
+        """질환 샘플 → 질환 설명 그림 (Ctrl+Shift+D): the 질환 샘플 window on its 환자 설명 그림 page."""
+        dlg = self.open_samples()
+        dlg.set_mode("explain")
+        return dlg
+
+    def restore_builtin_samples(self) -> None:
+        """질환 샘플 → 프로그램 기본 샘플 다시 넣기: the program's samples that were deleted, back."""
+        try:
+            n = self.samples.restore_builtin()
+        except OSError as e:
+            QMessageBox.warning(self._dialog_parent(), "질환 샘플", f"넣지 못했습니다: {e}")
+            return
+        self.lbl_status.setText(f"프로그램 기본 샘플 {n}장을 다시 넣었습니다" if n else "프로그램 기본 샘플이 모두 있습니다")
+        if self._sample_dlg is not None:
+            self._sample_dlg._fill_diseases()
 
     def _sync_samples(self) -> None:
         """The 질환 샘플 window, when open, shows the photo on screen now."""
