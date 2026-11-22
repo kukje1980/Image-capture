@@ -29,7 +29,14 @@ def view(app):
     v.set_rgb(rgb)
     v.geometry = measure.Geometry(400, 300, 290, 176, "internal", "radial")
     app.processEvents()
-    return v
+    yield v
+    # Taken down here, not left on screen for the garbage collector: a view holds itself in reference
+    # cycles, so a dropped one stayed shown until some later collection deleted it — at any moment,
+    # once while it was being painted (a segmentation fault in a later test's processEvents).
+    from PySide6.QtCore import QCoreApplication, QEvent
+    v.close()
+    v.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 def _drag(view, button, a, b, steps=6):
