@@ -598,7 +598,7 @@ def layout_for(n: int) -> int:
 
 class _Reader(QObject):
     """Reads reduced photos on worker threads (``imaging.load_reduced``) for the cells of the larger layouts."""
-    loaded = Signal(object, object)       # (image id, side), RGB array (None: unreadable)
+    loaded = Signal(object, object, int)  # (image id, side), RGB array, cache generation
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -606,23 +606,30 @@ class _Reader(QObject):
 
         self._pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="fundus-review")
         self.busy: set = set()
+        self.generation = 0
 
     def request(self, key, path: str) -> None:
-        if key not in self.busy:
-            self.busy.add(key)
-            self._pool.submit(self._run, key, path)
+        pending = (self.generation, key)
+        if pending not in self.busy:
+            self.busy.add(pending)
+            self._pool.submit(self._run, key, path, self.generation)
 
-    def _run(self, key, path: str) -> None:
+    def invalidate(self) -> None:
+        self.generation += 1
+        self.busy.clear()
+
+    def _run(self, key, path: str, generation: int) -> None:
         try:
             rgb = imaging.load_reduced(path, key[1])
         except Exception:
             rgb = None
         try:
-            self.loaded.emit(key, rgb)
+            self.loaded.emit(key, rgb, generation)
         except RuntimeError:              # the page is gone
             pass
 
     def shutdown(self) -> None:
+        self.invalidate()
         self._pool.shutdown(wait=False, cancel_futures=True)
 
 
@@ -853,7 +860,23 @@ class ReviewPage(QWidget):
             b.setChecked(True)
 
     # -- photos ------------------------------------------------------------------------------------
-    def set_photos(self, rows, current: str | None = None) -> None:
+    def invalidate(self) -> None:
+        """Discard displayed/reduced pixels and pending reads, including hidden cells."""
+        self._reader.invalidate()
+        self._small.clear()
+        self._small_bytes = 0
+        self._photos_key = None
+        self._syncing = True
+        try:
+            for cell in self.cells:
+                cell.pending = None
+                cell.set_photo(None, None)
+                cell.set_overlays(None, None, None)
+        finally:
+            self._syncing = False
+        self.lens.hide()
+
+    def set_photos(self, rows, current: str | None = None, *, force: bool = False) -> None:
         """The patient's ``rows`` (images, any order) and the exam under review (None = the newest).
         The stage is kept when it is still possible; the cells show its default photos again."""
         rows = [r for r in rows if review.is_photo(r)]
@@ -861,10 +884,11 @@ class ReviewPage(QWidget):
         current = current if current in dates else (dates[0] if dates else None)
         # the same photos and the same exam again (a list refresh, a search): leave everything as the
         # user has it — zoom, stage, the prior on screen, the selection, the layout and the page
-        key = (current, tuple((r["id"], r["exam_date"], r["exam_time"], r["laterality"], r["modality"]) for r in rows))
-        if key == getattr(self, "_photos_key", None):
+        key = (current, tuple(tuple(sorted(dict(r).items())) for r in rows))
+        if not force and key == getattr(self, "_photos_key", None):
             self.rows = rows
             return
+        self.invalidate()
         self._photos_key = key
         self.rows, self.current = rows, current
         self.selection = []
@@ -1017,8 +1041,10 @@ class ReviewPage(QWidget):
         if missing:
             cell.empty_text = "파일을 찾을 수 없습니다"
 
-    def _on_reduced(self, key, rgb) -> None:
-        self._reader.busy.discard(key)
+    def _on_reduced(self, key, rgb, generation: int) -> None:
+        self._reader.busy.discard((generation, key))
+        if generation != self._reader.generation:
+            return
         if rgb is not None:
             self._keep_small(key, rgb)
         for cell in self.views:

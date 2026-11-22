@@ -48,7 +48,10 @@ class TimelineTab(_Tab):
 
     def __init__(self, shots=None, current_id: int | None = None, prefer=(), parent=None):
         super().__init__(NEED, parent)
-        self.shots = T.in_order(shots or [])
+        ordered = T.in_order(shots or [])
+        current = next((s for s in ordered if s.image_id == current_id), None)
+        eye = current.eye if current is not None else T.common_eye(ordered)
+        self.shots = [s for s in ordered if s.eye == eye] if eye in ("OD", "OS") else []
         self._by_id = {s.image_id: s for s in self.shots}
         self.current_id, self._prefer = current_id, tuple(prefer)
         self.checked: list[int] = self._default() if len(self.shots) >= 2 else []
@@ -144,7 +147,8 @@ class TimelineTab(_Tab):
         for i, s in enumerate(self.shots):
             it = self.list.item(i)
             gap = T.interval_text(first, s.day) if s.image_id in self.checked else ""
-            bits = [s.day or "날짜 미상", gap, s.caption, "읽지 못함" if s.image_id in self._failed else ""]
+            bits = [s.eye or "눈 미상", s.day or "날짜 미상", gap, s.caption,
+                    "읽지 못함" if s.image_id in self._failed else ""]
             it.setText("  ·  ".join(b for b in bits if b))
             it.setCheckState(Qt.CheckState.Checked if s.image_id in self.checked else Qt.CheckState.Unchecked)
         if self.selected is not None:
@@ -194,12 +198,10 @@ class TimelineTab(_Tab):
             try:
                 for s in todo:
                     photo = s.load() if s.load is not None else None
-                    if photo is None or photo.rgb is None:
+                    if photo is None or photo.rgb is None or photo.eye != s.eye:
                         self._failed.add(s.image_id)
                         continue
                     self._frames[s.image_id] = T.frames_of(photo.rgb, photo.disc, photo.disc_px)
-                    if s.eye is None:
-                        s.eye = photo.eye
             finally:
                 QApplication.restoreOverrideCursor()
         shown = [s.image_id for s in self.shown()]
@@ -438,7 +440,7 @@ class TimelineTab(_Tab):
     # -- dates on the picture ----------------------------------------------------------------------
     def _label(self, shot, first_day: str) -> str:
         gap = T.interval_text(first_day, shot.day)
-        return (shot.day or "날짜 미상") + (f"   {gap}" if gap else "")
+        return f"{shot.eye or '눈 미상'}   " + (shot.day or "날짜 미상") + (f"   {gap}" if gap else "")
 
     @staticmethod
     def _pill(p: QPainter, x: float, y: float, text: str, size: float, color=None) -> None:

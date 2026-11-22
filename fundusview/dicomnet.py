@@ -3,9 +3,10 @@
 설정 → DICOM says where the PACS and the worklist server are (host, port, AE title) and what this
 program calls itself (its own AE title — the PACS must know it).
 
-**전송.** A photo that came as a DICOM file is sent as that file; only when the viewer knows the
-patient differently (the id or name was corrected here) or an order of the worklist belongs to it
-are the patient and the study of the file replaced. A JPEG / PNG photo is wrapped into an
+**전송.** A photo that came as a DICOM file keeps its pixels and original metadata except for the
+patient, eye and acquisition information corrected in the viewer, or a selected worklist order.
+Reassigned patients and converted pixel representations use deterministic identifiers, so retries
+remain the same instance. A JPEG / PNG photo is wrapped into an
 *Ophthalmic Photography 8 Bit Image* (a composed picture — 몽타주, 디스크 2장, 녹내장 분석, an edited
 copy — into a *Secondary Capture Image*). A JPEG goes as it is (JPEG Baseline, no second
 compression) when the PACS takes that, otherwise uncompressed; a PACS that does not take
@@ -23,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import warnings
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -329,6 +331,7 @@ class Item:
     derived: bool = False         # made by the viewer (an edited copy, a montage …)
     order: Order | None = None
     label: str = ""               # for messages: "OD 2026-11-21 컬러"
+    metadata_authoritative: bool = False  # DB values include explicit user-cleared fields
 
 
 def item_of(row, patient, order: Order | None = None, label: str = "", path: str | None = None) -> Item:
@@ -347,7 +350,7 @@ def item_of(row, patient, order: Order | None = None, label: str = "", path: str
         laterality=row["laterality"] or "", kind=kind, device=row["device"] or "",
         fov_deg=row["fov_deg"], note=row["note"] or "",
         derived=kind in COMPOSED or meta.get("derived_from") is not None,
-        order=order, label=label,
+        order=order, label=label, metadata_authoritative=True,
     )
 
 
@@ -481,7 +484,8 @@ def wrap_photo(item: Item, s: Settings, *, jpeg: bool = True, sop_class: str | N
     ds.PatientBirthDate = _da(item.birth_date)
     ds.PatientSex = item.sex if item.sex in ("M", "F", "O") else ""
     ds.StudyInstanceUID = _study_uid(item)
-    ds.StudyDate, ds.StudyTime = date, time
+    ds.StudyDate = _da(order.date) if order is not None and order.date else date
+    ds.StudyTime = _tm(order.time) if order is not None and order.time else time
     ds.AccessionNumber = order.accession if order else ""
     ds.StudyID = (order.procedure_id if order else "")[:16]
     if order is not None and (order.procedure_id or order.step_id):
@@ -518,10 +522,10 @@ def wrap_photo(item: Item, s: Settings, *, jpeg: bool = True, sop_class: str | N
         ds.ConversionType = "WSD"
         ds.DateOfSecondaryCapture, ds.TimeOfSecondaryCapture = now.strftime("%Y%m%d"), now.strftime("%H%M%S")
         if eye:
-            ds.Laterality = eye
+            ds.Laterality = eye if eye in ("R", "L") else ""
     else:
         if not eye:
-            ds.ImageLaterality = "B"                 # type 1 in Ophthalmic Photography
+            ds.ImageLaterality = "U"                 # type 1: unknown is different from bilateral
         ds.NumberOfFrames = 1
         ds.PixelSpacing = None
         ds.AnatomicRegionSequence = [_code("5665001", "SCT", "Retina") if item.kind != "anterior"
@@ -552,9 +556,53 @@ def wrap_photo(item: Item, s: Settings, *, jpeg: bool = True, sop_class: str | N
     return ds
 
 
+def _image_datetime(ds) -> tuple[str, str]:
+    """The acquisition date/time displayed by the importer (not necessarily the study's)."""
+    for day_kw, time_kw in (("AcquisitionDateTime", None), ("ContentDate", "ContentTime"),
+                           ("AcquisitionDate", "AcquisitionTime"), ("SeriesDate", "SeriesTime"),
+                           ("StudyDate", "StudyTime")):
+        value = _text(ds, day_kw)
+        day = norm_date(value[:8], min_year=1990)
+        if day:
+            time = value[8:14] if time_kw is None else _text(ds, time_kw)
+            return day, norm_time(time) or ""
+    return "", ""
+
+
+def _correct_image_datetime(ds, item: Item) -> bool:
+    """Correct acquisition fields; the existing study retains its own date and time."""
+    old_day, old_time = _image_datetime(ds)
+    day_changed = (item.metadata_authoritative or bool(item.exam_date)) and item.exam_date != old_day
+    time_changed = (item.metadata_authoritative or bool(item.exam_time)) and item.exam_time != old_time
+    if day_changed:
+        for keyword in ("SeriesDate", "ContentDate", "AcquisitionDate"):
+            if keyword == "ContentDate" or keyword in ds:
+                setattr(ds, keyword, _da(item.exam_date))
+    if time_changed:
+        for keyword in ("SeriesTime", "ContentTime", "AcquisitionTime"):
+            if keyword == "ContentTime" or keyword in ds:
+                setattr(ds, keyword, _tm(item.exam_time))
+    acquired = _text(ds, "AcquisitionDateTime")
+    if acquired and (day_changed or time_changed):
+        if day_changed and not item.exam_date:
+            ds.AcquisitionDateTime = ""
+            return True
+        day = _da(item.exam_date) if day_changed else acquired[:8]
+        time = acquired[8:]
+        if time_changed:
+            zone = re.search(r"[+-]\d{4}$", time)
+            time = (_tm(item.exam_time) + (zone.group() if zone else "")) if item.exam_time else ""
+        ds.AcquisitionDateTime = day + time
+    return day_changed or time_changed
+
+
 def load_dicom(item: Item, s: Settings):
-    """A photo that came as a DICOM file: the file itself. The patient is written anew only where
-    the viewer knows it differently, the study only when an order belongs to the photo."""
+    """An imported DICOM with the viewer's patient, eye and acquisition corrections.
+
+    Unchanged images retain their original identifiers and tags. A reassigned patient gets a
+    deterministic new study/instance; a corrected image or worklist study gets a separate series
+    and instance so the original SOP identity never moves to a different DICOM hierarchy.
+    """
     import pydicom
     from pydicom.dataset import FileMetaDataset
 
@@ -569,19 +617,53 @@ def load_dicom(item: Item, s: Settings):
             ds.file_meta.TransferSyntaxUID = IMPLICIT_LE
         if "SOPClassUID" not in ds or "SOPInstanceUID" not in ds:
             raise DicomError("DICOM 파일에 SOP Class / Instance UID가 없습니다")
+        source_sop = str(ds.SOPInstanceUID)
+        source_series = _text(ds, "SeriesInstanceUID") or source_sop
+        source_study = _text(ds, "StudyInstanceUID")
         changes: dict[str, str] = {}
-        if item.patient_id and _text(ds, "PatientID").replace(" ", "") != item.patient_id:
+        reassigned = bool(item.patient_id) and _text(ds, "PatientID").replace(" ", "") != item.patient_id
+        if reassigned:
+            # A previous patient's optional history, identifiers and characteristics must not
+            # survive reassignment. Clear the whole patient group, including nested metadata,
+            # then rebuild the required fields from the target patient (unknown values blank).
+            def clear_patient_group(dataset, element):
+                if element.tag.group == 0x0010:
+                    del dataset[element.tag]
+
+            ds.walk(clear_patient_group)
             changes["PatientID"] = item.patient_id
+            # Blanks belong to the new patient too: never inherit the previous patient's values.
+            changes["PatientName"] = _patient_name(item)
+            ds.PatientBirthDate = _da(item.birth_date)
+            ds.PatientSex = item.sex if item.sex in ("M", "F", "O") else ""
+            for keyword in ("AccessionNumber", "StudyID", "RequestAttributesSequence"):
+                if keyword in ds:
+                    delattr(ds, keyword)
+            ds.StudyInstanceUID = make_uid("study", item.patient_id, item.exam_date or "undated")
+            ds.SOPInstanceUID = make_uid("reassigned", source_sop, item.patient_id)
+            ds.file_meta.MediaStorageSOPInstanceUID = ds.SOPInstanceUID
         name = _patient_name(item)
-        if name and (_person_name(ds) or "") != (_display_name(name) or name):
+        if (name or item.metadata_authoritative) and (_person_name(ds) or "") != (_display_name(name) or name):
             changes["PatientName"] = name
         if (name and "PatientName" not in changes and "SpecificCharacterSet" not in ds
                 and not _ascii(pn_text(ds))):
             changes["PatientName"] = name            # a Hangul name without its character set: declared here
-        if item.birth_date and norm_date(_text(ds, "PatientBirthDate")) != item.birth_date:
+        if not reassigned and (item.birth_date or item.metadata_authoritative) and \
+                (norm_date(_text(ds, "PatientBirthDate")) or "") != item.birth_date:
             ds.PatientBirthDate = _da(item.birth_date)
-        if item.sex and norm_sex(_text(ds, "PatientSex")) != item.sex:
-            ds.PatientSex = item.sex
+        if not reassigned and (item.sex or item.metadata_authoritative) and \
+                (norm_sex(_text(ds, "PatientSex")) or "") != item.sex:
+            ds.PatientSex = item.sex if item.sex in ("M", "F", "O") else ""
+        eye = EYES.get(item.laterality, "U" if item.metadata_authoritative else None)
+        series_eye_value = eye if eye in ("R", "L") else ""
+        image_eye, series_eye = _text(ds, "ImageLaterality"), _text(ds, "Laterality")
+        eye_changed = bool(eye) and (eye != (image_eye or series_eye)
+                                   or bool(series_eye and series_eye != series_eye_value))
+        if eye_changed:
+            ds.ImageLaterality = eye
+            if "Laterality" in ds:
+                ds.Laterality = series_eye_value
+        timestamp_changed = _correct_image_datetime(ds, item)
         order = item.order
         if order is not None:
             if order.accession:
@@ -590,6 +672,18 @@ def load_dicom(item: Item, s: Settings):
                 ds.StudyInstanceUID = order.study_uid
             if order.procedure_id and not _text(ds, "StudyID"):
                 ds.StudyID = order.procedure_id[:16]
+        if reassigned or _text(ds, "StudyInstanceUID") != source_study:
+            # New study metadata belongs to the target; an explicit worklist schedule is
+            # authoritative for the study while Series/Content/Acquisition retain capture time.
+            ds.StudyDate = _da(order.date) if order is not None and order.date else _da(item.exam_date)
+            ds.StudyTime = _tm(order.time) if order is not None and order.time else _tm(item.exam_time)
+        if reassigned or eye_changed or timestamp_changed or _text(ds, "StudyInstanceUID") != source_study:
+            if not _text(ds, "StudyInstanceUID"):
+                ds.StudyInstanceUID = _study_uid(item)
+            ds.SeriesInstanceUID = make_uid("corrected-series", source_series, ds.StudyInstanceUID,
+                                             item.patient_id, item.laterality, item.exam_date, item.exam_time)
+            ds.SOPInstanceUID = make_uid("corrected-instance", source_sop, ds.SeriesInstanceUID)
+            ds.file_meta.MediaStorageSOPInstanceUID = ds.SOPInstanceUID
         if changes:
             if not all(_ascii(v) for v in changes.values()):
                 _redeclare(ds, _charset(s))
@@ -713,7 +807,14 @@ def _fit(ds, item: Item, s: Settings, accepted: set[tuple[str, str]]):
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            ds.decompress()
+            source_uid = str(ds.SOPInstanceUID)
+            old_color = _text(ds, "PhotometricInterpretation")
+            ds.decompress(generate_instance_uid=False)
+            if _text(ds, "PhotometricInterpretation") != old_color:
+                # YBR -> RGB changes the pixel representation. Give that conversion its own stable
+                # identity rather than pydicom's randomly generated instance on every retry.
+                ds.SOPInstanceUID = make_uid("decompressed-rgb-v1", source_uid)
+                ds.file_meta.MediaStorageSOPInstanceUID = ds.SOPInstanceUID
     except Exception as exc:
         raise DicomError(f"PACS가 받는 형식으로 압축을 풀지 못했습니다 — {exc}") from exc
     return ds

@@ -270,9 +270,13 @@ def test_dicom_file_goes_unchanged_unless_the_viewer_knows_better(pacs, tmp_path
     original = pydicom.dcmread(path)
     p = pacs()
     s = p.settings()
-    same = photo(path, patient_id="D0009876", name="최유나", birth_date="1979-03-12", sex="F", laterality="OS")
-    fixed = photo(path, image_id=8, patient_id="D0009876", name="최윤아", birth_date="1979-03-12", sex="F")
-    ordered = photo(path, image_id=9, patient_id="D0009876", name="최유나", birth_date="1979-03-12", sex="F",
+    # These cases change only the name/order; use the source's actual eye and acquisition
+    # timestamp rather than photo()'s unrelated defaults, which are real corrections now.
+    same_info = dict(patient_id="D0009876", birth_date="1979-03-12", sex="F", laterality="OS",
+                     exam_date="2026-01-20", exam_time="11:15:02")
+    same = photo(path, name="최유나", **same_info)
+    fixed = photo(path, image_id=8, name="최윤아", **same_info)
+    ordered = photo(path, image_id=9, name="최유나", **same_info,
                     order=Order(patient_id="D0009876", name="최유나", accession="ACC9", study_uid="1.2.3.9"))
     results = dicomnet.send(s, [same, fixed, ordered])
     assert all(r.ok for r in results), [r.message for r in results]

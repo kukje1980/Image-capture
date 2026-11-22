@@ -96,6 +96,8 @@ class ScanPhotoView(QWidget):
                   circle: tuple[float, float, float] | None = None) -> None:
         if rgb is None:
             self._pix = None
+            self._rows, self._centre = (0.0, 1.0), (0.5, 0.5)
+            self.scan, self.dim = None, 1.0
             self.update()
             return
         h, w = rgb.shape[:2]
