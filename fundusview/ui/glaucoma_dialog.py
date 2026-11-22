@@ -789,8 +789,9 @@ class Surface3DTab(_Tab):
     LIMIT = 65.0                                         # how far the surface turns (degrees)
 
     def __init__(self, photo: Photo | None, second: Photo | None = None, parent=None, disc_tab=None,
-                 method: str = "hybrid"):
-        """``method``: how one photo's shape is estimated at first (``disc3d.METHODS``, 설정 → 일반)."""
+                 method: str = "hybrid", stereo_method: str = "parallax_vessels"):
+        """``method``: how one photo's shape is estimated at first (``disc3d.METHODS``, 설정 → 일반);
+        ``stereo_method``: how the stereo depth is drawn at first (``disc3d.STEREO_METHODS``, 설정 → 일반)."""
         super().__init__(NEED_ONE, parent)
         self.photos = [p for p in (photo, second) if p is not None]
         self.disc_tab = disc_tab                         # its green outline is the disc margin here
@@ -802,7 +803,8 @@ class Surface3DTab(_Tab):
         self.source = "stereo" if self.stereo_ok else "a"
         # one photo's estimate: 밝기 · 혈관 꺾임 · 하이브리드 (the last the one a new window opens on)
         self.method = method if method in disc3d.METHODS else "hybrid"
-        self.stereo_method = "parallax_vessels"          # two photos: 시차 · 시차 + 혈관 꺾임
+        # two photos: 시차 · 시차 + 혈관 꺾임 (the last the one a new window opens on)
+        self.stereo_method = stereo_method if stereo_method in disc3d.STEREO_METHODS else "parallax_vessels"
         self.field = "normal"
         self.yaw, self.pitch = -22.0, 14.0
         self.info: dict = {}
@@ -1604,10 +1606,11 @@ class GlaucomaDialog(QDialog):
 
     def __init__(self, current: Photo | None, second: Photo | None = None, *, title_line: str = "",
                  file_stem: str = "녹내장", save_record=None, parent=None, series=None, prefer=(),
-                 start: str | None = None, method: str = "hybrid"):
+                 start: str | None = None, method: str = "hybrid", stereo_method: str = "parallax_vessels"):
         """``series``: the photos of this eye over time (``timeline.Shot`` — 시간별 비교), ``prefer``:
         those of them the user picked; ``start="timeline"`` opens on that tab. ``method``: how the 3D
-        입체 tab estimates one photo's shape at first (``disc3d.METHODS``; 설정 → 일반)."""
+        입체 tab estimates one photo's shape at first (``disc3d.METHODS``; 설정 → 일반), ``stereo_method``:
+        how it draws the stereo depth at first (``disc3d.STEREO_METHODS``; 설정 → 일반)."""
         super().__init__(parent)
         from .timeline_tab import TimelineTab        # (it builds on the widgets of this module)
 
@@ -1627,7 +1630,7 @@ class GlaucomaDialog(QDialog):
         self.tabs.setObjectName("views")
         self.tabs.setDocumentMode(True)
         self.disc = DiscTab(current)
-        self.surface = Surface3DTab(current, second, disc_tab=self.disc, method=method)
+        self.surface = Surface3DTab(current, second, disc_tab=self.disc, method=method, stereo_method=stereo_method)
         self.surface.b_apply.clicked.connect(lambda: self.tabs.setCurrentWidget(self.disc))
         self.wide = WideTab(current)
         self.stereo = StereoTab(candidates)

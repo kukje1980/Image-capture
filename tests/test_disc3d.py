@@ -480,6 +480,17 @@ def test_the_window_opens_on_the_estimate_set_in_the_settings(app):
         assert tab.method == method and tab.methods.key() == method
         assert tab.metrics()["vertical"] == tab.by_method()[method]
     assert GlaucomaDialog(_big_photo(1, _cupped_picture()), method="what").surface.method == "hybrid"
+    # … and the stereo depth on the one set there too (처음 설정: 시차 + 혈관 꺾임)
+    assert Settings().disc3d_stereo_method == "parallax_vessels"
+    left, right = _cupped_stereo_pair()
+    for method in disc3d.STEREO_METHODS:
+        dlg = GlaucomaDialog(_big_photo(1, left), _big_photo(2, right), stereo_method=method)
+        dlg.stereo._timer.stop()
+        dlg.progress._timer.stop()
+        tab = dlg.surface
+        assert tab.source == "stereo" and tab.stereo_method == method and tab.stereo_methods.key() == method
+        assert tab.metrics()["vertical"] == tab.by_method()[method]
+    assert GlaucomaDialog(_big_photo(1, left), stereo_method="what").surface.stereo_method == "parallax_vessels"
 
 
 def _cupped_stereo_pair(bend=True, cup=0.7, shift=8.0):
