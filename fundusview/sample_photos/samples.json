@@ -110,6 +110,32 @@
    ]
   },
   {
+   "disease": "녹내장 (시신경 유두)",
+   "file": "glaucoma_advanced_cup.jpg",
+   "note": "진행된 녹내장 — 유두 함몰(컵)이 커져 테두리(림)가 거의 남지 않음 (시신경 유두 확대 사진)",
+   "credit": "Snoop (German Wikipedia) · CC BY-SA 3.0 · Wikimedia Commons",
+   "author": "Snoop (German Wikipedia)",
+   "license": "CC BY-SA 3.0",
+   "license_url": "https://creativecommons.org/licenses/by-sa/3.0/",
+   "source": "https://commons.wikimedia.org/wiki/File:Glaukompapille2.jpg",
+   "title": "Glaukompapille2.jpg",
+   "changes": []
+  },
+  {
+   "disease": "녹내장 (시신경 유두)",
+   "file": "glaucoma_cupped_disc.jpg",
+   "note": "녹내장 의심 — 유두 함몰(창백한 컵)이 커지고 테두리(림)가 얇아짐 (오른쪽 눈)",
+   "credit": "Joint Shantou International Eye Centre (JSIEC) · 자유 이용 · Zenodo (크기 줄임)",
+   "author": "Joint Shantou International Eye Centre (JSIEC)",
+   "license": "자유 이용",
+   "license_url": "https://zenodo.org/records/3477553",
+   "source": "https://zenodo.org/records/3477553",
+   "title": "1000 Fundus images with 39 categories (JSIEC) — 1000images/10.0.Possible glaucoma/1ffa933c-8d87-11e8-9daf-6045cb817f5b..JPG",
+   "changes": [
+    "크기 줄임"
+   ]
+  },
+  {
    "disease": "망막정맥폐쇄",
    "file": "rvo_branch.jpg",
    "note": "분지 정맥폐쇄 — 상이측 가지의 불꽃 모양 출혈 · 경성 삼출물 (왼쪽 눈)",
@@ -199,6 +225,160 @@
    "changes": []
   },
   {
+   "disease": "황반원공",
+   "file": "mh_full_thickness.jpg",
+   "note": "황반 가운데의 둥근 구멍 — 바닥의 작은 노란 점과 둘레의 들뜬 테두리 (오른쪽 눈)",
+   "credit": "Joint Shantou International Eye Centre (JSIEC) · 자유 이용 · Zenodo (크기 줄임)",
+   "author": "Joint Shantou International Eye Centre (JSIEC)",
+   "license": "자유 이용",
+   "license_url": "https://zenodo.org/records/3477553",
+   "source": "https://zenodo.org/records/3477553",
+   "title": "1000 Fundus images with 39 categories (JSIEC) — 1000images/8.MH/1ffa92e2-8d87-11e8-9daf-6045cb817f5b..JPG",
+   "changes": [
+    "크기 줄임"
+   ]
+  },
+  {
+   "disease": "황반원공",
+   "file": "mh_full_thickness_os.jpg",
+   "note": "황반 가운데의 둥글고 붉은 구멍과 바닥의 노란 점 (왼쪽 눈)",
+   "credit": "Joint Shantou International Eye Centre (JSIEC) · 자유 이용 · Zenodo (크기 줄임)",
+   "author": "Joint Shantou International Eye Centre (JSIEC)",
+   "license": "자유 이용",
+   "license_url": "https://zenodo.org/records/3477553",
+   "source": "https://zenodo.org/records/3477553",
+   "title": "1000 Fundus images with 39 categories (JSIEC) — 1000images/8.MH/1ffa92cf-8d87-11e8-9daf-6045cb817f5b..JPG",
+   "changes": [
+    "크기 줄임"
+   ]
+  },
+  {
+   "disease": "황반전막",
+   "file": "erm_cellophane.jpg",
+   "note": "황반 위쪽을 덮은 얇은 막 — 하얗게 반짝이는 셀로판 모양 반사 (오른쪽 눈)",
+   "credit": "Joint Shantou International Eye Centre (JSIEC) · 자유 이용 · Zenodo (크기 줄임)",
+   "author": "Joint Shantou International Eye Centre (JSIEC)",
+   "license": "자유 이용",
+   "license_url": "https://zenodo.org/records/3477553",
+   "source": "https://zenodo.org/records/3477553",
+   "title": "1000 Fundus images with 39 categories (JSIEC) — 1000images/7.ERM/1ffa9320-8d87-11e8-9daf-6045cb817f5b..JPG",
+   "changes": [
+    "크기 줄임"
+   ]
+  },
+  {
+   "disease": "황반전막",
+   "file": "erm_membrane.jpg",
+   "note": "황반 위쪽으로 하얗게 비치는 막 (오른쪽 눈)",
+   "credit": "Joint Shantou International Eye Centre (JSIEC) · 자유 이용 · Zenodo (크기 줄임)",
+   "author": "Joint Shantou International Eye Centre (JSIEC)",
+   "license": "자유 이용",
+   "license_url": "https://zenodo.org/records/3477553",
+   "source": "https://zenodo.org/records/3477553",
+   "title": "1000 Fundus images with 39 categories (JSIEC) — 1000images/7.ERM/1ffa9321-8d87-11e8-9daf-6045cb817f5b..JPG",
+   "changes": [
+    "크기 줄임"
+   ]
+  },
+  {
+   "disease": "중심장액맥락망막병증",
+   "file": "csc_serous_detachment.jpg",
+   "note": "황반에 고인 장액 — 둥글게 들뜬 망막의 경계가 보임 (왼쪽 눈)",
+   "credit": "Joint Shantou International Eye Centre (JSIEC) · 자유 이용 · Zenodo (크기 줄임)",
+   "author": "Joint Shantou International Eye Centre (JSIEC)",
+   "license": "자유 이용",
+   "license_url": "https://zenodo.org/records/3477553",
+   "source": "https://zenodo.org/records/3477553",
+   "title": "1000 Fundus images with 39 categories (JSIEC) — 1000images/5.0.CSCR/1ffa9670-8d87-11e8-9daf-6045cb817f5b..JPG",
+   "changes": [
+    "크기 줄임"
+   ]
+  },
+  {
+   "disease": "중심장액맥락망막병증",
+   "file": "csc_serous_detachment_od.jpg",
+   "note": "황반이 둥글게 들떠 어둡게 보임 (오른쪽 눈)",
+   "credit": "Joint Shantou International Eye Centre (JSIEC) · 자유 이용 · Zenodo (크기 줄임)",
+   "author": "Joint Shantou International Eye Centre (JSIEC)",
+   "license": "자유 이용",
+   "license_url": "https://zenodo.org/records/3477553",
+   "source": "https://zenodo.org/records/3477553",
+   "title": "1000 Fundus images with 39 categories (JSIEC) — 1000images/5.0.CSCR/1ffa9676-8d87-11e8-9daf-6045cb817f5b..JPG",
+   "changes": [
+    "크기 줄임"
+   ]
+  },
+  {
+   "disease": "병적 근시",
+   "file": "myopia_crescent.jpg",
+   "note": "유두 옆의 큰 근시성 반월(하얀 초승달 모양 위축)과 유두 주위 맥락막 위축 (오른쪽 눈)",
+   "credit": "Jmarchn · CC BY-SA 3.0 · Wikimedia Commons (크기 줄임)",
+   "author": "Jmarchn",
+   "license": "CC BY-SA 3.0",
+   "license_url": "https://creativecommons.org/licenses/by-sa/3.0/",
+   "source": "https://commons.wikimedia.org/wiki/File:Large_Myopic_Crescent_Right_eye.jpg",
+   "title": "Large Myopic Crescent Right eye.jpg",
+   "changes": [
+    "크기 줄임"
+   ]
+  },
+  {
+   "disease": "병적 근시",
+   "file": "myopia_patchy_atrophy.jpg",
+   "note": "황반의 반점 모양 맥락망막 위축(하얀 부분) · 유두 주위 위축 · 바둑판 모양 안저 (오른쪽 눈)",
+   "credit": "Joint Shantou International Eye Centre (JSIEC) · 자유 이용 · Zenodo (크기 줄임)",
+   "author": "Joint Shantou International Eye Centre (JSIEC)",
+   "license": "자유 이용",
+   "license_url": "https://zenodo.org/records/3477553",
+   "source": "https://zenodo.org/records/3477553",
+   "title": "1000 Fundus images with 39 categories (JSIEC) — 1000images/9.Pathological myopia/1ffa94d7-8d87-11e8-9daf-6045cb817f5b..JPG",
+   "changes": [
+    "크기 줄임"
+   ]
+  },
+  {
+   "disease": "병적 근시",
+   "file": "myopia_peripapillary_atrophy.jpg",
+   "note": "유두 둘레의 넓은 위축 · 바둑판 모양 안저 · 황반의 작은 색소 반점 (오른쪽 눈)",
+   "credit": "Joint Shantou International Eye Centre (JSIEC) · 자유 이용 · Zenodo (크기 줄임)",
+   "author": "Joint Shantou International Eye Centre (JSIEC)",
+   "license": "자유 이용",
+   "license_url": "https://zenodo.org/records/3477553",
+   "source": "https://zenodo.org/records/3477553",
+   "title": "1000 Fundus images with 39 categories (JSIEC) — 1000images/9.Pathological myopia/1ffa94e3-8d87-11e8-9daf-6045cb817f5b..JPG",
+   "changes": [
+    "크기 줄임"
+   ]
+  },
+  {
+   "disease": "시신경 유두부종",
+   "file": "papilledema_severe.jpg",
+   "note": "심한 유두부종 — 부어올라 경계가 흐린 유두와 둘레의 출혈 (특발성 두개내압 상승, 오른쪽 눈)",
+   "credit": "DocSee04 · CC BY 4.0 · Wikimedia Commons (크기 줄임)",
+   "author": "DocSee04",
+   "license": "CC BY 4.0",
+   "license_url": "https://creativecommons.org/licenses/by/4.0/",
+   "source": "https://commons.wikimedia.org/wiki/File:Retina_photo_of_a_right_eye,_patient_with_Severe_Idiopathic_Cranial_Hypertension_(aka_Psuedotumor_Cerebri).jpg",
+   "title": "Retina photo of a right eye, patient with Severe Idiopathic Cranial Hypertension (aka Psuedotumor Cerebri).jpg",
+   "changes": [
+    "크기 줄임"
+   ]
+  },
+  {
+   "disease": "시신경 유두부종",
+   "file": "disc_swelling.jpg",
+   "note": "부어오른 유두 — 경계가 흐리고 유두 위 혈관이 묻혀 보임 (원인은 사진만으로 알 수 없음, 오른쪽 눈)",
+   "credit": "Joint Shantou International Eye Centre (JSIEC) · 자유 이용 · Zenodo (크기 줄임)",
+   "author": "Joint Shantou International Eye Centre (JSIEC)",
+   "license": "자유 이용",
+   "license_url": "https://zenodo.org/records/3477553",
+   "source": "https://zenodo.org/records/3477553",
+   "title": "1000 Fundus images with 39 categories (JSIEC) — 1000images/12.Disc swelling and elevation/1ffa95a6-8d87-11e8-9daf-6045cb817f5b..JPG",
+   "changes": [
+    "크기 줄임"
+   ]
+  },
+  {
    "disease": "망막색소변성",
    "file": "rp_mid_stage.jpg",
    "note": "중기 — 중간 주변부의 뼈 조각 모양 색소 · 가늘어진 혈관 · 창백한 유두 (왼쪽 눈)",
@@ -211,53 +391,29 @@
    "changes": []
   },
   {
-   "disease": "녹내장 (시신경 유두)",
-   "file": "glaucoma_advanced_cup.jpg",
-   "note": "진행된 녹내장 — 유두 함몰(컵)이 커져 테두리(림)가 거의 남지 않음 (시신경 유두 확대 사진)",
-   "credit": "Snoop (German Wikipedia) · CC BY-SA 3.0 · Wikimedia Commons",
-   "author": "Snoop (German Wikipedia)",
-   "license": "CC BY-SA 3.0",
-   "license_url": "https://creativecommons.org/licenses/by-sa/3.0/",
-   "source": "https://commons.wikimedia.org/wiki/File:Glaukompapille2.jpg",
-   "title": "Glaukompapille2.jpg",
-   "changes": []
-  },
-  {
-   "disease": "황반원공",
-   "file": "mh_oct.jpg",
-   "note": "OCT 단면 (안저 사진 아님) — 황반 가운데에서 망막이 끊어져 생긴 구멍 (오른쪽 눈)",
-   "credit": "Betty Wills (Atsme) · CC BY-SA 4.0 · Wikimedia Commons (잘라 냄)",
-   "author": "Betty Wills (Atsme)",
-   "license": "CC BY-SA 4.0",
-   "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
-   "source": "https://commons.wikimedia.org/wiki/File:Macular_Hole_side_x_side.jpg",
-   "title": "Macular Hole side x side.jpg",
+   "disease": "망막색소변성",
+   "file": "rp_end_stage.jpg",
+   "note": "말기 — 망막 전체의 색소 침착 · 아주 가늘어진 혈관 · 창백한 유두",
+   "credit": "Christian Hamel (Orphanet J Rare Dis 2006) · CC BY 2.0 · Wikimedia Commons (잘라 냄)",
+   "author": "Christian Hamel (Orphanet J Rare Dis 2006)",
+   "license": "CC BY 2.0",
+   "license_url": "https://creativecommons.org/licenses/by/2.0/",
+   "source": "https://commons.wikimedia.org/wiki/File:Fundus_of_patient_with_retinitis_pigmentosa,_end_stage.jpg",
+   "title": "Fundus of patient with retinitis pigmentosa, end stage.jpg",
    "changes": [
     "잘라 냄"
    ]
   },
   {
-   "disease": "중심장액맥락망막병증",
-   "file": "csc_oct.jpg",
-   "note": "OCT 단면 (안저 사진 아님) — 황반 아래에 고인 맑은 액체로 망막이 들떠 있음 (왼쪽 눈)",
-   "credit": "Ashley Ireland, OD · CC BY-SA 3.0 · Wikimedia Commons",
-   "author": "Ashley Ireland, OD",
-   "license": "CC BY-SA 3.0",
-   "license_url": "https://creativecommons.org/licenses/by-sa/3.0/",
-   "source": "https://commons.wikimedia.org/wiki/File:Macular_OCT_depicting_Central_Serous_Chorioretinopathy_in_the_Left_Eye.png",
-   "title": "Macular OCT depicting Central Serous Chorioretinopathy in the Left Eye.png",
-   "changes": []
-  },
-  {
-   "disease": "중심장액맥락망막병증",
-   "file": "csc_oct_color.jpg",
-   "note": "OCT 단면 (안저 사진 아님, 검사 화면을 찍은 사진) — 황반 아래 액체로 망막이 볼록하게 들뜸",
-   "credit": "Russell Neches · CC BY-SA 3.0 · Wikimedia Commons (크기 줄임)",
-   "author": "Russell Neches",
-   "license": "CC BY-SA 3.0",
-   "license_url": "https://creativecommons.org/licenses/by-sa/3.0/",
-   "source": "https://commons.wikimedia.org/wiki/File:Central_serous_retinopathy.jpg",
-   "title": "Central serous retinopathy.jpg",
+   "disease": "망막색소변성",
+   "file": "rp_bone_spicules.jpg",
+   "note": "중간 주변부의 뼈 조각 모양 색소 · 가늘어진 혈관 (오른쪽 눈)",
+   "credit": "Joint Shantou International Eye Centre (JSIEC) · 자유 이용 · Zenodo (크기 줄임)",
+   "author": "Joint Shantou International Eye Centre (JSIEC)",
+   "license": "자유 이용",
+   "license_url": "https://zenodo.org/records/3477553",
+   "source": "https://zenodo.org/records/3477553",
+   "title": "1000 Fundus images with 39 categories (JSIEC) — 1000images/15.0.Retinitis pigmentosa/1ffa9563-8d87-11e8-9daf-6045cb817f5b..JPG",
    "changes": [
     "크기 줄임"
    ]

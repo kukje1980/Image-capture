@@ -11,7 +11,9 @@ from PIL import Image
 from fundusview import diseases as D
 from fundusview.samples import BUILTIN_DIR, BUILTIN_INDEX, DEFAULT_DISEASES, SampleLibrary
 
-FREE = ("CC0", "퍼블릭 도메인", "CC BY 2.0", "CC BY 3.0", "CC BY 4.0", "CC BY-SA 2.0", "CC BY-SA 3.0", "CC BY-SA 4.0")
+FREE = ("CC0", "퍼블릭 도메인", "CC BY 2.0", "CC BY 3.0", "CC BY 4.0", "CC BY-SA 2.0", "CC BY-SA 3.0", "CC BY-SA 4.0",
+        "자유 이용")                                              # JSIEC: "freely used for any purpose"
+SOURCES = ("https://commons.wikimedia.org/wiki/File:", "https://zenodo.org/records/3477553")
 
 
 def _builtin(folder, n=2):
@@ -50,19 +52,20 @@ def test_the_programs_samples_go_in_once_with_their_credits(tmp_path):
 def test_the_bundled_samples_are_openly_licensed_photos_of_the_diseases():
     items = SampleLibrary.builtin_list()
     data = json.loads((BUILTIN_DIR / BUILTIN_INDEX).read_text("utf-8"))
-    assert len(items) == len(data["photos"]) >= 20            # every listed file is there
+    assert len(items) == len(data["photos"]) >= 30            # every listed file is there
     names = {it["file"] for it in items}
     assert names == {p.name for p in BUILTIN_DIR.iterdir() if p.suffix.lower() in (".jpg", ".png")}
     for it in items:
         assert it["disease"] in DEFAULT_DISEASES, it
         assert any(lic in it["credit"] for lic in FREE), it      # author · licence · source
-        assert it["source"].startswith("https://commons.wikimedia.org/wiki/File:"), it
+        assert it["source"].startswith(SOURCES), it
+        if "자유 이용" in it["credit"]:
+            assert "JSIEC" in it["credit"] and it["source"].startswith("https://zenodo.org/"), it
         with Image.open(BUILTIN_DIR / it["file"]) as im:
             assert max(im.size) <= 1400 and min(im.size) >= 300
-        if "oct" in it["file"]:                                  # not a fundus photo: the note says so
-            assert it["note"].startswith("OCT 단면 (안저 사진 아님"), it
+        assert "OCT" not in it["note"], it                       # fundus photos only
     covered = {it["disease"] for it in items}
-    assert len(covered) >= 11
+    assert covered == set(DEFAULT_DISEASES)                       # every disease has a photo
     assert (BUILTIN_DIR / "CREDITS.md").is_file()
 
 
