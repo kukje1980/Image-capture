@@ -477,6 +477,57 @@ def height_from_stereo(a: np.ndarray, b: np.ndarray, disc_frac: float, n: int = 
     return np.clip(H * _edge_taper(n), -1.0, 1.0).astype(np.float32), info
 
 
+
+STEREO_METHODS = ("parallax", "parallax_vessels")    # two photos: 시차 · 시차 + 혈관 꺾임
+
+
+def merge_bends(*found: dict) -> dict:
+    """The bends of several photos of one disc (registered onto each other) as one ``find_bends``:
+    each photo's bends weigh ``1/len(found)`` — a bend both photos show counts in full, one only
+    one of them shows by half — and ``vessels`` is the most any one photo has."""
+    k = max(1, len(found))
+    keep = [b for b in found if len(b["r"])]
+    if not keep:
+        return found[0] if found else _find_bends(np.zeros((8, 8, 3), np.uint8), 0.3)
+    out = {key: np.concatenate([b[key] for b in keep]) for key in ("xy", "r", "theta", "turn", "weight")}
+    out["weight"] = out["weight"] / k
+    out["vessels"] = max(b["vessels"] for b in found)
+    return out
+
+
+def height_stereo_vessels(a: np.ndarray, b: np.ndarray, disc_frac: float, n: int = 256,
+                          flip: bool = False) -> tuple[np.ndarray, dict]:
+    """Two photos (시차 + 혈관 꺾임): the depth from their parallax (``height_from_stereo``), the cup's
+    margin where the vessels bend (``find_bends`` in both photos, ``merge_bends``). Where vessels
+    bend, the hollow's wall stands there and its floor follows the parallax; round the rest of the
+    disc, and wherever the surface rises, the parallax alone. No bends, or no hollow in the parallax
+    inside their margin (a raised disc, or 깊이 뒤집기): the parallax surface itself.
+    Returns ``(heights, info)``: ``height_from_stereo``'s info with ``"bends"``, ``"support"`` and
+    ``"no_hollow"`` (bends found, but the parallax shows nothing deep where they put the cup)."""
+    H, info = height_from_stereo(a, b, disc_frac, n, flip)
+    bends = merge_bends(find_bends(a, disc_frac), find_bends(b, disc_frac))
+    margin = margin_from_bends(bends)
+    info = {**info, "bends": bends, "support": float(margin[1].mean()) if margin is not None else 0.0,
+            "no_hollow": False}
+    if margin is None:
+        return H, info
+    radius, support = margin
+    frame = {"n": n, "r": _radius(n, disc_frac), "centre": ((n - 1) / 2.0, (n - 1) / 2.0)}
+    angle = _polar(frame)
+    edge = _around(radius, angle)
+    deep = np.clip(-H, 0.0, None)                               # the parallax's hollow (0…1 down)
+    within = _smoothstep((WALL / 2.0 - (frame["r"] - edge)) / WALL) > 0.5
+    top = float(deep[within].max()) if within.any() else 0.0
+    if top < 0.2:                                               # the bends place the wall of a hollow the
+        return H, {**info, "support": 0.0, "no_hollow": True}   # parallax shows — here it shows none
+    hollow = 1.0 - (frame["r"] / np.maximum(edge, 0.05)) ** 2
+    floor = 0.5 * hollow + 0.5 * deep / top
+    walled = _walled(frame, radius, floor)
+    c = _around(support, angle)
+    # where the bends say: the parallax's hollow swapped for the walled one (what rises stays)
+    out = H + c * (deep - walled)
+    return np.clip(out * _edge_taper(n), -1.0, 1.0).astype(np.float32), info
+
 CUP_LEVEL = 0.30         # the cup's margin: this part of the way down to its deepest point
 MIN_CUP_DEPTH = 0.12     # a hollow shallower than this (of height 1) is no cup to measure
 
