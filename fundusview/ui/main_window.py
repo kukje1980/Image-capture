@@ -466,6 +466,7 @@ class MainWindow(QMainWindow):
             m.addAction(a)
         m.addAction(A["discpair"])
         m.addAction(A["glaucoma"])
+        m.addAction("시간별 비교 (이 눈의 유두 사진 여러 장)…", lambda: self.open_glaucoma(start="timeline"))
         m.addAction("몽타주 만들기 (고른 사진)…", lambda: self.open_montage())
         m.addAction(A["print"])
         m.addSeparator()
@@ -3283,6 +3284,8 @@ class MainWindow(QMainWindow):
             menu.addAction("디스크 2장 (② 사진과)…", lambda: self._disc_pair())
             menu.addAction("녹내장 분석 (② 사진과)…", lambda: self.open_glaucoma())
             menu.addAction("두 번째 사진(②) 선택 해제", lambda: self._pick_second(self.compare["id"]))
+        menu.addAction("시간별 비교 (이 눈의 유두 사진들)…",
+                       lambda: (self._show_image(iid) if iid != cur else None, self.open_glaucoma(start="timeline")))
         menu.addAction("원본 폴더 열기", lambda: (self._show_image(iid), self._open_folder()))
         if len(pinned) >= 2 and iid in pinned:
             menu.addAction(f"DICOM 전송 — 고른 사진 {len(pinned)}장 (PACS)…", lambda: self.dicom_send("picked"))
@@ -3684,6 +3687,8 @@ class MainWindow(QMainWindow):
             self._disc_pair()
         elif key == "glaucoma":
             self.open_glaucoma()
+        elif key == "timeline":
+            self.open_glaucoma(start="timeline")
         # -- command toolbar ---------------------------------------------------------
         elif key == "search":                       # 환자 검색: the patient list, the cursor in 환자 ID
             self.show_patient_list(search=True)
@@ -5410,9 +5415,48 @@ class MainWindow(QMainWindow):
                      discpair.disc_diameter_px(src.geometry, src.disc, (rgb.shape[1], rgb.shape[0])),
                      fovea, src.found == "saved", src.when, src.caption)
 
-    def _build_glaucoma(self, second_id: int | None = None):
+    def _glaucoma_series(self, first, eye: str | None, also=()) -> list:
+        """시간별 비교: the photos of ``first``'s patient that show the optic disc of the same eye
+        (``timeline.Shot`` — read only when shown). Photos made by the viewer and photos whose disc
+        was not found are left out; ``first`` and the photos of ``also`` are always in."""
+        from .. import timeline
+
+        rows = self.db.images_for_patient(first["patient_ref"]) if first["patient_ref"] is not None else [first]
+        shots = []
+        for row in rows:
+            must = row["id"] == first["id"] or row["id"] in also
+            if row["modality"] in ("anterior", "disc", "glaucoma", "montage"):
+                continue
+            row_eye = row["laterality"] if row["laterality"] in ("OD", "OS") else None
+            if row_eye is None and row["disc_x"] is not None and row["circle_r"]:
+                row_eye = imaging.laterality_from_disc((row["disc_x"], row["disc_y"]),
+                                                       (row["circle_cx"], row["circle_cy"], row["circle_r"]))
+            if not must and (row["disc_x"] is None or row_eye != eye):
+                continue
+            prof = get_profile(row["profile"])
+            fov = f"{row['fov_deg']:g}°" if row["fov_deg"] else ""
+            caption = " · ".join(x for x in (fov, MODALITY_LABELS.get(row["modality"] or "", ""),
+                                             row["device"] or prof.name) if x)
+            when = f"{row['exam_date'] or ''} {row['exam_time'] or ''}".strip()
+            shots.append(timeline.Shot(row["id"], when, row_eye, caption,
+                                       lambda row=row: self._glaucoma_shot(row)))
+        return shots
+
+    def _glaucoma_shot(self, row) -> Photo | None:
+        """Read one photo of the timeline (not into the cache of the photos on screen)."""
+        rgb = self._cache.get(row["id"])
+        if rgb is None:
+            path = self._image_path(row)
+            try:
+                rgb = imaging.load_rgb(path) if path is not None else None
+            except Exception:
+                rgb = None
+        return self._glaucoma_photo(row, rgb) if rgb is not None else None
+
+    def _build_glaucoma(self, second_id: int | None = None, start: str | None = None):
         """``(dialog, "")`` for the shown photo — with ``second_id`` (default: the ② photo, if one
-        is picked) as its pair for stereo and progression — or ``(None, why not)``."""
+        is picked) as its pair for stereo and progression, and the photos of the same eye for 시간별
+        비교 (``start="timeline"``: opened there) — or ``(None, why not)``."""
         if self.current is None:
             return None, "사진을 고르세요."
         first = self.db.get_image(self.current["id"])
@@ -5434,12 +5478,15 @@ class MainWindow(QMainWindow):
         bits = [p["name"] or "(이름 없음)", f"ID {p['patient_id']}"] if p is not None else ["미분류"]
         bits += [ph.caption for ph in photos]
         stem = "_".join(x for x in (p["patient_id"] if p is not None else "", "녹내장", first["exam_date"] or "") if x)
+        prefer = self._multi_picks() if self._own_picks() else ()       # photos picked by hand: those first
         dlg = GlaucomaDialog(photos[0], photos[1] if len(photos) == 2 else None, title_line="  ·  ".join(bits),
-                             file_stem=safe_component(stem, "녹내장"), save_record=self._save_glaucoma, parent=self)
+                             file_stem=safe_component(stem, "녹내장"), save_record=self._save_glaucoma, parent=self,
+                             series=self._glaucoma_series(first, photos[0].eye, [r["id"] for r in rows[1:]]),
+                             prefer=prefer, start=start)
         return dlg, ""
 
-    def open_glaucoma(self, second_id: int | None = None) -> None:
-        dlg, why = self._build_glaucoma(second_id)
+    def open_glaucoma(self, second_id: int | None = None, start: str | None = None) -> None:
+        dlg, why = self._build_glaucoma(second_id, start)
         if dlg is None:
             QMessageBox.information(self, "녹내장 분석", why)
             return

@@ -6,7 +6,8 @@ photo on screen goes to **디스크 C/D** (cut around its optic disc), **3D 입�
 surface to turn — from one photo, or from the parallax of two) and **광각 분석** (its disc and
 fovea, found at import, are already marked); with a second photo picked (Ctrl+click, ②) the two
 go to **스테레오 보기** and **경과 비교**, cut around their discs to the same retinal field so
-that different cameras compare.
+that different cameras compare. **시간별 비교** (``timeline_tab.py``) takes every photo of that eye:
+side by side in the order of time, or on top of each other.
 What a tab shows can be saved into the patient record as a new photo (the originals stay as they
 are), written to a file or copied.
 """
@@ -1399,8 +1400,13 @@ class GlaucomaDialog(QDialog):
     stores the shown picture in the patient record and returns its id."""
 
     def __init__(self, current: Photo | None, second: Photo | None = None, *, title_line: str = "",
-                 file_stem: str = "녹내장", save_record=None, parent=None):
+                 file_stem: str = "녹내장", save_record=None, parent=None, series=None, prefer=(),
+                 start: str | None = None):
+        """``series``: the photos of this eye over time (``timeline.Shot`` — 시간별 비교), ``prefer``:
+        those of them the user picked; ``start="timeline"`` opens on that tab."""
         super().__init__(parent)
+        from .timeline_tab import TimelineTab        # (it builds on the widgets of this module)
+
         self.setWindowTitle("녹내장 분석")
         self._save_record, self.file_stem = save_record, file_stem
         self.saved_id: int | None = None
@@ -1421,13 +1427,17 @@ class GlaucomaDialog(QDialog):
         self.wide = WideTab(current)
         self.stereo = StereoTab(pair)
         self.progress = ProgressTab(pair)
+        self.timeline = TimelineTab(series, current.image_id if current is not None else None, prefer)
         self.explain = ExplainTab()
         for tab, text in ((self.disc, "디스크 C/D"), (self.surface, "3D 입체"), (self.wide, "광각 분석"),
-                          (self.stereo, "스테레오 보기"), (self.progress, "경과 비교"), (self.explain, "환자 설명")):
+                          (self.stereo, "스테레오 보기"), (self.progress, "경과 비교"), (self.timeline, "시간별 비교"),
+                          (self.explain, "환자 설명")):
             self.tabs.addTab(tab, text)
         if pair is not None:        # two photos of one day: a stereo pair; of two days: a follow-up
             same_day = current.day and current.day == second.day
             self.tabs.setCurrentWidget(self.stereo if same_day else self.progress)
+        if start == "timeline":
+            self.tabs.setCurrentWidget(self.timeline)
         root.addWidget(self.tabs, 1)
         foot = _note("측정값은 참고용 추정값입니다. 진단은 의사가 사진을 보고 판단하세요. "
                      "깊이 지도와 3D 입체는 상대값이며 절대 길이가 아닙니다.")
