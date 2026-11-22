@@ -72,6 +72,7 @@ from .dialogs import WHEEL3D, ImageDialog, PatientDialog, SettingsDialog, source
 from .dicom_dialogs import DicomSendDialog, WorklistDialog
 from .disc_pair import DiscPairDialog
 from .glaucoma_dialog import GlaucomaDialog, Photo
+from .icons import icon as line_icon
 from .depth_bar import DepthBar, ZoomBar
 from .eye3d import EyeView
 from .pair3d import MAX_EYES as MAX_3D, Pair3D
@@ -770,6 +771,7 @@ class MainWindow(QMainWindow):
         self.multi.opened.connect(self._open_cell)
         self.multi.layoutChanged.connect(self._on_multi_layout)
         self.multi.stepped.connect(self._step_cell)
+        self.multi.menuRequested.connect(self._cell_menu)
         self.multi.set_closeups(bool(self.settings.simple_closeups))     # 황반 · 디스크 as left last time
         self.multi.set_hover_loupe(bool(self.settings.hover_loupe))
         self.tabs.addTab(self.multi, "다중 보기")
@@ -3292,6 +3294,49 @@ class MainWindow(QMainWindow):
         menu.addAction("다시 분석 (원·시신경 검출)", lambda: self._reanalyse(iid))
         menu.addAction("목록에서 제거…", lambda: self._remove_image(iid))
         menu.exec(global_pos)
+
+    def _cell_menu(self, iid: int, menu: QMenu) -> None:
+        """Right click on a photo of Simple · Multi (the cell is selected by it): what the command
+        toolbar does with the photos on screen — 3D · Montage · Glaucoma — at the top of the photo's
+        own menu, without going down to the toolbar."""
+        ids = self._picked_ids()
+        n = len(ids)
+        menu.addAction(line_icon("eye3d"), "3D — 이 사진", lambda: self._cell_3d(iid))
+        if n >= 2:
+            more = f" (앞의 {MAX_3D}장)" if n > MAX_3D else f" ({n}장)"
+            menu.addAction(line_icon("eye3d"), f"3D — 화면의 사진 모두{more}", lambda: self._cell_3d(iid, ids))
+        a = menu.addAction(line_icon("montage"), f"Montage — 화면의 사진 {n}장…" if n >= 2 else "Montage…",
+                           lambda: self.open_montage())
+        a.setEnabled(n >= 2)
+        if n < 2:
+            a.setToolTip("몽타주는 사진 2장 이상(같은 눈)을 골라야 만들 수 있습니다")
+        menu.addAction(line_icon("glaucoma"), "Glaucoma — 녹내장 분석…", lambda: self._cell_run(iid, self.open_glaucoma))
+        others = [i for i in ids if i != iid]
+        if len(others) == 1:               # two on screen: the pair, without picking ② first
+            other = others[0]
+            menu.addAction("Glaucoma — 다른 한 장과 함께 (스테레오 · 경과)…",
+                           lambda: self._cell_run(iid, lambda: self.open_glaucoma(other)))
+            menu.addAction("디스크 2장 (다른 한 장과)…", lambda: self._cell_run(iid, lambda: self._disc_pair(other)))
+        elif self.compare is not None and self.compare["id"] != iid:
+            menu.addAction("디스크 2장 (② 사진과)…", lambda: self._cell_run(iid, self._disc_pair))
+        menu.addSeparator()
+        menu.addAction(line_icon("detail"), "Detail — 크게 보기", lambda: self.open_large(iid))
+        menu.addAction("환자 지정/정보 수정…", lambda: self._cell_run(iid, self._edit_image))
+        menu.addAction("DICOM 전송 (PACS)…", lambda: self.dicom_send("one", iid))
+
+    def _cell_run(self, iid: int, fn) -> None:
+        """``fn`` with the photo ``iid`` as the one being looked at."""
+        if self.current is None or self.current["id"] != iid:
+            self._select_from_multi(iid)
+        fn()
+
+    def _cell_3d(self, iid: int, ids: list[int] | None = None) -> None:
+        """The cell's photo on the 3D eye — or, with ``ids``, each of them on its own eye (여러 장 3D)."""
+        if self.current is None or self.current["id"] != iid:
+            self._select_from_multi(iid)
+        if ids and len(ids) >= 2 and self._open_pair3d(ids[:MAX_3D]):
+            return
+        self._go("3d")
 
     # =====================================================================
     # image display
