@@ -30,6 +30,8 @@ from .widgets import RoundCorners
 LAYOUTS = {1: (1, 1), 2: (1, 2), 4: (2, 2), 6: (2, 3), 9: (3, 3), 16: (4, 4)}
 CLOSEUP_MAX = 4                 # 황반 · 디스크 under the photos up to this many cells
 CLOSEUPS = (("macula", "황반"), ("disc", "시신경 유두"))
+HEAD_MARGIN = 8                 # the cell's title: this far from the photo pane's top-left corner
+HEAD_BG = "rgba(0, 0, 0, 150)"  # … on a dark see-through pill, readable on the retina too
 
 
 class _Cell(QFrame):
@@ -40,20 +42,24 @@ class _Cell(QFrame):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(1, 1, 1, 1)
         lay.setSpacing(0)
-        self.label = QLabel()
-        self.label.setStyleSheet(f"background:{theme.CARD}; color:{theme.TEXT2}; padding:3px 6px; font-size:11px")
-        # the photo the processing toolbar works on: framed in blue (select), and a small blue 보정 badge at
-        # the right of its header (with two cells or more)
-        self.badge = _active_badge()
-        hl = QHBoxLayout(self.label)
-        hl.setContentsMargins(0, 0, 4, 0)
-        hl.addStretch(1)
-        hl.addWidget(self.badge, 0, Qt.AlignmentFlag.AlignVCenter)
         self.view = ImageView()
         self.view.click_loupe = True        # not zoomed yet: the left button held shows the loupe
-        self.view.round.hide()              # (the cell is round, header and photo together)
+        self.view.round.hide()              # (the cell is round, its frame and photo together)
         self.nav = EdgeNav(self.view)       # ◀ ▶ at its sides (Simple; nowhere to go until told)
-        lay.addWidget(self.label)
+        # the cell's title (number · OD/OS · date · kind): on the photo, in its top-left corner — no bar of
+        # its own above it, so the photo has the cell's whole height (set_head). Clicks, the wheel and drags
+        # go through it to the photo.
+        self.label = QLabel(self.view)      # (over the viewport, not in it: a scrolled photo takes the
+                                            # viewport's own children along)
+        self.label.setObjectName("cellHead")
+        self.label.setTextFormat(Qt.TextFormat.RichText)
+        self.label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.label.setStyleSheet(f"QLabel#cellHead {{ background: {HEAD_BG}; color: {theme.TEXT}; border: none; "
+                                 "border-radius: 6px; padding: 2px 7px; font-size: 12px; }")
+        self.label.hide()
+        # the photo the processing toolbar works on: framed in blue (select), and a small blue 보정 badge
+        # right after its title (with two cells or more)
+        self.badge = _active_badge(self.view)
         lay.addWidget(self.view, 3)
         # 황반 · 디스크: the photo's macula and optic disc enlarged, side by side under it (set_closeups)
         self.closeups = QWidget()
@@ -86,6 +92,19 @@ class _Cell(QFrame):
         self.round = RoundCorners(self)     # the cell's corners are round, and so is its frame
         self.select(False)
 
+    def set_head(self, html: str) -> None:
+        """The title on the photo's top-left corner ('' : none), the 보정 badge right after it."""
+        lab, badge = self.label, self.badge
+        lab.setText(html)
+        lab.adjustSize()
+        lab.move(HEAD_MARGIN, HEAD_MARGIN)
+        lab.setVisible(bool(html))
+        badge.adjustSize()
+        x = lab.x() + lab.width() + 6 if html else HEAD_MARGIN
+        badge.move(x, lab.y() + (lab.height() - badge.height()) // 2 if html else HEAD_MARGIN)
+        lab.raise_()
+        badge.raise_()
+
     def select(self, on: bool) -> None:
         """The cell whose photo the processing toolbar works on (the one clicked last): framed in blue,
         with its blue 보정 badge (MultiView._sync_badges)."""
@@ -94,11 +113,11 @@ class _Cell(QFrame):
         self.round.set_border(theme.ACCENT if on else theme.CARD)
 
 
-def _active_badge() -> QFrame:
+def _active_badge(parent: QWidget | None = None) -> QFrame:
     """보정: a blue pill with a white tools icon — on the cell whose photo the processing toolbar works on."""
     from PySide6.QtGui import QPainter
 
-    badge = QFrame()
+    badge = QFrame(parent)
     badge.setObjectName("cellActive")
     badge.setStyleSheet(f"QFrame#cellActive {{ background:{theme.ACCENT}; border:none; border-radius:6px; }}"
                         "QLabel { background:transparent; border:none; color:#ffffff; font-size:11px; "
@@ -214,12 +233,12 @@ class MultiView(QWidget):
                 same = (cell.image_id == iid and cell.view._rgb is not None
                         and cell.view._rgb.shape == rgb.shape)
                 cell.image_id = iid
-                cell.label.setText(label)
+                cell.set_head(label)
                 cell.view.set_rgb(rgb, keep_view=same)
                 cell.select(iid == current_id)
             else:
                 cell.image_id = None
-                cell.label.setText("")
+                cell.set_head("")
                 cell.view.set_rgb(None)
                 for z in cell.zooms.values():
                     z.set_rgb(None)
@@ -244,7 +263,7 @@ class MultiView(QWidget):
         self.populate([], None)
         for cell in self.cells:
             cell.image_id = None
-            cell.label.setText("")
+            cell.set_head("")
             cell.view.set_rgb(None)
             for view in cell.zooms.values():
                 view.set_rgb(None)
