@@ -390,6 +390,71 @@ class SettingsDialog(QDialog):
         self._share_changed()
         tabs.addTab(w5, "공유")
 
+        # -- DICOM (dicomnet.py): PACS 전송 · 워크리스트 ----------------------------------
+        from .. import dicomnet
+        w6 = QWidget()
+        f6 = QFormLayout(w6)
+        self.dicom_ae = QLineEdit(settings.dicom_ae)
+        self.dicom_ae.setMaxLength(16)
+        self.dicom_ae.setPlaceholderText("FUNDUSVIEWER")
+        self.dicom_ae.setToolTip("이 프로그램의 이름(AE Title, 16자까지) — PACS와 워크리스트 서버에 등록되어 있어야 합니다")
+        f6.addRow("이 프로그램의 AE Title", self.dicom_ae)
+
+        def server(host: str, port: int, ae: str, tip: str):
+            row = QHBoxLayout()
+            e_host, e_port, e_ae = QLineEdit(host), QSpinBox(), QLineEdit(ae)
+            e_host.setPlaceholderText("서버 주소 — 예: 192.168.0.20")
+            e_port.setRange(1, 65535)
+            e_port.setValue(int(port or 104))
+            e_port.setToolTip("포트 (보통 104 또는 11112)")
+            e_ae.setMaxLength(16)
+            e_ae.setPlaceholderText("서버의 AE Title")
+            test = QPushButton("연결 시험")
+            test.setToolTip(tip)
+            row.addWidget(e_host, 3)
+            row.addWidget(QLabel("포트"))
+            row.addWidget(e_port)
+            row.addWidget(QLabel("AE Title"))
+            row.addWidget(e_ae, 2)
+            row.addWidget(test)
+            return row, e_host, e_port, e_ae, test
+
+        row, self.pacs_host, self.pacs_port, self.pacs_ae, b = server(
+            settings.pacs_host, settings.pacs_port, settings.pacs_ae, "PACS에 연결되는지 확인합니다 (C-ECHO)")
+        b.clicked.connect(lambda: self._test_dicom(self.pacs_host, self.pacs_port, self.pacs_ae, "PACS"))
+        f6.addRow("PACS (사진 전송)", row)
+        row, self.mwl_host, self.mwl_port, self.mwl_ae, b = server(
+            settings.mwl_host, settings.mwl_port, settings.mwl_ae, "워크리스트 서버에 연결되는지 확인합니다 (C-ECHO)")
+        b.clicked.connect(lambda: self._test_dicom(self.mwl_host, self.mwl_port, self.mwl_ae, "워크리스트 서버"))
+        f6.addRow("워크리스트 서버", row)
+        self.mwl_modality = QLineEdit(settings.mwl_modality)
+        self.mwl_modality.setMaxLength(16)
+        self.mwl_modality.setPlaceholderText("비우면 모든 검사")
+        self.mwl_modality.setToolTip("워크리스트에서 이 Modality의 검사만 조회하고, 전송하는 사진의 Modality로 씁니다\n"
+                                     "안저 사진: OP (Ophthalmic Photography) — 병원 전산에서 쓰는 값에 맞추세요 (예: XC · OT)")
+        f6.addRow("Modality (검사 종류)", self.mwl_modality)
+        self.mwl_own_station = QCheckBox("이 프로그램의 AE Title로 예약된 검사만 조회")
+        self.mwl_own_station.setChecked(bool(settings.mwl_own_station))
+        f6.addRow("", self.mwl_own_station)
+        self.dicom_charset = _combo(list(dicomnet.CHARSETS), settings.dicom_charset)
+        f6.addRow("한글 이름 문자셋", self.dicom_charset)
+        self.dicom_sop = _combo([("op", "Ophthalmic Photography — PACS가 받지 않으면 Secondary Capture로"),
+                                 ("sc", "Secondary Capture (모든 PACS가 받는 일반 영상)")], settings.dicom_sop)
+        self.dicom_sop.setToolTip("JPEG · PNG 사진을 어떤 DICOM 영상으로 보낼지 — DICOM 파일로 들어온 사진은 그 파일 그대로 보냅니다")
+        f6.addRow("JPEG · PNG 사진은", self.dicom_sop)
+        self.dicom_jpeg = QCheckBox("JPEG 사진은 압축된 그대로 전송 (PACS가 받지 않으면 비압축으로)")
+        self.dicom_jpeg.setChecked(bool(settings.dicom_jpeg))
+        f6.addRow("", self.dicom_jpeg)
+        self.dicom_institution = QLineEdit(settings.dicom_institution)
+        self.dicom_institution.setPlaceholderText("전송하는 사진에 적을 병원 이름 (Institution Name)")
+        f6.addRow("병원 이름", self.dicom_institution)
+        self.dicom_info = QLabel("전송: 파일 → DICOM (PACS) · 사진 오른쪽 클릭 → DICOM 전송.  워크리스트: 환자 → 워크리스트 "
+                                 "(Ctrl+L).<br>PACS · 워크리스트 서버 쪽에도 이 컴퓨터의 AE Title · IP 주소가 등록되어 있어야 합니다.")
+        self.dicom_info.setWordWrap(True)
+        self.dicom_info.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        f6.addRow("", self.dicom_info)
+        tabs.addTab(w6, "DICOM")
+
         # -- filename rules -------------------------------------------------------
         w3 = QWidget()
         l3 = QVBoxLayout(w3)
@@ -523,6 +588,40 @@ class SettingsDialog(QDialog):
         finally:
             remote.close()
 
+    def dicom_settings(self) -> Settings:
+        """The DICOM tab as settings of its own (연결 시험 tries what is typed, before 확인)."""
+        s = Settings()
+        self._apply_dicom(s)
+        return s
+
+    def _apply_dicom(self, s: Settings) -> None:
+        s.dicom_ae = self.dicom_ae.text().strip().upper() or "FUNDUSVIEWER"
+        s.pacs_host, s.pacs_port, s.pacs_ae = (self.pacs_host.text().strip(), self.pacs_port.value(),
+                                               self.pacs_ae.text().strip())
+        s.mwl_host, s.mwl_port, s.mwl_ae = (self.mwl_host.text().strip(), self.mwl_port.value(),
+                                            self.mwl_ae.text().strip())
+        s.mwl_modality = self.mwl_modality.text().strip().upper()
+        s.mwl_own_station = self.mwl_own_station.isChecked()
+        s.dicom_charset = self.dicom_charset.currentData()
+        s.dicom_sop = self.dicom_sop.currentData()
+        s.dicom_jpeg = self.dicom_jpeg.isChecked()
+        s.dicom_institution = self.dicom_institution.text().strip()
+
+    def _test_dicom(self, host: QLineEdit, port: QSpinBox, ae: QLineEdit, what: str) -> None:
+        from .. import dicomnet
+        node = dicomnet.Node(host.text().strip(), port.value(), ae.text().strip())
+        if not node.ok:
+            self.dicom_info.setText(f"{what}의 서버 주소를 입력하세요 (예: 192.168.0.20).")
+            return
+        try:
+            dicomnet.echo(self.dicom_settings(), node, timeout=5)
+            self.dicom_info.setText(f"<span style='color:#34d399'>연결되었습니다</span> — {what} {node.label}")
+        except dicomnet.DicomError as exc:
+            self.dicom_info.setText(f"<span style='color:#ff6961'>연결하지 못했습니다</span> — {what}: {exc}")
+        except Exception as exc:
+            self.dicom_info.setText(f"<span style='color:#ff6961'>연결하지 못했습니다</span> — {what}: "
+                                    f"{type(exc).__name__}: {exc}")
+
     def _pick_library(self) -> None:
         d = QFileDialog.getExistingDirectory(self, "라이브러리 폴더 선택", self.library.text())
         if d:
@@ -572,6 +671,7 @@ class SettingsDialog(QDialog):
         s.thumb_date = self.thumb_date.isChecked()
         s.thumb_kind = self.thumb_kind.isChecked()
         s.custom_filename_patterns = [p for p in self.patterns.toPlainText().splitlines() if p.strip()]
+        self._apply_dicom(s)
         from .. import share
         s.share_mode = self.share_mode.currentData()
         s.share_port = self.share_port.value()

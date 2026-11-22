@@ -7,6 +7,8 @@ Windows 10 / 11 · macOS 14 (Sonoma) 이상용 안저카메라 전용 뷰어입�
 우선 회사 초광각 모델 **SYSEYE RetiCam 3100 Plus (1회 176° · 몽타주 220°)** 에 맞춰
 만들었고, **Microclear APOLLO (WA 135° / UWA 165°)**, **Kowa VK-2 / VK-2s** (nonmyd·VX
 시리즈) 출력과 일반 안저카메라 파일도 읽습니다.
+병원 전산과는 DICOM으로 이어집니다 — **워크리스트**에서 그날 예약된 환자를 열고, 사진을 **PACS로 전송**합니다
+([아래](#dicom-전송-pacs--워크리스트)).
 
 | Detail (큰 사진 · 황반 · 시신경 유두) | 3D 안구 — 간단히 |
 |---|---|
@@ -179,6 +181,57 @@ Mac 앱(Apple Silicon)을 빌드·시험하며, 기본 브랜치(`fundus-viewer`
 
 > 접속은 암호 하나로 지키는 **병원 내부망용**(암호화하지 않은 HTTP)입니다. 인터넷에 직접 열지 마세요 — 병원 밖에서
 > 쓰려면 VPN을 거치세요. 두 컴퓨터가 같은 항목을 동시에 고치면 나중에 저장한 값이 남습니다.
+
+## DICOM 전송 (PACS) · 워크리스트
+
+| 워크리스트 — 그날 예약된 검사 | DICOM 전송 — 사진마다 환자 · 검사 · 결과 |
+|---|---|
+| ![워크리스트](docs/dicom_worklist.jpg) | ![DICOM 전송](docs/dicom_send.jpg) |
+
+병원 전산과 DICOM으로 이어집니다: **워크리스트**에서 그날 예약된 환자를 골라 열고, 찍은 사진을 **PACS로 전송**합니다.
+
+**1. 설정 → DICOM** — 한 번만 합니다.
+
+![설정 → DICOM](docs/settings_dicom.jpg)
+
+* **이 프로그램의 AE Title**(예: `EYEROOM1`, 16자까지)과 **PACS** · **워크리스트 서버**의 주소 · 포트 · AE Title을 적고
+  **[연결 시험]** 을 누릅니다. PACS · 워크리스트 서버 쪽에도 이 컴퓨터의 AE Title과 IP 주소가 등록되어 있어야 합니다
+  (PACS 담당자에게 요청). 연결되지 않으면 그 까닭(주소 · 포트 · AE Title 거부)이 나옵니다.
+* **Modality**: 워크리스트에서 이 종류의 검사만 조회하고, 보내는 사진에도 적습니다(처음 설정 `OP`, 비우면 모든 검사).
+  병원 전산이 안저 촬영을 다른 값(`XC` · `OT`)으로 예약한다면 그 값을 적습니다.
+* **한글 이름 문자셋**: 국내 PACS는 보통 `ISO 2022 IR 149`(처음 설정)입니다. 이름이 깨져 보이면 UTF-8로 바꿔 봅니다.
+
+**2. 워크리스트** — 환자 → **워크리스트** (Ctrl+L) 또는 환자 목록 창의 **[워크리스트]**.
+
+* 그날 예약된 검사가 시각 순으로 나옵니다. ◀ ▶ · 달력 · **[오늘]** 로 날짜를 바꾸고, 환자 ID · 이름으로 찾습니다. **[조회]**(F5)는
+  서버에서 다시 읽습니다.
+* 환자를 **두 번 누르면**(Enter · [환자 열기]) 그 환자가 열립니다. 처음 보는 환자는 ID · 이름 · 생년월일 · 성별이 그대로
+  등록됩니다. 이미 등록된 환자는 등록된 정보가 그대로 남고, 이름이 다르면 목록에 "이름이 다릅니다"라고 나옵니다.
+* 환자 정보가 없는 사진(RetiCam의 `IMG_0001.jpg` …)을 **[사진 가져오기]** 로 넣으면 확인 창이 방금 연 환자를 권합니다 —
+  한 번 눌러 그 환자의 사진으로 가져옵니다.
+* 워크리스트에서 연 환자의 **그날 사진**은 그 검사의 **Accession No. · Study Instance UID**로 전송됩니다. PACS에서 사진이
+  처방(오더)과 바로 묶입니다. 워크리스트 없이 보낸 사진은 환자 ID와 검사일로 묶입니다(같은 환자 · 같은 날 = 한 검사).
+
+**3. DICOM 전송** — 파일 → **DICOM (PACS)** → 보고 있는 사진 / 고른 사진 / 이 검사일의 사진 / 이 환자의 사진 모두, 또는 사진을
+**오른쪽 클릭 → DICOM 전송 (PACS)…**.
+
+* 전송 창에서 **[전송]** 을 누르면 사진마다 결과가 나옵니다(전송됨 · 실패한 까닭). 실패하거나 **[중지]** 한 사진만
+  **[다시 전송]** 할 수 있습니다. 전송 기록은 파일 → 가져오기 기록에도 남습니다.
+* **무엇이 가는가**
+  * DICOM 파일로 들어온 사진(VK-2 …): **그 파일 그대로**. 뷰어에서 환자 ID · 이름을 고쳤거나 워크리스트의 검사가 있을 때만
+    환자 · 검사 항목을 바꿔 보냅니다(보관함의 파일은 바뀌지 않습니다).
+  * JPEG · PNG 사진: 환자 정보 · 검사일 · 시각 · 눈(OD → R, OS → L) · 장비 · 화각을 넣은 **Ophthalmic Photography 8 Bit**
+    영상. JPEG은 다시 압축하지 않고 그대로 넣습니다(JPEG Baseline). PACS가 Ophthalmic Photography나 JPEG을 받지 않으면
+    저절로 **Secondary Capture** · **비압축**으로 바꿔 보냅니다(설정에서 처음부터 그렇게 정할 수도 있습니다).
+  * 뷰어가 만든 사진(몽타주 · 디스크 2장 · 녹내장 분석 · 편집 영상): Secondary Capture.
+* **미분류**(환자가 지정되지 않은) 사진은 보내지 않습니다. 같은 사진을 다시 보내도 PACS에는 한 장으로 남습니다
+  (사진마다 늘 같은 SOP Instance UID).
+* 파일 → DICOM (PACS) → **DICOM 파일로 저장**: 보낼 내용 그대로를 `.dcm` 파일로 저장합니다(PACS 없이 확인할 때).
+* 서버에 연결한 뷰어(공유)에서도 됩니다 — 그 컴퓨터가 직접 PACS · 워크리스트 서버에 접속하므로, 그 컴퓨터의
+  설정 → DICOM을 채우고 PACS에 그 컴퓨터의 AE Title을 등록합니다.
+
+> 전송은 암호화하지 않은 DICOM(병원 내부망용)입니다. 자동 전송(가져오면 바로 보내기)과 PACS에서 사진 받아 오기
+> (Query/Retrieve)는 아직 없습니다 — 보낼 사진을 확인하고 직접 보냅니다.
 
 ## 환자 목록 창 (VK-2 OPEN LIST)
 
@@ -1024,7 +1077,7 @@ DICOM 내보내기 폴더를 감시하세요.
 fundusview/
   app.py            진입점 (OpenGL 모드, 테마, --demo / --home)
   config.py         설정 JSON (%APPDATA%\FundusViewer\settings.json)
-  db.py             SQLite: patients / images / seen_files / import_log
+  db.py             SQLite: patients / images / seen_files / import_log / orders(워크리스트에서 연 검사)
   profiles.py       카메라 프로필 (RetiCam, APOLLO, VK-2, VK-2 ID 폴더, 일반)
   extract/          메타데이터 추출 (dicom / reticam / apollo / embedded+sidecar / filename / normalize)
   importer.py       안정화 대기 → 중복 검사 → 추출 → 분석 → 라이브러리 저장 → DB
@@ -1044,6 +1097,7 @@ fundusview/
   autosetup.py      자동 가져오기: 가져오기 폴더 + 장비 폴더(RetiCam·APOLLO) 찾기
   share.py          여러 컴퓨터에서 함께 쓰기: 서버(HTTP) · 서버에 연결한 뷰어의 데이터베이스 · 사진 캐시
   share_page.py     서버가 웹 브라우저에 주는 화면 (환자 목록 · 사진 · 메모)
+  dicomnet.py       DICOM 통신: PACS 전송(C-STORE) · 워크리스트(MWL C-FIND) · 연결 시험(C-ECHO), JPEG/PNG → DICOM 영상
   review.py         검토: 검사(검사일) 묶기, 눈마다 보여 줄 사진 고르기, 이전 검사 순서
   samples.py        질환 샘플: 질환별 샘플 사진 보관 (라이브러리 폴더의 질환 샘플\, 설명 · 순서는 index.json)
   ui/               main_window, patient_list(환자 목록 창 — 처음에 뜨는 따로 된 창), review_view(검토 화면 — 0.3.0부터 숨김:
@@ -1056,10 +1110,11 @@ fundusview/
                     sample_compare(질환 샘플과 비교 창), disc_pair(디스크 2장 미리 보기·저장·인쇄),
                     glaucoma_dialog(녹내장 분석 창: 디스크 C/D · 3D 입체 · 광각 · 스테레오 · 경과),
                     montage_dialog(몽타주 편집기: 반투명 겹치기·기준점·완성·3D), histogram, dialogs,
-                    import_dialog(사진 가져오기 → 환자 정보 확인 창)
+                    import_dialog(사진 가져오기 → 환자 정보 확인 창), dicom_dialogs(워크리스트 창 · DICOM 전송 창)
 tests/              pytest (추출·투영·영상·가져오기·감시·GUI·디자인·3D 안구 모델·OpenGL 렌더링·웹 미리보기,
                     test_import_review: 가져오기 확인 창 · 환자 지정, test_import_stress: 극한 테스트 —
-                    손상 파일 · 무작위 이름 · 대량 · 여러 스레드 · 환자 수천 명)
+                    손상 파일 · 무작위 이름 · 대량 · 여러 스레드 · 환자 수천 명, test_dicomnet · test_dicom_gui:
+                    시험용 PACS · 워크리스트 서버를 띄워 전송 · 조회)
 web3d/              3D 안구 미리보기 웹 페이지 (build.py → eye3d.html)
 fundus_viewer.spec  PyInstaller (Windows exe · Mac .app), build_windows.bat · build_mac.sh
 macos_bundle.py     Mac 앱의 최소 macOS: 앱에 든 라이브러리(Mach-O)에서 읽어 Info.plist에 쓰고 빌드 뒤 확인

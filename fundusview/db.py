@@ -65,6 +65,15 @@ CREATE TABLE IF NOT EXISTS seen_files (
     message   TEXT,
     seen_at   TEXT
 );
+CREATE TABLE IF NOT EXISTS orders (     -- worklist orders a patient was opened with (dicomnet.py)
+    id          INTEGER PRIMARY KEY,
+    patient_id  TEXT NOT NULL,
+    exam_date   TEXT NOT NULL,          -- the scheduled day
+    accession   TEXT NOT NULL DEFAULT '',
+    data_json   TEXT,                   -- dicomnet.Order
+    picked_at   TEXT NOT NULL,
+    UNIQUE (patient_id, exam_date, accession)
+);
 CREATE TABLE IF NOT EXISTS import_log (
     id       INTEGER PRIMARY KEY,
     at       TEXT NOT NULL,
@@ -303,6 +312,27 @@ class Database:
             " seen_at=excluded.seen_at",
             (path, size, mtime, status, image_id, message, _now()),
         )
+
+    # -- worklist orders (dicomnet.py) ---------------------------------------
+    def save_order(self, order: dict) -> None:
+        """Keep the worklist order a patient was opened with: photos of that patient and day are sent
+        to the PACS under it (Accession Number, Study Instance UID)."""
+        pid, day = (order.get("patient_id") or "").strip(), (order.get("date") or "").strip()
+        if not pid or not day:
+            return
+        self._exec(
+            "INSERT INTO orders (patient_id, exam_date, accession, data_json, picked_at) VALUES (?, ?, ?, ?, ?)"
+            " ON CONFLICT(patient_id, exam_date, accession) DO UPDATE SET data_json=excluded.data_json,"
+            " picked_at=excluded.picked_at",
+            (pid, day, order.get("accession") or "", json.dumps(order, ensure_ascii=False), _now()),
+        )
+
+    def order_for(self, patient_id: str, exam_date: str) -> sqlite3.Row | None:
+        """The order of this patient scheduled for ``exam_date`` (the one picked last)."""
+        if not patient_id or not exam_date:
+            return None
+        return self._one("SELECT * FROM orders WHERE patient_id = ? AND exam_date = ?"
+                         " ORDER BY picked_at DESC, id DESC LIMIT 1", (patient_id, exam_date))
 
     # -- log ---------------------------------------------------------------
     def log(self, level: str, message: str, path: str = "") -> None:
