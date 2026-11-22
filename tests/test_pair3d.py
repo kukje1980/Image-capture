@@ -285,3 +285,47 @@ def test_the_3d_question_itself(tmp_path):
         assert w._ask_3d_which(3) is None
     finally:
         w.close()
+
+
+def test_simple_again_shows_the_photos_as_taken(tmp_path, demo_dir, import_and_wait):
+    """[Simple] (or back to Simple from Detail) drops the processing of every photo on it."""
+    from PySide6.QtWidgets import QApplication
+
+    from fundusview.config import Settings
+    from fundusview.db import Database
+    from fundusview.ui.main_window import MainWindow
+
+    app = QApplication.instance() or QApplication([])
+    s = Settings(library_dir=str(tmp_path / "lib"), stable_seconds=0.05, rescan_seconds=0,
+                 watch_on_startup=False, auto_detect=False)
+    db = Database(tmp_path / "lib" / "fundus.db")
+    w = MainWindow(s, db)
+    try:
+        w.show()
+        import_and_wait(app, w, [demo_dir])
+        w._select_patient_ref(db.find_patient("20260115001")["id"])
+        w.show_simple()
+        app.processEvents()
+        a, b = w._picks
+        w._on_action("chan:green", True)                      # the photo on screen: G 필터
+        w._select_from_multi(b if w.current["id"] == a else a)
+        w._on_action("negative")                              # the other: 네거티브
+        app.processEvents()
+        assert w._invert and any(v["state"]["channel"] == "green" for v in w._per_photo.values())
+
+        w.show_simple()                                       # [Simple] again: as taken
+        app.processEvents()
+        assert w._channel == "rgb" and not w._invert and not w._history and not w._ops
+        states = [w._photo_state(i) for i in w._picks]
+        assert all(st.get("channel", "rgb") == "rgb" and not st.get("invert") for st in states)
+        assert not w.acts["chan:green"].isChecked() and not w.acts["negative"].isChecked()
+
+        w._on_action("chan:green", True)
+        w.open_large(w.current["id"])                         # Detail, and back with a double click
+        app.processEvents()
+        w._to_simple()
+        app.processEvents()
+        assert w._tab() == "multi" and w._channel == "rgb"
+        assert all(w._photo_state(i).get("channel", "rgb") == "rgb" for i in w._picks)
+    finally:
+        w.close()

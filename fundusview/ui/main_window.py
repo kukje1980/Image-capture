@@ -2153,6 +2153,7 @@ class MainWindow(QMainWindow):
         picks = self._newest_pair(self._default_exam)
         if not picks and self.current is not None:
             picks = [self.current["id"]]
+        self._reset_processing()
         self._picks, self._pick_pre, self._multi_auto = picks, None, True
         self._default_picks = list(picks)
         self._split_via = SIMPLE
@@ -2163,6 +2164,23 @@ class MainWindow(QMainWindow):
         self._go("multi")
         self._sync_views()
         self.lbl_status.setText(self.SIMPLE_HINT)
+
+    def _reset_processing(self) -> None:
+        """Back on Simple the photos are as they were taken: the processing (필터 · 밝기 · 대비 · 선명 …)
+        of every photo — the one on screen and those kept for the picked photos — is dropped, with
+        the rotation and the measurements of the big photo."""
+        self._per_photo = {}
+        self._load_state({})
+        self.view2d.reset_orientation()
+        self.view2d.clear_annotations()
+        self._on_measured("")
+        if self.current is not None:
+            rgb = self._display_rgb(self.current)
+            if rgb is not None:
+                self.view2d.set_rgb(rgb, keep_view=True)
+            if self.c_adj3d.isChecked():
+                self._mark_3d_dirty()
+        self._sync_palette()
 
     def _own_picks(self) -> bool:
         """Photos picked by hand — not Simple's newest OD | OS as [Simple] put them."""
@@ -2244,6 +2262,7 @@ class MainWindow(QMainWindow):
         if self.current is None and not self._picks:
             return                                # (no photo: nothing to show there)
         if self._picks:
+            self._reset_processing()
             self._split_via = SIMPLE
             self.open_picks()
             self.lbl_status.setText(self.SIMPLE_HINT)
@@ -2268,6 +2287,8 @@ class MainWindow(QMainWindow):
         if back in ("3d", "3d2"):
             self._on_action("view3d")             # (3D again from Detail: the 3D view)
         elif back == "multi":
+            if self._split_via == SIMPLE:
+                self._reset_processing()          # (back on Simple: the photos as taken)
             self.open_picks()                     # Simple · Multi, the photos on it as they were
         elif back != "grid" and not self._grid_mode() and self._newest_pair(self._default_exam):
             self.show_simple()                    # (opened on Detail itself: Simple, where a patient opens)
