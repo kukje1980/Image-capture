@@ -100,6 +100,30 @@ def test_main_window_imports_and_lists(tmp_path, demo_dir, import_and_wait, monk
         finally:
             disc3d_method("hybrid")
         assert Settings.load().disc3d_method == "hybrid"
+        # … 3D 입체 두 장 스테레오: the stereo depth opens on it (처음 설정: 시차 + 혈관 꺾임)
+        assert s.disc3d_stereo_method == "parallax_vessels"
+        assert w._build_glaucoma()[0].surface.stereo_method == "parallax_vessels"
+
+        def stereo_method(method):
+            def ok(dlg):
+                items = [dlg.disc3d_stereo_method.itemData(i) for i in range(dlg.disc3d_stereo_method.count())]
+                assert items == ["parallax_vessels", "parallax"]
+                assert dlg.disc3d_stereo_method.currentData() == s.disc3d_stereo_method
+                dlg.disc3d_stereo_method.setCurrentIndex(dlg.disc3d_stereo_method.findData(method))
+                return True
+            monkeypatch.setattr(SettingsDialog, "exec", ok)
+            w._open_settings()
+
+        try:
+            stereo_method("parallax")
+            assert s.disc3d_stereo_method == "parallax" and Settings.load().disc3d_stereo_method == "parallax"
+            assert s.disc3d_method == "hybrid"                          # (the one-photo setting as it was)
+            dlg, _ = w._build_glaucoma()
+            assert dlg.surface.stereo_method == "parallax"
+            dlg.close()
+        finally:
+            stereo_method("parallax_vessels")
+        assert Settings.load().disc3d_stereo_method == "parallax_vessels"
         w._on_action("chan:redfree")
         # zooming: steps and wide-field regions from the 화면 맞춤 ▾ menu, the status-bar magnification
         w._on_action("zoom4")

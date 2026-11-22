@@ -57,6 +57,11 @@ DISC3D_METHODS = (("hybrid", "하이브리드 — 경계는 혈관 꺾임, 혈�
                   ("pallor", "밝기 — 창백한 곳 = 깊은 곳"))
 
 
+# 설정 → 일반 → 3D 입체 두 장 스테레오 (Settings.disc3d_stereo_method): … and the stereo depth on this one
+DISC3D_STEREO_METHODS = (("parallax_vessels", "시차 + 혈관 꺾임 — 깊이는 시차, 컵 경계는 혈관이 꺾이는 곳"),
+                         ("parallax", "시차 — 두 사진의 시차로 계산한 깊이 그대로"))
+
+
 # 3D 안구의 마우스 휠 (Settings.wheel3d): (key, short name, what it does)
 WHEEL3D = (("zoom", "확대", "커서가 가리키는 곳으로 확대 · 축소 (깊이는 3D 화면 위의 깊이 막대로)"),
            ("depth", "깊이", "자르는 깊이 — 앞으로 굴리면 깊게, 뒤로 굴리면 닫힘 (내부에서는 확대)"),
@@ -359,6 +364,11 @@ class SettingsDialog(QDialog):
                                       "(하이브리드가 처음 설정). 창에서는 언제나 밝기 · 혈관 꺾임 · 하이브리드를 바꿔 볼 수 있고,\n"
                                       "[셋 나란히 비교]로 함께 볼 수 있습니다. 두 장 스테레오에는 쓰이지 않습니다.")
         f2.addRow("3D 입체 한 장 추정", self.disc3d_method)
+        self.disc3d_stereo_method = _combo(DISC3D_STEREO_METHODS, settings.disc3d_stereo_method)
+        self.disc3d_stereo_method.setToolTip("녹내장 분석 → 3D 입체의 2장 스테레오(같은 날 같은 눈의 두 장)를 처음에 이 방법으로\n"
+                                             "그립니다 (시차 + 혈관 꺾임이 처음 설정). 창에서는 언제나 시차 · 시차 + 혈관 꺾임을\n"
+                                             "바꿔 볼 수 있고, [둘 나란히 비교]로 함께 볼 수 있습니다.")
+        f2.addRow("3D 입체 두 장 스테레오", self.disc3d_stereo_method)
         # what is written on the photos of the photo list (also 보기 → 사진 목록 표시)
         self.thumb_date = QCheckBox("날짜")
         self.thumb_date.setChecked(bool(settings.thumb_date))
@@ -680,6 +690,7 @@ class SettingsDialog(QDialog):
         s.green_filter = self.green_filter.currentData()
         s.rnfl_strength = round(self.rnfl_strength.value(), 2)
         s.disc3d_method = self.disc3d_method.currentData()
+        s.disc3d_stereo_method = self.disc3d_stereo_method.currentData()
         s.thumb_date = self.thumb_date.isChecked()
         s.thumb_kind = self.thumb_kind.isChecked()
         s.custom_filename_patterns = [p for p in self.patterns.toPlainText().splitlines() if p.strip()]
