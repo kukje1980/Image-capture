@@ -1,6 +1,7 @@
 """극한 테스트: the import under bad files, hostile names, many files at once and several
 threads — it must never crash, never file a photo under a patient the files do not name, never
 leave half an import behind, and stay quick."""
+import gc
 import io
 import os
 import random
@@ -245,6 +246,11 @@ def test_bulk_import_while_the_window_reads_the_database(env):
     threads while two more read the database as the window does: every photo once, with its
     patient; no error; no reader ever sees half an import."""
     s, db, drop = env
+    # What earlier tests left in reference cycles (the DICOM tests' sockets, servers and association
+    # threads) is freed here, in this thread, before the threads start: left to the collector, it was
+    # freed in whichever thread allocated next — a reader holding the database lock — and on the CI
+    # runner that reader never came back, so the import waited behind it until the job's time ran out.
+    gc.collect()
     patients, per, unique = 30, 9, 270
     for i in range(unique):
         pid = 10000 + i % patients
