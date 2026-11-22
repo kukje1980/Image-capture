@@ -749,6 +749,12 @@ S3_METHODS = (("pallor", "밝기", "창백한 곳 = 깊은 곳"),
               ("vessels", "혈관 꺾임", "혈관이 꺾이는 곳 = 컵 경계 (색은 쓰지 않음)"),
               ("hybrid", "하이브리드", "혈관이 꺾이는 쪽은 그 경계, 혈관이 없는 쪽과 바닥 모양은 밝기"))
 S3_METHOD_NAMES = {k: name for k, name, _ in S3_METHODS}
+# two photos of one day: the stereo depth alone, or its cup's margin where the vessels bend
+# (disc3d.STEREO_METHODS)
+S3_STEREO_METHODS = (("parallax", "시차", "두 사진의 시차로 계산한 깊이 그대로"),
+                     ("parallax_vessels", "시차 + 혈관 꺾임",
+                      "깊이는 시차, 컵 경계는 혈관이 꺾이는 곳 (꺾임이 없는 쪽은 시차 그대로)"))
+S3_STEREO_NAMES = {k: name for k, name, _ in S3_STEREO_METHODS}
 S3_COMPARE_PX = 420      # 셋 나란히 비교: each of the three views (px)
 S3_GAP = 8               # … and the gap between them
 BEND_USED = (63, 224, 255)       # a bend the margin goes through (the outermost of its vessel)
@@ -796,6 +802,7 @@ class Surface3DTab(_Tab):
         self.source = "stereo" if self.stereo_ok else "a"
         # one photo's estimate: 밝기 · 혈관 꺾임 · 하이브리드 (the last the one a new window opens on)
         self.method = method if method in disc3d.METHODS else "hybrid"
+        self.stereo_method = "parallax_vessels"          # two photos: 시차 · 시차 + 혈관 꺾임
         self.field = "normal"
         self.yaw, self.pitch = -22.0, 14.0
         self.info: dict = {}
@@ -810,6 +817,7 @@ class Surface3DTab(_Tab):
         self.hint.setText(S3_HINT)
 
         self.sources = None
+        self.stereo_methods = None
         self.sw_flip = Switch("깊이 뒤집기")
         self.sw_flip.setToolTip("컵이 솟아 보이면 켭니다 (어느 사진이 왼쪽에서 찍혔는지는 알 수 없습니다)")
         self.sw_flip.toggled.connect(lambda _on: self._shape_changed())
@@ -842,8 +850,12 @@ class Surface3DTab(_Tab):
             self.sources.set(self.source)
             self.sources.changed.connect(self.set_source)
             self.sources.buttons[2].setEnabled(self.stereo_ok)
-            rows = [self.sources, self.methods, self.fields, self.sw_bends, self.sw_compare, self.sw_flip,
-                    self.sw_flick, self.speed, self.status]
+            self.stereo_methods = _Choice(S3_STEREO_METHODS)
+            self.stereo_methods.set(self.stereo_method)
+            self.stereo_methods.changed.connect(self.set_stereo_method)
+            self.stereo_methods.setToolTip("두 장 스테레오의 깊이 — 시차만, 또는 컵 경계를 혈관 꺾임으로")
+            rows = [self.sources, self.methods, self.stereo_methods, self.fields, self.sw_bends, self.sw_compare,
+                    self.sw_flip, self.sw_flick, self.speed, self.status]
         self.side.addWidget(card("모양 (깊이)", *rows, lines=False))
 
         self.s_depth = _Slider("깊이 과장", 0, 200, 100, 5, lambda v: f"{v:.0f}%")
@@ -930,24 +942,42 @@ class Surface3DTab(_Tab):
         self.methods.set(method)
         self._shape_changed()
 
+    def set_stereo_method(self, method: str) -> None:
+        """How the stereo depth is drawn: ``disc3d.STEREO_METHODS`` (시차 · 시차 + 혈관 꺾임)."""
+        self.stereo_method = method
+        if self.stereo_methods is not None:
+            self.stereo_methods.set(method)
+        self._shape_changed()
+
+    def current_method(self, source: str | None = None) -> str:
+        """The way to the shape of ``source`` (the one shown, if None): the stereo one or one photo's."""
+        return self.stereo_method if (source or self.source) == "stereo" else self.method
+
+    def family(self) -> tuple:
+        """The ways to the shape the source shown has: (key, name, tip) — 시차 · 시차 + 혈관 꺾임 for
+        the stereo depth, 밝기 · 혈관 꺾임 · 하이브리드 for one photo."""
+        return S3_STEREO_METHODS if self.source == "stereo" else S3_METHODS
+
     def comparing(self) -> bool:
-        """셋 나란히 비교: the three one-photo estimates side by side (not for the stereo depth)."""
-        return self.sw_compare.isChecked() and self.source != "stereo" and bool(self._tex)
+        """나란히 비교: the ways to the shape of the source shown side by side — the three one-photo
+        estimates, or the stereo depth with and without the vessels' bends."""
+        return self.sw_compare.isChecked() and bool(self._tex) and (self.source != "stereo" or self.stereo_ok)
 
     def _surface(self, source: str, method: str | None = None) -> tuple[np.ndarray, dict] | None:
-        """The surface of ``source`` (a · b · stereo) — one photo's by ``method`` (the one chosen,
-        if None) — and what is known of it."""
+        """The surface of ``source`` (a · b · stereo) by ``method`` (``disc3d.STEREO_METHODS`` for the
+        stereo depth, ``disc3d.METHODS`` for one photo; the one chosen, if None) — and what is known
+        of it."""
         if source == "stereo" and not self.stereo_ok:
             return None
         if not self._tex or (source != "a" and len(self._tex) < 2):
             return None
-        method = method or self.method
-        key = (source, self.sw_flip.isChecked()) if source == "stereo" else (source, method)
+        method = method or self.current_method(source)
+        key = (source, method, self.sw_flip.isChecked()) if source == "stereo" else (source, method)
         if key not in self._heights:
             frac = 1.0 / self._factor()
             if source == "stereo":
-                self._heights[key] = disc3d.height_from_stereo(self._tex[0], self._tex[1], frac,
-                                                               flip=self.sw_flip.isChecked())
+                draw = disc3d.height_stereo_vessels if method == "parallax_vessels" else disc3d.height_from_stereo
+                self._heights[key] = draw(self._tex[0], self._tex[1], frac, flip=self.sw_flip.isChecked())
             else:
                 info: dict = {}
                 self._heights[key] = (disc3d.height_one_photo(self._tex[source == "b"], frac, method, info=info),
@@ -964,9 +994,14 @@ class Surface3DTab(_Tab):
     def _shape_changed(self) -> None:
         stereo = self.source == "stereo"
         self.sw_flip.setVisible(stereo)
-        for w in (self.methods, self.sw_compare):
-            w.setVisible(not stereo)
-        self.sw_bends.setVisible(not stereo and (self.method != "pallor" or self.sw_compare.isChecked()))
+        self.methods.setVisible(not stereo)
+        if self.stereo_methods is not None:
+            self.stereo_methods.setVisible(stereo)
+        self.sw_compare.setText("둘 나란히 비교" if stereo else "셋 나란히 비교")
+        self.sw_compare.setToolTip("시차 · 시차 + 혈관 꺾임을 나란히 — 함께 돌아갑니다" if stereo
+                                   else "밝기 · 혈관 꺾임 · 하이브리드를 나란히 — 함께 돌아갑니다")
+        self.sw_bends.setVisible(self.sw_compare.isChecked()
+                                 or self.current_method() not in ("pallor", "parallax"))
         self.heights()
         if not self._tex:
             self.status.setText("")
@@ -986,6 +1021,17 @@ class Surface3DTab(_Tab):
             elif not self.info.get("reliable", True):
                 text = ("두 사진이 스테레오 쌍으로 맞지 않아 깊이가 믿을 만하지 않습니다 (유두 둘레가 고르게 나오지 않음). "
                         "같은 곳을 보게 하고 카메라만 옆으로 조금 옮겨 찍은 두 장이 필요합니다 — [사진 ①] 한 장 추정으로 보세요.")
+            elif self.stereo_method == "parallax_vessels":
+                b = self.info.get("bends") or {}
+                found = f"꺾임 {len(b.get('r', ()))}곳 · 혈관 {b.get('vessels', 0)}개"
+                if self.info.get("support"):
+                    text += (f" 컵 경계는 혈관이 꺾이는 곳입니다 ({found} · 경계의 {self.info['support']:.0%}, "
+                             "두 사진 모두에서 찾은 꺾임일수록 무겁게) — 꺾임이 없는 쪽은 시차 그대로.")
+                elif self.info.get("no_hollow"):
+                    text += (f" 혈관 꺾임({found})은 찾았지만 시차에서 그 안쪽이 오목하지 않아 쓰지 않았습니다 "
+                             "([시차]와 같은 모양).")
+                else:
+                    text += f" 혈관 꺾임을 찾지 못해 ({found}) [시차]와 같은 모양입니다."
             self.status.setText(text)
         self._restart()
         self._draw()
@@ -1070,7 +1116,7 @@ class Surface3DTab(_Tab):
         it (``disc3d.cup_from_surface``) — or None: no surface, no cup seen in the photo, or a stereo
         depth that is not to be trusted."""
         source = source or self.source
-        method = method or self.method
+        method = method or self.current_method(source)
         surface = self._surface(source, method)
         if surface is None or not surface[1].get("cup", True) or not surface[1].get("reliable", True):
             return None
@@ -1078,7 +1124,7 @@ class Surface3DTab(_Tab):
             return None
         H = surface[0]
         disc = self.disc_outline()
-        key = (source, method if source != "stereo" else None, self.sw_flip.isChecked(), self.field,
+        key = (source, method, self.sw_flip.isChecked(), self.field,
                self.s_level.value(), tuple(disc.values()))
         if key not in self._cup:
             k = H.shape[0] / disc3d.TEX_PX                # (the surface is coarser than the texture)
@@ -1102,9 +1148,9 @@ class Surface3DTab(_Tab):
         return G.cdr_metrics(found[0], found[1], self.eye() or "OD") if found else None
 
     def by_method(self) -> dict:
-        """One photo (the one shown): the vertical C/D of each way to its shape, ``{method: value or None}``."""
-        source = "a" if self.source == "stereo" else self.source
-        return {k: (m["vertical"] if (m := self.metrics(source, k)) else None) for k in disc3d.METHODS}
+        """The vertical C/D of each way to the shape of the source shown (``family``), ``{method: value
+        or None}`` — the three one-photo estimates, or the stereo depth with and without the bends."""
+        return {k: (m["vertical"] if (m := self.metrics(self.source, k)) else None) for k, _, _ in self.family()}
 
     def both(self) -> dict | None:
         """With two photos: vertical C/D of each one's own estimate, of the stereo depth, the mean
@@ -1155,15 +1201,16 @@ class Surface3DTab(_Tab):
                              + self._methods_text() + self._both_text())
 
     def _methods_text(self) -> str:
-        """One photo: the vertical C/D of each way to its shape side by side (the one shown in bold)."""
-        if self.source == "stereo" or not self._tex:
+        """The vertical C/D of each way to the shape side by side (the one shown in bold)."""
+        if not self._tex or (self.source == "stereo" and not self.stereo_ok):
             return ""
         v = self.by_method()
         cells = []
-        for key, name, _ in S3_METHODS:
+        for key, name, _ in self.family():
             text = f"{name} {v[key]:.2f}" if v[key] is not None else f"{name} –"
-            cells.append(f"<b>{text}</b>" if key == self.method else text)
-        return "<br><br>추정 방식별 수직 C/D<br>" + " &nbsp;·&nbsp; ".join(cells)
+            cells.append(f"<b>{text}</b>" if key == self.current_method() else text)
+        title = "깊이 방식별 수직 C/D" if self.source == "stereo" else "추정 방식별 수직 C/D"
+        return f"<br><br>{title}<br>" + " &nbsp;·&nbsp; ".join(cells)
 
     def _both_text(self) -> str:
         """Two photos: each one's vertical C/D side by side (the one shown in bold)."""
@@ -1195,10 +1242,11 @@ class Surface3DTab(_Tab):
 
     def bends(self, method: str | None = None) -> tuple[np.ndarray, np.ndarray]:
         """Where the vessels bend on the photo shown (texture pixels, (k, 2)) and whether each is
-        one the margin goes through (k,) — for 혈관 꺾임 · 하이브리드, else none."""
-        method = method or self.method
+        one the margin goes through (k,) — for 혈관 꺾임 · 하이브리드 · 시차 + 혈관 꺾임, else none
+        (the stereo depth's: found in either photo, the two laid on each other)."""
+        method = method or self.current_method()
         none = np.zeros((0, 2), np.float32), np.zeros(0, bool)
-        if method == "pallor" or self.source == "stereo" or self._flickering():
+        if method in ("pallor", "parallax") or self._flickering():
             return none
         surface = self._surface(self.source, method)
         b = surface[1].get("bends") if surface is not None else None
@@ -1233,11 +1281,14 @@ class Surface3DTab(_Tab):
         yaw, pitch = self._angles()
         kw = dict(light=1.0 if self.sw_light.isChecked() else 0.0, contours=self.sw_contour.isChecked())
         draw = disc3d.anaglyph if self.sw_ana.isChecked() else disc3d.render
-        if self.comparing():                             # 셋 나란히: the three estimates, turned alike
+        if self.comparing():                             # 나란히: each way to the shape, turned alike
             views = [draw(self._texture(key), self._surface(self.source, key)[0], self.depth_px(), yaw, pitch,
-                          out_px=S3_COMPARE_PX, **kw) for key in disc3d.METHODS]
+                          out_px=S3_COMPARE_PX, **kw) for key, _, _ in self.family()]
             gap = np.zeros((S3_COMPARE_PX, S3_GAP, 3), np.uint8)
-            return np.hstack([views[0], gap, views[1], gap, views[2]])
+            row = [views[0]]
+            for v in views[1:]:
+                row += [gap, v]
+            return np.hstack(row)
         return draw(self._texture(), H, self.depth_px(), yaw, pitch, **kw)
 
     def _labels(self, p: QPainter) -> None:
@@ -1249,12 +1300,12 @@ class Surface3DTab(_Tab):
         f.setPixelSize(17)
         f.setBold(True)
         p.setFont(f)
-        for i, (key, name, _) in enumerate(S3_METHODS):
+        for i, (key, name, _) in enumerate(self.family()):
             text = f"{name}   C/D {v[key]:.2f}" if v[key] is not None else f"{name}   C/D –"
             rect = QRectF(i * (S3_COMPARE_PX + S3_GAP) + 12, 8, S3_COMPARE_PX - 24, 28)
             p.setPen(QColor(0, 0, 0, 200))
             p.drawText(rect.translated(1.5, 1.5), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, text)
-            p.setPen(QColor(theme.ORANGE) if key == self.method else QColor("#ffffff"))
+            p.setPen(QColor(theme.ORANGE) if key == self.current_method() else QColor("#ffffff"))
             p.drawText(rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, text)
 
     def _draw(self) -> None:
@@ -1262,13 +1313,17 @@ class Surface3DTab(_Tab):
         self.view.set_rgb(self.compose())
 
     def note(self) -> str:
+        stereo = self.source == "stereo"
         if self.comparing():
             v = self.by_method()
-            return ("녹내장 분석 — 유두 3D (1장 추정 · 셋 나란히) · 수직 C/D " + " · ".join(
-                f"{name} {v[k]:.2f}" if v[k] is not None else f"{name} –" for k, name, _ in S3_METHODS))
+            return ("녹내장 분석 — 유두 3D " + ("(2장 스테레오 · 둘 나란히)" if stereo else "(1장 추정 · 셋 나란히)")
+                    + " · 수직 C/D " + " · ".join(f"{name} {v[k]:.2f}" if v[k] is not None else f"{name} –"
+                                                 for k, name, _ in self.family()))
         m = self.metrics()
-        kind = ("(2장 스테레오)" if self.source == "stereo" else "(1장 추정)" if self.method == "pallor"
-                else f"(1장 추정 · {S3_METHOD_NAMES[self.method]})")
+        if stereo:
+            kind = "(2장 스테레오)" if self.stereo_method == "parallax" else "(2장 스테레오 · 혈관 꺾임)"
+        else:
+            kind = ("(1장 추정)" if self.method == "pallor" else f"(1장 추정 · {S3_METHOD_NAMES[self.method]})")
         return ("녹내장 분석 — 유두 3D " + kind
                 + (f" · 추정 수직 C/D {m['vertical']:.2f}" if m else "")
                 + self._both_note())
