@@ -7,6 +7,10 @@ on screen as one (보고 있는 사진을 샘플로 — saved as shown, black ou
 write the patient's name, and under a name of its own: nothing of the patient goes with it); each sample
 has a note (설명). With **함께 확대 · 이동** on, zooming or moving one photo
 does the same on the other (by the part of the photo shown), so the same place of both is seen.
+
+The program's own samples (samples.py, ``sample_photos/``) show who made them and under what licence.
+**환자 설명 그림** (the switch at the top) shows instead the chosen disease explained, stage by stage, with
+drawn pictures (ui/disease_view.py) — to talk it through with the patient.
 """
 from __future__ import annotations
 
@@ -17,11 +21,14 @@ from PySide6.QtCore import QRectF, QSize, Qt, QTimer
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (QCheckBox, QDialog, QFileDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
                                QListView, QListWidget, QListWidgetItem, QMessageBox, QPushButton, QSplitter,
-                               QToolButton, QVBoxLayout, QWidget)
+                               QStackedWidget, QToolButton, QVBoxLayout, QWidget)
 
 from .. import imaging
 from ..samples import PHOTO_EXTS, SampleLibrary
+from . import theme
+from .disease_view import DiseaseExplainPanel
 from .image_view import ImageView, to_qimage
+from .widgets import Segmented, segment
 
 THUMB = QSize(132, 100)
 PATH_ROLE = Qt.ItemDataRole.UserRole
@@ -51,7 +58,7 @@ class SampleCompareDialog(QDialog):
         title.setObjectName("sectionTitle")
         self.diseases = QListWidget()
         self.diseases.setObjectName("diseaseList")
-        self.diseases.currentItemChanged.connect(lambda *_: self._fill_samples())
+        self.diseases.currentItemChanged.connect(lambda *_: self._disease_changed())
         self.diseases.itemDoubleClicked.connect(lambda _: self._rename_disease())
         row = QHBoxLayout()
         self.b_add_disease = QPushButton("+ 질환")
@@ -149,12 +156,34 @@ class SampleCompareDialog(QDialog):
         brow.addWidget(self.b_remove)
         brow.addWidget(self.c_sync)
 
-        right = QWidget()
-        rl = QVBoxLayout(right)
+        compare = QWidget()
+        rl = QVBoxLayout(compare)
         rl.setContentsMargins(0, 0, 0, 0)
         rl.addWidget(photos, 1)
         rl.addLayout(srow)
         rl.addLayout(brow)
+
+        # -- 샘플과 비교 | 환자 설명 그림 ---------------------------------------------------------------------
+        self.explain = DiseaseExplainPanel()
+        self.pages = QStackedWidget()
+        self.pages.addWidget(compare)
+        self.pages.addWidget(self.explain)
+        self.seg_compare = segment("샘플과 비교", "환자 사진과 질환 샘플 사진을 나란히")
+        self.seg_explain = segment("환자 설명 그림", "고른 질환을 단계별 그림으로 설명 (안저 모식도 · 단면 · 환자가 보는 모습)")
+        self.mode = Segmented([self.seg_compare, self.seg_explain], on_card=False)
+        self.mode.setFixedWidth(340)
+        self.seg_compare.setChecked(True)
+        self.seg_compare.clicked.connect(lambda: self.set_mode("compare"))
+        self.seg_explain.clicked.connect(lambda: self.set_mode("explain"))
+        top = QHBoxLayout()
+        top.addWidget(self.mode)
+        top.addStretch(1)
+        right = QWidget()
+        rv = QVBoxLayout(right)
+        rv.setContentsMargins(0, 0, 0, 0)
+        rv.setSpacing(6)
+        rv.addLayout(top)
+        rv.addWidget(self.pages, 1)
 
         split = QSplitter(Qt.Orientation.Horizontal)
         split.setChildrenCollapsible(False)
@@ -168,6 +197,18 @@ class SampleCompareDialog(QDialog):
 
         self._fill_diseases()
         self.refresh_patient()
+
+    # -- 샘플과 비교 | 환자 설명 그림 ----------------------------------------------------------------------
+    def set_mode(self, mode: str) -> None:
+        """``"compare"``: the patient's photo beside the samples; ``"explain"``: the disease explained."""
+        explain = mode == "explain"
+        (self.seg_explain if explain else self.seg_compare).setChecked(True)
+        self.pages.setCurrentWidget(self.explain if explain else self.pages.widget(0))
+        if explain:
+            self.explain.set_disease(self.current_disease())
+
+    def mode_key(self) -> str:
+        return "explain" if self.pages.currentWidget() is self.explain else "compare"
 
     # -- the patient's photo ---------------------------------------------------------------------
     def refresh_patient(self) -> None:
@@ -186,7 +227,7 @@ class SampleCompareDialog(QDialog):
         self.v_patient.set_rgb(rgb, keep_view=keep)
         self.lbl_patient.setText(f"<b>환자 사진</b>  {text}" if text else "<b>환자 사진</b>")
         if not keep:
-            QTimer.singleShot(0, lambda: self._follow(self.v_sample))
+            QTimer.singleShot(0, self, lambda: self._follow(self.v_sample))
 
     # -- diseases ----------------------------------------------------------------------------------
     def current_disease(self) -> str | None:
@@ -211,6 +252,11 @@ class SampleCompareDialog(QDialog):
             select = next((d for d in names if self.lib.count(d)), names[0])
         self.diseases.setCurrentRow(names.index(select))
         self._fill_samples()
+
+    def _disease_changed(self) -> None:
+        self._fill_samples()
+        if self.mode_key() == "explain":       # (drawn only when it is looked at)
+            self.explain.set_disease(self.current_disease())
 
     def select_disease(self, name: str) -> None:
         names = self.lib.diseases()
@@ -318,8 +364,11 @@ class SampleCompareDialog(QDialog):
         note = self.lib.note(path)
         self.note.setText(note)
         k = paths.index(path) + 1
-        self.lbl_sample.setText(f"<b>{disease}</b>  {k} / {len(paths)}" + (f"  —  {note}" if note else ""))
-        QTimer.singleShot(0, lambda: self._follow(self.v_patient))
+        credit = self.lib.credit(path)
+        self.lbl_sample.setText(f"<b>{disease}</b>  {k} / {len(paths)}" + (f"  —  {note}" if note else "") +
+                                (f"<br><span style='color:{theme.TEXT3}; font-size:11px'>출처: {credit}</span>"
+                                 if credit else ""))
+        QTimer.singleShot(0, self, lambda: self._follow(self.v_patient))
 
     def _step(self, d: int) -> None:
         k = self.strip.currentRow() + d

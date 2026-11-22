@@ -7,6 +7,11 @@ copied to another computer as it is; photos put into a disease's folder by hand 
 
 A photo is copied in under a name of its own (the disease and a number), never under the name it had:
 a patient's photo taken as a sample carries no name, ID or date of that patient with it.
+
+The program brings sample photos of its own (``sample_photos/``: openly licensed photos from Wikimedia
+Commons, each with its author, licence and source in ``sample_photos/samples.json``). ``install_builtin``
+copies those not yet given to this library in — once: a sample the user deletes is not brought back,
+unless asked (``restore_builtin``). Each keeps its credit (``credit``), shown under it.
 """
 from __future__ import annotations
 
@@ -19,6 +24,8 @@ import numpy as np
 
 FOLDER = "질환 샘플"
 INDEX = "index.json"
+BUILTIN_DIR = Path(__file__).with_name("sample_photos")     # the program's own samples
+BUILTIN_INDEX = "samples.json"
 PHOTO_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"}
 # the diseases a new sample library starts with (they can be renamed, removed and added to)
 DEFAULT_DISEASES = (
@@ -62,8 +69,9 @@ class SampleLibrary:
             if not isinstance(idx.get("diseases"), list):
                 # a new library: the usual diseases (and the folders put there by hand)
                 idx["diseases"] = list(DEFAULT_DISEASES)
-            if not isinstance(idx.get("notes"), dict):
-                idx["notes"] = {}
+            for key in ("notes", "credits", "builtin"):
+                if not isinstance(idx.get(key), dict):
+                    idx[key] = {}
             self._index = idx
             for d in self._folders_by_hand():
                 if d not in idx["diseases"]:
@@ -112,8 +120,9 @@ class SampleLibrary:
         if src.is_dir() and src != dst:
             src.rename(dst)
         old_pre, new_pre = folder_name(old) + "/", folder_name(new) + "/"
-        idx["notes"] = {(new_pre + k[len(old_pre):] if k.startswith(old_pre) else k): v
-                        for k, v in idx["notes"].items()}
+        for key in ("notes", "credits"):
+            idx[key] = {(new_pre + k[len(old_pre):] if k.startswith(old_pre) else k): v for k, v in idx[key].items()}
+        idx["builtin"] = {f: (new_pre + k[len(old_pre):] if k.startswith(old_pre) else k) for f, k in idx["builtin"].items()}
         idx["diseases"][idx["diseases"].index(old)] = new
         self._save()
         return new
@@ -127,7 +136,8 @@ class SampleLibrary:
         if folder.is_dir():
             shutil.rmtree(folder)
         pre = folder_name(name) + "/"
-        idx["notes"] = {k: v for k, v in idx["notes"].items() if not k.startswith(pre)}
+        for key in ("notes", "credits"):
+            idx[key] = {k: v for k, v in idx[key].items() if not k.startswith(pre)}
         idx["diseases"].remove(name)
         self._save()
 
@@ -183,8 +193,10 @@ class SampleLibrary:
         key = self._key(path)
         if path.is_file():
             path.unlink()
-        if key in self._load()["notes"]:
-            del self._load()["notes"][key]
+        idx = self._load()
+        if key in idx["notes"] or key in idx["credits"]:
+            idx["notes"].pop(key, None)
+            idx["credits"].pop(key, None)
             self._save()
 
     def _key(self, path: Path) -> str:
@@ -202,3 +214,56 @@ class SampleLibrary:
         else:
             notes.pop(key, None)
         self._save()
+
+    def credit(self, path: Path | str) -> str:
+        """Who made a sample and under what licence (the program's own samples), or ''."""
+        return str(self._load()["credits"].get(self._key(Path(path)), ""))
+
+    # -- the program's own samples -----------------------------------------------------------------
+    @staticmethod
+    def builtin_list(folder: Path | None = None) -> list[dict]:
+        """The program's own samples: ``{disease, file, note, credit, …}`` for each photo that is there."""
+        folder = BUILTIN_DIR if folder is None else Path(folder)
+        try:
+            data = json.loads((folder / BUILTIN_INDEX).read_text("utf-8"))
+        except (OSError, ValueError):
+            return []
+        out = []
+        for it in data.get("photos", []):
+            if isinstance(it, dict) and it.get("disease") and it.get("file") and (folder / it["file"]).is_file():
+                out.append(it)
+        return out
+
+    def _add_builtin(self, it: dict, folder: Path) -> Path:
+        src = folder / it["file"]
+        dst = self.add_file(it["disease"], src, it.get("note", ""))
+        if it.get("credit"):
+            self._load()["credits"][self._key(dst)] = it["credit"]
+        self._load()["builtin"][it["file"]] = self._key(dst)
+        self._save()
+        return dst
+
+    def install_builtin(self, folder: Path | None = None) -> int:
+        """Copy in the program's samples this library has not had yet; how many."""
+        folder = BUILTIN_DIR if folder is None else Path(folder)
+        had = self._load()["builtin"]
+        n = 0
+        for it in self.builtin_list(folder):
+            if it["file"] in had:
+                continue
+            self._add_builtin(it, folder)
+            n += 1
+        return n
+
+    def restore_builtin(self, folder: Path | None = None) -> int:
+        """Bring back the program's samples that were deleted (or never copied in); how many."""
+        folder = BUILTIN_DIR if folder is None else Path(folder)
+        had = self._load()["builtin"]
+        n = 0
+        for it in self.builtin_list(folder):
+            key = had.get(it["file"])
+            if key and (self.root / key).is_file():
+                continue
+            self._add_builtin(it, folder)
+            n += 1
+        return n
