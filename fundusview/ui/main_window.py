@@ -93,7 +93,7 @@ from .landmarks_view import LandmarkPhoto
 from .slit_scan import SLIT, ScanPhotoView, SlitScanShow, ViewTween
 from .thumbs import (DATE_ROLE, DockOverlay, EYE_ROLE, KIND_ROLE, PICK_ROLE, SECOND_COLOR, SECOND_ROLE, SHOWN, EyeRail,
                      ThumbDelegate, ThumbStrip, eye_badge_html, eye_row)
-from .toolbars import CHECKABLE, CMDBAR, COMMANDS, MENUS, PROCESSING, GammaPopup, SliderPopup, icon_for
+from .toolbars import CHECKABLE, CMDBAR, COMMANDS, MENUS, PROCBAR, PROCESSING, GammaPopup, SliderPopup, icon_for
 from .widgets import ElidedLabel, Segmented, Switch, card, segment
 from .widgets import row as setting_row
 
@@ -948,7 +948,7 @@ class MainWindow(QMainWindow):
         self._cmdbar_parked = False              # (closing: put back in the window's toolbar area, closeEvent)
         if self.settings.cmdbar_area == "under":
             self.move_cmdbar("under")
-        self.tb_proc = self._toolbar("procbar", "영상 처리 툴바", Qt.ToolBarArea.BottomToolBarArea, PROCESSING, 30)
+        self.tb_proc = self._toolbar("procbar", "영상 처리 툴바", Qt.ToolBarArea.BottomToolBarArea, PROCBAR, 30)
         self.tb_proc.visibilityChanged.connect(lambda v: self.acts["tools"].setChecked(v))
         self.acts["tools"].setChecked(True)
         self.acts["list"].setChecked(False)
@@ -1666,7 +1666,7 @@ class MainWindow(QMainWindow):
             "화면 맞춤 ▾ 또는 아래쪽 [배율]: 400·800%, 후극부·위/아래/코/귀쪽 주변부로 바로 확대<br>"
             "더블클릭: 아래 사진 목록의 사진은 Detail에서 크게 (Simple의 큰 사진은 화면 맞춤만), "
             "그 밖의 화면(Detail의 큰 사진 · Multi · 16장 보기 · 3D)에서는 Simple로 · "
-            "돋보기는 아래 툴바의 [돋보기] (누르는 동안)<br>"
+            "돋보기는 영상 처리 메뉴의 [돋보기] (누르는 동안)<br>"
             "오른쪽 클릭: 메뉴 (시신경 유두 · 황반 위치 지정, 돋보기 배율, 미니맵)<br><br>"
             "<b>3D 안구</b><br>"
             "위 막대: 간단히 / 자세히 (가벼운 기본 모형 / 실제 해부 구조) · 외부 / 내부 · ▶ 슬릿 스캔 · "
@@ -3800,6 +3800,9 @@ class MainWindow(QMainWindow):
                 self._go("2d")
         if key.startswith("tool:"):
             tool = key[5:]
+            if checked is not None and tool == v.tool:   # the lit button again: back to 확대 (wheel · drag),
+                tool = "zoom"                            # which has no button of its own (0.13.6)
+                self.acts["tool:zoom"].setChecked(True)
             v.set_tool(tool)
             self.lbl_status.setText(f"{TOOLS[tool]} — {TOOL_HINTS[tool]}")
             v.setFocus()
