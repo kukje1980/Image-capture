@@ -480,8 +480,8 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         for a in self.menus["save"].actions():
             m.addAction(a)
-        m.addAction(A["discpair"])
         m.addAction(A["glaucoma"])
+        m.addAction(A["discpair"])                   # 스테레오 보기 (고른 두 사진)
         m.addAction("시간별 비교 (이 눈의 유두 사진 여러 장)…", lambda: self.open_glaucoma(start="timeline"))
         m.addAction("몽타주 만들기 (고른 사진)…", lambda: self.open_montage())
         m.addAction(A["print"])
@@ -727,7 +727,7 @@ class MainWindow(QMainWindow):
                                     "Simple에서 더블클릭: 크게 보기 (Detail) · Detail — 다른 사진을 클릭: Simple에서 함께 보기 (여러 장 고르기), "
                                     "더블클릭: 그 사진을 크게 · 3D — 클릭: 이 사진 보기, 더블클릭: Simple로\n"
                                     "휠: 이전 / 다음 날짜 책갈피 (Shift+휠: 옆으로 넘기기) · ← →: 이전 / 다음 사진\n"
-                                    "Ctrl+클릭: 두 번째 사진(②) 선택/해제 — 비교 · 디스크 2장 · "
+                                    "같은 눈의 사진 두 장을 클릭해 고른 뒤 [Glaucoma]: 스테레오 보기 · 경과 비교 · "
                                     "오른쪽 클릭: 환자 지정·다시 분석"))
         self.thumbs.stepped.connect(self._step)
         self.eye_rail = EyeRail(self.thumbs)                 # OD · OS, once per row, at its left
@@ -828,8 +828,8 @@ class MainWindow(QMainWindow):
         cmp_row = QHBoxLayout()
         cmp_row.addWidget(self.cmp_sync)
         cmp_row.addStretch()
-        b_pair = QPushButton("디스크 2장 (보험 청구용)…")
-        b_pair.setToolTip("이 두 사진의 시신경 유두만 확대해 한 장으로 만듭니다")
+        b_pair = QPushButton("스테레오 보기…")
+        b_pair.setToolTip("이 두 사진을 스테레오로 봅니다 (위글 · 평행 · 교차 · 적청 · 깊이) — 보험 청구용 한 장도 그 안에")
         b_pair.clicked.connect(lambda: self._on_action("discpair"))
         cmp_row.addWidget(b_pair)
         cmp_l.addLayout(cmp_row)
@@ -1729,7 +1729,7 @@ class MainWindow(QMainWindow):
             "다시 열기: 명령 툴바의 [환자 목록] · 보기 → 환자 목록 · Ctrl+0 · 환자 검색(Ctrl+F)<br><br>"
             "<b>명령 툴바 (왼쪽)</b><br>"
             "환자 목록 · 이전 · 다음 · [Simple] · [Multi] · [Detail] (켜진 것이 지금 보기) · 화면 맞춤 · 도구 · [3D] · "
-            "[Montage] · [Glaucoma] (▾ 디스크 2장) · 인쇄 · 설정 · 종료<br>"
+            "[Montage] · [Glaucoma] (▾ 스테레오 보기 · 시간별 비교) · 인쇄 · 설정 · 종료<br>"
             "맨 위의 점 손잡이를 끌면 오른쪽이나 화면 위쪽으로 옮겨집니다 (툴바를 오른쪽 클릭: 위치 고르기, 다음에도 그 자리)<br>"
             "<b>16장 보기</b> (환자를 열면 처음 나오는 화면, VK-2 방식): 이 환자의 사진 16장을 한 화면에 — "
             "클릭: 고르기(번호) · 다시 클릭: 빼기 · 휠 · ◀ ▶: 다음 / 이전 16장<br>"
@@ -1752,9 +1752,11 @@ class MainWindow(QMainWindow):
             "<b>사진 목록 (화면 아래)</b><br>"
             "위 줄 OD · 아래 줄 OS (줄마다 최신 사진부터) — 눈은 줄 왼쪽에 한 번만 표시하고, 사진 위에는 날짜만 씁니다<br>"
             "보기 → 사진 목록 표시: 날짜 · 종류(컬러 · 몽타주 …) · 눈별로 두 줄 (끄면 한 줄) · 미상 사진은 눈 고르기 → 미상<br><br>"
-            "<b>두 사진 고르기 · 디스크 2장</b><br>"
-            "두 번째 사진을 Ctrl+클릭(②, 다시 Ctrl+클릭하면 해제) → [Glaucoma] ▾ 디스크 2장 · [Glaucoma](스테레오 · 경과 비교)<br>"
-            "[디스크 2장]: 두 사진의 시신경 유두만 확대해 한 장으로 (OD 왼쪽 · OS 오른쪽, 보험 청구용)<br><br>"
+            "<b>두 사진 고르기 · 스테레오 보기</b><br>"
+            "사진 목록에서 같은 눈의 사진 두 장을 차례로 클릭해 고르고 (몽타주처럼) → [Glaucoma] (스테레오 보기 · 경과 비교) · "
+            "[Glaucoma] ▾ 스테레오 보기<br>"
+            "스테레오 보기 → 보험 청구용 [청구용 한 장]: 두 사진의 시신경 유두만 확대해 흰 종이 한 장으로 "
+            "(전의 디스크 2장 — OD 왼쪽 · OS 오른쪽)<br><br>"
             "<b>여러 컴퓨터에서 함께 쓰기</b><br>"
             "설정 → 공유: 서버(이 컴퓨터의 자료를 함께 쓰기) · 서버에 연결(다른 컴퓨터의 자료 보기) · "
             "웹 브라우저로 http://서버주소:8765<br><br>"
@@ -3402,10 +3404,10 @@ class MainWindow(QMainWindow):
         cur = self.current["id"] if self.current else None
         if iid != cur:
             menu.addAction("비교 대상으로 (오른쪽)", lambda: self._set_compare(iid))
-            menu.addAction("디스크 2장 (보고 있는 사진과)…", lambda: self._disc_pair(iid))
+            menu.addAction("스테레오 보기 (보고 있는 사진과)…", lambda: self.open_stereo(iid))
             menu.addAction("녹내장 분석 (보고 있는 사진과)…", lambda: self.open_glaucoma(iid))
         elif self.compare is not None:
-            menu.addAction("디스크 2장 (② 사진과)…", lambda: self._disc_pair())
+            menu.addAction("스테레오 보기 (② 사진과)…", lambda: self.open_stereo())
             menu.addAction("녹내장 분석 (② 사진과)…", lambda: self.open_glaucoma())
             menu.addAction("두 번째 사진(②) 선택 해제", lambda: self._pick_second(self.compare["id"]))
         menu.addAction("시간별 비교 (이 눈의 유두 사진들)…",
@@ -3443,9 +3445,9 @@ class MainWindow(QMainWindow):
             other = others[0]
             menu.addAction("Glaucoma — 다른 한 장과 함께 (스테레오 · 경과)…",
                            lambda: self._cell_run(iid, lambda: self.open_glaucoma(other)))
-            menu.addAction("디스크 2장 (다른 한 장과)…", lambda: self._cell_run(iid, lambda: self._disc_pair(other)))
+            menu.addAction("스테레오 보기 (다른 한 장과)…", lambda: self._cell_run(iid, lambda: self.open_stereo(other)))
         elif self.compare is not None and self.compare["id"] != iid:
-            menu.addAction("디스크 2장 (② 사진과)…", lambda: self._cell_run(iid, self._disc_pair))
+            menu.addAction("스테레오 보기 (② 사진과)…", lambda: self._cell_run(iid, self.open_stereo))
         menu.addSeparator()
         menu.addAction(line_icon("detail"), "Detail — 크게 보기", lambda: self.open_large(iid))
         menu.addAction("환자 지정/정보 수정…", lambda: self._cell_run(iid, self._edit_image))
@@ -3887,8 +3889,8 @@ class MainWindow(QMainWindow):
             self._save_view_record()
         elif key == "print":
             self._print_view()
-        elif key == "discpair":
-            self._disc_pair()
+        elif key == "discpair":               # Glaucoma ▾ 스테레오 보기 (the 청구용 한 장 is in it)
+            self.open_stereo()
         elif key == "glaucoma":
             self.open_glaucoma()
         elif key == "timeline":
@@ -5547,7 +5549,7 @@ class MainWindow(QMainWindow):
             return
         self.compare = self.db.get_image(image_id)
         self._mark_pair()
-        self.lbl_status.setText(keys("두 사진을 골랐습니다 (② = 두 번째) — [디스크 2장] · [녹내장](스테레오 · 경과 비교) · "
+        self.lbl_status.setText(keys("두 사진을 골랐습니다 (② = 두 번째) — [Glaucoma] (스테레오 보기 · 경과 비교) · "
                                      "Ctrl+클릭으로 해제"))
 
     def _fill_compare(self) -> None:
@@ -5582,18 +5584,19 @@ class MainWindow(QMainWindow):
                                            MODALITY_LABELS.get(row["modality"] or "", "")) if x)
         return discpair.DiscSource(row["id"], rgb, disc, geo, eye, when, caption, found)
 
-    def _build_disc_pair(self, second_id: int | None = None):
-        """``(dialog, "")`` for the shown photo and ``second_id`` (default: the ② photo),
-        or ``(None, why not)``."""
-        if self.current is None:
+    def _build_disc_pair(self, second_id: int | None = None, first_id: int | None = None, parent=None):
+        """``(dialog, "")`` for ``first_id`` (default: the shown photo) and ``second_id`` (default: the ②
+        photo, else the other of two photos picked), or ``(None, why not)``."""
+        if first_id is None and self.current is None:
             return None, "사진을 고르세요."
-        first = self.db.get_image(self.current["id"])
+        first = self.db.get_image(self.current["id"] if first_id is None else first_id)
+        if first is None:
+            return None, "사진이 삭제되었습니다. 다시 선택하세요."
         if second_id is None or second_id == first["id"]:
-            second_id = self.compare["id"] if self.compare is not None else None
+            second_id = self.compare["id"] if self.compare is not None else self._other_pick(first, same_eye=False)
         second = self.db.get_image(second_id) if second_id is not None else None
         if second is None or second["id"] == first["id"]:
-            return None, keys("사진 두 장을 고르세요.\n\n썸네일에서 한 장을 클릭한 뒤 두 번째 사진을 Ctrl+클릭하면 "
-                              "② 표시가 붙습니다. 그다음 [디스크 2장]을 누르세요.")
+            return None, self.NEED_TWO
         if first["patient_ref"] is None or second["patient_ref"] is None:
             return None, "미분류 사진은 쓸 수 없습니다.\n먼저 [정보 수정]으로 환자를 지정하세요."
         if first["patient_ref"] != second["patient_ref"]:
@@ -5620,16 +5623,36 @@ class MainWindow(QMainWindow):
         dlg = DiscPairDialog(sources, patient_line="  ·  ".join(bits),
                              footer=f"{APP_TITLE}  ·  작성 {date.today().isoformat()}",
                              file_stem=safe_component(stem, "디스크"), save_record=self._save_disc_pair,
-                             adjust=self._adjusted, parent=self)
+                             adjust=self._adjusted, parent=parent or self)
         dlg.discPicked.connect(self._set_disc)
         return dlg, ""
 
-    def _disc_pair(self, second_id: int | None = None) -> None:
-        dlg, why = self._build_disc_pair(second_id)
+    def _disc_pair(self, second_id: int | None = None, first_id: int | None = None, parent=None) -> None:
+        """청구용 한 장 (디스크 2장): opened from 녹내장 분석 → 스테레오 보기 → 보험 청구용."""
+        dlg, why = self._build_disc_pair(second_id, first_id, parent)
         if dlg is None:
-            QMessageBox.information(self, "디스크 2장", why)
+            QMessageBox.information(parent or self, "청구용 한 장 (디스크 2장)", why)
             return
         dlg.exec()
+
+    NEED_TWO = ("사진 두 장을 고르세요.\n\n사진 목록에서 같은 눈의 사진 두 장을 차례로 클릭해 고른 뒤 (몽타주처럼) "
+                "[Glaucoma] 또는 [Glaucoma] ▾ 스테레오 보기를 누르세요.")
+
+    def _other_pick(self, first, same_eye: bool = True) -> int | None:
+        """Two photos picked by plain clicks (as for 몽타주) or shown by Simple, ``first`` one of them:
+        the other — its pair for 스테레오 보기 · 경과 비교, without a Ctrl+click (②). Only a photo of the
+        same patient that can be analysed; ``same_eye``: and of the same eye (Simple's own OD | OS is
+        no pair)."""
+        ids = self._picked_ids()
+        if first is None or len(ids) != 2 or first["id"] not in ids:
+            return None
+        other = self.db.get_image(ids[0] if ids[1] == first["id"] else ids[1])
+        if (other is None or other["patient_ref"] is None or other["patient_ref"] != first["patient_ref"]
+                or other["modality"] in ("anterior", "disc", "glaucoma")):
+            return None
+        if same_eye and (self._glaucoma_eye(first) is None or self._glaucoma_eye(first) != self._glaucoma_eye(other)):
+            return None
+        return other["id"]
 
     def _save_disc_pair(self, rgb: np.ndarray, sources) -> int:
         """Store the sheet as a new photo of the patient (modality ``disc``)."""
@@ -5707,19 +5730,24 @@ class MainWindow(QMainWindow):
                 rgb = None
         return self._glaucoma_photo(row, rgb) if rgb is not None else None
 
-    def _build_glaucoma(self, second_id: int | None = None, start: str | None = None):
-        """``(dialog, "")`` for the shown photo — with ``second_id`` (default: the ② photo, if one
-        is picked) as its pair for stereo and progression, and the photos of the same eye for 시간별
-        비교 (``start="timeline"``: opened there) — or ``(None, why not)``."""
-        if self.current is None:
+    def _build_glaucoma(self, second_id: int | None = None, start: str | None = None,
+                        first_id: int | None = None):
+        """``(dialog, "")`` for the shown photo (or ``first_id``) — with ``second_id`` (default: the ②
+        photo, else the other of two photos of one eye picked by plain clicks) as its pair for stereo
+        and progression, and the photos of the same eye for 시간별 비교 (``start="timeline"``: opened
+        there; ``start="stereo"``: 스테레오 보기, which needs the two) — or ``(None, why not)``."""
+        if first_id is None and self.current is None:
             return None, "사진을 고르세요."
-        first = self.db.get_image(self.current["id"])
+        first = self.db.get_image(self.current["id"] if first_id is None else first_id)
         if first is None:
             return None, "사진이 삭제되었습니다. 다시 선택하세요."
         if second_id is None or second_id == first["id"]:
-            second_id = self.compare["id"] if self.compare is not None else None
+            second_id = (self.compare["id"] if self.compare is not None
+                         else self._other_pick(first, same_eye=start != "stereo"))
         second = self.db.get_image(second_id) if second_id is not None else None
         rows = [first] + ([second] if second is not None and second["id"] != first["id"] else [])
+        if start == "stereo" and len(rows) < 2:
+            return None, self.NEED_TWO
         if len(rows) == 2 and first["patient_ref"] is None:
             return None, "여러 사진을 비교하려면 먼저 환자를 지정하세요."
         if len(rows) == 2 and first["patient_ref"] != second["patient_ref"]:
@@ -5749,15 +5777,33 @@ class MainWindow(QMainWindow):
                              file_stem=safe_component(stem, "녹내장"), save_record=save_record, parent=self,
                              series=series,
                              prefer=prefer, start=start, method=self.settings.disc3d_method,
-                             stereo_method=self.settings.disc3d_stereo_method)
+                             stereo_method=self.settings.disc3d_stereo_method,
+                             sheet=(lambda parent: self._disc_pair(rows[1]["id"], rows[0]["id"], parent))
+                             if len(rows) == 2 else None)
         return dlg, ""
 
-    def open_glaucoma(self, second_id: int | None = None, start: str | None = None) -> None:
-        dlg, why = self._build_glaucoma(second_id, start)
+    def open_glaucoma(self, second_id: int | None = None, start: str | None = None,
+                      first_id: int | None = None) -> None:
+        dlg, why = self._build_glaucoma(second_id, start, first_id)
         if dlg is None:
-            QMessageBox.information(self, "녹내장 분석", why)
+            QMessageBox.information(self, "스테레오 보기" if start == "stereo" else "녹내장 분석", why)
             return
         dlg.exec()
+
+    def _stereo_ids(self, second_id: int | None = None) -> tuple[int | None, int | None]:
+        """``(first, second)`` for 스테레오 보기: ``second_id`` or the ② photo with the shown one — else
+        the two photos picked, also where none of them is the one looked at (16장 보기)."""
+        if second_id is None and self.compare is None:
+            ids = self._picked_ids()
+            if len(ids) == 2 and (self.current is None or self.current["id"] not in ids):
+                return ids[0], ids[1]
+        return None, second_id
+
+    def open_stereo(self, second_id: int | None = None) -> None:
+        """[Glaucoma] ▾ 스테레오 보기: 녹내장 분석 on its 스테레오 보기 tab with the two photos picked (plain
+        clicks, as for 몽타주) — the 청구용 한 장 (전의 디스크 2장) is in that tab."""
+        first_id, second_id = self._stereo_ids(second_id)
+        self.open_glaucoma(second_id, "stereo", first_id)
 
     def _save_glaucoma(self, rgb: np.ndarray, note: str, eye: str | None, image_ids,
                        *, expected_patient=..., expected_sources=None) -> int:
