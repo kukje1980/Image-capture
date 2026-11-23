@@ -3873,7 +3873,7 @@ class MainWindow(QMainWindow):
         elif key in ("flip_h", "flip_v"):
             v.flip(key == "flip_h")
         elif key in ("prev", "next"):
-            self._step(-1 if key == "prev" else 1)
+            self._step_shown(-1 if key == "prev" else 1)
         elif key == "slideshow":
             self._stop_slideshow() if self._slide_timer.isActive() else self._start_slideshow()
         elif key == "annot_undo":
@@ -3982,7 +3982,7 @@ class MainWindow(QMainWindow):
     def _step(self, d: int, wrap: bool = False) -> None:
         """이전 / 다음 (PageUp · PageDown, ← · →, ◀ ▶ at the sides of a photo, 연속): the photo before
         / after the one shown — of the photo list; on Simple with picked photos the picked one
-        before / after."""
+        before / after (the photo list's ← / → and 연속; the toolbar's 이전 / 다음: ``_step_shown``)."""
         cur = self.current["id"] if self.current is not None else None
         if self._tab() == "multi" and cur in self._picks:
             ids = list(self._picks)
@@ -4049,6 +4049,16 @@ class MainWindow(QMainWindow):
         if row is not None:
             self.lbl_status.setText(f"{row['laterality'] or ''} {row['exam_date'] or ''} — ◀ ▶: 같은 눈의 "
                                     "이전 / 다음 사진")
+
+    def _step_shown(self, d: int) -> None:
+        """이전 / 다음 of the toolbar (PageUp · PageDown): what ◀ ▶ at the sides of the photo shown do —
+        Simple · Multi with picked photos: in the selected cell the photo of the same eye before / after
+        it (``_step_cell``); elsewhere the photo before / after of the photo list (``_step``)."""
+        cur = self.current["id"] if self.current is not None else None
+        if self._tab() == "multi" and cur in self._picks:
+            self._step_cell(cur, d)
+        else:
+            self._step(d)
 
     def _sync_navs(self) -> None:
         """◀ ▶ are at a photo's sides only where there is a photo to go to: Detail — before / after

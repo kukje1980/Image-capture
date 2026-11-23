@@ -340,7 +340,7 @@ Windows에서는 창 제목 표시줄도 어둡게 맞춥니다.
 | 버튼 | VK-2 | 기능 |
 |---|---|---|
 | 환자 목록 | OPEN LIST | [환자 목록 창](#환자-목록-창-vk-2-open-list) 열기/닫기 (Ctrl+0) — 환자 검색(Ctrl+F)도 이 창에서 |
-| 이전 / 다음 | PREV / NEXT | 이전·다음 사진 (PageUp / PageDown · ← / →) — Simple · Multi에서는 고른 사진 사이 |
+| 이전 / 다음 | PREV / NEXT | 이전·다음 사진 (PageUp / PageDown) — 사진 좌우 끝의 ◀ ▶ 와 같음: Simple · Multi에서는 고른 칸에 같은 눈의 이전 / 다음 사진 |
 | Simple | | 최신 OD \| OS 두 장, 사진 목록을 클릭하면 더하기 · 빼기 (Ctrl+1, [아래](#보기-고르기--16장-보기--multi--simple--detail)) |
 | Multi | MULTI | 16장 보기에서 고른 사진만 — 다시 누르면 16장 보기로 (Ctrl+2, [아래](#16장-보기--multi-vk-2-방식)) |
 | Detail | | 사진 한 장을 크게 + 황반 · 시신경 유두 확대 (Ctrl+5) — 다시 누르면 보던 화면으로 |

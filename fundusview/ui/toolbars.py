@@ -39,8 +39,8 @@ COMMANDS = (
     ("search", "환자 검색", "환자 ID·이름으로 찾기 (Ctrl+F)", "search", "ID# SEARCH"),
     ("list", "환자 목록", "환자 목록 창 열기/닫기 (Ctrl+0) — 환자를 찾아 두 번 누르면 그 환자의 사진", "log",
      "OPEN LIST"),
-    ("prev", "이전", "이전 사진 (PageUp · ←)", "prev", "PREV"),
-    ("next", "다음", "다음 사진 (PageDown · →)", "next", "NEXT"),
+    ("prev", "이전", "이전 사진 (PageUp · ←) — 사진 왼쪽 끝의 ◀ 와 같음: Simple · Multi에서는 고른 칸에 같은 눈의 이전 사진", "prev", "PREV"),
+    ("next", "다음", "다음 사진 (PageDown · →) — 사진 오른쪽 끝의 ▶ 와 같음: Simple · Multi에서는 고른 칸에 같은 눈의 다음 사진", "next", "NEXT"),
     ("view:simple", "Simple", "Simple (Ctrl+1) — 누르면 최신 OD | OS 두 장 (OD 왼쪽 · OS 오른쪽)\n"
                               "사진 목록을 클릭하면 더하고(번호) 다시 클릭하면 뺍니다 — 고른 장수에 맞게 화면이 나뉩니다 "
                               "(1 · 2 · 4 · 6 · 9 · 16)\n칸을 누르면 그 사진만 보정 · 아래 사진을 더블클릭: 크게 보기 (Detail)",
