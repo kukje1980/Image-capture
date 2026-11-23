@@ -72,6 +72,7 @@ from .dialogs import WHEEL3D, ImageDialog, PatientDialog, SettingsDialog, source
 from .dicom_dialogs import DicomSendDialog, WorklistDialog
 from .disc_pair import DiscPairDialog
 from .glaucoma_dialog import GlaucomaDialog, Photo
+from . import icons as icon_looks
 from .icons import icon as line_icon
 from .depth_bar import DepthBar, ZoomBar
 from .eye3d import EyeView
@@ -394,6 +395,7 @@ class MainWindow(QMainWindow):
         if icon:
             a.setIcon(icon_for(icon))
             a.setIconVisibleInMenu(False)
+            self._icon_acts.append((a, icon))     # (drawn again in another look: _set_icon_style)
         vk_txt = f"<br><span style='color:{theme.TEXT3}'>VK-2: {vk}</span>" if vk and vk != "—" else ""
         a.setToolTip(f"<b>{label}</b><br>{tip}{vk_txt}" if tip else label)
         a.setStatusTip(tip)
@@ -402,6 +404,8 @@ class MainWindow(QMainWindow):
         return a
 
     def _make_actions(self) -> None:
+        self._icon_acts: list[tuple[QAction, str]] = []
+        self.settings.icon_style = icon_looks.set_style(self.settings.icon_style)   # 보기 → 아이콘 모양
         self.acts: dict[str, QAction] = {}
         for key, label, tip, ic, vk in COMMANDS:
             self.acts[key] = self._act(key, label, tip, ic, vk, checkable=key in CHECKABLE)
@@ -552,6 +556,18 @@ class MainWindow(QMainWindow):
                                         "돋보기가 나옵니다 (사진 전체가 보일 때 — 휠로 확대한 뒤에는 드래그로 이동)\n"
                                         "처음에는 꺼져 있습니다 — 돋보기는 왼쪽 버튼을 누르고 있는 동안 나옵니다")
         self.act_hover_loupe.toggled.connect(self._set_hover_loupe)
+        sub = m.addMenu("아이콘 모양")             # the look of the toolbar icons (icons.STYLES)
+        sub.setToolTipsVisible(True)
+        self._icon_styles = QActionGroup(self)
+        self.icon_style_acts = {}
+        for k, label, tip in icon_looks.STYLES:
+            a = sub.addAction(label)
+            a.setToolTip(tip)
+            a.setCheckable(True)
+            a.setChecked(k == icon_looks.style())
+            self._icon_styles.addAction(a)
+            a.triggered.connect(lambda _=False, k=k: self._set_icon_style(k))
+            self.icon_style_acts[k] = a
         m.addAction(self.tb_cmd.toggleViewAction())
         sub = m.addMenu("명령 툴바 위치")          # (as the right-click menu of the toolbar)
         self.cmdbar_acts = {}
@@ -2869,6 +2885,18 @@ class MainWindow(QMainWindow):
         if getattr(self, "dock", None) is not None:
             self._peek_grow.stop()
             self.thumbs.set_dock(None)
+
+    def _set_icon_style(self, style: str, save: bool = True) -> None:
+        """보기 → 아이콘 모양: the toolbar icons in another look (icons.STYLES), at once."""
+        self.settings.icon_style = style = icon_looks.set_style(style)
+        self.icon_style_acts[style].setChecked(True)
+        for a, spec in self._icon_acts:
+            a.setIcon(icon_for(spec))
+        if save:
+            try:
+                self.settings.save()
+            except OSError:
+                pass
 
     def _set_preview_scale(self, scale: float, save: bool = True) -> None:
         """보기 → 미리 보기 배율: the photo under the mouse grows to ``scale`` times its size in the
