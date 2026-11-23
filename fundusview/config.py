@@ -136,7 +136,8 @@ class Settings:
     green_filter: str = "green"
     rnfl_strength: float = 0.9
     # 녹내장 분석 → 3D 입체 (설정 → 일반): how one photo's shape is estimated when the window opens —
-    # "hybrid" 하이브리드 (처음 설정) · "vessels" 혈관 꺾임 · "pallor" 밝기 (disc3d.METHODS); the tab can switch
+    # "hybrid" 하이브리드 (처음 설정) · "vessels" 혈관 꺾임 · "pallor" 밝기 (disc3d.METHODS); the tab can switch.
+    # 디스크 C/D starts on the same one (its lines of equal depth and the cup put on one of them)
     disc3d_method: str = "hybrid"
     # … and the stereo depth of two photos (설정 → 일반): "parallax_vessels" 시차 + 혈관 꺾임 (처음 설정) ·
     # "parallax" 시차 (disc3d.STEREO_METHODS); the tab can switch

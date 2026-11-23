@@ -72,26 +72,141 @@ def test_cdr_metrics_and_isnt():
     cup = {"cx": 100, "cy": 100, "rx": 25, "ry": 30}
     m = G.cdr_metrics(disc, cup, "OD")
     assert m["vertical"] == pytest.approx(0.5) and m["horizontal"] == pytest.approx(0.5)
-    assert m["area"] == pytest.approx(0.25)
+    assert m["area"] == pytest.approx(0.25) and m["dd"] == pytest.approx(120)
     assert m["rim"]["I"] == pytest.approx(0.25) and m["rim"]["S"] == pytest.approx(0.25)
+    assert set(m["rim"]) == {"S", "I", "N", "T", "SN", "ST", "IN", "IT"}        # the rim in eight directions
     # healthy order I ≥ S ≥ N ≥ T: cup towards the temporal side (left in a right eye) and up
     cup2 = {"cx": 97, "cy": 98, "rx": 30, "ry": 30}
     ok = G.cdr_metrics(disc, cup2, "OD")
     assert ok["rim"]["I"] > ok["rim"]["S"] > ok["rim"]["N"] > ok["rim"]["T"] and ok["isnt"] == []
+    assert ok["rim"]["IN"] > ok["rim"]["ST"] and ok["thinnest"] == "T"
     # the same picture read as a left eye has nasal and temporal exchanged
     os_ = G.cdr_metrics(disc, cup2, "OS")
     assert os_["rim"]["N"] == pytest.approx(ok["rim"]["T"]) and "비측 림이 이측보다 얇음" in os_["isnt"]
+    assert os_["rim"]["ST"] == pytest.approx(ok["rim"]["SN"])
     # inferior notch
     low = G.cdr_metrics(disc, {"cx": 100, "cy": 115, "rx": 25, "ry": 40}, "OD")
     assert "하측 림이 상측보다 얇음" in low["isnt"] and low["vertical"] == pytest.approx(40 / 60)
-    # an outline whose points were moved one by one: a cup reaching further down than up (an inferior
-    # notch) — the inferior rim alone thins; the area is its four quarter ellipses
+    # four quarter ellipses (the reach up · right · down · left): a cup reaching further down than up —
+    # the inferior rim alone thins
     notch = {"cx": 100, "cy": 100, "top": 30, "right": 25, "bottom": 48, "left": 25}
     m2 = G.cdr_metrics(disc, notch, "OD")
     assert m2["rim"]["S"] == pytest.approx(m["rim"]["S"]) and m2["rim"]["I"] == pytest.approx((60 - 48) / 120)
     assert m2["vertical"] == pytest.approx((30 + 48) / 120) and "하측 림이 상측보다 얇음" in m2["isnt"]
-    assert G.outline_area(notch) == pytest.approx(math.pi / 4 * (25 * 30 * 2 + 25 * 48 * 2))
-    assert G.outline(cup) == {"cx": 100.0, "cy": 100.0, "top": 30.0, "right": 25.0, "bottom": 30.0, "left": 25.0}
+    assert G.area(notch) == pytest.approx(math.pi / 4 * (25 * 30 * 2 + 25 * 48 * 2), rel=1e-3)
+    # … and the narrowest rim round the whole disc: at 6 o'clock, a tenth of the disc's diameter there
+    assert m2["narrow"]["hour"] == 6 and m2["narrow"]["name"] == "I" and m2["thinnest"] == "I"
+    assert m2["narrow"]["ratio"] == pytest.approx(12 / 120) and m2["narrow"]["absent"] == 0 and m2["ddls"] == 4
+
+
+def test_outlines_as_points_a_smooth_line_through_them():
+    circle = {"cx": 200, "cy": 150, "rx": 80, "ry": 80}
+    pts = G.ring(circle)                                            # up first, then clockwise on the screen
+    assert pts.shape == (G.RING, 2) and pts[0] == pytest.approx((200, 70)) and pts[2] == pytest.approx((280, 150))
+    assert pts[4] == pytest.approx((200, 230)) and pts[1] == pytest.approx((200 + 80 * 0.7071, 150 - 80 * 0.7071), abs=0.01)
+    line = G.curve({"pts": pts})                                    # the smooth line through eight points
+    r = np.hypot(line[:, 0] - 200, line[:, 1] - 150)
+    assert len(line) == G.RING * G.CURVE_PER and 79.5 < r.min() and r.max() < 80.01
+    assert G.area({"pts": pts}) == pytest.approx(math.pi * 80 * 80, rel=0.005)
+    assert G.centre({"pts": pts}) == pytest.approx((200, 150), abs=0.01)
+    oval = {"cx": 100, "cy": 100, "rx": 50, "ry": 60}
+    as_pts = {"pts": G.ring(oval)}
+    assert G.area(as_pts) == pytest.approx(G.area(oval), rel=0.005)
+    m = G.cdr_metrics(as_pts, {"pts": G.ring({"cx": 100, "cy": 100, "rx": 25, "ry": 30})})
+    assert m["vertical"] == pytest.approx(0.5, abs=1e-6) and m["area"] == pytest.approx(0.25, abs=1e-6)
+    # one point moved: the line bulges there, its middle follows, the far side stays
+    out = pts.copy()
+    out[2] += (30, 0)
+    bulged = G.curve({"pts": out})
+    assert bulged[:, 0].max() == pytest.approx(310, abs=0.5) and bulged[:, 0].min() == pytest.approx(120, abs=1.0)
+    assert G.centre({"pts": out})[0] > 202 and G.centre({"pts": out})[1] == pytest.approx(150, abs=0.01)
+    # two points close together: no loop (the line stays outside the middle)
+    near = pts.copy()
+    near[1] = near[2] + (-2, -3)
+    tight = G.curve({"pts": near})
+    assert np.hypot(tight[:, 0] - 200, tight[:, 1] - 150).min() > 60
+    # another picture's pixels
+    moved = G.moved({"pts": pts}, 0.5, 10, -5)
+    assert moved["pts"][0] == pytest.approx((110, 30)) and G.moved(oval, 2, 1, 1)["top"] == 120
+    assert G.reach(line, (200, 150), 0.0) == pytest.approx(80, abs=0.01) and G.reach(line, (500, 150), 0.0) == 0
+
+
+def test_a_traced_outline_as_points_and_evened_out():
+    t = np.linspace(0, 2 * math.pi, 300, endpoint=False)
+    oval = np.stack([120 + 40 * np.cos(t), 90 + 55 * np.sin(t)], axis=1)
+    pts = G.ring({"poly": oval})                                    # its top · bottom · sides, the diagonals between
+    assert pts[0] == pytest.approx((120, 35), abs=0.2) and pts[4] == pytest.approx((120, 145), abs=0.2)
+    assert pts[2] == pytest.approx((160, 90), abs=0.2) and pts[6] == pytest.approx((80, 90), abs=0.2)
+    through = G.curve({"pts": pts})
+    assert np.ptp(through[:, 1]) == pytest.approx(110, abs=0.3) and np.ptp(through[:, 0]) == pytest.approx(80, abs=0.3)
+    assert G.area({"pts": pts}) == pytest.approx(G.area({"poly": oval}), rel=0.01)
+    even = G.evened(oval)                                           # an oval stays what it is
+    assert np.ptp(even[:, 1]) == pytest.approx(110, abs=2.5) and np.ptp(even[:, 0]) == pytest.approx(80, abs=2.5)
+    # a narrow tongue (along a vessel) does not stand as drawn: the evened line stays near the oval
+    r = np.where(np.abs(t - 0.4) < 0.12, 1.7, 1.0)
+    tongue = np.stack([120 + 40 * r * np.cos(t), 90 + 55 * r * np.sin(t)], axis=1)
+    assert np.hypot(*(tongue - (120, 90)).T).max() > 70
+    even = G.evened(tongue)
+    assert np.hypot(*(even - G.centre({"poly": even})).T).max() < 60
+    assert G.area({"poly": even}) == pytest.approx(G.area({"poly": oval}), rel=0.08)
+
+
+def test_the_narrowest_rim_ddls_and_the_cup_a_disc_of_that_size_has():
+    disc = {"cx": 100, "cy": 100, "rx": 50, "ry": 60}
+    # a cup that reaches the margin below and to the temporal side (a right eye: left of the photo)
+    m = G.cdr_metrics(disc, {"cx": 90, "cy": 112, "rx": 36, "ry": 46}, "OD")
+    assert m["narrow"]["name"] in ("IT", "I") and m["narrow"]["hour"] in (6, 7, 8) and m["narrow"]["ratio"] < 0.05
+    assert m["ddls"] >= 5 and m["rim"]["IT"] < m["rim"]["SN"]
+    gone = G.cdr_metrics(disc, {"cx": 86, "cy": 116, "rx": 40, "ry": 50}, "OD")      # … and past it: no rim there
+    assert gone["narrow"]["absent"] >= 20 and gone["narrow"]["ratio"] == 0 and gone["ddls"] >= 6
+    assert gone["rim"]["IT"] < 0
+    # the nomogram for a disc of average size (1.5–2.0 mm): rim/disc ratio, then how much has no rim
+    assert [G.ddls_stage(r, 0) for r in (0.45, 0.4, 0.35, 0.25, 0.15, 0.05)] == [1, 1, 2, 3, 4, 5]
+    assert [G.ddls_stage(0, d) for d in (30, 60, 120, 200, 300)] == [6, 7, 8, 9, 10]
+    assert G.ddls_stage(0.35, 0, 1.3) == 3 and G.ddls_stage(0.35, 0, 2.3) == 1     # a small disc: one up, a large: one down
+    assert G.ddls_stage(0.45, 0, 2.3) == 1 and G.ddls_stage(0, 300, 1.3) == 10     # (never off the scale)
+    assert G.cdr_metrics(disc, {"cx": 100, "cy": 100, "rx": 25, "ry": 30}, "OD", disc_mm=1.3)["ddls"] == 4
+    # Garway-Heath 1998: a large disc has a large cup — CDR = (−1.31 + 1.194 · DD) / DD
+    assert G.expected_cdr(1.8) == pytest.approx(0.466, abs=0.001) and G.expected_cdr(2.2) == pytest.approx(0.599, abs=0.001)
+    assert G.expected_cdr(1.5) < G.expected_cdr(1.8) < G.expected_cdr(2.2) and G.expected_cdr(1.0) == 0.0
+    assert G.ring_names("OD") == ("S", "SN", "N", "IN", "I", "IT", "T", "ST")
+    assert G.ring_names("OS") == ("S", "ST", "T", "IT", "I", "IN", "N", "SN")
+
+
+def _disc_crop(n=420, frac=1 / 3.5, rx=0.9, ry=1.1, cup=0.5, offset=(14, -9), seed=2):
+    """A square picture round an optic disc: an upright oval disc (``rx`` · ``ry`` of the radius expected,
+    its middle ``offset`` px off the picture's) paler than the retina, a pale cup in it, vessels across."""
+    import cv2
+    yy, xx = np.mgrid[0:n, 0:n].astype(np.float32)
+    c, rd = (n - 1) / 2, frac * n / 2
+    r = np.hypot((xx - c - offset[0]) / rx, (yy - c - offset[1]) / ry) / rd
+    img = np.empty((n, n, 3), np.float32)
+    img[:] = (185, 85, 45)
+    img[r < 1.0] = (240, 160, 100)
+    img[r < cup] = (255, 235, 200)
+    out = np.clip(cv2.GaussianBlur(img, (0, 0), 2.5), 0, 255).astype(np.uint8)
+    for a in (25, 100, 200, 290):
+        t = math.radians(a)
+        p0 = (int(c + offset[0] + 0.1 * rd * math.cos(t)), int(c + offset[1] + 0.1 * rd * math.sin(t)))
+        p1 = (int(c + 3.0 * rd * math.cos(t + 0.2)), int(c + 3.0 * rd * math.sin(t + 0.2)))
+        cv2.line(out, p0, p1, (150, 35, 30), 4, cv2.LINE_AA)
+    noise = cv2.GaussianBlur(np.random.default_rng(seed).normal(0, 25, (n, n)).astype(np.float32), (0, 0), 1.5)
+    return np.clip(out.astype(np.float32) + noise[..., None], 0, 255).astype(np.uint8)
+
+
+def test_the_disc_margin_is_found_where_the_brightness_falls_to_the_retina():
+    n, frac = 420, 1 / 3.5
+    rd = frac * n / 2
+    for rx, ry, offset, cup in ((0.9, 1.1, (14, -9), 0.5), (1.15, 1.25, (-10, 6), 0.3), (0.8, 0.95, (0, 0), 0.7)):
+        found = G.find_disc_margin(_disc_crop(n, frac, rx, ry, cup, offset), frac)
+        assert found is not None and found["pts"].shape == (G.RING, 2) and found["confidence"] > 0.3
+        line = G.curve({"pts": found["pts"]})
+        assert np.ptp(line[:, 1]) == pytest.approx(2 * ry * rd, rel=0.06)       # as tall and as wide as the disc
+        assert np.ptp(line[:, 0]) == pytest.approx(2 * rx * rd, rel=0.06)
+        mid = G.centre({"pts": found["pts"]})                                     # … round its own middle
+        assert mid == pytest.approx(((n - 1) / 2 + offset[0], (n - 1) / 2 + offset[1]), abs=4)
+    assert G.find_disc_margin(np.full((n, n, 3), 120, np.uint8), frac) is None   # nothing there: not found
+    assert G.find_disc_margin(np.zeros((n, n, 3), np.uint8), frac) is None
 
 
 def test_sectors_and_clock_hours():
@@ -177,41 +292,172 @@ def _photo(image_id, eye="OD", seed=4, when="2026-01-05 10:00:00", shift=0):
     return Photo(image_id, rgb, eye, (disc[0] + shift, disc[1]), disc_px, (400.0 + shift, 400.0), True, when, "45°")
 
 
-def test_disc_tab_cuts_around_the_disc_and_measures(app):
-    from fundusview.ui.glaucoma_dialog import DiscTab
+def test_disc_tab_cuts_around_the_disc_and_each_point_moves_on_its_own(app):
+    from fundusview.ui.glaucoma_dialog import DT_CUP_DOT, DT_GRAB, DiscTab
 
     tab = DiscTab(_photo(1))
     assert tab.has_image() and tab.img.shape[0] == tab.img.shape[1]
-    side = tab.img.shape[0]
-    # the ellipses start at the disc's own size: 3.5 disc diameters across the picture
-    assert tab.disc["top"] + tab.disc["bottom"] == pytest.approx(side / 3.5 * 1.05, rel=0.01)
-    assert tab.metrics()["vertical"] == pytest.approx(0.50 / 1.05, abs=0.01)
+    assert tab.disc["pts"].shape == (G.RING, 2) == tab.cup["pts"].shape       # eight points an outline
     assert not tab.warn.isVisibleTo(tab)
+    tab.reset_outlines()                                            # (the size a disc has there: not yet fitted)
+    tab._changed()
+    side = tab.img.shape[0]
+    # the outlines at the disc's own size: 3.5 disc diameters across the picture
+    assert np.ptp(G.curve(tab.disc)[:, 1]) == pytest.approx(side / 3.5 * 1.05, rel=0.01)
+    assert tab.metrics()["vertical"] == pytest.approx(0.50 / 1.05, abs=0.01)
+    assert tab.state == {"disc": "default", "cup": "default"} and "기본 크기" in tab.lbl_auto.text()
+    u = 1.0 / tab.view.scale()                                      # one screen pixel in the picture's
+    mid = side / 2.0
+    # the two middles lie on each other: the dot in the middle is the cup's, the ring round it the disc's
+    assert G.centre(tab.disc) == pytest.approx((mid, mid), abs=0.01) == G.centre(tab.cup)
+    disc0, cup0 = tab.disc["pts"].copy(), tab.cup["pts"].copy()
+    tab._press(mid + 0.5 * DT_CUP_DOT * u, mid)
+    tab._move(mid + 0.5 * DT_CUP_DOT * u + 10, mid + 4)
+    tab._release()
+    assert tab.cup["pts"] == pytest.approx(cup0 + (10, 4)) and (tab.disc["pts"] == disc0).all()
+    assert tab.state == {"disc": "default", "cup": "hand"} and "컵: 직접 맞춤" in tab.lbl_auto.text()
+    tab._press(mid - 0.6 * DT_GRAB * u, mid)                        # (nearer the disc's middle than the cup's now)
+    tab._move(mid - 0.6 * DT_GRAB * u - 6, mid + 8)
+    tab._release()
+    assert tab.disc["pts"] == pytest.approx(disc0 + (-6, 8)) and tab.cup["pts"] == pytest.approx(cup0 + (10, 4))
+    assert G.centre(tab.disc) == pytest.approx((mid - 6, mid + 8), abs=0.01)   # the mark follows its outline
+    tab.reset_outlines()
+    tab._changed()
+    # drag the cup's lower point down: that point alone moves — the vertical C/D grows, the inferior rim
+    # narrows, the superior one is as it was; the cup's middle follows
+    c, rim0, v0 = tab.cup["pts"].copy(), tab.metrics()["rim"], tab.metrics()["vertical"]
+    low = c[4][1] - mid
+    tab._press(*c[4])
+    assert tab._drag["key"] == "cup" and tab._drag["what"] == 4
+    tab._move(c[4][0], c[4][1] + 0.6 * low)
+    assert tab.cup["pts"][4] == pytest.approx((c[4][0], c[4][1] + 0.6 * low))
+    assert (np.delete(tab.cup["pts"], 4, axis=0) == np.delete(c, 4, axis=0)).all()
+    assert tab.metrics()["vertical"] == pytest.approx(v0 * 1.3, abs=0.01)
+    assert tab.metrics()["rim"]["S"] == pytest.approx(rim0["S"], abs=0.004) and tab.metrics()["rim"]["I"] < rim0["I"] - 0.05
+    assert G.centre(tab.cup)[1] > mid + 2
+    tab._release()
+    assert tab._drag is None and tab.lbl_v.text() == f"{tab.metrics()['vertical']:.2f}"
+    # … the disc's nasal point on its own, and a point between them wherever it is dragged (not along an axis)
+    d = tab.disc["pts"].copy()
+    tab._press(*d[2])
+    tab._move(d[2][0] + 12, d[2][1])
+    tab._release()
+    assert tab.disc["pts"][2] == pytest.approx(d[2] + (12, 0)) and (tab.disc["pts"][6] == d[6]).all()
+    tab._press(*d[1])
+    tab._move(d[1][0] + 6, d[1][1] - 9)
+    tab._release()
+    assert tab.disc["pts"][1] == pytest.approx(d[1] + (6, -9))
+    # … but not past its neighbour: the line does not cross itself
+    tab._press(*tab.disc["pts"][1])
+    tab._move(d[3][0], d[3][1] + 20)                                # (dragged round to below the next two points)
+    tab._release()
+    turn = [math.atan2(y - G.centre(tab.disc)[1], x - G.centre(tab.disc)[0]) for x, y in tab.disc["pts"][:3]]
+    assert turn[0] < turn[1] < turn[2]
+    # the line itself, between two points: the whole outline
+    tab.reset_outlines()
+    d = tab.disc["pts"].copy()
+    on_line = G.curve(tab.disc)[G.CURVE_PER // 2]
+    assert np.hypot(*(d - on_line).T).min() > DT_GRAB * u            # (no point within reach there)
+    tab._press(*on_line)
+    assert tab._drag["key"] == "disc" and tab._drag["what"] == "c"
+    tab._move(on_line[0] + 5, on_line[1] - 7)
+    tab._release()
+    assert tab.disc["pts"] == pytest.approx(d + (5, -7))
+    tab._press(3, 3)                                                # nothing there: nothing is held
+    assert tab._drag is None
+    # another field: the outlines stay where they are on the photo
+    tab.reset_outlines()
+    tab.set_outlines(tab.disc, {"pts": tab.cup["pts"] + (-10, 0)})
+    before, tall = tab.metrics(), np.ptp(G.curve(tab.disc)[:, 1]) / side
     tab.set_field("wide")
-    assert tab.disc["top"] + tab.disc["bottom"] == pytest.approx(tab.img.shape[0] / 5.0 * 1.05, rel=0.01)
-    # drag the cup's lower point down: that point alone moves (the upper one stays) — the vertical C/D
-    # grows by half as much, the inferior rim narrows, the superior one is as it was
-    c = dict(tab.cup)
-    rim0 = tab.metrics()["rim"]
-    tab._press(c["cx"], c["cy"] + c["bottom"])
-    tab._move(c["cx"], c["cy"] + 1.6 * c["bottom"])
-    assert tab.cup["top"] == c["top"] and tab.cup["bottom"] == pytest.approx(1.6 * c["bottom"])
-    assert tab.metrics()["vertical"] == pytest.approx((1 + 1.6) / 2 * 0.50 / 1.05, abs=0.02)
-    assert tab.metrics()["rim"]["S"] == pytest.approx(rim0["S"]) and tab.metrics()["rim"]["I"] < rim0["I"]
-    # … and the disc's nasal point on its own: the temporal side stays
-    d = dict(tab.disc)
-    tab._press(d["cx"] + d["right"], d["cy"])
-    tab._move(d["cx"] + d["right"] + 12, d["cy"])
-    assert tab.disc["right"] == pytest.approx(d["right"] + 12) and tab.disc["left"] == d["left"]
-    tab._drag = None
-    assert tab.lbl_v.text() == f"{tab.metrics()['vertical']:.2f}"
-    tab.set_ellipses(tab.disc, {**tab.cup, "cx": tab.cup["cx"] - 10})
+    assert tab.metrics()["vertical"] == pytest.approx(before["vertical"]) and tab.metrics()["area"] == pytest.approx(before["area"])
+    assert np.ptp(G.curve(tab.disc)[:, 1]) / tab.img.shape[0] == pytest.approx(tall * 3.5 / 5.0, rel=1e-6)
     n_od = tab.metrics()["rim"]["N"]
     tab.set_eye("OS")
     assert tab.eye() == "OS" and tab.metrics()["rim"]["T"] == pytest.approx(n_od)
+    assert "DDLS" in tab.lbl_rim.text() and "가장 얇은 림" in tab.lbl_rim.text() and "하이측" in tab.lbl_rim.text()
+    tab.set_eye("")
+    assert "눈(OD/OS)" in tab.lbl_rim.text() and "DDLS" in tab.lbl_rim.text()
     out = tab.render()
-    assert out.shape == tab.img.shape and (out != tab.img).any()                # the ellipses are drawn in
-    assert "C/D" in tab.note()
+    assert out.shape == tab.img.shape and (out != tab.img).any()                # the outlines are drawn in
+    assert "C/D" in tab.note() and "mm" not in tab.lbl_ratio.text()             # (a photo without a scale)
+
+
+def _disc_photo(image_id=1, cup=0.5, rx=0.9, ry=1.1, offset=(14, -9), scale_known=False, found=True, rgb=None):
+    """A photo that is all optic disc region: a disc ``rx`` · ``ry`` of the size expected, a pale cup."""
+    from fundusview.ui.glaucoma_dialog import Photo
+
+    n = 630
+    rgb = _disc_crop(n, 1 / 3.0, rx, ry, cup, offset) if rgb is None else rgb
+    return Photo(image_id, rgb, "OD", ((n - 1) / 2, (n - 1) / 2), n / 3.0, None, found, "2026-01-05 10:00:00", "",
+                 scale_known=scale_known)
+
+
+def test_disc_tab_starts_on_the_disc_margin_and_the_cup_on_a_line_of_equal_depth(app):
+    from fundusview import disc3d
+    from fundusview.ui.glaucoma_dialog import DiscTab
+
+    tab = DiscTab(_disc_photo(cup=0.5, scale_known=True))
+    assert tab.state == {"disc": "auto", "cup": "auto"} and tab.method == "hybrid"
+    side = tab.img.shape[0]
+    rd = side / 3.5 / 2.0                                           # the radius a disc is expected to have there
+    disc = G.curve(tab.disc)
+    assert np.ptp(disc[:, 1]) == pytest.approx(2 * 1.1 * rd, rel=0.06)          # the green line: on the disc drawn
+    assert np.ptp(disc[:, 0]) == pytest.approx(2 * 0.9 * rd, rel=0.06)
+    k = side / 3.5 / (630 / 3.0)                                    # photo px → the picture shown
+    assert G.centre(tab.disc) == pytest.approx((side / 2 + 14 * k, side / 2 - 9 * k), abs=4)
+    m = tab.metrics()
+    assert m["vertical"] == pytest.approx(0.5, abs=0.06) and m["horizontal"] == pytest.approx(0.5, abs=0.08)
+    assert "사진에서 찾음" in tab.lbl_auto.text() and "하이브리드 등고선 30%" in tab.lbl_auto.text()
+    v = tab.by_method()                                             # each way of estimating, on its own line
+    assert set(v) == set(disc3d.METHODS) and v["hybrid"] == pytest.approx(m["vertical"], abs=0.01)
+    assert "추정 방식별 수직 C/D" in tab.lbl_auto.text() and f"<b>하이브리드 {v['hybrid']:.2f}</b>" in tab.lbl_auto.text()
+    # the lines of equal depth drawn over the photo: nested, the cup's among them
+    lines = tab.contours()
+    levels = [lv for lv, _ in lines]
+    areas = [G.area({"poly": pts}) for _, pts in lines]
+    assert 0.3 in levels and len(lines) >= 6 and all(a > b for a, b in zip(areas, areas[1:]))
+    on = dict(lines)[0.3]
+    assert np.ptp(on[:, 1]) == pytest.approx(np.ptp(G.curve(tab.cup)[:, 1]), rel=0.02)   # the yellow line lies on it
+    shown = tab.render()
+    tab.sw_contour.setChecked(False)
+    assert not (tab.render() == shown).all()
+    # 컵 기준 깊이: a deeper line of equal depth is a smaller cup — the cup goes there
+    tab.s_level.slider.setValue(round(60 / 5))
+    assert tab.metrics()["vertical"] < m["vertical"] - 0.03 and "등고선 60%" in tab.lbl_auto.text()
+    tab.s_level.slider.setValue(round(30 / 5))
+    assert tab.metrics()["vertical"] == pytest.approx(m["vertical"], abs=1e-6)
+    # a point moved by hand stays until the cup is put back on its line
+    p = tab.cup["pts"][0].copy()
+    tab._press(*p)
+    tab._move(p[0], p[1] - 0.1 * rd)
+    tab._release()
+    assert tab.state["cup"] == "hand" and tab.metrics()["vertical"] > m["vertical"] + 0.01
+    tab.b_cup.click()
+    assert tab.state["cup"] == "auto" and tab.metrics()["vertical"] == pytest.approx(m["vertical"], abs=1e-6)
+    tab.set_method("pallor")
+    assert tab.methods.key() == "pallor" and "밝기 등고선 30%" in tab.lbl_auto.text()
+    assert tab.metrics()["vertical"] == pytest.approx(v["pallor"], abs=0.01)
+    # the green line moved by hand, then 자동 맞춤: both back where the photo puts them
+    tab.set_method("hybrid")
+    tab.set_outlines({"pts": tab.disc["pts"] * 1.2}, tab.cup)
+    assert tab.state == {"disc": "hand", "cup": "auto"}             # (the cup, handed back as it is, stands as it did)
+    tab.b_auto.click()
+    assert tab.state == {"disc": "auto", "cup": "auto"} and tab.metrics()["vertical"] == pytest.approx(m["vertical"], abs=0.01)
+    # the disc's size by the photo's scale, and the cup a disc of that size has
+    assert tab.disc_mm() == pytest.approx(1.8 * 1.1, rel=0.06) and "mm" in tab.lbl_ratio.text()
+    assert "정상 평균 C/D" in tab.lbl_ratio.text() and "디스크 크기 반영" in tab.lbl_rim.text()
+    # a large cup is read large; a photo with no disc to see keeps the size a disc has there
+    big = DiscTab(_disc_photo(cup=0.8))
+    assert big.metrics()["vertical"] == pytest.approx(0.8, abs=0.07) and big.disc_mm() is None
+    flat = DiscTab(_disc_photo(rgb=np.full((630, 630, 3), 120, np.uint8)))
+    assert flat.state == {"disc": "none", "cup": "none"} and "찾지 못함" in flat.lbl_auto.text()
+    assert flat.metrics()["vertical"] == pytest.approx(0.50 / 1.05, abs=0.01)
+    lost = DiscTab(_disc_photo(found=False))                        # the disc's place is only a guess: not fitted
+    assert lost.state == {"disc": "default", "cup": "default"} and lost.warn.isVisibleTo(lost)
+    lost.auto_fit()                                                 # … until asked
+    assert lost.state == {"disc": "auto", "cup": "auto"}
+    assert DiscTab(None).metrics() is None
 
 
 def test_wide_tab_starts_from_the_photo_landmarks(app):

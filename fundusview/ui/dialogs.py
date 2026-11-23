@@ -52,6 +52,7 @@ GREEN_FILTERS = (("green", "녹색 성분만 (흑백)"),
 
 
 # 설정 → 일반 → 3D 입체 한 장 추정 (Settings.disc3d_method): 녹내장 분석 → 3D 입체 opens on this one
+# (and 디스크 C/D draws its lines of equal depth by it)
 DISC3D_METHODS = (("hybrid", "하이브리드 — 경계는 혈관 꺾임, 혈관이 없는 쪽과 바닥 모양은 밝기"),
                   ("vessels", "혈관 꺾임 — 혈관이 꺾이는 곳 = 컵 경계 (색은 쓰지 않음)"),
                   ("pallor", "밝기 — 창백한 곳 = 깊은 곳"))
@@ -361,8 +362,9 @@ class SettingsDialog(QDialog):
         f2.addRow("RNFL 강화 세기 (0.5 ~ 0.9)", self.rnfl_strength)
         self.disc3d_method = _combo(DISC3D_METHODS, settings.disc3d_method)
         self.disc3d_method.setToolTip("녹내장 분석 → 3D 입체에서 사진 한 장의 모양을 처음에 이 방법으로 추정합니다\n"
-                                      "(하이브리드가 처음 설정). 창에서는 언제나 밝기 · 혈관 꺾임 · 하이브리드를 바꿔 볼 수 있고,\n"
-                                      "[셋 나란히 비교]로 함께 볼 수 있습니다. 두 장 스테레오에는 쓰이지 않습니다.")
+                                      "(하이브리드가 처음 설정) — 디스크 C/D 탭의 등고선과 컵 자동 맞춤도 처음에 이 방법입니다.\n"
+                                      "창에서는 언제나 밝기 · 혈관 꺾임 · 하이브리드를 바꿔 볼 수 있고, [셋 나란히 비교]로 함께\n"
+                                      "볼 수 있습니다. 두 장 스테레오에는 쓰이지 않습니다.")
         f2.addRow("3D 입체 한 장 추정", self.disc3d_method)
         self.disc3d_stereo_method = _combo(DISC3D_STEREO_METHODS, settings.disc3d_stereo_method)
         self.disc3d_stereo_method.setToolTip("녹내장 분석 → 3D 입체의 2장 스테레오(같은 날 같은 눈의 두 장)를 처음에 이 방법으로\n"

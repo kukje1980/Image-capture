@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
     QSlider, QTabWidget, QVBoxLayout, QWidget,
 )
 
-from .. import disc3d
+from .. import disc3d, discpair
 from .. import glaucoma as G
 from ..timeline import common_eye
 from . import theme
@@ -58,6 +58,7 @@ class Photo:
     disc_found: bool = True            # False: ``disc`` is only where it should be
     when: str = ""                     # "YYYY-MM-DD HH:MM:SS"
     caption: str = ""
+    scale_known: bool = False          # ``disc_px`` stands on the camera's field of view (not a guess)
 
     @property
     def day(self) -> str:
@@ -545,37 +546,75 @@ class StereoTab(_PairTab):
 
 
 # -- disc: C/D -------------------------------------------------------------------------------------
-def _outline_path(e: dict) -> QPainterPath:
-    """An outline (``G.outline``) as four quarter ellipses round its centre: up-right, up-left, down-left,
-    down-right — the ellipse itself when the opposite reaches are equal."""
-    cx, cy, t, r, b, l = (e[k] for k in ("cx", "cy", "top", "right", "bottom", "left"))
-    path = QPainterPath(QPointF(cx + r, cy))
-    for (rx, ry), start in (((r, t), 0), ((l, t), 90), ((l, b), 180), ((r, b), 270)):
-        path.arcTo(QRectF(cx - rx, cy - ry, 2 * rx, 2 * ry), start, 90)
+# How the ratio is measured, and why (docs/cd_ratio.md has the sources):
+# * the disc's margin is the inner edge of the scleral ring, the cup's is where the surface falls away —
+#   the contour, shown by the small vessels bending, not the colour (the pale part lags behind the cup
+#   in glaucoma, so a cup drawn on pallor alone comes out small);
+# * the vertical C/D is the cup's height over the disc's (planimetry); what is normal depends on the
+#   disc's size, and the rim tells more than the ratio (ISNT, the narrowest rim: DDLS);
+# * from one photo the cup is an estimate — experts reading the same photo differ by up to 0.2 — so the
+#   outlines start where the photo puts them and every point is then the examiner's to move.
+DT_HINT = ("초록 선은 디스크 경계(공막 고리 안쪽)에, 노란 선은 컵 경계(혈관이 꺾이는 곳)에 맞춥니다. 점은 끄는 대로 "
+           "움직이고, 가운데 표시(바깥 고리 = 디스크 · 안쪽 점 = 컵)나 선을 끌면 통째로 옮겨집니다.")
+DT_GRAB = 14.0           # a point is taken from this near (screen px)
+DT_CUP_DOT = 6.0         # … the cup's centre dot, inside the disc's centre ring, from this near
+DT_LINE = 7.0            # … and an outline's line from this near: the whole outline moves
+DT_TURN = 6.0            # a point keeps this many degrees from its neighbours (the line does not cross itself)
+DT_EST_FIELD = 3.5       # the photo's shape is estimated on this field (disc diameters), whatever the tab
+#                          shows — the 3D 입체 tab's 보통, so that both tabs read the same surface
+DT_SPREAD = 0.10         # the ways of estimating further apart than this (vertical C/D): say so
+DT_NOTE = ("자동 맞춤과 등고선은 사진 한 장의 밝기 · 혈관 꺾임으로 추정한 출발점입니다 (실제 깊이를 잰 것이 아님). "
+           "컵은 색이 아니라 윤곽 — 작은 혈관이 꺾이는 곳 — 으로 정합니다: 창백한 곳만 따르면 녹내장에서 컵을 작게 "
+           "보기 쉽습니다. 점을 끌어 다듬은 것이 측정값입니다.")
+DT_STATE = {
+    "disc": {"auto": "디스크 경계: 사진에서 찾음 (밝기가 꺾이는 곳)", "hand": "디스크 경계: 직접 맞춤",
+             "given": "디스크 경계: 3D 입체 탭에서 가져옴",
+             "none": "디스크 경계: 뚜렷하지 않아 찾지 못함 — 초록 점을 직접 맞추세요",
+             "default": "디스크 경계: 기본 크기 — 초록 점을 맞추세요"},
+    "cup": {"hand": "컵: 직접 맞춤", "given": "컵: 3D 입체 탭의 컵 경계(등고선)를 가져옴",
+            "none": "컵: 등고선에서 찾지 못함 — 노란 점을 직접 맞추세요",
+            "default": "컵: 기본 크기 — 노란 점을 맞추세요"},
+}
+
+
+def _poly_path(pts) -> QPainterPath:
+    path = QPainterPath()
+    path.addPolygon(QPolygonF([QPointF(float(x), float(y)) for x, y in pts]))
     path.closeSubpath()
     return path
 
 
 class DiscTab(_Tab):
-    """The optic disc of the photo with two outlines to fit: the disc margin and the cup — each point
-    (S · N · I · T) moved on its own, the centre moving the whole outline."""
+    """The optic disc of the photo with two outlines to fit: the disc margin and the cup — each a smooth
+    line through ``G.RING`` points that move on their own (wherever they are dragged); the mark in an
+    outline's middle (it follows the outline) or its line moves the whole outline. They start where the
+    photo puts them: the disc's margin where the brightness falls to the retina (``G.find_disc_margin``),
+    the cup on a line of equal depth (등고선) of the shape estimated from the photo (``disc3d``) — drawn
+    over the photo with the places where the vessels bend, which is what the cup is judged by."""
 
-    def __init__(self, photo: Photo | None, parent=None):
+    def __init__(self, photo: Photo | None, parent=None, method: str = "hybrid"):
+        """``method``: how the photo's shape is estimated at first (``disc3d.METHODS``; 설정 → 일반)."""
         super().__init__(NEED_ONE, parent)
         self.photo = photo
         self.eye_key = photo.eye if photo is not None and photo.eye in ("OD", "OS") else None
         self.img = self.disc = self.cup = None
         self._drag = None
+        self._saving = False
         self.field = "normal"
-        self.hint.setText("초록 타원을 디스크 경계에, 노란 타원을 컵 경계에 맞추세요. "
-                          "가운데 점은 통째로 옮기기, 가장자리 점(S · N · I · T)은 하나씩 따로 움직입니다.")
+        self.method = method if method in disc3d.METHODS else "hybrid"
+        self.state = {"disc": "default", "cup": "default"}       # default · auto · hand · given · none (not found)
+        self._tex = None                  # the photo round its disc, as the shape is estimated on
+        self._surfaces: dict = {}         # method → (heights, what is known of them)
+        self._lines = None                # (key, the lines of equal depth drawn)
+        self._spread = None               # (key, each method's vertical C/D)
+        self.hint.setText(DT_HINT)
         self.eyes = _Choice([("", "눈 미상"), ("OD", "OD (우안)"), ("OS", "OS (좌안)")])
         self.eyes.set(self.eye_key or "")
         self.eyes.changed.connect(self.set_eye)
         self.fields = _Choice(DISC_FIELDS)
         self.fields.set("normal")
         self.fields.changed.connect(self.set_field)
-        self.fields.setToolTip("화면에 담을 범위 — 유두 지름의 몇 배인지")
+        self.fields.setToolTip("화면에 담을 범위 — 유두 지름의 몇 배인지 (맞춘 선은 그대로 따라옵니다)")
         self.warn = _note()
         self.warn.setStyleSheet(f"color:{theme.ORANGE}; font-weight:600")
         self.side.addWidget(card("눈 · 범위", self.eyes, self.fields,
@@ -589,122 +628,388 @@ class DiscTab(_Tab):
         self.lbl_ratio.setTextFormat(Qt.TextFormat.RichText)
         self.lbl_ratio.setWordWrap(True)
         self.side.addWidget(card("수직 C/D", self.lbl_v, self.lbl_ratio))
+
+        self.b_auto = _button("자동 맞춤", primary=True,
+                              tip="디스크 경계는 밝기가 망막 쪽으로 꺾이는 곳, 컵은 아래 기준 깊이의 등고선 — 그 뒤 점을 끌어 다듬습니다")
+        self.b_cup = _button("컵 → 등고선", tip="노란 선만 기준 깊이의 등고선으로 옮깁니다 (초록 선은 그대로)")
+        self.b_auto.clicked.connect(lambda: self.auto_fit())
+        self.b_cup.clicked.connect(lambda: self.fit_cup())
+        self.methods = _Choice(S3_METHODS)
+        self.methods.set(self.method)
+        self.methods.changed.connect(self.set_method)
+        self.methods.setToolTip("등고선을 그리는 모양(깊이)을 사진 한 장에서 추정하는 방법 — 3D 입체 탭과 같습니다")
+        self.s_level = _Slider("컵 기준 깊이", 10, 80, disc3d.CUP_LEVEL * 100, 5, lambda v: f"{v:.0f}%")
+        self.s_level.setToolTip("가장 깊은 곳까지의 깊이 중 이 등고선보다 깊은 곳을 컵으로 봅니다 — 올리면 컵이 작아집니다.\n"
+                                "움직이면 노란 선이 그 등고선으로 옮겨집니다")
+        self.s_level.changed.connect(lambda _v: self.fit_cup())
+        self.sw_contour = Switch("등고선")
+        self.sw_contour.setChecked(True)
+        self.sw_contour.setToolTip("추정한 모양에서 같은 깊이를 잇는 선 (10%마다) — 점선이 컵 기준 깊이")
+        self.sw_bends = Switch("혈관 꺾임 점")
+        self.sw_bends.setChecked(True)
+        self.sw_bends.setToolTip("혈관이 꺾인 곳 = 컵 경계의 단서 — 하늘색: 혈관마다 가장 바깥 꺾임 (컵 경계), "
+                                 "분홍: 같은 혈관의 안쪽 꺾임")
+        for sw in (self.sw_contour, self.sw_bends):
+            sw.toggled.connect(lambda _on: self.view.update())
+        self.lbl_auto = QLabel()
+        self.lbl_auto.setTextFormat(Qt.TextFormat.RichText)
+        self.lbl_auto.setWordWrap(True)
+        self.side.addWidget(card("자동 맞춤 · 등고선", _pair_row(self.b_auto, self.b_cup), self.methods, self.s_level,
+                                 self.sw_contour, self.sw_bends, self.lbl_auto, _note(DT_NOTE)))
         self.lbl_rim = QLabel()
         self.lbl_rim.setTextFormat(Qt.TextFormat.RichText)
         self.lbl_rim.setWordWrap(True)
-        self.side.addWidget(card("림 두께 (ISNT)", self.lbl_rim,
-                                 _note("림 두께는 디스크 수직 지름(DD)에 대한 비율입니다.")))
+        self.side.addWidget(card("림 두께 (ISNT · DDLS)", self.lbl_rim,
+                                 _note("림 두께는 디스크 수직 지름(DD)에 대한 비율, 림/디스크는 그 방향 디스크 지름에 대한 "
+                                       "비율입니다.")))
         self.side.addStretch(1)
         self.view.overlay = self._overlay
         self.view.pressed.connect(self._press)
         self.view.moved.connect(self._move)
-        self.view.released.connect(lambda: setattr(self, "_drag", None))
+        self.view.released.connect(self._release)
         self.set_field("normal")
 
+    # -- the picture and the outlines ----------------------------------------------------------------
+    def _factor(self, field: str | None = None) -> float:
+        return {k: f for k, _, f in DISC_FIELDS}[field or self.field]
+
     def set_field(self, field: str) -> None:
-        """Cut the photo around its disc, ``field`` disc diameters wide, and start the ellipses
-        at the size a disc has there."""
+        """Cut the photo around its disc, ``field`` disc diameters wide. The outlines stay where they are
+        on the photo; the first time they are put where the photo shows the disc and the cup
+        (``auto_fit``), or — a photo whose disc was not found — at the size a disc has there."""
+        old = (self._factor(), float(self.img.shape[0])) if self.img is not None else None
         self.field = field
         self.fields.set(field)
         if self.photo is None:
             self.warn.setVisible(False)
             return
-        factor = {k: f for k, _, f in DISC_FIELDS}[field]
+        factor = self._factor()
         crop, _, _ = G.crop_square(self.photo.rgb, *self.photo.disc, factor * self.photo.disc_px)
         self.img = G.fit(crop, 800)
         side = float(self.img.shape[0])
-        r = side / factor / 2.0                                  # the disc radius in this picture
-        c = side / 2.0
-        self.disc = G.outline({"cx": c, "cy": c, "rx": r * 0.95, "ry": r * 1.05})
-        self.cup = G.outline({"cx": c, "cy": c, "rx": r * 0.45, "ry": r * 0.50})
+        self._lines = self._spread = None
+        if old is not None and self.disc is not None:            # the same places in the new picture
+            k = (old[0] / old[1]) * (side / factor)
+            sh = side / 2.0 - old[1] / 2.0 * k
+            self.disc, self.cup = G.moved(self.disc, k, sh, sh), G.moved(self.cup, k, sh, sh)
+        else:
+            self.reset_outlines()
+            if self.photo.disc_found:
+                self.auto_fit(report=False)
         self.warn.setText("" if self.photo.disc_found else
                           "유두를 찾지 못해 예상 위치를 잘랐습니다 — 2D 사진에서 오른쪽 클릭 → 시신경 유두로 지정")
         self.warn.setVisible(not self.photo.disc_found)
         self.view.set_rgb(self.img)
-        self._report()
+        self._changed()
+
+    def reset_outlines(self) -> None:
+        """Both outlines at the size a disc has in this picture (an upright oval, the cup half of it)."""
+        side = float(self.img.shape[0])
+        r, c = side / self._factor() / 2.0, side / 2.0
+        self.disc = {"pts": G.ring({"cx": c, "cy": c, "rx": r * 0.95, "ry": r * 1.05})}
+        self.cup = {"pts": G.ring({"cx": c, "cy": c, "rx": r * 0.45, "ry": r * 0.50})}
+        self.state = {"disc": "default", "cup": "default"}
 
     def set_eye(self, eye: str) -> None:
         self.eye_key = eye if eye in ("OD", "OS") else None
         self.eyes.set(self.eye_key or "")
         self._changed()
 
-    def set_ellipses(self, disc: dict, cup: dict) -> None:
-        """The disc and cup outlines (``G.outline``: an ellipse or the reach up · right · down · left)."""
-        self.disc, self.cup = G.outline(disc), G.outline(cup)
+    def set_outlines(self, disc: dict, cup: dict, given: bool = False) -> None:
+        """The disc and cup outlines (any ``glaucoma`` outline: points, a traced line, an ellipse), each
+        taken as its ``G.RING`` points. One handed back as it is keeps what it stands on; ``given``: the
+        other comes from the 3D 입체 tab's surface (not set by hand)."""
+        new = "given" if given else "hand"
+        self.state = {"disc": self.state["disc"] if disc is self.disc else new,
+                      "cup": self.state["cup"] if cup is self.cup else new}
+        self.disc, self.cup = {"pts": G.ring(disc)}, {"pts": G.ring(cup)}
         self._changed()
 
+    def disc_mm(self) -> float | None:
+        """The vertical disc diameter in mm by the photo's scale (the camera's field, a 24 mm eye) — an
+        estimate; None where the photo has no scale."""
+        if self.photo is None or self.disc is None or not self.photo.scale_known:
+            return None
+        tall = float(np.ptp(G.curve(self.disc)[:, 1]))
+        return discpair.DISC_DIAMETER_MM * tall / (float(self.img.shape[0]) / self._factor())
+
     def metrics(self) -> dict | None:
-        return G.cdr_metrics(self.disc, self.cup, self.eye_key or "OD") if self.disc else None
+        return G.cdr_metrics(self.disc, self.cup, self.eye_key or "OD", self.disc_mm()) if self.disc else None
 
-    def _handles(self) -> list:
-        """The points of each outline: its centre (moves it) and S · N · I · T — each moves on its own,
-        along its own direction (up / down, left / right), the opposite one staying where it is."""
-        out = []
-        for key in ("cup", "disc"):
-            e = getattr(self, key)
-            out += [(key, "c", e["cx"], e["cy"]), (key, "e", e["cx"] + e["right"], e["cy"]),
-                    (key, "w", e["cx"] - e["left"], e["cy"]), (key, "n", e["cx"], e["cy"] - e["top"]),
-                    (key, "s", e["cx"], e["cy"] + e["bottom"])]
-        return out
+    # -- the shape estimated from the photo: where the outlines start ------------------------------------
+    def _texture(self) -> np.ndarray:
+        if self._tex is None:
+            crop, _, _ = G.crop_square(self.photo.rgb, *self.photo.disc, DT_EST_FIELD * self.photo.disc_px)
+            self._tex = np.ascontiguousarray(
+                G.match_size(crop, np.empty((disc3d.TEX_PX, disc3d.TEX_PX, 3), np.uint8)))
+        return self._tex
 
+    def _to_tex(self) -> tuple[float, float]:
+        """``(k, shift)``: a point p of the picture shown lies at ``p · k + shift`` in that texture."""
+        side = float(self.img.shape[0])
+        k = (self._factor() / side) * (disc3d.TEX_PX / DT_EST_FIELD)
+        return k, (disc3d.TEX_PX - 1) / 2.0 - side / 2.0 * k
+
+    def _on_surface(self, e: dict, n: int) -> dict:
+        k, sh = self._to_tex()
+        kh = n / disc3d.TEX_PX
+        return G.moved(e, k * kh, (sh + 0.5) * kh - 0.5, (sh + 0.5) * kh - 0.5)
+
+    def _off_surface(self, pts, n: int) -> np.ndarray:
+        k, sh = self._to_tex()
+        kh = n / disc3d.TEX_PX
+        return ((np.asarray(pts, np.float64) + 0.5) / kh - 0.5 - sh) / k
+
+    def _surface(self, method: str | None = None) -> tuple[np.ndarray, dict]:
+        method = method or self.method
+        if method not in self._surfaces:
+            info: dict = {}
+            self._surfaces[method] = (disc3d.height_one_photo(self._texture(), 1.0 / DT_EST_FIELD, method,
+                                                              info=info), info)
+        return self._surfaces[method]
+
+    def cup_line(self, method: str | None = None, level: float | None = None) -> np.ndarray | None:
+        """The line of equal depth the cup is read on (등고선), (k, 2) in the picture's pixels: the hollow
+        of the shape estimated by ``method`` (the one chosen) inside the green outline, ``level`` (컵 기준
+        깊이) of the way down (``disc3d.cup_from_surface``) — or None where the photo shows no cup."""
+        if self.img is None or self.disc is None:
+            return None
+        H, info = self._surface(method)
+        if not info.get("cup", True):
+            return None
+        level = self.s_level.value() / 100.0 if level is None else level
+        found = disc3d.cup_from_surface(H, self._on_surface(self.disc, H.shape[0]), level)
+        return self._off_surface(found[1], H.shape[0]) if found else None
+
+    def auto_fit(self, report: bool = True) -> None:
+        """자동 맞춤: the green outline on the disc's margin as the photo shows it, then the yellow one on
+        the line of equal depth inside it. What is not found stays as it is."""
+        if self.img is None:
+            return
+        found = G.find_disc_margin(self._texture(), 1.0 / DT_EST_FIELD)
+        if found is not None:
+            k, sh = self._to_tex()
+            self.disc = {"pts": (found["pts"] - sh) / k}
+        self.state["disc"] = "auto" if found is not None else "none"
+        self.fit_cup(report=False)
+        if report:
+            self._changed()
+
+    def fit_cup(self, report: bool = True) -> bool:
+        """컵 → 등고선: the yellow outline on the line of equal depth at 컵 기준 깊이 (``cup_line``)."""
+        line = self.cup_line()
+        if line is not None:
+            self.cup = {"pts": G.ring({"poly": line})}
+        self.state["cup"] = "auto" if line is not None else "none"
+        if report:
+            self._changed()
+        return line is not None
+
+    def set_method(self, method: str) -> None:
+        """How the shape is estimated (``disc3d.METHODS``): the lines of equal depth are that shape's, and
+        the cup goes onto its line."""
+        self.method = method if method in disc3d.METHODS else "hybrid"
+        self.methods.set(self.method)
+        self._lines = None
+        if self.img is not None:
+            self.fit_cup()
+
+    def _outline_key(self) -> tuple:
+        return self.field, round(self.s_level.value() / 100.0, 3), np.round(self.disc["pts"], 1).tobytes()
+
+    def contours(self) -> list:
+        """The lines of equal depth to draw: ``[(level, (k, 2) picture pixels), …]`` — every tenth of the
+        way down and the 컵 기준 깊이 — inside the green outline (kept while that is being dragged)."""
+        if self.img is None or self.disc is None:
+            return []
+        key = (self.method,) + self._outline_key()
+        if self._lines is None or (self._lines[0] != key and self._drag is None):
+            H, info = self._surface()
+            lines = []
+            if info.get("cup", True):
+                levels = sorted(set(disc3d.CONTOUR_LEVELS) | {key[2]})
+                lines = [(lv, self._off_surface(edge, H.shape[0])) for lv, edge in
+                         disc3d.depth_contours(H, self._on_surface(self.disc, H.shape[0]), levels)]
+            self._lines = (key, lines)
+        return self._lines[1]
+
+    def by_method(self) -> dict:
+        """The vertical C/D each way of estimating the shape gives on its own line of equal depth, for the
+        green outline as it is: ``{method: value or None}``. How far they lie apart says how sure the
+        photo is about its cup."""
+        if self.img is None or self.disc is None:
+            return {}
+        key = self._outline_key()
+        if self._spread is None or (self._spread[0] != key and self._drag is None):
+            out = {}
+            for m in disc3d.METHODS:
+                line = self.cup_line(m)
+                out[m] = G.cdr_metrics(self.disc, {"poly": line})["vertical"] if line is not None else None
+            self._spread = (key, out)
+        return self._spread[1]
+
+    def bends(self) -> tuple[np.ndarray, np.ndarray]:
+        """Where the vessels on the disc bend, (k, 2) in the picture's pixels, and whether each is its
+        vessel's outermost bend (k,) — the top of the cup's wall, the sign the cup's margin is judged by."""
+        none = np.zeros((0, 2)), np.zeros(0, bool)
+        if self.img is None:
+            return none
+        b = self._surface("hybrid")[1].get("bends")
+        if b is None or not len(b["weight"]):
+            return none
+        k, sh = self._to_tex()
+        return (b["xy"] * disc3d.TEX_PX - sh) / k, b["weight"] >= 0.4 * float(b["weight"].max())
+
+    # -- moving the points -------------------------------------------------------------------------------
     def _press(self, x: float, y: float) -> None:
+        """What lies under the cursor: the nearest point; the mark in an outline's middle (the cup's dot
+        first where it lies inside the disc's ring); else an outline's line (the whole outline)."""
         if self.disc is None:
             return
-        best, hit = 14 / self.view.scale(), None
-        for h in self._handles():
-            d = math.hypot(h[2] - x, h[3] - y)
-            if d < best:
-                best, hit = d, h
-        if hit:
-            e = getattr(self, hit[0])
-            self._drag = (hit[0], hit[1], x - e["cx"], y - e["cy"])
+        u = 1.0 / self.view.scale()
+        best, hit = DT_GRAB * u, None
+        for key in ("cup", "disc"):                              # (the disc's are drawn on top)
+            pts = getattr(self, key)["pts"]
+            d = np.hypot(pts[:, 0] - x, pts[:, 1] - y)
+            i = int(np.argmin(d))
+            if d[i] <= best:
+                best, hit = float(d[i]), (key, i)
+        (dx, dy), (cx, cy) = G.centre(self.disc), G.centre(self.cup)
+        dd, dc = math.hypot(dx - x, dy - y), math.hypot(cx - x, cy - y)
+        mid = (("cup", dc) if dc <= DT_CUP_DOT * u else ("disc", dd) if dd <= DT_GRAB * u and dd <= dc
+               else ("cup", dc) if dc <= DT_GRAB * u else ("disc", dd) if dd <= DT_GRAB * u else None)
+        if mid is not None and (hit is None or mid[1] < best):
+            hit = (mid[0], "c")
+        if hit is None:
+            near = DT_LINE * u
+            for key in ("cup", "disc"):
+                c = G.curve(getattr(self, key))
+                d = float(np.hypot(c[:, 0] - x, c[:, 1] - y).min())
+                if d <= near:
+                    near, hit = d, (key, "c")
+        if hit is None:
+            return
+        e = getattr(self, hit[0])
+        self._drag = {"key": hit[0], "what": hit[1], "at": (x, y), "pts": e["pts"].copy(), "mid": G.centre(e)}
+        self.view.setCursor(Qt.CursorShape.CrossCursor)
+        self.view.update()
+
+    @staticmethod
+    def _in_turn(pts: np.ndarray, i: int, p, mid) -> np.ndarray:
+        """Where point ``i`` goes when dragged to ``p``: there, but kept between its two neighbours as seen
+        from the outline's middle (the line does not cross itself) and off the middle itself."""
+        def ang(q):
+            return math.atan2(q[1] - mid[1], q[0] - mid[0])
+        k = len(pts)
+        r = max(3.0, math.hypot(p[0] - mid[0], p[1] - mid[1]))
+        lo = ang(pts[(i - 1) % k])
+        span = (ang(pts[(i + 1) % k]) - lo) % (2.0 * math.pi)
+        rel = (ang(p) - lo) % (2.0 * math.pi)
+        gap = min(math.radians(DT_TURN), span / 4.0)
+        if rel < gap:
+            rel = gap
+        elif rel > span - gap:                                   # (past the next one, or back past the last)
+            rel = span - gap if rel - (span - gap) <= (2.0 * math.pi - rel) + gap else gap
+        return np.array([mid[0] + r * math.cos(lo + rel), mid[1] + r * math.sin(lo + rel)])
 
     def _move(self, x: float, y: float) -> None:
         if not self._drag:
             return
-        key, h, ox, oy = self._drag
-        e = getattr(self, key)
-        if h == "c":
-            e["cx"], e["cy"] = x - ox, y - oy
-        elif h == "e":                        # each point on its own: the opposite one stays
-            e["right"] = max(5.0, x - e["cx"])
-        elif h == "w":
-            e["left"] = max(5.0, e["cx"] - x)
-        elif h == "n":
-            e["top"] = max(5.0, e["cy"] - y)
+        g = self._drag
+        side = float(self.img.shape[0])
+        dx, dy = x - g["at"][0], y - g["at"][1]
+        pts = g["pts"].copy()
+        if g["what"] == "c":                                     # the whole outline (its middle stays inside)
+            mx, my = g["mid"]
+            pts += (min(max(dx, -mx), side - 1.0 - mx), min(max(dy, -my), side - 1.0 - my))
         else:
-            e["bottom"] = max(5.0, y - e["cy"])
+            p = np.clip(pts[g["what"]] + (dx, dy), 0.0, side - 1.0)
+            pts[g["what"]] = self._in_turn(pts, g["what"], p, g["mid"])
+        getattr(self, g["key"])["pts"] = pts
+        self.state[g["key"]] = "hand"
+        self._changed()
+
+    def _release(self) -> None:
+        if self._drag is None:
+            return
+        self._drag = None
+        self.view.unsetCursor()
         self._changed()
 
     def _changed(self) -> None:
         self._report()
         self.view.update()
 
+    # -- drawing -----------------------------------------------------------------------------------------
+    def render(self):
+        self._saving = True                                      # (sizes in the picture's own pixels)
+        try:
+            return super().render()
+        finally:
+            self._saving = False
+
     def _overlay(self, p: QPainter) -> None:
         if self.disc is None:
             return
-        u = self.img.shape[1] / 600
-        for e, col in ((self.disc, DISC_COLOR), (self.cup, CUP_COLOR)):
-            p.setPen(QPen(col, 2.5 * u))
-            p.setBrush(Qt.BrushStyle.NoBrush)
-            p.drawPath(_outline_path(e))
-        for key, _h, x, y in self._handles():
-            p.setPen(QPen(QColor("#111111"), 1.5 * u))
-            p.setBrush(DISC_COLOR if key == "disc" else CUP_COLOR)
-            p.drawEllipse(QPointF(x, y), 6 * u, 6 * u)
-        d, right = self.disc, ("N" if self.eye_key == "OD" else "T")
-        left = "T" if right == "N" else "N"
-        if self.eye_key is None:
-            right = left = "?"
+        u = self.img.shape[1] / 600 if self._saving else 1.0 / self.view.scale()
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        if self.sw_contour.isChecked():                          # the lines of equal depth, the cup's dashed
+            level = self.s_level.value() / 100.0
+            for lv, pts in self.contours():
+                chosen = abs(lv - level) < 1e-6
+                pen = QPen(QColor(100, 210, 255, 240 if chosen else 120), (1.8 if chosen else 1.0) * u)
+                if chosen:
+                    pen.setStyle(Qt.PenStyle.DashLine)
+                p.setPen(pen)
+                p.drawPath(_poly_path(pts))
+        if self.sw_bends.isChecked():
+            for (x, y), main in zip(*self.bends()):
+                for col, w in ((QColor(20, 20, 20), 3.4), (QColor(*(BEND_USED if main else BEND_INNER)), 1.7)):
+                    p.setPen(QPen(col, w * u))
+                    p.drawEllipse(QPointF(float(x), float(y)), 6.5 * u, 6.5 * u)
+        for key, col in (("cup", CUP_COLOR), ("disc", DISC_COLOR)):
+            path = _poly_path(G.curve(getattr(self, key)))
+            p.setPen(QPen(QColor(0, 0, 0, 130), 4.2 * u))        # (seen on a pale cup too)
+            p.drawPath(path)
+            p.setPen(QPen(col, 2.2 * u))
+            p.drawPath(path)
+        g = self._drag or {}
+        for key, col in (("cup", CUP_COLOR), ("disc", DISC_COLOR)):
+            for i, (x, y) in enumerate(getattr(self, key)["pts"]):
+                if g.get("key") == key and g.get("what") == i:   # the one held: a ring, the photo seen in it
+                    p.setBrush(Qt.BrushStyle.NoBrush)
+                    for c, w in ((QColor("#111111"), 3.6), (col, 1.8)):
+                        p.setPen(QPen(c, w * u))
+                        p.drawEllipse(QPointF(float(x), float(y)), 6.5 * u, 6.5 * u)
+                    continue
+                p.setPen(QPen(QColor("#111111"), 1.5 * u))
+                p.setBrush(col)
+                p.drawEllipse(QPointF(float(x), float(y)), 5.5 * u, 5.5 * u)
+        # the middles: the disc's a ring, the cup's a dot (inside it where the two lie on each other)
+        mid = QPointF(*G.centre(self.disc))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        for c, w in ((QColor("#111111"), 4.4), (DISC_COLOR, 2.4)):
+            p.setPen(QPen(c, w * u))
+            p.drawEllipse(mid, 9.5 * u, 9.5 * u)
+        p.setPen(QPen(QColor("#111111"), 1.5 * u))
+        p.setBrush(CUP_COLOR)
+        p.drawEllipse(QPointF(*G.centre(self.cup)), 4.5 * u, 4.5 * u)
+        names = G.ring_names(self.eye_key) if self.eye_key else ("S", "", "?", "", "I", "", "?", "")
         f = QFont()
         f.setPixelSize(max(8, round(15 * u)))
         f.setBold(True)
         p.setFont(f)
-        p.setPen(QColor("#ffffff"))
-        for text, x, y in (("S", d["cx"], d["cy"] - d["top"] - 16 * u), ("I", d["cx"], d["cy"] + d["bottom"] + 16 * u),
-                           (right, d["cx"] + d["right"] + 16 * u, d["cy"]), (left, d["cx"] - d["left"] - 16 * u, d["cy"])):
-            p.drawText(QRectF(x - 20 * u, y - 12 * u, 40 * u, 24 * u), Qt.AlignmentFlag.AlignCenter, text)
+        for i in (0, 2, 4, 6):
+            x, y = self.disc["pts"][i]
+            d = math.hypot(x - mid.x(), y - mid.y()) or 1.0
+            x, y = x + (x - mid.x()) / d * 17 * u, y + (y - mid.y()) / d * 17 * u
+            rect = QRectF(x - 20 * u, y - 12 * u, 40 * u, 24 * u)
+            p.setPen(QColor(0, 0, 0, 200))
+            p.drawText(rect.translated(1.2 * u, 1.2 * u), Qt.AlignmentFlag.AlignCenter, names[i])
+            p.setPen(QColor("#ffffff"))
+            p.drawText(rect, Qt.AlignmentFlag.AlignCenter, names[i])
 
+    # -- the numbers -------------------------------------------------------------------------------------
     def _report(self) -> None:
         m = self.metrics()
         if not m:
@@ -712,19 +1017,51 @@ class DiscTab(_Tab):
         v = m["vertical"]
         band = "0.7 이상" if v >= 0.7 else "0.5~0.7" if v >= 0.5 else "0.5 미만"
         self.lbl_v.setText(f"{v:.2f}")
-        self.lbl_ratio.setText(f"<span style='color:{theme.TEXT2}'>{band}</span><br>"
-                               f"수평 C/D <b>{m['horizontal']:.2f}</b> &nbsp;·&nbsp; 면적 C/D <b>{m['area']:.2f}</b>"
-                               f" &nbsp;·&nbsp; 림 면적 <b>{(1 - m['area']) * 100:.0f}%</b>")
+        text = (f"<span style='color:{theme.TEXT2}'>{band}</span><br>"
+                f"수평 C/D <b>{m['horizontal']:.2f}</b> &nbsp;·&nbsp; 면적 C/D <b>{m['area']:.2f}</b>"
+                f" &nbsp;·&nbsp; 림 면적 <b>{(1 - m['area']) * 100:.0f}%</b>")
+        mm = self.disc_mm()
+        if mm is not None:                                       # what is normal depends on the disc's size
+            size = "작은" if mm < G.DISC_SMALL_MM else "큰" if mm > G.DISC_LARGE_MM else "평균 크기"
+            text += (f"<br><span style='color:{theme.TEXT2}'>디스크 수직 지름 약 <b>{mm:.1f} mm</b> ({size} 디스크 · "
+                     f"24 mm 안구 가정) — 이 크기의 정상 평균 C/D 약 {G.expected_cdr(mm):.2f}</span>")
+        self.lbl_ratio.setText(text)
+        self._report_auto()
+        narrow = m["narrow"]
+        where = f"{narrow['hour']}시 방향" + (f" ({G.RIM_NAMES[narrow['name']]})" if self.eye_key else "")
+        gone = f" · 림 없음 {narrow['absent']:.0f}°" if narrow["absent"] else ""
+        tail = (f"가장 얇은 림: <b>{where}</b> · 림/디스크 <b>{narrow['ratio']:.2f}</b>{gone}<br>"
+                f"DDLS <b>{m['ddls']}단계</b> <span style='color:{theme.TEXT2}'>"
+                f"({'디스크 크기 반영' if mm is not None else '평균 크기 디스크로 가정'} · 1~10, 클수록 손상)</span>")
         if self.eye_key is None:
-            self.lbl_rim.setText("눈(OD/OS)을 확인해야 비측·이측 림과 ISNT 순서를 표시할 수 있습니다.")
+            self.lbl_rim.setText("눈(OD/OS)을 확인해야 비측·이측 림과 ISNT 순서를 표시할 수 있습니다.<br><br>" + tail)
             return
         rim = m["rim"]
-        rows = "".join(f"<tr><td>{k} {ko}&nbsp;&nbsp;&nbsp;</td><td align='right'>"
-                       f"{'경계 밖' if rim[k] < 0 else f'{rim[k]:.3f} DD'}</td></tr>"
-                       for k, ko in (("I", "하측"), ("S", "상측"), ("N", "비측"), ("T", "이측")))
+
+        def cell(k):
+            return (f"<td>{k} {G.RIM_NAMES[k]}&nbsp;&nbsp;</td><td align='right'>"
+                    f"{'경계 밖' if rim[k] < 0 else f'{rim[k]:.3f}'}</td>")
+        rows = "".join(f"<tr>{cell(a)}<td>&nbsp;&nbsp;&nbsp;&nbsp;</td>{cell(b)}</tr>"
+                       for a, b in (("I", "IT"), ("S", "ST"), ("N", "IN"), ("T", "SN")))
         verdict = (f"<b style='color:{theme.ORANGE}'>ISNT 어긋남</b> — " + ", ".join(m["isnt"])) if m["isnt"] \
             else f"<b style='color:{theme.GREEN}'>ISNT 순서 유지</b>"
-        self.lbl_rim.setText(f"<table>{rows}</table><br>{verdict}")
+        self.lbl_rim.setText(f"<table>{rows}</table><br>{verdict}<br><br>{tail}")
+
+    def _report_auto(self) -> None:
+        """What the outlines stand on, and each way's vertical C/D on its line of equal depth."""
+        level = f"{self.s_level.value():.0f}%"
+        cup = DT_STATE["cup"].get(self.state["cup"]) or f"컵: {S3_METHOD_NAMES[self.method]} 등고선 {level}"
+        text = f"{DT_STATE['disc'][self.state['disc']]}<br>{cup}"
+        v = self.by_method()
+        if v:
+            cells = [(f"{name} {v[k]:.2f}" if v.get(k) is not None else f"{name} –") for k, name, _ in S3_METHODS]
+            cells = [f"<b>{c}</b>" if k == self.method else c for c, (k, _, _) in zip(cells, S3_METHODS)]
+            text += f"<br><br>추정 방식별 수직 C/D (등고선 {level})<br>" + " &nbsp;·&nbsp; ".join(cells)
+            got = [x for x in v.values() if x is not None]
+            if len(got) >= 2 and max(got) - min(got) > DT_SPREAD:
+                text += (f"<br><span style='color:{theme.ORANGE}'>방식에 따라 {max(got) - min(got):.2f} 차이 — 사진만으로는 "
+                         "컵 경계가 뚜렷하지 않습니다. 혈관 꺾임을 보고 직접 맞추세요.</span>")
+        self.lbl_auto.setText(f"<span style='color:{theme.TEXT2}'>{text}</span>")
 
     def note(self) -> str:
         m = self.metrics()
@@ -1107,10 +1444,8 @@ class Surface3DTab(_Tab):
         if t is not None and t.disc is not None and t.img is not None:
             side = float(t.img.shape[0])
             k = r / (side / {k: f for k, _, f in DISC_FIELDS}[t.field] / 2.0)
-            d = t.disc
-            return {"cx": c + (d["cx"] - side / 2.0) * k, "cy": c + (d["cy"] - side / 2.0) * k,
-                    **{key: d[key] * k for key in ("top", "right", "bottom", "left")}}
-        return G.outline({"cx": c, "cy": c, "rx": r * 0.95, "ry": r * 1.05})
+            return G.moved(t.disc, k, c - side / 2.0 * k, c - side / 2.0 * k)
+        return {"pts": G.ring({"cx": c, "cy": c, "rx": r * 0.95, "ry": r * 1.05})}
 
     def cup(self, source: str | None = None, method: str | None = None) -> tuple[dict, dict, np.ndarray] | None:
         """(disc outline, cup outline, the cup's margin) in texture pixels — the cup as the surface
@@ -1127,17 +1462,14 @@ class Surface3DTab(_Tab):
         H = surface[0]
         disc = self.disc_outline()
         key = (source, method, self.sw_flip.isChecked(), self.field,
-               self.s_level.value(), tuple(disc.values()))
+               self.s_level.value(), np.round(G.ring(disc), 2).tobytes())
         if key not in self._cup:
             k = H.shape[0] / disc3d.TEX_PX                # (the surface is coarser than the texture)
-            small = {**{a: disc[a] * k for a in ("top", "right", "bottom", "left")},
-                     "cx": (disc["cx"] + 0.5) * k - 0.5, "cy": (disc["cy"] + 0.5) * k - 0.5}
+            small = G.moved(disc, k, 0.5 * k - 0.5, 0.5 * k - 0.5)
             found = disc3d.cup_from_surface(H, small, self.s_level.value() / 100.0)
             if found is not None:
                 cup, edge = found
-                cup = {**{a: cup[a] / k for a in ("top", "right", "bottom", "left")},
-                       "cx": (cup["cx"] + 0.5) / k - 0.5, "cy": (cup["cy"] + 0.5) / k - 0.5}
-                found = (disc, cup, (edge + 0.5) / k - 0.5)
+                found = (disc, G.moved(cup, 1.0 / k, 0.5 / k - 0.5, 0.5 / k - 0.5), (edge + 0.5) / k - 0.5)
             if len(self._cup) > 12:                      # (a slider dragged: only the last ones are asked again)
                 self._cup.clear()
             self._cup[key] = found
@@ -1174,7 +1506,8 @@ class Surface3DTab(_Tab):
         return v
 
     def apply_to_disc_tab(self) -> None:
-        """The cup found here becomes the yellow outline of the 디스크 C/D tab."""
+        """The cup found here — its line of equal depth — becomes the yellow outline of the 디스크 C/D tab
+        (its ``G.RING`` points on that line)."""
         found, t = self.cup(), self.disc_tab
         if self.source == "b" and not self.same_eye:
             return
@@ -1183,9 +1516,7 @@ class Surface3DTab(_Tab):
         c, r = (disc3d.TEX_PX - 1) / 2.0, disc3d.TEX_PX / self._factor() / 2.0
         side = float(t.img.shape[0])
         k = (side / {k: f for k, _, f in DISC_FIELDS}[t.field] / 2.0) / r
-        cup = found[1]
-        t.set_ellipses(t.disc, {"cx": side / 2.0 + (cup["cx"] - c) * k, "cy": side / 2.0 + (cup["cy"] - c) * k,
-                                **{key: cup[key] * k for key in ("top", "right", "bottom", "left")}})
+        t.set_outlines(t.disc, G.moved(found[1], k, side / 2.0 - c * k, side / 2.0 - c * k), given=True)
 
     def _report(self) -> None:
         m = self.metrics()
@@ -1265,7 +1596,7 @@ class Surface3DTab(_Tab):
         if not found and not len(pts):
             return tex
         tex = tex.copy()
-        lines = ((disc3d.outline_points(found[0]), DISC_COLOR), (found[2], CUP_COLOR)) if found else ()
+        lines = ((G.curve(found[0]), DISC_COLOR), (found[2], CUP_COLOR)) if found else ()
         for line_pts, col in lines:
             line = [np.round(line_pts * 8).astype(np.int32)]
             cv2.polylines(tex, line, True, (20, 20, 20), 5, cv2.LINE_AA, shift=3)      # (seen on a pale cup too)
@@ -1629,7 +1960,7 @@ class GlaucomaDialog(QDialog):
         self.tabs = QTabWidget()
         self.tabs.setObjectName("views")
         self.tabs.setDocumentMode(True)
-        self.disc = DiscTab(current)
+        self.disc = DiscTab(current, method=method)
         self.surface = Surface3DTab(current, second, disc_tab=self.disc, method=method, stereo_method=stereo_method)
         self.surface.b_apply.clicked.connect(lambda: self.tabs.setCurrentWidget(self.disc))
         self.wide = WideTab(current)

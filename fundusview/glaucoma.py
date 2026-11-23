@@ -2,7 +2,9 @@
 
 * stereo (스테레오): register two photos of one disc (a shift), show them side by side, as a
   red–cyan anaglyph, or as a disparity (relative depth) map;
-* disc (디스크 C/D): cup-to-disc ratios, rim widths and the ISNT order from two ellipses;
+* disc (디스크 C/D): the disc's margin found in the photo, and from the two outlines (the disc's, the
+  cup's — smooth lines through a few points) the cup-to-disc ratios, the rim all round (ISNT, the
+  narrowest: DDLS) and what a disc of that size has (``docs/cd_ratio.md``: the method and its sources);
 * wide field (광각): red-free with local contrast for the nerve fibre layer, the Garway-Heath
   sectors around the disc and the 24-2 visual field points laid on the fundus;
 * progression (경과): blend and change map of two registered photos.
@@ -239,45 +241,397 @@ def depth_profile(disp: np.ndarray, y: float, image_h: int, width: int, height: 
 
 
 # -- disc: cup-to-disc ratio -----------------------------------------------------------------------
-def outline(e: dict) -> dict:
-    """A disc or cup outline as ``{cx, cy, top, right, bottom, left}`` — its centre and how far it reaches
-    up, right, down and left (each point of the C/D tab moves on its own). An ellipse ``{cx, cy, rx, ry}``
-    is the outline with top = bottom = ry and left = right = rx. Between the four points the outline is
-    a quarter ellipse each (smooth where they meet)."""
+# An outline (the disc's margin, the cup's) is one of
+#   {"pts": [[x, y], …]}   points in order round it — the outline is the smooth closed curve through
+#                          them (the C/D tab: ``RING`` points, each moved on its own);
+#   {"poly": [[x, y], …]}  a traced outline, taken as it is (a line of equal depth: ``disc3d``);
+#   {"cx", "cy", "rx", "ry"} an ellipse, or {"cx", "cy", "top", "right", "bottom", "left"} four
+#                          quarter ellipses (its reach up · right · down · left from the centre).
+# Image pixels, x right, y down. The photo is upright: the right eye's nasal side is on the right.
+RING = 8                                         # points round an outline in the C/D tab
+RING_DEG = tuple(-90.0 + 45.0 * i for i in range(RING))   # their directions: up first, then clockwise
+CURVE_PER = 24                                   # points of the drawn curve between two of them
+RIM_NAMES = {"S": "상측", "I": "하측", "N": "비측", "T": "이측",
+             "SN": "상비측", "ST": "상이측", "IN": "하비측", "IT": "하이측"}
+
+
+def ring_names(eye: str | None = "OD") -> tuple:
+    """The anatomical name of each of the ``RING`` directions (up, up-right, right, …): the right eye's
+    nasal side is on the right of the photo, the left eye's on the left."""
+    r, l = ("T", "N") if eye == "OS" else ("N", "T")
+    return ("S", "S" + r, r, "I" + r, "I", "I" + l, l, "S" + l)
+
+
+def _closed_spline(p: np.ndarray, per: int = CURVE_PER) -> np.ndarray:
+    """The smooth closed curve through the points ``p`` (k, 2) in order: a periodic cubic spline over
+    the chord lengths (no loops where two points lie close), ``per`` points from each to the next."""
+    k = len(p)
+    if k < 3:
+        return p.copy()
+    nxt = np.roll(p, -1, axis=0)
+    h = np.maximum(np.hypot(*(nxt - p).T), 1e-3)                # chord i → i+1
+    hp = np.roll(h, 1)                                          # chord i-1 → i
+    a = np.zeros((k, k))
+    i = np.arange(k)
+    np.add.at(a, (i, (i - 1) % k), hp)
+    np.add.at(a, (i, i), 2.0 * (hp + h))
+    np.add.at(a, (i, (i + 1) % k), h)
+    rhs = 6.0 * ((nxt - p) / h[:, None] - (p - np.roll(p, 1, axis=0)) / hp[:, None])
+    m = np.linalg.solve(a, rhs)                                 # the second derivatives at the points
+    b = (np.arange(per) / per)[None, :, None]                   # (k, per, 1): the way from i to i+1
+    aa = 1.0 - b
+    hh = h[:, None, None]
+    out = (aa * p[:, None] + b * nxt[:, None]
+           + ((aa ** 3 - aa) * m[:, None] + (b ** 3 - b) * np.roll(m, -1, axis=0)[:, None]) * hh * hh / 6.0)
+    return out.reshape(-1, 2)
+
+
+def _reach_dict(e: dict) -> tuple[float, ...]:
     if "top" in e:
-        return {k: float(e[k]) for k in ("cx", "cy", "top", "right", "bottom", "left")}
-    return {"cx": float(e["cx"]), "cy": float(e["cy"]), "top": float(e["ry"]), "right": float(e["rx"]),
-            "bottom": float(e["ry"]), "left": float(e["rx"])}
+        return tuple(float(e[k]) for k in ("cx", "cy", "top", "right", "bottom", "left"))
+    return float(e["cx"]), float(e["cy"]), float(e["ry"]), float(e["rx"]), float(e["ry"]), float(e["rx"])
 
 
-def outline_area(e: dict) -> float:
-    """Area of an outline: four quarter ellipses."""
-    o = outline(e)
-    return math.pi / 4 * (o["right"] * o["top"] + o["top"] * o["left"] + o["left"] * o["bottom"]
-                          + o["bottom"] * o["right"])
+def _on_reach(e: dict, ang: np.ndarray) -> np.ndarray:
+    """Points of an ellipse / four quarter ellipses at the parametric angles ``ang`` (from +x towards +y)."""
+    cx, cy, t, r, b, l = _reach_dict(e)
+    c, s = np.cos(ang), np.sin(ang)
+    return np.stack([cx + np.where(c >= 0, r, l) * c, cy + np.where(s >= 0, b, t) * s], axis=1)
 
 
-def cdr_metrics(disc: dict, cup: dict, eye: str = "OD") -> dict:
-    """``disc`` / ``cup`` = outlines (``outline``: centre and the reach up, right, down, left — or an
-    ellipse ``{cx, cy, rx, ry}``). Rim widths are fractions of the vertical disc diameter (DD). The
-    photo is upright: the right eye's nasal side is on the right."""
-    d, c = outline(disc), outline(cup)
-    dd = d["top"] + d["bottom"]
-    s = ((c["cy"] - c["top"]) - (d["cy"] - d["top"])) / dd
-    i = ((d["cy"] + d["bottom"]) - (c["cy"] + c["bottom"])) / dd
-    right = ((d["cx"] + d["right"]) - (c["cx"] + c["right"])) / dd
-    left = ((c["cx"] - c["left"]) - (d["cx"] - d["left"])) / dd
-    n, t = (left, right) if eye == "OS" else (right, left)
+def curve(e: dict, per: int = CURVE_PER) -> np.ndarray:
+    """An outline as a closed polygon (k, 2) — dense enough to draw and to measure."""
+    if "poly" in e:
+        return np.asarray(e["poly"], np.float64).reshape(-1, 2)
+    if "pts" in e:
+        return _closed_spline(np.asarray(e["pts"], np.float64).reshape(-1, 2), per)
+    return _on_reach(e, np.linspace(0.0, 2.0 * math.pi, 192, endpoint=False))
+
+
+def area(e: dict) -> float:
+    """The area an outline encloses (px²)."""
+    p = curve(e)
+    x, y = p[:, 0], p[:, 1]
+    return abs(float(np.dot(x, np.roll(y, -1)) - np.dot(np.roll(x, -1), y))) / 2.0
+
+
+def centre(e: dict) -> tuple[float, float]:
+    """The middle of an outline: the centre of the area it encloses."""
+    p = curve(e)
+    x, y = p[:, 0], p[:, 1]
+    x1, y1 = np.roll(x, -1), np.roll(y, -1)
+    cross = x * y1 - x1 * y
+    a = float(cross.sum()) / 2.0
+    if abs(a) < 1e-9:
+        return float(x.mean()), float(y.mean())
+    return float(((x + x1) * cross).sum() / (6.0 * a)), float(((y + y1) * cross).sum() / (6.0 * a))
+
+
+def reaches(poly: np.ndarray, origin, angles) -> np.ndarray:
+    """How far the rays from ``origin`` at ``angles`` (radians, x right, y down) run to the outermost
+    place each crosses the closed polygon — 0 where one does not cross it."""
+    p = np.asarray(poly, np.float64)
+    q = np.roll(p, -1, axis=0) - p                              # (E, 2) edges
+    a = np.atleast_1d(np.asarray(angles, np.float64))
+    dx, dy = np.cos(a)[:, None], np.sin(a)[:, None]             # (A, 1)
+    w = p - np.asarray(origin, np.float64)
+    den = dx * q[None, :, 1] - dy * q[None, :, 0]               # (A, E)
+    ok = np.abs(den) > 1e-12
+    den = np.where(ok, den, 1.0)
+    t = (w[:, 0] * q[:, 1] - w[:, 1] * q[:, 0])[None, :] / den  # along the ray
+    s = (w[None, :, 0] * dy - w[None, :, 1] * dx) / den         # along the edge
+    hit = ok & (t >= 0) & (s >= -1e-9) & (s <= 1 + 1e-9)
+    return np.where(hit, t, 0.0).max(axis=1)
+
+
+def reach(poly: np.ndarray, origin, angle: float) -> float:
+    """``reaches`` for one ray."""
+    return float(reaches(poly, origin, [angle])[0])
+
+
+def _harmonics(t: np.ndarray, order: int) -> np.ndarray:
+    cols = [np.ones_like(t)]
+    for h in range(1, order + 1):
+        cols += [np.cos(h * t), np.sin(h * t)]
+    return np.stack(cols, axis=1)
+
+
+def evened(poly: np.ndarray) -> np.ndarray:
+    """A traced outline evened out to a smooth closed line (192 points) round its middle: an oval — an
+    ellipse comes back as it is, whichever way it is turned — that may lean to one side (by half). A
+    cup's margin is a smooth line: a narrow tongue of the traced one (along a vessel, towards one bend)
+    or a corner does not stand as drawn (the cup is drawn as a smooth line through its marks: Joshi et
+    al., IEEE TMI 2011).
+
+    Fitted to 1 / reach² over the angle — an ellipse's is exactly its second harmonic — each angle
+    weighed so that what is made small is the miss in the reach itself."""
+    p = np.asarray(poly, np.float64).reshape(-1, 2)
+    c = centre({"poly": p})
+    ang = np.linspace(0.0, 2.0 * math.pi, 180, endpoint=False)
+    r = reaches(p, c, ang)
+    ok = r > 0
+    if int(ok.sum()) < 16:
+        return p
+    scale = float(r[ok].mean())
+    rho = r[ok] / scale
+    lo, hi = 1.0 / (1.5 * float(rho.max())) ** 2, 1.0 / (0.5 * float(rho.min())) ** 2
+    a = _harmonics(ang[ok], 3)
+    w2 = np.ones_like(rho)
+    for _ in range(4):                                          # (d(1/ρ²) = −2 dρ / ρ³, ρ the line's own reach)
+        lean = [0.0] * 5 + [0.5 * float(w2.sum())] * 2          # the third harmonic: by half (no corners)
+        coef = np.linalg.solve(a.T @ (a * w2[:, None]) + np.diag(lean), a.T @ (w2 / rho ** 2))
+        w2 = np.clip(a @ coef, lo, hi) ** -3.0
+    fine = np.linspace(0.0, 2.0 * math.pi, 192, endpoint=False)
+    rf = scale / np.sqrt(np.clip(_harmonics(fine, 3) @ coef, lo, hi))
+    return np.stack([c[0] + rf * np.cos(fine), c[1] + rf * np.sin(fine)], axis=1)
+
+
+def _ring_of_poly(poly: np.ndarray, k: int = RING) -> np.ndarray:
+    """``k`` points on a traced outline, in the ``RING`` directions from its middle — the up, down, left
+    and right ones (k = 8) at its top, bottom and sides where those lie near their direction, so that
+    the curve through the points is as tall and as wide as the outline."""
+    c = centre({"poly": poly})
+    degs = RING_DEG if k == RING else tuple(-90.0 + 360.0 * i / k for i in range(k))
+    out = np.array([[c[0] + reach(poly, c, math.radians(a)) * math.cos(math.radians(a)),
+                     c[1] + reach(poly, c, math.radians(a)) * math.sin(math.radians(a))] for a in degs])
+    if k == RING:
+        for i, axis, pick in ((0, 1, np.argmin), (4, 1, np.argmax), (2, 0, np.argmax), (6, 0, np.argmin)):
+            q = poly[int(pick(poly[:, axis]))]
+            off = math.degrees(math.atan2(q[1] - c[1], q[0] - c[0])) - RING_DEG[i]
+            if abs((off + 180.0) % 360.0 - 180.0) < 35.0:
+                out[i] = q
+    return out
+
+
+def ring(e: dict, k: int = RING) -> np.ndarray:
+    """The ``k`` points (k, 2) of an outline as the C/D tab moves them: up first, then clockwise."""
+    if "pts" in e and len(e["pts"]) == k:
+        return np.asarray(e["pts"], np.float64).reshape(-1, 2).copy()
+    if "pts" in e or "poly" in e:
+        return _ring_of_poly(curve(e), k)
+    return _on_reach(e, np.radians(np.asarray(RING_DEG if k == RING else
+                                               [-90.0 + 360.0 * i / k for i in range(k)])))
+
+
+def moved(e: dict, scale: float, dx: float = 0.0, dy: float = 0.0) -> dict:
+    """The outline with every point p taken to ``p · scale + (dx, dy)`` (another picture's pixels)."""
+    for key in ("pts", "poly"):
+        if key in e:
+            return {key: np.asarray(e[key], np.float64).reshape(-1, 2) * scale + (dx, dy)}
+    cx, cy, t, r, b, l = _reach_dict(e)
+    return {"cx": cx * scale + dx, "cy": cy * scale + dy, "top": t * scale, "right": r * scale,
+            "bottom": b * scale, "left": l * scale}
+
+
+RIM_STEP_DEG = 1             # the rim is measured round the whole disc every so many degrees
+RIM_ABSENT = 0.005           # a rim narrower than this (of the disc's diameter there) is no rim
+DISC_SMALL_MM, DISC_LARGE_MM = 1.5, 2.0      # DDLS: a small disc is below, a large one above
+
+
+def expected_cdr(disc_mm: float) -> float:
+    """The mean vertical C/D of normal eyes with a disc ``disc_mm`` tall: a large disc has a large
+    cup. Garway-Heath et al., Br J Ophthalmol 1998;82:1118 — vertical cup diameter regressed on
+    vertical disc diameter in 88 normal eyes (stereo planimetry): CDR = (−1.31 + 1.194 · DD) / DD,
+    R² = 0.42 (the scatter round it is wide: a guide, not a limit)."""
+    return float(np.clip((-1.31 + 1.194 * disc_mm) / max(disc_mm, 1e-6), 0.0, 1.0))
+
+
+def ddls_stage(rim_disc: float, absent_deg: float, disc_mm: float | None = None) -> int:
+    """Disc Damage Likelihood Scale (Spaeth et al. 2002), 1…10, from the narrowest rim: its width as a
+    part of the disc's diameter along the same meridian (``rim_disc``), or — where there is no rim —
+    how much of the disc's circumference is without one (``absent_deg``). The nomogram for a disc of
+    average size (1.5–2.0 mm); a small disc (< 1.5 mm) is one stage up, a large one (> 2.0 mm) one
+    stage down. ``disc_mm`` None: taken as average."""
+    if absent_deg > 0:
+        stage = 6 if absent_deg < 45 else 7 if absent_deg <= 90 else 8 if absent_deg <= 180 \
+            else 9 if absent_deg <= 270 else 10
+    else:
+        stage = 1 if rim_disc >= 0.4 else 2 if rim_disc >= 0.3 else 3 if rim_disc >= 0.2 \
+            else 4 if rim_disc >= 0.1 else 5
+    if disc_mm is not None:
+        stage += 1 if disc_mm < DISC_SMALL_MM else -1 if disc_mm > DISC_LARGE_MM else 0
+    return int(min(10, max(1, stage)))
+
+
+def cdr_metrics(disc: dict, cup: dict, eye: str = "OD", disc_mm: float | None = None) -> dict:
+    """C/D of two outlines, as planimetry measures it: ``vertical`` and ``horizontal`` — the cup's
+    height · width over the disc's — and ``area``; ``rim``: the rim width in each of the ``RING``
+    directions from the disc's middle (the disc margin less the cup's, as a fraction of the vertical
+    disc diameter DD; negative: the cup reaches past the margin); ``isnt``: where the I ≥ S ≥ N ≥ T
+    order is broken; ``thinnest``: the narrowest of those eight.
+
+    ``narrow``: the narrowest rim round the whole disc — ``ratio`` (its width over the disc's diameter
+    along the same meridian: DDLS's rim/disc ratio), ``name`` (the nearest of the eight directions),
+    ``hour`` (clock hour as the photo is seen: 12 up, 3 right) and ``absent`` (degrees of the
+    circumference with no rim) — and ``ddls``, its stage (``ddls_stage``; ``disc_mm``: the vertical
+    disc diameter in mm where the photo's scale is known). ``dd``: the vertical disc diameter (px)."""
+    d, c = curve(disc), curve(cup)
+    dd = max(float(np.ptp(d[:, 1])), 1e-6)
+    o = centre({"poly": d})
+    names = ring_names(eye)
+    ang = np.radians(np.arange(0.0, 360.0, RIM_STEP_DEG))       # (x right, y down: 0 = right, 90 = down)
+    rd, rc = reaches(d, o, ang), reaches(c, o, ang)
+    eight = np.round((np.asarray(RING_DEG) % 360.0) / RIM_STEP_DEG).astype(int) % len(ang)
+    rim = {name: float(rd[i] - rc[i]) / dd for name, i in zip(names, eight)}
     bad = []
-    if i < s:
+    if rim["I"] < rim["S"]:
         bad.append("하측 림이 상측보다 얇음")
-    if s < n:
+    if rim["S"] < rim["N"]:
         bad.append("상측 림이 비측보다 얇음")
-    if n < t:
+    if rim["N"] < rim["T"]:
         bad.append("비측 림이 이측보다 얇음")
-    area = outline_area(c) / outline_area(d)
-    return {"vertical": (c["top"] + c["bottom"]) / dd, "horizontal": (c["left"] + c["right"]) / (d["left"] + d["right"]),
-            "area": area, "rim": {"I": i, "S": s, "N": n, "T": t}, "isnt": bad}
+    across = np.maximum(rd + np.roll(rd, len(ang) // 2), 1e-6)  # the disc's diameter along each meridian
+    part = (rd - rc) / across
+    i = int(np.argmin(part))
+    deg = float(np.degrees(ang[i]))
+    absent = float((part <= RIM_ABSENT).sum() * RIM_STEP_DEG)
+    narrow = {"ratio": max(0.0, float(part[i])), "deg": deg, "name": names[int(round((deg + 90.0) / 45.0)) % RING],
+              "hour": int(round((deg + 90.0) / 30.0)) % 12 or 12, "absent": absent}
+    return {"vertical": float(np.ptp(c[:, 1])) / dd,
+            "horizontal": float(np.ptp(c[:, 0])) / max(float(np.ptp(d[:, 0])), 1e-6),
+            "area": area({"poly": c}) / max(area({"poly": d}), 1e-6), "rim": rim, "isnt": bad,
+            "thinnest": min(rim, key=rim.get), "narrow": narrow,
+            "ddls": ddls_stage(narrow["ratio"], absent, disc_mm), "dd": dd}
+
+
+# -- disc: its margin found in the photo ---------------------------------------------------------------
+DISC_SEARCH = (0.45, 1.75)   # the margin is looked for between these radii (of the disc expected)
+DISC_MIN_EDGE = 0.22         # less than this (of the clearest edge) along the margin: not found
+
+
+def _odd(x: float) -> int:
+    return 2 * max(1, int(round(x / 2.0))) + 1
+
+
+def find_disc_margin(img: np.ndarray, disc_frac: float, k: int = RING) -> dict | None:
+    """The optic disc's margin in a square picture cut round the disc (expected ``disc_frac`` of the
+    picture's side across, from the camera — a real disc is often larger or smaller): ``{"pts": (k, 2)
+    picture pixels, "centre", "confidence": 0…1}``, or None where no margin stands out.
+
+    The margin is where the brightness falls from the pale rim to the darker retina: the vessels closed
+    out, the picture unrolled round the bright patch's middle, and one closed line through the falls
+    that turns smoothly (a path found round all the angles at once), then evened out (a few harmonics).
+    An estimate — a pale ring of atrophy round the disc can be taken for it."""
+    n = 256
+    side = float(img.shape[0])
+    sm = cv2.resize(img, (n, n), interpolation=cv2.INTER_AREA).astype(np.float32)
+    rd = max(disc_frac * n / 2.0, 4.0)
+    lum = 0.7 * sm[..., 0] + 0.3 * sm[..., 1]                   # mostly red: the disc against the retina (in
+    #                                                             green the cup stands out more than the disc)
+    lum = cv2.morphologyEx(lum, cv2.MORPH_CLOSE,
+                           cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (_odd(0.3 * rd),) * 2))
+    lum = cv2.GaussianBlur(lum, (0, 0), max(1.0, 0.05 * rd))
+    lit = cv2.erode((sm.max(axis=2) > 18).astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
+    yy, xx = np.mgrid[0:n, 0:n].astype(np.float32)
+    cx = cy = (n - 1) / 2.0
+    around = lit & (np.hypot(xx - cx, yy - cy) < 2.5 * rd)
+    if around.sum() < 20:
+        return None
+    base = float(np.median(lum[around]))
+    for _ in range(8):                                          # the middle of the bright patch near here
+        near = lit & (np.hypot(xx - cx, yy - cy) < 1.3 * rd)
+        w = np.clip(lum - base, 0.0, None) ** 2 * near
+        if near.sum() < 20 or float(w.sum()) <= 0.0:
+            return None
+        nx, ny = float((w * xx).sum() / w.sum()), float((w * yy).sum() / w.sum())
+        if math.hypot(nx - (n - 1) / 2.0, ny - (n - 1) / 2.0) > 1.5 * rd:
+            break
+        done = math.hypot(nx - cx, ny - cy) < 0.5
+        cx, cy = nx, ny
+        if done:
+            break
+    found = None
+    for _ in range(2):                                          # (again from the middle of what was found)
+        got = _margin_round(lum, lit, cx, cy, rd)
+        if got is None:
+            break
+        found = got
+        mx, my = centre({"poly": got[0]})
+        if math.hypot(mx - cx, my - cy) < 0.08 * rd:
+            break
+        cx, cy = mx, my
+    if found is None:
+        return None
+    poly, confidence = found
+    k_px = side / n
+    poly = (poly + 0.5) * k_px - 0.5
+    return {"pts": _ring_of_poly(poly, k), "centre": ((cx + 0.5) * k_px - 0.5, (cy + 0.5) * k_px - 0.5),
+            "confidence": confidence}
+
+
+def _margin_round(lum: np.ndarray, lit: np.ndarray, cx: float, cy: float, rd: float):
+    """``find_disc_margin`` from the middle (``cx``, ``cy``): ``(closed polygon, confidence)`` or None."""
+    na, nr = 96, 72
+    ang = np.linspace(0.0, 2.0 * math.pi, na, endpoint=False)
+    rad = np.linspace(DISC_SEARCH[0] * rd, DISC_SEARCH[1] * rd, nr)
+    mx = (cx + rad[None, :] * np.cos(ang)[:, None]).astype(np.float32)
+    my = (cy + rad[None, :] * np.sin(ang)[:, None]).astype(np.float32)
+    prof = cv2.remap(lum, mx, my, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+    seen = cv2.remap(lit.astype(np.float32), mx, my, cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT) > 0.5
+    # the fall from the pale disc to the retina: a sharp step, and the disc paler than what lies past it
+    # (the step from the cup to the rim is sharp too, but the rim past it is still pale)
+    dr = rad[1] - rad[0]
+    wide = max(3, int(round(0.3 * rd / dr)))
+    cs = np.concatenate([np.zeros((na, 1), np.float32), np.cumsum(prof, axis=1)], axis=1)
+    j = np.arange(nr)
+    lo, hi = np.clip(j - wide, 0, nr), np.clip(j + wide, 0, nr)
+    inner = (cs[:, j] - cs[:, lo]) / np.maximum(j - lo, 1)
+    outer = (cs[:, hi] - cs[:, j]) / np.maximum(hi - j, 1)
+    level = np.maximum(prof, 25.0)                              # (relative: any exposure)
+    sharp = np.zeros_like(prof)
+    sharp[:, 2:-2] = (prof[:, :-4] - prof[:, 4:]) / level[:, 2:-2]
+    broad = (inner - outer) / level
+    tops = []
+    for f in (sharp, broad):
+        f = np.clip(f, 0.0, None) * seen
+        f = (np.roll(f, 1, axis=0) + 2.0 * f + np.roll(f, -1, axis=0)) / 4.0       # (along the angle)
+        top = float(np.percentile(f, 99.5))
+        if top <= 1e-4:
+            return None
+        tops.append(np.clip(f / top, 0.0, 1.0))
+    score = np.sqrt(tops[0] * tops[1])
+    rr = rad / rd                                               # a mild pull towards the size expected
+    score = score * (0.65 + 0.35 * np.exp(-((rr - 1.0) / 0.45) ** 2))[None, :]
+    # one line round all the angles: three turns, the middle one kept (so that it closes)
+    jump, pen = 2, 0.06
+    s3 = np.tile(score, (3, 1))
+    cost = np.empty_like(s3)
+    back = np.zeros(s3.shape, np.int32)
+    cost[0] = -s3[0]
+    for i in range(1, len(s3)):
+        best = np.full(nr, np.inf, np.float32)
+        arg = np.zeros(nr, np.int32)
+        for dj in range(-jump, jump + 1):
+            src = np.clip(j - dj, 0, nr - 1)
+            c = cost[i - 1][src] + pen * abs(dj)
+            better = c < best
+            best[better], arg[better] = c[better], src[better]
+        cost[i], back[i] = best - s3[i], arg
+    path = np.zeros(len(s3), np.int32)
+    path[-1] = int(np.argmin(cost[-1]))
+    for i in range(len(s3) - 1, 0, -1):
+        path[i - 1] = back[i, path[i]]
+    jj = path[na:2 * na]
+    r_found = rad[jj]
+    strength = score[np.arange(na), jj]
+    confidence = float(np.median(strength))
+    if confidence < DISC_MIN_EDGE:
+        return None
+    # even it out: a few harmonics, the angles whose fall is weak or far off the rest let go
+    a = _harmonics(ang, 3)
+    w0 = np.maximum(strength, 0.02)
+    w = w0.copy()
+    ridge = np.diag([1e-6, 0.5, 0.5, 1.0, 1.0, 3.0, 3.0])
+    coef = np.zeros(7)
+    for _ in range(5):
+        coef = np.linalg.solve(a.T @ (a * w[:, None]) + ridge, a.T @ (w * r_found))
+        res = r_found - a @ coef
+        s = max(0.04 * rd, 1.4826 * float(np.median(np.abs(res))))
+        u = res / (3.0 * s)
+        w = w0 * np.where(np.abs(u) < 1.0, (1.0 - u * u) ** 2, 0.0)
+    fine = np.linspace(0.0, 2.0 * math.pi, 192, endpoint=False)
+    rf = np.clip(_harmonics(fine, 3) @ coef, DISC_SEARCH[0] * rd, DISC_SEARCH[1] * rd)
+    return np.stack([cx + rf * np.cos(fine), cy + rf * np.sin(fine)], axis=1), confidence
 
 
 # -- wide field ------------------------------------------------------------------------------------

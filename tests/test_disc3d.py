@@ -210,7 +210,7 @@ def test_cup_read_off_the_surface_follows_the_cup():
         out, edge = disc3d.cup_from_surface(H, disc)
         m = G.cdr_metrics(disc, out)
         assert info["cup"] and m["vertical"] == pytest.approx(cup, abs=0.1) == m["horizontal"]
-        assert edge.shape[1] == 2 and np.hypot(*(edge - (out["cx"], out["cy"])).T).max() < r
+        assert edge.shape[1] == 2 and np.hypot(*(edge - G.centre(out)).T).max() < r
         seen[cup] = m["area"]
     assert seen[0.3] < seen[0.5] < seen[0.7] < seen[0.85]
     H = disc3d.height_from_photo(_disc_picture(), frac)
@@ -222,6 +222,31 @@ def test_cup_read_off_the_surface_follows_the_cup():
     assert disc3d.cup_from_surface(np.zeros((n, n), np.float32), disc) is None
     pts = disc3d.outline_points({"cx": 10, "cy": 20, "top": 4, "right": 3, "bottom": 6, "left": 5}, 8)
     assert pts[0] == pytest.approx((13, 20)) and pts[2] == pytest.approx((10, 26)) and pts[4] == pytest.approx((5, 20))
+    even = disc3d.outline_points({"pts": G.ring({"cx": 50, "cy": 50, "rx": 20, "ry": 20})}, 36)    # … along a line
+    assert even.shape == (36, 2) and np.hypot(*(even - 50).T) == pytest.approx(20, abs=0.1)
+    steps = np.hypot(*(np.roll(even, -1, axis=0) - even).T)
+    assert steps.max() - steps.min() < 0.05
+
+
+def test_lines_of_equal_depth_are_nested_and_the_cup_is_one_of_them():
+    n, frac = 256, 1 / 3.5
+    c, r = (n - 1) / 2, frac * n / 2
+    disc = {"cx": c, "cy": c, "rx": r, "ry": r}
+    H = disc3d.height_from_photo(_disc_picture(cup=0.6), frac)
+    lines = disc3d.depth_contours(H, disc)
+    assert [lv for lv, _ in lines] == list(disc3d.CONTOUR_LEVELS)
+    tall = [float(np.ptp(edge[:, 1])) for _, edge in lines]
+    assert all(a > b for a, b in zip(tall, tall[1:]))               # deeper: smaller
+    for _lv, edge in lines:                                         # smooth closed lines round the hollow
+        assert np.hypot(*(edge - (c, c)).T).max() < r and len(edge) >= 100
+    cup, edge = disc3d.cup_from_surface(H, disc, 0.3)
+    assert set(cup) == {"poly"} and np.allclose(edge, dict(lines)[0.3], atol=1e-4)
+    assert G.cdr_metrics(disc, {"pts": G.ring(cup)})["vertical"] == pytest.approx(G.cdr_metrics(disc, cup)["vertical"],
+                                                                                 abs=0.005)
+    assert disc3d.depth_contours(np.zeros((n, n), np.float32), disc) == []
+    # the disc's outline as eight points (the C/D tab's): the same cup as from its ellipse
+    as_pts = disc3d.cup_from_surface(H, {"pts": G.ring(disc)}, 0.3)[0]
+    assert G.cdr_metrics(disc, as_pts)["vertical"] == pytest.approx(G.cdr_metrics(disc, cup)["vertical"], abs=0.01)
 
 
 def test_tab_estimates_the_cd_ratio_and_hands_the_cup_to_the_disc_tab(app):
@@ -231,7 +256,7 @@ def test_tab_estimates_the_cd_ratio_and_hands_the_cup_to_the_disc_tab(app):
     tab = dlg.surface
     tab.set_view(0, 0)
     m = tab.metrics()
-    assert m["vertical"] == pytest.approx(0.6 / 1.05, abs=0.08)     # (the disc tab's outline starts 1.05 tall)
+    assert m["vertical"] == pytest.approx(0.6, abs=0.08)            # (the disc tab's outline: on the disc's margin)
     assert tab.lbl_cd.text() == f"{m['vertical']:.2f}" and "수평 C/D" in tab.lbl_cd2.text()
     assert tab.note().endswith(f"추정 수직 C/D {m['vertical']:.2f}")
     lines = tab.compose()
@@ -240,14 +265,18 @@ def test_tab_estimates_the_cd_ratio_and_hands_the_cup_to_the_disc_tab(app):
     tab.s_level.set(60)
     assert tab.metrics()["vertical"] < m["vertical"]
     tab.s_level.set(30)
-    d = dict(dlg.disc.disc)                                         # the disc margin is the disc tab's green line
-    dlg.disc.set_ellipses({**d, "top": d["top"] * 1.25, "bottom": d["bottom"] * 1.25}, dlg.disc.cup)
+    assert dlg.disc.metrics()["vertical"] == pytest.approx(m["vertical"], abs=0.02)   # both tabs: the same cup
+    pts, mid = dlg.disc.disc["pts"], G.centre(dlg.disc.disc)        # the disc margin is the disc tab's green line
+    tall = pts.copy()
+    tall[:, 1] = mid[1] + (pts[:, 1] - mid[1]) * 1.25
+    dlg.disc.set_outlines({"pts": tall}, dlg.disc.cup)
     assert tab.metrics()["vertical"] == pytest.approx(m["vertical"] / 1.25, abs=0.02)
     dlg.disc.set_field("wide")                                      # … whatever field either tab shows
     tab.set_field("near")
-    assert tab.metrics()["vertical"] == pytest.approx(0.6 / 1.05, abs=0.08)
-    tab.b_apply.click()
-    assert dlg.tabs.currentWidget() is dlg.disc
+    assert tab.metrics()["vertical"] == pytest.approx(m["vertical"] / 1.25, abs=0.04)
+    tab.b_apply.click()                                             # the cup's line as the disc tab's eight points
+    assert dlg.tabs.currentWidget() is dlg.disc and dlg.disc.cup["pts"].shape == (G.RING, 2)
+    assert dlg.disc.state == {"disc": "hand", "cup": "given"} and "3D 입체 탭" in dlg.disc.lbl_auto.text()
     assert dlg.disc.metrics()["vertical"] == pytest.approx(tab.metrics()["vertical"], abs=0.01)
     assert dlg.disc.metrics()["area"] == pytest.approx(tab.metrics()["area"], abs=0.01)
     blank = GlaucomaDialog(_photo(1, np.full((N, N, 3), 120, np.uint8))).surface    # no cup to see
@@ -349,7 +378,7 @@ def _cupped_picture(n=640, frac=1 / 3.5, cup=0.7, pallor=0.4, angles=BENDING, be
 def _vertical_cd(H, frac=1 / 3.5):
     n = H.shape[0]
     c, r = (n - 1) / 2, frac * n / 2
-    disc = G.outline({"cx": c, "cy": c, "rx": r, "ry": r})
+    disc = {"cx": c, "cy": c, "rx": r, "ry": r}
     found = disc3d.cup_from_surface(H, disc)
     return G.cdr_metrics(disc, found[0]) if found else None
 

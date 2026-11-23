@@ -533,45 +533,102 @@ MIN_CUP_DEPTH = 0.12     # a hollow shallower than this (of height 1) is no cup 
 
 
 def outline_points(e: dict, k: int = 120) -> np.ndarray:
-    """``k`` points round an outline (``glaucoma.outline``: four quarter ellipses), as (k, 2) x, y."""
-    o = G.outline(e)
-    a = np.linspace(0.0, 2.0 * math.pi, k, endpoint=False)
-    c, s = np.cos(a), np.sin(a)                                  # (y down: s > 0 is below the centre)
-    x = o["cx"] + np.where(c >= 0, o["right"], o["left"]) * c
-    y = o["cy"] + np.where(s >= 0, o["bottom"], o["top"]) * s
-    return np.stack([x, y], axis=1)
+    """``k`` points round an outline (``glaucoma.curve``), as (k, 2) x, y — an ellipse or four quarter
+    ellipses at even angles from +x towards +y, any other outline evenly along its length."""
+    if "pts" not in e and "poly" not in e:
+        return G._on_reach(e, np.linspace(0.0, 2.0 * math.pi, k, endpoint=False))
+    p = G.curve(e)
+    seg = np.hypot(*(np.roll(p, -1, axis=0) - p).T)
+    at = np.concatenate([[0.0], np.cumsum(seg)])
+    want = np.linspace(0.0, at[-1], k, endpoint=False)
+    closed = np.vstack([p, p[:1]])
+    return np.stack([np.interp(want, at, closed[:, 0]), np.interp(want, at, closed[:, 1])], axis=1)
 
 
-def cup_from_surface(H: np.ndarray, disc: dict, level: float = CUP_LEVEL) -> tuple[dict, np.ndarray] | None:
-    """The cup read off the surface ``H``: the hollow inside the ``disc`` outline (in pixels of ``H``)
-    that lies deeper than ``level`` of the way from the retina's level down to the deepest point —
-    the one piece of it that holds that point. Returns its outline (``glaucoma.outline``: centre and
-    the reach up · right · down · left, so that ``glaucoma.cdr_metrics`` takes it) and its margin as
-    (k, 2) points, or None when there is no hollow to speak of.
+CONTOUR_UP = 2           # lines of equal depth are traced on a grid this much finer than the surface
 
-    An estimate as good as the surface: from one photo that is the pale part of the disc, from a
-    stereo pair the part the parallax puts deepest."""
+
+def _depths(H: np.ndarray, disc: dict) -> tuple[np.ndarray, tuple[int, int], float] | None:
+    """The surface inside the ``disc`` outline (pixels of ``H``) on the finer grid (outside: +inf), its
+    deepest point there and that depth — or None when no hollow there is deep enough to be a cup."""
     n = H.shape[0]
-    inside = np.zeros((n, n), np.uint8)
-    cv2.fillPoly(inside, [np.round(outline_points(disc)).astype(np.int32)], 1)
+    m = n * CONTOUR_UP
+    inside = np.zeros((m, m), np.uint8)
+    pts = (G.curve(disc) + 0.5) * CONTOUR_UP - 0.5
+    cv2.fillPoly(inside, [np.round(pts * 4).astype(np.int32)], 1, shift=2)
     if not inside.any():
         return None
     Hs = cv2.GaussianBlur(H, (0, 0), max(1.0, n / 200.0))        # (a vessel across the cup is not its margin)
-    deep = np.where(inside > 0, Hs, np.inf)
+    Hs = cv2.resize(Hs, (m, m), interpolation=cv2.INTER_CUBIC)
+    deep = np.where(inside > 0, Hs, np.inf).astype(np.float32)
     iy, ix = np.unravel_index(int(np.argmin(deep)), deep.shape)
     bottom = float(deep[iy, ix])
     if bottom > -MIN_CUP_DEPTH:
         return None
-    mask = ((deep <= float(np.clip(level, 0.02, 0.98)) * bottom)).astype(np.uint8)
+    return deep, (int(iy), int(ix)), bottom
+
+
+def _contour_at(deep: np.ndarray, at: tuple[int, int], bottom: float, level: float) -> np.ndarray | None:
+    """The line where the hollow holding ``at`` is ``level`` of the way down to ``bottom``: (k, 2) points
+    in pixels of the surface — traced half a grid step out (on the line, not just inside it), then evened
+    out to a smooth closed line (``glaucoma.evened``)."""
+    mask = (deep <= float(np.clip(level, 0.02, 0.98)) * bottom).astype(np.uint8)
     _, labels = cv2.connectedComponents(mask, connectivity=4)
-    mask = (labels == labels[iy, ix]).astype(np.uint8)
-    ys, xs = np.nonzero(mask)
-    cx, cy = float(xs.mean()), float(ys.mean())
-    cup = {"cx": cx, "cy": cy, "top": cy - ys.min() + 0.5, "bottom": ys.max() - cy + 0.5,
-           "left": cx - xs.min() + 0.5, "right": xs.max() - cx + 0.5}
+    mask = (labels == labels[at]).astype(np.uint8)
+    # a cup is a round hollow: a thin tongue running out of it (along a vessel, towards one bend) is not
+    k = 2 * int(round(0.09 * math.sqrt(float(mask.sum())))) + 1
+    if k >= 3:
+        opened = cv2.morphologyEx(mask, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+        if opened[at]:
+            _, labels = cv2.connectedComponents(opened, connectivity=4)
+            mask = (labels == labels[at]).astype(np.uint8)
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    edge = max(contours, key=len).reshape(-1, 2).astype(np.float32)
-    return cup, edge
+    if not contours:
+        return None
+    p = max(contours, key=len).reshape(-1, 2).astype(np.float64)
+    if len(p) >= 7:                                              # (the grid's stairs evened out)
+        p = sum(np.roll(p, s, axis=0) for s in range(-2, 3)) / 5.0
+    c = p.mean(axis=0)
+    d = np.maximum(np.hypot(*(p - c).T), 1e-6)[:, None]
+    p = p + (p - c) / d * 0.5                                    # (the pixels' edge, not their centres)
+    p = (p + 0.5) / CONTOUR_UP - 0.5
+    return G.evened(p).astype(np.float32)                         # (a smooth closed line: a cup's margin)
+
+
+def cup_from_surface(H: np.ndarray, disc: dict, level: float = CUP_LEVEL) -> tuple[dict, np.ndarray] | None:
+    """The cup read off the surface ``H`` along a line of equal depth (등고선): the hollow inside the
+    ``disc`` outline (in pixels of ``H``) that lies deeper than ``level`` of the way from the retina's
+    level down to the deepest point — the one piece of it that holds that point. Returns its outline
+    (``{"poly": …}``, so that ``glaucoma.cdr_metrics`` takes it) and its margin as (k, 2) points, or None
+    when there is no hollow to speak of.
+
+    An estimate as good as the surface: from one photo that is the pale part of the disc, from a
+    stereo pair the part the parallax puts deepest."""
+    found = _depths(H, disc)
+    if found is None:
+        return None
+    edge = _contour_at(*found, level)
+    if edge is None or len(edge) < 3:
+        return None
+    return {"poly": edge.astype(np.float64)}, edge
+
+
+CONTOUR_LEVELS = tuple(round(0.1 * i, 1) for i in range(1, 10))   # 등고선: every tenth of the way down
+
+
+def depth_contours(H: np.ndarray, disc: dict, levels=CONTOUR_LEVELS) -> list:
+    """The lines of equal depth of the hollow inside the ``disc`` outline (pixels of ``H``): ``[(level,
+    (k, 2) points), …]`` for each ``level`` of the way down to the deepest point (the cup at ``level``
+    is what ``cup_from_surface`` reads) — none when there is no hollow."""
+    found = _depths(H, disc)
+    if found is None:
+        return []
+    out = []
+    for lv in levels:
+        edge = _contour_at(*found, lv)
+        if edge is not None and len(edge) >= 3:
+            out.append((float(lv), edge))
+    return out
 
 
 def rotation(yaw_deg: float, pitch_deg: float) -> np.ndarray:
