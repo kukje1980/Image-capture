@@ -226,25 +226,109 @@ def test_images_load_from_a_settings_folder_with_spaces(app, tmp_path, monkeypat
 
 def test_toolbar_icons_are_colour_tiles_with_white_glyphs(app):
     """0.10.18: every toolbar icon is a rounded colour tile (photo thumbnails: a rounded photo) with
-    clear corners; the glyph alone (``plain``) stays a light line drawing with no tile behind it."""
+    clear corners; the glyph alone (``plain``) stays a light line drawing with no tile behind it.
+    (0.13.5: one of the looks of 보기 → 아이콘 모양 — "tile".)"""
     from fundusview.ui import icons
     from fundusview.ui.toolbars import COMMANDS, PROCESSING, icon_for
 
     specs = [c[3] for c in COMMANDS] + [c[3] for c in PROCESSING if c]
-    for spec in specs:
-        img = icon_for(spec).pixmap(64, 64).toImage()
-        assert img.pixelColor(0, 0).alpha() == 0 and img.pixelColor(63, 63).alpha() == 0, spec   # round corners
-        assert img.pixelColor(32, 5).alpha() == 255 and img.pixelColor(5, 32).alpha() == 255, spec  # the tile
-        if not spec.startswith("fundus:"):
-            assert spec in icons.TILE_OF or spec.startswith("multi"), spec       # a colour chosen for it
-            top, bottom = icons.tile_colors(spec)
-            edge = img.pixelColor(32, 57)
-            assert abs(edge.red() - bottom.red()) < 40 and abs(edge.blue() - bottom.blue()) < 40, spec
-            white = sum(img.pixelColor(x, y).lightness() > 240 for x in range(10, 54) for y in range(10, 54))
-            assert white > 40, spec                                             # the glyph, in white
+    was = icons.style()
+    icons.set_style("tile")
+    try:
+        for spec in specs:
+            img = icon_for(spec).pixmap(64, 64).toImage()
+            assert img.pixelColor(0, 0).alpha() == 0 and img.pixelColor(63, 63).alpha() == 0, spec   # round corners
+            assert img.pixelColor(32, 5).alpha() == 255 and img.pixelColor(5, 32).alpha() == 255, spec  # the tile
+            if not spec.startswith("fundus:"):
+                assert spec in icons.TILE_OF or spec.startswith("multi"), spec       # a colour chosen for it
+                top, bottom = icons.tile_colors(spec)
+                edge = img.pixelColor(32, 57)
+                assert abs(edge.red() - bottom.red()) < 40 and abs(edge.blue() - bottom.blue()) < 40, spec
+                white = sum(img.pixelColor(x, y).lightness() > 240 for x in range(10, 54) for y in range(10, 54))
+                assert white > 40, spec                                             # the glyph, in white
+    finally:
+        icons.set_style(was)
     # neighbours on the command toolbar differ in colour where it helps to tell them apart
     assert icons.tile_colors("simple") != icons.tile_colors("multi16") != icons.tile_colors("detail")
     assert icons.tile_colors("exit")[1].red() > 200
     plain = icons.icon("prev", plain=True).pixmap(64, 64).toImage()
     assert plain.pixelColor(32, 5).alpha() == 0 and plain.pixelColor(5, 32).alpha() == 0
     assert any(plain.pixelColor(x, 32).alpha() == 255 for x in range(64))
+
+
+def test_icon_looks_put_the_glyph_first(app):
+    """0.13.5: 보기 → 아이콘 모양 — the line looks have no tile and a glyph that fills its square, in few
+    colours with a meaning ("group", as first set); the tile looks keep a tile but a quiet one."""
+    from PySide6.QtGui import QColor
+
+    from fundusview.config import Settings
+    from fundusview.ui import icons
+    from fundusview.ui.toolbars import COMMANDS, PROCESSING
+
+    assert Settings().icon_style == icons.DEFAULT_STYLE == "group"
+    names = [c[3] for c in COMMANDS] + [c[3] for c in PROCESSING if c and not c[3].startswith("fundus:")]
+
+    def picture(name, look):
+        return icons.icon(name, style=look).pixmap(64, 64).toImage()
+
+    def box(img):
+        pts = [(x, y) for x in range(64) for y in range(64) if img.pixelColor(x, y).alpha() > 60]
+        xs, ys = [x for x, _ in pts], [y for _, y in pts]
+        return max(max(xs) - min(xs), max(ys) - min(ys))        # (a chevron is narrow, but tall)
+
+    for name in names:
+        for look in ("group", "mono", "color"):
+            img = picture(name, look)
+            assert img.pixelColor(1, 1).alpha() == 0 and img.pixelColor(62, 62).alpha() == 0, (name, look)
+            assert box(img) >= 34, (name, look)                     # the glyph is large …
+            clear = sum(img.pixelColor(x, y).alpha() < 30 for x in range(64) for y in range(64))
+            assert clear > 64 * 64 * 0.3, (name, look)              # … and there is no tile behind it
+        for look in ("dark", "tint", "flat", "tile"):
+            img = picture(name, look)
+            assert img.pixelColor(32, 5).alpha() == 255 and img.pixelColor(0, 0).alpha() == 0, (name, look)
+        # "group": the colour says what kind of command it is
+        img = picture(name, "group")
+        want = QColor(icons.GROUPS[icons.group_of(name)][0])
+        hit = sum(1 for x in range(64) for y in range(64)
+                  if img.pixelColor(x, y).alpha() == 255
+                  and abs(img.pixelColor(x, y).red() - want.red()) + abs(img.pixelColor(x, y).green() - want.green())
+                  + abs(img.pixelColor(x, y).blue() - want.blue()) < 12)
+        assert hit > 25, name
+    assert icons.group_of("simple") == icons.group_of("multi16") == icons.group_of("detail") == "view"
+    assert icons.group_of("glaucoma") == icons.group_of("eye3d") == "exam" and icons.group_of("exit") == "danger"
+    # the tiles of "dark" are all the same quiet grey; an unknown look is the first one
+    assert picture("simple", "dark").pixelColor(32, 6) == picture("exit", "dark").pixelColor(32, 6)
+    was = icons.style()
+    try:
+        assert icons.set_style("nonsense") == "group"
+    finally:
+        icons.set_style(was)
+
+
+def test_icon_look_is_chosen_in_the_view_menu(app, tmp_path):
+    """0.13.5: 보기 → 아이콘 모양 redraws every toolbar icon at once and is remembered."""
+    from fundusview.config import Settings
+    from fundusview.db import Database
+    from fundusview.ui import icons
+    from fundusview.ui.main_window import MainWindow
+
+    s = Settings(library_dir=str(tmp_path / "lib"), stable_seconds=0.05, rescan_seconds=0,
+                 watch_on_startup=False, auto_detect=False)
+    window = MainWindow(s, Database(tmp_path / "lib" / "fundus.db"))
+    try:
+        assert window.settings.icon_style == icons.style() == "group"
+        assert window.icon_style_acts["group"].isChecked() and len(window.icon_style_acts) == len(icons.STYLES)
+
+        def corner(key):
+            return window.acts[key].icon().pixmap(64, 64).toImage().pixelColor(32, 5).alpha()
+
+        assert corner("view:simple") == 0 and corner("flip_v") == 0
+        window.icon_style_acts["flat"].trigger()
+        assert icons.style() == window.settings.icon_style == "flat"
+        assert corner("view:simple") == 255 and corner("flip_v") == 255       # tiles now, on both toolbars
+        window.icon_style_acts["mono"].trigger()
+        assert corner("view:simple") == 0 and window.icon_style_acts["mono"].isChecked()
+    finally:
+        icons.set_style(icons.DEFAULT_STYLE)
+        window.close()
+
