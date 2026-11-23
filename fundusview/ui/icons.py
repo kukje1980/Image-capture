@@ -1,10 +1,13 @@
 """Toolbar icons, drawn with QPainter (no image assets in the repo).
 
-``icon(name)`` returns a QIcon for the toolbar keys used in the main window: a rounded square
-("squircle") tile in one of a dozen fresh colours with a soft top-to-bottom gradient, and the
-glyph on it in white with round, chunky strokes — the look of the icons in macOS's System
-Settings and Dock. ``icon(name, plain=True)`` is the glyph alone, as a light line drawing, for
-places that bring their own background (the ◀ ▶ over a photo, a badge).
+``icon(name)`` returns a QIcon for the toolbar keys used in the main window, in the look chosen
+with ``set_style`` (보기 → 아이콘 모양; ``STYLES``): the glyph alone as a line drawing that fills its
+square — in one colour per kind of command ("group", as first set), light grey ("mono") or a colour
+of its own ("color") — or the glyph on a rounded square ("squircle") tile: a dark one ("dark"), one
+tinted with the glyph's colour ("tint"), a flat one in the colour of its kind ("flat"), or the
+colour tile with a gradient and a white glyph of before 0.13.6 ("tile").
+``icon(name, plain=True)`` is the glyph alone, as a light line drawing, for places that bring their
+own background (the ◀ ▶ over a photo, a badge) — the same in every look.
 """
 from __future__ import annotations
 
@@ -57,6 +60,61 @@ TILE_OF = {
     "copy": "sky", "save": "blue", "record": "green", "edit": "orange", "folder": "sky", "import": "green",
     "watch_on": "green", "watch_off": "red",
 }
+
+# -- the looks (보기 → 아이콘 모양) -------------------------------------------------------------
+# (key, name in the menu, what it is) — in the order of the menu; the first is the one first set
+STYLES = (
+    ("group", "기능별 색 라인", "타일 없이 그림만 크게 — 색은 기능별로: 탐색·파일 회색, 보기 파랑, 분석 초록, 측정 주황, "
+                           "영상 처리 보라, 방향 청록, 종료·지우기 빨강"),
+    ("mono", "모노 라인", "타일 없이 그림만 크게 — 모두 밝은 회색 선"),
+    ("color", "컬러 라인", "타일 없이 그림만 크게 — 그림마다 제 색"),
+    ("dark", "어두운 타일 + 컬러 그림", "차분한 어두운 타일 위에 색 그림"),
+    ("tint", "옅은 색 타일 + 컬러 그림", "제 색을 옅게 깐 타일 위에 색 그림"),
+    ("flat", "단색 타일 + 큰 흰 그림", "그라데이션 없는 타일(색은 기능별) 위에 흰 그림을 크게"),
+    ("tile", "컬러 타일 (이전 모양)", "그라데이션 색 타일 위에 흰 그림 — 0.13.4까지의 모양"),
+)
+DEFAULT_STYLE = STYLES[0][0]
+PAGE = QColor("#1c1c1e")           # the bars the icons sit on (theme.BG): behind a glyph with no tile
+DARK_TILE = QColor("#2f3136")
+MONO_INK, MONO_SOFT = QColor("#e6e9ee"), QColor("#8f97a3")
+# what kind of command a glyph is (the rest: "image") …
+GROUP_OF = {
+    **dict.fromkeys(("log", "search", "prev", "next", "print", "settings", "undo", "copy", "save", "record", "edit",
+                     "folder", "import"), "nav"),
+    **dict.fromkeys(("simple", "detail", "fit", "actual", "tools", "zoom", "loupe", "pan", "loop"), "view"),
+    **dict.fromkeys(("eye3d", "montage", "glaucoma", "discpair", "watch_on"), "exam"),
+    **dict.fromkeys(("length", "angle", "cd", "text", "arrow", "profile", "histogram"), "measure"),
+    **dict.fromkeys(("flip_v", "flip_h", "rot_cw", "rot_ccw"), "turn"),
+    **dict.fromkeys(("exit", "annot_clear", "watch_off"), "danger"),
+}
+# … and the colour of each kind: (the line of "group", the tile of "flat")
+GROUPS = {
+    "nav": ("#aeb4bf", "#5b6577"),
+    "view": ("#4da3ff", "#1f7ae0"),
+    "exam": ("#34d399", "#12936b"),
+    "measure": ("#ffb340", "#b9770a"),
+    "image": ("#c08cff", "#7d4fd1"),
+    "turn": ("#4fd1d9", "#0f8f9c"),
+    "danger": ("#ff6b61", "#d6453b"),
+}
+_style = DEFAULT_STYLE
+
+
+def set_style(style: str | None) -> str:
+    """Choose the look of the toolbar icons (one of ``STYLES``; anything else: the first). Icons made
+    before keep theirs: make them again with ``icon``."""
+    global _style
+    _style = style if style in {k for k, _, _ in STYLES} else DEFAULT_STYLE
+    return _style
+
+
+def style() -> str:
+    return _style
+
+
+def group_of(name: str) -> str:
+    """The kind of command of glyph ``name`` (a key of ``GROUPS``)."""
+    return "view" if name.startswith("multi") else GROUP_OF.get(name, "image")
 
 
 class _Glyph:
@@ -477,26 +535,82 @@ def tile_colors(name: str) -> tuple[QColor, QColor]:
     return QColor(top), QColor(bottom)
 
 
+def _own_color(name: str) -> QColor:
+    """The colour of glyph ``name`` drawn as a coloured line: that of its tile, light enough for a dark bar."""
+    top, bottom = tile_colors(name)
+    c = QColor((top.red() * 2 + bottom.red()) // 3, (top.green() * 2 + bottom.green()) // 3,
+               (top.blue() * 2 + bottom.blue()) // 3)
+    h, sat, light, _a = c.getHslF()
+    return QColor.fromHslF(h, sat, max(light, 0.66))
+
+
+def _flat_tile(p: QPainter, color: QColor, border: QColor | None = None) -> None:
+    shape = QPainterPath()
+    shape.addRoundedRect(TILE, TILE_RADIUS, TILE_RADIUS)
+    p.fillPath(shape, QBrush(color))
+    if border is not None:
+        p.setPen(QPen(border, 1.2))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRoundedRect(TILE.adjusted(0.6, 0.6, -0.6, -0.6), TILE_RADIUS - 0.6, TILE_RADIUS - 0.6)
+
+
+def _glyph(p: QPainter, name: str, ink: QColor, soft: QColor, hole: QColor, scale: float, k: float,
+           dy: float = 0.0) -> None:
+    p.translate(32, 32 + dy)
+    p.scale(scale, scale)
+    p.translate(-32, -32)
+    _draw(name, _Glyph(p, ink, soft, hole, k, tiled=True))
+
+
+def _paint(p: QPainter, name: str, look: str) -> None:
+    """Glyph ``name`` in look ``look`` on the 64-unit canvas."""
+    white = QColor(255, 255, 255)
+    line, flat = (QColor(c) for c in GROUPS[group_of(name)])
+    if look == "mono":
+        _glyph(p, name, MONO_INK, MONO_SOFT, PAGE, 0.92, 1.0)
+    elif look == "color":
+        c = _own_color(name)
+        _glyph(p, name, c, _with_alpha(c, 150), PAGE, 0.92, 1.0)
+    elif look == "group":
+        _glyph(p, name, line, _with_alpha(line, 150), PAGE, 0.92, 1.0)
+    elif look == "dark":
+        c = _own_color(name)
+        _flat_tile(p, DARK_TILE, QColor(255, 255, 255, 26))
+        _glyph(p, name, c, _with_alpha(c, 150), DARK_TILE, 0.70, 1.2)
+    elif look == "tint":
+        c = _own_color(name)
+        base = QColor(*(int(b + (v - b) * 0.2) for b, v in zip((28, 28, 30), (c.red(), c.green(), c.blue()))))
+        _flat_tile(p, base, _with_alpha(c, 70))
+        _glyph(p, name, c, _with_alpha(c, 150), base, 0.70, 1.2)
+    elif look == "flat":
+        _flat_tile(p, flat)
+        _glyph(p, name, white, _with_alpha(white, 190), flat, 0.74, 1.15)
+    else:                                  # "tile": a gradient colour tile, the glyph on it in white
+        top, bottom = tile_colors(name)
+        _tile(p, top, bottom)
+        mid = QColor((top.red() + bottom.red()) // 2, (top.green() + bottom.green()) // 2,
+                     (top.blue() + bottom.blue()) // 2)
+        # the glyph a little below the middle of the tile is where the eye puts the middle
+        _glyph(p, name, white, _with_alpha(white, 175), mid, GLYPH_SCALE, 1.3, dy=0.5)
+
+
 @lru_cache(maxsize=None)
-def icon(name: str, plain: bool = False) -> QIcon:
+def _icon(name: str, look: str) -> QIcon:
     pm = QPixmap(S * PX, S * PX)
     pm.fill(Qt.GlobalColor.transparent)
     p = QPainter(pm)
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
     p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
     p.scale(PX, PX)
-    if plain:
+    if look == "plain":
         _draw(name, _Glyph(p, INK, ACCENT, BG, 1.0, tiled=False))
     else:
-        top, bottom = tile_colors(name)
-        _tile(p, top, bottom)
-        mid = QColor((top.red() + bottom.red()) // 2, (top.green() + bottom.green()) // 2,
-                     (top.blue() + bottom.blue()) // 2)
-        # the glyph a little below the middle of the tile is where the eye puts the middle
-        p.translate(32, 32.5)
-        p.scale(GLYPH_SCALE, GLYPH_SCALE)
-        p.translate(-32, -32)
-        white = QColor(255, 255, 255)
-        _draw(name, _Glyph(p, white, _with_alpha(white, 175), mid, 1.3, tiled=True))
+        _paint(p, name, look)
     p.end()
     return QIcon(pm)
+
+
+def icon(name: str, plain: bool = False, style: str | None = None) -> QIcon:
+    """The icon of ``name``: in the look in use (``set_style``) or in ``style``; ``plain``: the glyph
+    alone as a light line drawing, whatever the look."""
+    return _icon(name, "plain" if plain else (style or _style))
