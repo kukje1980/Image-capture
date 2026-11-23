@@ -5621,7 +5621,8 @@ class MainWindow(QMainWindow):
         fovea = (row["fovea_x"], row["fovea_y"]) if row["fovea_x"] is not None else None
         return Photo(row["id"], rgb, self._glaucoma_eye(row), src.disc,
                      discpair.disc_diameter_px(src.geometry, src.disc, (rgb.shape[1], rgb.shape[0])),
-                     fovea, src.found == "saved", src.when, src.caption)
+                     fovea, src.found == "saved", src.when, src.caption,
+                     scale_known=bool(src.geometry is not None and src.geometry.r > 0 and src.geometry.fov_deg))
 
     def _glaucoma_series(self, first, eye: str | None, also=()) -> list:
         """시간별 비교: the photos of ``first``'s patient that show the optic disc of the same eye
