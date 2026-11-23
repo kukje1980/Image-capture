@@ -28,57 +28,30 @@ def test_main_window_imports_and_lists(tmp_path, demo_dir, import_and_wait, monk
         assert w.thumbs.count() == 2 and w.current is not None
         assert w.view2d.has_image()
         assert "김민수" in w.banner.text()
-        w._on_action("chan:redfree")
-        assert w._channel == "redfree"
-        # G 필터 ▾ 녹색 + RNFL 강화 (광각 분석의 레드프리 0.9): the G 필터 lit; it again: colour
-        labels = [a.text() for a in w.menus["chan:green"].actions()]
-        assert labels[0].startswith("녹색 성분만") and "RNFL" in labels[1]
-        w._on_action("chan:rnfl")
-        assert w._channel == "rnfl" and w.acts["chan:green"].isChecked() and not w.acts["chan:redfree"].isChecked()
+        # Red-free: the green channel with RNFL 강화 at 0.9 (광각 분석의 레드프리) — grey; it again: colour
+        from fundusview import imaging
+        from fundusview.ui.dialogs import SettingsDialog
+
+        orig = w.view2d._rgb.copy()
+        w._on_action("chan:redfree", True)
+        assert w._channel == "redfree" and w.acts["chan:redfree"].isChecked() and not w.acts["chan:green"].isChecked()
         shown = w.view2d._rgb
         h, wd = shown.shape[:2]
         mid = shown[h // 3:2 * h // 3, wd // 3:2 * wd // 3]
         assert (mid[..., 0] == mid[..., 2]).all() and (mid[..., 0] == mid[..., 1]).all()   # grey on the retina
-        w._on_action("chan:green", False)                               # the lit G 필터 clicked again
-        assert w._channel == "rgb" and not w.acts["chan:green"].isChecked()
-        # 설정 → 일반: the G 필터 button gives one of its two pictures (처음 설정: 녹색 성분만), and RNFL 강화
-        # is as strong as set there (0.5 … 0.9) — the ▾ says it, a photo shown with it is drawn again
-        from fundusview import imaging
-        from fundusview.ui.dialogs import SettingsDialog
-
-        def settings(mode, k):
-            def ok(dlg):
-                assert dlg.rnfl_strength.minimum() == 0.5 and dlg.rnfl_strength.maximum() == 0.9
-                assert [dlg.green_filter.itemData(i) for i in range(dlg.green_filter.count())] == ["green", "rnfl"]
-                dlg.green_filter.setCurrentIndex(dlg.green_filter.findData(mode))
-                dlg.rnfl_strength.setValue(k)
-                return True
-            monkeypatch.setattr(SettingsDialog, "exec", ok)
-            w._open_settings()
-
-        assert s.green_filter == "green" and s.rnfl_strength == 0.9 and "(0.9)" in labels[1]
-        w._on_action("chan:green", True)                                # the button: the green channel alone
-        assert w._channel == "green"
+        assert imaging.RNFL_K == 0.9 and (shown == imaging.rnfl_green(orig, 0.9)).all()
+        w._on_action("chan:redfree", False)                             # the lit Red-free clicked again
+        assert w._channel == "rgb" and not w.acts["chan:redfree"].isChecked()
+        # the G 필터: the green channel alone, as it is (no ▾, nothing in 설정 to turn it into another picture)
+        assert "chan:green" not in w.menus and "RNFL" not in w.acts["chan:green"].toolTip()
+        w._on_action("chan:green", True)
+        assert w._channel == "green" and w.acts["chan:green"].isChecked() and not w.acts["chan:redfree"].isChecked()
+        assert (w.view2d._rgb[..., 0] == orig[..., 1]).all() and (w.view2d._rgb != shown).any()
         w._on_action("chan:green", False)
-        try:
-            settings("rnfl", 0.5)
-            assert s.green_filter == "rnfl" and s.rnfl_strength == 0.5 and imaging.rnfl_k() == 0.5
-            assert Settings.load().green_filter == "rnfl" and Settings.load().rnfl_strength == 0.5
-            assert "(0.5)" in w.menus["chan:green"].actions()[1].text()
-            w._on_action("chan:green", True)                            # the button now: RNFL 강화, at 0.5
-            assert w._channel == "rnfl" and w.acts["chan:green"].isChecked()
-            weak = w.view2d._rgb.copy()
-            w._on_action("chan:green")                                  # (its ▾ still gives the plain green)
-            assert w._channel == "green"
-            w._on_action("chan:rnfl")
-            settings("rnfl", 0.9)                                       # stronger: the photo shown is drawn again
-            assert imaging.rnfl_k() == 0.9 and (w.view2d._rgb != weak).any()
-            w._on_action("chan:green", False)                           # the lit button again: colour
-            assert w._channel == "rgb"
-            settings("green", 3.0)                                      # (never past 0.9)
-            assert s.green_filter == "green" and s.rnfl_strength == 0.9
-        finally:
-            imaging.set_rnfl_k(imaging.RNFL_K)
+        assert w._channel == "rgb"
+        dlg = SettingsDialog(s, w)
+        assert not hasattr(dlg, "green_filter") and not hasattr(dlg, "rnfl_strength")
+        dlg.deleteLater()
         # 설정 → 일반 → 3D 입체 한 장 추정: 녹내장 분석 → 3D 입체 opens on it (처음 설정: 하이브리드)
         assert s.disc3d_method == "hybrid" and w._build_glaucoma()[0].surface.method == "hybrid"
 

@@ -269,7 +269,8 @@ def test_the_photos_under_the_mouse_grow_like_the_dock_and_a_click_pins(win):
     assert not dock.isVisible() and w._peek is None and t.dock_row() is None
     _press(w, "view:simple")
 
-    # Detail: the photos grow under the mouse as well (the big photo stays); a click shows the photo
+    # Detail: the photos grow under the mouse as well (the big photo stays); a click on another photo:
+    # Simple with the two
     _hover(app, w, None)
     w.set_book("2025-12-01")
     _click(app, w, os2, double=True)
@@ -278,7 +279,7 @@ def test_the_photos_under_the_mouse_grow_like_the_dock_and_a_click_pins(win):
     at = _hover(app, w, od2)
     assert dock.isVisible() and w._peek == od2 and w.current["id"] == os2
     _press_at(app, w, at)
-    assert w.current["id"] == od2 and w._tab() == "all"
+    assert w.current["id"] == od2 and w._tab() == "multi" and w.picks() == [os2, od2]
     _hover(app, w, None)
 
     # 보기 → 사진 목록에 마우스를 올리면 미리 보기: off — nothing grows (remembered); the click still pins

@@ -131,10 +131,6 @@ class Settings:
     hover_loupe: bool = False
     # … how large: that many times its size in the list (보기 → 미리 보기 배율; peek.SCALES: 1.5 … 3)
     preview_scale: float = 2.0
-    # G 필터 (설정 → 일반): what the button gives — "green" the green channel alone, "rnfl" 녹색 + RNFL 강화
-    # (the ▾ of the button offers both anyway) — and how strong that RNFL 강화 is: 0.5 … 0.9
-    green_filter: str = "green"
-    rnfl_strength: float = 0.9
     # 녹내장 분석 → 3D 입체 (설정 → 일반): how one photo's shape is estimated when the window opens —
     # "hybrid" 하이브리드 (처음 설정) · "vessels" 혈관 꺾임 · "pallor" 밝기 (disc3d.METHODS); the tab can switch.
     # 디스크 C/D starts on the same one (its lines of equal depth and the cup put on one of them)

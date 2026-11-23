@@ -71,10 +71,10 @@ def test_fast_paths_match_the_plain_ones(monkeypatch):
     rgb[5:40, 5:200] = 255                                     # text the device burns into the corner
     circle = imaging.detect_circle(rgb)
     fast = (imaging.fundus_alpha(rgb, circle), imaging.adjust(rgb, brightness=0.1, contrast=1.3, gamma=0.8),
-            imaging.adjust(rgb, channel="redfree", invert=True), imaging.adjust(rgb, channel="blue", auto=True))
+            imaging.adjust(rgb, channel="green", invert=True), imaging.adjust(rgb, channel="blue", auto=True))
     monkeypatch.setattr(imaging, "cv2", None)
     plain = (imaging.fundus_alpha(rgb, circle), imaging.adjust(rgb, brightness=0.1, contrast=1.3, gamma=0.8),
-             imaging.adjust(rgb, channel="redfree", invert=True), imaging.adjust(rgb, channel="blue", auto=True))
+             imaging.adjust(rgb, channel="green", invert=True), imaging.adjust(rgb, channel="blue", auto=True))
     assert np.abs(fast[0].astype(int) - plain[0].astype(int)).max() <= 6      # the soft edge, within rounding
     assert fast[0][10, 10] == 0 and fast[0][538, 717] == 255
     for a, b in zip(fast[1:], plain[1:]):
@@ -124,8 +124,9 @@ def test_fovea_tells_an_unknown_eye(eye):
 
 
 def test_green_with_rnfl_contrast_is_the_wide_analysis_picture():
-    """G 필터 ▾ 녹색 + RNFL 강화: the green channel with the local contrast of 녹내장 분석 → 광각 분석 at 0.9 —
-    the same picture there and here; grey; outside the image circle the photo as it is."""
+    """Red-free: the green channel with the local contrast of 녹내장 분석 → 광각 분석 at 0.9 — the same
+    picture there and here; grey; outside the image circle the photo as it is. The G 필터 is the green
+    channel alone."""
     import cv2
 
     from fundusview import glaucoma as G
@@ -138,27 +139,11 @@ def test_green_with_rnfl_contrast_is_the_wide_analysis_picture():
     lit = rgb.astype(int).sum(axis=2) > 24
     assert (out[lit][:, 0] == out[lit][:, 1]).all() and (out[lit][:, 1] == out[lit][:, 2]).all()
     assert (out[~lit] == rgb[~lit]).all()
-    assert (imaging.adjust(rgb, channel="rnfl") == out).all()            # as a filter of the main window
+    assert (imaging.adjust(rgb, channel="redfree") == out).all()         # as a filter of the main window
     # it brings out what the plain green channel shows flat: more local contrast
     plain = imaging.adjust(rgb, channel="green")[..., 1].astype(float)
     hp = lambda x: x - cv2.GaussianBlur(x, (0, 0), 6)  # noqa: E731
     assert hp(out[..., 1].astype(float))[lit].std() > 1.3 * hp(plain)[lit].std()
-    assert "RNFL" in imaging.CHANNEL_LABELS["rnfl"]
-
-
-def test_the_strength_of_rnfl_contrast_is_set_between_half_and_nine_tenths():
-    """설정 → 일반 → RNFL 강화 세기: 0.5 … 0.9 — the 녹색 + RNFL 강화 filter is 광각 분석's picture at that strength."""
-    from fundusview import glaucoma as G
-
-    rgb = synth_fundus(eye="OD", size=(320, 300), seed=5)
-    assert imaging.RNFL_K_RANGE == (0.5, 0.9) and imaging.rnfl_k() == 0.9
-    try:
-        assert imaging.set_rnfl_k(0.5) == 0.5 and imaging.rnfl_k() == 0.5
-        weak = imaging.adjust(rgb, channel="rnfl")
-        assert (weak == G.enhance_wide(rgb, True, 0.5)).all() and (weak == imaging.rnfl_green(rgb)).all()
-        assert (weak != imaging.rnfl_green(rgb, 0.9)).any()               # … weaker than at 0.9
-        assert imaging.set_rnfl_k(0.7) == 0.7
-        assert imaging.set_rnfl_k(0.2) == 0.5 and imaging.set_rnfl_k(3) == 0.9      # never outside
-        assert imaging.set_rnfl_k("x") == 0.9 and imaging.set_rnfl_k(None) == 0.9
-    finally:
-        imaging.set_rnfl_k(imaging.RNFL_K)
+    assert (plain[..., None] == rgb[..., 1:2]).all() and "rnfl" not in imaging.CHANNELS
+    assert "0.9" in imaging.CHANNEL_LABELS["redfree"]
+    assert (imaging.rnfl_green(rgb, 0.5) != out).any()                    # (광각 분석 can set it weaker)
