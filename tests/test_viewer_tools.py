@@ -272,6 +272,46 @@ def test_main_window_tools(app, tmp_path, demo_dir, import_and_wait):
         w.s_gamma.setValue(150)
         w._apply_adjust()
         assert w.acts["adj:gamma"].isChecked()
+        # 감마 is a graph (입력 → 출력): a click or a drag on it bends the curve through that point —
+        # above the diagonal lighter (감마 > 1), below it darker, on it 1.00; one 실행 취소 per drag
+        from PySide6.QtCore import QPoint, QPointF, Qt
+        from PySide6.QtTest import QTest
+        curve = w.pop_gamma.curve
+        app.processEvents()
+        r = curve.plot()
+        assert curve.isVisible() and r.width() == r.height() and r.width() >= 150
+
+        def at(x, y):                            # the place of (입력 x, 출력 y) on the graph
+            return QPointF(r.left() + x * r.width(), r.bottom() - y * r.height()).toPoint()
+
+        for x, y, want in ((0.5, 0.5, 1.0), (0.25, 0.5, 2.0), (0.5, 0.25, 0.5), (0.5, 0.75, 2.41)):
+            QTest.mouseClick(curve, Qt.MouseButton.LeftButton, pos=at(x, y))
+            assert w.s_gamma.value() / 100 == pytest.approx(want, abs=0.06)
+            dot = curve.point(curve._at)         # the handle sits on the curve where it was clicked
+            assert abs(dot.x() - at(x, y).x()) <= 1.5 and abs(dot.y() - at(x, y).y()) <= 2.5
+        QTest.mouseClick(curve, Qt.MouseButton.LeftButton, pos=at(0.01, 0.99))    # (a corner: the strongest)
+        assert w.s_gamma.value() == w.s_gamma.maximum() == 400
+        QTest.mouseClick(curve, Qt.MouseButton.LeftButton, pos=at(0.99, 0.01))
+        assert w.s_gamma.value() == w.s_gamma.minimum() == 20
+        w._on_action("adj_reset")
+        w._apply_adjust()
+        plain = w.view2d._rgb.copy()
+        depth = len(w._history)
+        QTest.mousePress(curve, Qt.MouseButton.LeftButton, pos=at(0.5, 0.5))
+        QTest.mouseMove(curve, at(0.4, 0.6))
+        QTest.mouseMove(curve, at(0.3, 0.7))
+        QTest.mouseRelease(curve, Qt.MouseButton.LeftButton, pos=at(0.3, 0.7))
+        assert w.s_gamma.value() / 100 == pytest.approx(3.38, abs=0.08) and len(w._history) == depth + 1
+        w._apply_adjust()
+        assert w.view2d._rgb.astype(int).sum() > plain.astype(int).sum()          # the photo is lighter
+        assert w.pop_gamma.value.text() == f"{w.s_gamma.value() / 100:.2f}"
+        w._on_action("undo")
+        assert w.s_gamma.value() == 100
+        QTest.mouseClick(curve, Qt.MouseButton.LeftButton, pos=at(0.25, 0.5))
+        QTest.mouseDClick(curve, Qt.MouseButton.LeftButton, pos=at(0.25, 0.5))    # a double click: 1.00 again
+        assert w.s_gamma.value() == 100
+        w.s_gamma.setValue(150)                  # the slider under it still sets it (fine steps): the curve follows
+        assert curve.gamma() == 1.5
         w.pop_gamma.hide()
         w._on_action("adj_reset")
         assert w.s_gamma.value() == 100 and not w.acts["adj:gamma"].isChecked()

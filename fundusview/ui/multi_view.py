@@ -79,7 +79,7 @@ class _Cell(QFrame):
             view.set_navigator(False)
             view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-            view.setToolTip(f"{title} 확대 — 휠: 배율 · 드래그: 이동 · 더블클릭: 크게 보기 (Detail)")
+            view.setToolTip(f"{title} 확대 — 휠: 배율 · 드래그: 이동 · 더블클릭: 화면 맞춤")
             view.setMinimumHeight(60)
             bl.addWidget(head)
             bl.addWidget(view, 1)
@@ -275,7 +275,7 @@ class MultiView(QWidget):
         self._tip()
 
     def _tip(self) -> None:
-        tip = "화면 분할 — 휠: 확대·축소 · 드래그: 이동 · 클릭: 선택 · 더블클릭: 크게 보기"
+        tip = "화면 분할 — 휠: 확대·축소 · 드래그: 이동 · 클릭: 선택 · 더블클릭: 화면 맞춤 (크게 보기 Detail: 아래 사진을 더블클릭)"
         self.combo.setToolTip(f"{self.mode_text}\n{tip}" if self.mode_text else tip)
 
     # -- 황반 · 디스크 ------------------------------------------------------------------------------

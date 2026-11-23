@@ -46,9 +46,6 @@ OPEN_BOOKS = (("latest", "최신 검사 — 가장 최근 검사일(오늘 찍�
               ("all", "전체 — 모든 검사일의 사진을 한꺼번에"))
 
 
-# 설정 → 일반 → G 필터 (Settings.green_filter): what the G 필터 button gives
-GREEN_FILTERS = (("green", "녹색 성분만 (흑백)"),
-                 ("rnfl", "녹색 + RNFL 강화 — 신경섬유층이 잘 보이게 국소 대비를 높임"))
 
 
 # 설정 → 일반 → 3D 입체 한 장 추정 (Settings.disc3d_method): 녹내장 분석 → 3D 입체 opens on this one
@@ -340,26 +337,13 @@ class SettingsDialog(QDialog):
                                   "여러 장을 고정하면 그 수만큼 화면이 나뉘고, 다시 클릭하면 빠집니다.\n"
                                   "16장 보기 (VK-2 방식): 사진 16장을 한 화면에 — 클릭해 고르고(번호) 왼쪽 툴바의\n"
                                   "[Multi]를 누르면 고른 사진만 보고, 다시 [Multi]를 누르면 16장으로 돌아옵니다.\n"
-                                  "더블클릭하면 그 사진을 크게 봅니다(Detail).")
+                                  "아래 사진 목록의 사진을 더블클릭하면 그 사진을 크게 봅니다(Detail).")
         f2.addRow("환자를 열면", self.open_view)
         self.open_book = _combo(OPEN_BOOKS, "all" if settings.open_book == "all" else "latest")
         self.open_book.setToolTip("환자를 열 때 아래 사진 목록이 먼저 보여 주는 날짜 책갈피\n"
                                   "최신 검사 (처음 설정): 가장 최근 검사일의 사진만 — 다른 날짜는 책갈피나 휠로 넘깁니다.\n"
                                   "전체: 모든 검사일의 사진을 한 목록에. 위의 큰 화면에는 어느 쪽이든 최신 OD | OS가 나옵니다.")
         f2.addRow("환자를 열면 사진 목록은", self.open_book)
-        # G 필터: which of its two pictures the button gives, and how strong RNFL 강화 is
-        from .. import imaging
-        self.green_filter = _combo(GREEN_FILTERS, "rnfl" if settings.green_filter == "rnfl" else "green")
-        self.green_filter.setToolTip("툴바의 [G 필터]를 눌렀을 때 나오는 그림 — 버튼 옆 ▾ 에서는 언제나 둘 다 고를 수 있습니다")
-        f2.addRow("G 필터를 누르면", self.green_filter)
-        self.rnfl_strength = QDoubleSpinBox()
-        self.rnfl_strength.setRange(*imaging.RNFL_K_RANGE)
-        self.rnfl_strength.setSingleStep(0.05)
-        self.rnfl_strength.setDecimals(2)
-        self.rnfl_strength.setValue(imaging.clamp_rnfl_k(settings.rnfl_strength))
-        self.rnfl_strength.setToolTip("녹색 + RNFL 강화의 세기: 0.5(약하게) … 0.9(강하게, 처음 설정)\n"
-                                      "녹내장 분석 → 광각 분석의 RNFL 대비 강화와 같은 값입니다")
-        f2.addRow("RNFL 강화 세기 (0.5 ~ 0.9)", self.rnfl_strength)
         self.disc3d_method = _combo(DISC3D_METHODS, settings.disc3d_method)
         self.disc3d_method.setToolTip("녹내장 분석 → 3D 입체에서 사진 한 장의 모양을 처음에 이 방법으로 추정합니다\n"
                                       "(하이브리드가 처음 설정) — 디스크 C/D 탭의 등고선과 컵 자동 맞춤도 처음에 이 방법입니다.\n"
@@ -689,8 +673,6 @@ class SettingsDialog(QDialog):
         s.walk_click3d = self.walk_click3d.isChecked()
         s.open_view = self.open_view.currentData()
         s.open_book = self.open_book.currentData()
-        s.green_filter = self.green_filter.currentData()
-        s.rnfl_strength = round(self.rnfl_strength.value(), 2)
         s.disc3d_method = self.disc3d_method.currentData()
         s.disc3d_stereo_method = self.disc3d_stereo_method.currentData()
         s.thumb_date = self.thumb_date.isChecked()

@@ -330,11 +330,14 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
 
         # processing applies to the selected cell's photo only
         before_second = cells[1].view._rgb.copy()
+        before_first = cells[0].view._rgb.copy()
         w._on_action("chan:redfree")
         assert w._channel == "redfree"
         assert (cells[1].view._rgb == before_second).all()          # the other cell is untouched
         g = cells[0].view._rgb
-        assert (g[..., 0] == g[..., 2]).all() and (g[..., 0] <= g[..., 1]).all()   # red-free = green-tinted grey
+        lit = before_first.astype(int).sum(axis=2) > 24              # (outside the image circle: as it is)
+        assert (g[lit][:, 0] == g[lit][:, 2]).all() and (g[lit][:, 0] == g[lit][:, 1]).all()   # red-free = grey
+        assert (g != before_first).any()
         QTest.mouseClick(cells[1].view.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(20, 20))
         app.processEvents()
         assert w._tab() == "multi"                                   # a click selects the cell (it stays)
@@ -353,7 +356,7 @@ def test_pick_photos_and_edit_each_in_multi(app, tmp_path, demo_dir, import_and_
         app.processEvents()
         cells = [c for c in w.multi.cells if c.isVisible()]
         assert w._tab() == "multi" and [c.image_id for c in cells] == [ids[0], ids[1]]
-        assert (cells[0].view._rgb[..., 0] == cells[0].view._rgb[..., 2]).all()      # still red-free
+        assert (cells[0].view._rgb[lit][:, 0] == cells[0].view._rgb[lit][:, 2]).all()      # still red-free
         w._on_action("undo")                                         # each photo keeps its own undo
         assert w._channel == "rgb"
         assert w._per_photo[ids[1]]["state"]["ops"] == ["sharpen"]
