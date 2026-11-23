@@ -7,7 +7,6 @@ import pytest
 
 from fundusview import discpair, imaging, measure
 from fundusview.demo import synth_fundus
-from fundusview.ui.keys import keys
 
 CAMERAS = [(45, "external", "perspective", "OD"), (50, "external", "perspective", "OS"),
            (135, "internal", "equidistant", "OS"), (176, "internal", "radial", "OD")]
@@ -104,9 +103,14 @@ def test_disc_pair_from_two_picked_photos(app, tmp_path, demo_dir, import_and_wa
         ref = db.find_patient("20260115001")["id"]       # 김민수: APOLLO OD + OS
         w._select_patient_ref(ref)
         assert w.thumbs.count() == 2
-        dlg, why = w._build_disc_pair()
-        assert dlg is None and keys("Ctrl+클릭") in why  # only one photo picked so far (⌘클릭 on macOS)
         shown = w.current["id"]                         # (the OD photo: a patient opens with OD | OS)
+        dlg, why = w._build_disc_pair()                 # the two on screen are the pair: no Ctrl+click (0.13.7)
+        assert why == "" and [src.eye for src in dlg.sources] == ["OD", "OS"]
+        dlg.close()
+        picks, w._picks = list(w._picks), [shown]       # one photo only: which two?
+        dlg, why = w._build_disc_pair()
+        assert dlg is None and "사진 두 장" in why and "Ctrl" not in why and "⌘" not in why
+        w._picks = picks
         other, mine = sorted((w.thumbs.item(i) for i in range(2)),
                              key=lambda it: it.data(Qt.ItemDataRole.UserRole) == shown)
         other_id = other.data(Qt.ItemDataRole.UserRole)
@@ -119,7 +123,7 @@ def test_disc_pair_from_two_picked_photos(app, tmp_path, demo_dir, import_and_wa
         ctrl_click(other)                               # Ctrl+click: second photo, the shown one stays
         assert w.current["id"] == shown and w.compare["id"] == other_id
         assert other.text().startswith("②") and w._tab() == "all"     # (no 비교 view any more: stays)
-        assert "디스크 2장" in w.lbl_status.text()
+        assert "스테레오 보기" in w.lbl_status.text()
         ctrl_click(other)                               # again: unpicked
         assert w.compare is None and not other.text().startswith("②")
         ctrl_click(other)

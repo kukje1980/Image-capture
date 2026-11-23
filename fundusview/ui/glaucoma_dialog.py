@@ -32,12 +32,11 @@ from .. import glaucoma as G
 from ..timeline import common_eye
 from . import theme
 from .image_view import from_qimage, to_qimage
-from .keys import keys
 from .widgets import RoundCorners, Segmented, Switch, card, segment
 
 DISC_COLOR, CUP_COLOR = QColor(theme.GREEN), QColor(theme.YELLOW)
-NEED_PAIR = keys("사진 두 장이 필요합니다.\n\n사진 목록에서 한 장을 클릭하고 두 번째 사진을 Ctrl+클릭(②)한 뒤\n"
-                 "[녹내장]을 다시 누르세요.")
+NEED_PAIR = ("사진 두 장이 필요합니다.\n\n사진 목록에서 같은 눈의 사진 두 장을 차례로 클릭해 고른 뒤 (몽타주처럼)\n"
+             "[Glaucoma]를 다시 누르세요.")
 NEED_ONE = "분석할 사진이 없습니다."
 NEED_SAME_EYE = "같은 눈(OD 또는 OS)이 확인된 사진 두 장이 필요합니다.\n다른 눈이나 눈 미상 사진은 한 장씩 분석하세요."
 # what a pair tab shows of each photo: (key, label, width in disc diameters — 0: the whole photo)
@@ -450,6 +449,15 @@ class StereoTab(_PairTab):
         self.sw_swap.toggled.connect(self.set_swap)
         self.side.addWidget(card("보기 방식", self.modes, self.speed, self.sw_swap, lines=False))
         self.side.addWidget(self.align_card("정렬"))
+        # 청구용 한 장: the two discs on a white sheet with the patient's name and the dates (disc_pair.py)
+        # — the dialog connects it; it also takes an OD · OS pair, which is no stereo pair
+        self.b_sheet = _button("청구용 한 장 (흰 종이)…",
+                               tip="두 사진의 시신경 유두만 확대해 환자 이름 · 검사일과 함께 한 장으로 — 보험 청구용\n"
+                                   "환자 기록에 저장 · 파일로 저장 · 인쇄 · 복사")
+        self.b_sheet.setEnabled(False)
+        self.side.addWidget(card("보험 청구용", self.b_sheet,
+                                 _note("두 사진의 유두만 확대해 환자 이름 · 검사일과 함께 흰 종이 한 장으로 만듭니다."),
+                                 lines=False))
         self.side.addStretch(1)
         self.view.pressed.connect(self._on_press)
         self.set_region("disc")
@@ -1942,9 +1950,11 @@ class GlaucomaDialog(QDialog):
 
     def __init__(self, current: Photo | None, second: Photo | None = None, *, title_line: str = "",
                  file_stem: str = "녹내장", save_record=None, parent=None, series=None, prefer=(),
-                 start: str | None = None, method: str = "hybrid", stereo_method: str = "parallax_vessels"):
+                 start: str | None = None, method: str = "hybrid", stereo_method: str = "parallax_vessels",
+                 sheet=None):
         """``series``: the photos of this eye over time (``timeline.Shot`` — 시간별 비교), ``prefer``:
-        those of them the user picked; ``start="timeline"`` opens on that tab. ``method``: how the 3D
+        those of them the user picked; ``start="timeline"`` · ``"stereo"`` opens on that tab.
+        ``sheet(parent)``: opens the 청구용 한 장 of the two photos (스테레오 보기 → 보험 청구용). ``method``: how the 3D
         입체 tab estimates one photo's shape at first (``disc3d.METHODS``; 설정 → 일반), ``stereo_method``:
         how it draws the stereo depth at first (``disc3d.STEREO_METHODS``; 설정 → 일반)."""
         super().__init__(parent)
@@ -1982,6 +1992,11 @@ class GlaucomaDialog(QDialog):
             self.tabs.setCurrentWidget(self.stereo if same_day else self.progress)
         if start == "timeline":
             self.tabs.setCurrentWidget(self.timeline)
+        elif start == "stereo":
+            self.tabs.setCurrentWidget(self.stereo)
+        if sheet is not None and candidates is not None:
+            self.stereo.b_sheet.setEnabled(True)
+            self.stereo.b_sheet.clicked.connect(lambda: sheet(self))
         root.addWidget(self.tabs, 1)
         foot = _note("측정값은 참고용 추정값입니다. 진단은 의사가 사진을 보고 판단하세요. "
                      "깊이 지도와 3D 입체는 상대값이며 절대 길이가 아닙니다.")
