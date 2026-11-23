@@ -4,13 +4,15 @@ A photo gives the disc's colour, the surface needs its shape. Two ways to a shap
 
 * one photo (:func:`height_from_photo`) — an **estimate from brightness**: the cup is the pale
   part of the disc, so the paler the deeper; the rim stands a little above the retina and the
-  vessels above the surface. A picture of the shape a viewer expects, not a measurement;
+  vessels a little above the surface. A picture of the shape a viewer expects, not a measurement;
 * two photos of the same disc from slightly different positions (:func:`height_from_stereo`) —
   the **parallax** between them (``glaucoma.disparity``): what moves more is deeper. Relative
   depth, not a length.
 
 :func:`render` then draws the photo on that surface seen from any direction — an exact view of
-the height field (nearer parts hide farther ones), computed without OpenGL.
+the height field (nearer parts hide farther ones), computed without OpenGL. It is the photo that is
+seen: its own colours and its own light (:func:`shade` adds only what turning it changes), at the
+depth a real cup has — the front view is the photo as it was taken.
 
 Heights run from -1 (deepest) to about +1, 0 = the retina around the disc; x right, y down.
 """
@@ -25,14 +27,16 @@ import numpy as np
 from . import glaucoma as G
 
 TEX_PX = 640             # side of the disc-centred texture (and of the picture drawn from it)
-DEPTH_DD = 0.5           # depth of height -1 at 100 %: half a disc diameter (the cup, exaggerated)
+DEPTH_DD = 0.4           # depth of height -1 at 100 %: 0.4 disc diameters — about a deep cup's (0.7 mm)
 RIM_H = 0.16             # the neuroretinal rim / peripapillary retina, raised a little
-VESSEL_H = 0.14          # a vessel's top
+VESSEL_H = 0.07          # a vessel's top: about half its width above the surface it lies on
 CUP_GAMMA = 2.2          # one photo: depth against pallor (1 = the whole pale disc is the hollow)
 SOLVE_PX = 320           # render: side of the grid the visible surface is solved on
 MIN_PARALLAX_PX = 1.0    # stereo: less parallax than this (at the analysis width) is no depth
-MIN_LIGHT_Z = 0.35       # shade: the light is never lower over the photo's plane than this
-LIGHT = (-0.45, -0.55, 0.70)     # the light in view space: from the upper left, towards the viewer
+SHADE = 0.8              # shade: how much a slope's turn to or from the viewer lightens / darkens it
+SHADE_RANGE = (0.75, 1.14)       # … and never more than this (the photo keeps its own colours)
+MIN_VIEW_Z = 0.5         # shade: the viewer is never lower over the photo's plane than this
+VIEW_DIST = 3.0          # the 3D tab's camera: this many sides of the picture away (a slight perspective)
 
 
 def _smoothstep(x: np.ndarray) -> np.ndarray:
@@ -110,8 +114,9 @@ def _finish(H: np.ndarray, p: dict) -> np.ndarray:
     vk = 2 * max(1, int(round(rd * 0.09))) + 1
     hat = cv2.morphologyEx(g, cv2.MORPH_BLACKHAT, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (vk, vk)))
     top = float(np.percentile(hat, 99.5))
-    if top > 4.0:                                               # (below a third of the darkest: grain, not vessels)
-        H = H + VESSEL_H * cv2.GaussianBlur(np.clip((hat / top - 0.33) / 0.67, 0.0, 1.0), (0, 0), 1.2)
+    if top > 4.0:                                               # (below a sixth of the darkest: grain, not vessels)
+        # as high all along a vessel, whatever its darkness from place to place: a rounded ridge, not beads
+        H = H + VESSEL_H * cv2.GaussianBlur(_smoothstep((hat / top - 0.15) / 0.30), (0, 0), 1.4)
     H = cv2.GaussianBlur(H, (0, 0), max(0.8, rd * 0.035))
     return np.clip(H * _edge_taper(n), -1.0, 1.0).astype(np.float32)
 
@@ -641,23 +646,29 @@ def rotation(yaw_deg: float, pitch_deg: float) -> np.ndarray:
 
 def shade(tex: np.ndarray, H: np.ndarray, depth_px: float, R: np.ndarray, strength: float = 1.0,
           contours: bool = False) -> np.ndarray:
-    """The photo lit from the upper left of the view (slopes towards the light are brighter),
-    with lines of equal height when ``contours``."""
+    """The photo as it was taken, with the little the view adds: a slope turned towards the viewer is
+    a touch lighter, one turned away a touch darker (and lines of equal height when ``contours``).
+
+    The photo was lit along the camera's axis, and that light is in it already — a pale cup is pale,
+    not a dark pit. So nothing is shaded from the front (the front view is the photo itself), and
+    turned, only what the turn changes: as if the examiner's light went round with them. Kept within
+    ``SHADE_RANGE``: the photo keeps its own colours.
+    """
     n = tex.shape[0]
     Hf = cv2.resize(H, (n, n), interpolation=cv2.INTER_CUBIC) if H.shape[0] != n else H
     out = tex.astype(np.float32)
     if strength > 0.0 and depth_px > 0.0:
-        z = Hf * depth_px
+        z = cv2.GaussianBlur(Hf * depth_px, (0, 0), max(0.8, n / 256.0))
         gx = cv2.Sobel(z, cv2.CV_32F, 1, 0, ksize=3) / 8.0
         gy = cv2.Sobel(z, cv2.CV_32F, 0, 1, ksize=3) / 8.0
-        L = R.T @ (np.asarray(LIGHT, np.float64) / np.linalg.norm(LIGHT))    # the light in the object's frame
-        if L[2] < MIN_LIGHT_Z:                                   # turned far: the light stays in front of the
-            xy = float(np.hypot(L[0], L[1]))                     # sheet (behind it the whole photo went dark)
-            L = np.array([L[0] / xy * math.sqrt(1.0 - MIN_LIGHT_Z ** 2), L[1] / xy * math.sqrt(1.0 - MIN_LIGHT_Z ** 2),
-                          MIN_LIGHT_Z])
-        lit = (-gx * L[0] - gy * L[1] + L[2]) / np.sqrt(gx * gx + gy * gy + 1.0)
-        k = np.clip(1.0 + strength * (lit / float(L[2]) - 1.0), 0.35, 1.6)      # (the flat retina: as taken)
-        out *= k[..., None]
+        v = R.T @ np.array([0.0, 0.0, 1.0])                      # towards the viewer, in the photo's frame
+        if v[2] < MIN_VIEW_Z:                                    # turned far: as from MIN_VIEW_Z over the sheet
+            xy = float(np.hypot(v[0], v[1]))
+            v = np.array([v[0] / xy * math.sqrt(1.0 - MIN_VIEW_Z ** 2), v[1] / xy * math.sqrt(1.0 - MIN_VIEW_Z ** 2),
+                          MIN_VIEW_Z])
+        # how much more (or less) the surface faces the viewer than it faced the camera
+        turn = -(gx * v[0] + gy * v[1]) / (float(v[2]) * np.sqrt(gx * gx + gy * gy + 1.0))
+        out *= np.clip(1.0 + strength * SHADE * turn, *SHADE_RANGE)[..., None]
     if contours:
         lv = Hf * 8.0                                                         # 8 lines from 0 to the deepest
         d = np.abs(lv - np.round(lv))
@@ -670,7 +681,7 @@ def shade(tex: np.ndarray, H: np.ndarray, depth_px: float, R: np.ndarray, streng
 
 def render(tex: np.ndarray, H: np.ndarray, depth_px: float, yaw_deg: float = 0.0, pitch_deg: float = 0.0,
            out_px: int | None = None, zoom: float = 0.86, light: float = 1.0, contours: bool = False,
-           background=(0, 0, 0)) -> np.ndarray:
+           background=(0, 0, 0), perspective: float = 0.0) -> np.ndarray:
     """The square photo ``tex`` on the surface ``H`` (heights -1…1, ``depth_px`` texture pixels
     for 1, towards the viewer) seen turned by ``yaw`` / ``pitch``, as an ``out_px``² RGB picture.
 
@@ -678,6 +689,10 @@ def render(tex: np.ndarray, H: np.ndarray, depth_px: float, yaw_deg: float = 0.0
     photo's plane moved by ``h`` along one direction e = A⁻¹d, then the affine A. Turned so that
     e runs along the rows, each row is solved on its own: the first point (the highest one) whose
     moved place reaches a pixel is what is seen there.
+
+    ``perspective``: the camera this many sides of the picture away (0: none, parallel rays) — the
+    near side of the turned sheet is then larger than the far one, as a thing in front of the eye is.
+    The sheet's own depth sets the size (the relief's height on it is small against the distance).
     """
     n = tex.shape[0]
     out_px = out_px or n
@@ -719,6 +734,10 @@ def render(tex: np.ndarray, H: np.ndarray, depth_px: float, yaw_deg: float = 0.0
     s = out_px * zoom / n
     oy, ox = np.mgrid[0:out_px, 0:out_px].astype(np.float64)
     px, py = (ox - co) / s, (oy - co) / s
+    if perspective > 0.0:                                       # a pixel of the camera's picture → where its
+        zc = R[2, :2] @ Ainv                                    # ray meets the sheet, as the parallel view has it
+        near = (perspective * n) / np.maximum(perspective * n + zc[0] * px + zc[1] * py, 1e-6)
+        px, py = px * near, py * near
     ux = Ainv[0, 0] * px + Ainv[0, 1] * py                      # (texture pixels from the centre)
     uy = Ainv[1, 0] * px + Ainv[1, 1] * py
     rx = (cc + q * (cs * ux + sn * uy)).astype(np.float32)

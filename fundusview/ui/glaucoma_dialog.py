@@ -1076,7 +1076,8 @@ class DiscTab(_Tab):
 
 # -- 3D ----------------------------------------------------------------------------------------------
 S3_ONE = "사진 한 장의 밝기로 추정한 모양입니다 (창백한 곳 = 깊은 곳). 실제 깊이를 잰 것이 아닙니다."
-S3_HINT = "사진을 끌면 돌아갑니다. 깊이는 과장해서 보여 주는 상대값입니다."
+S3_HINT = ("사진을 끌면 돌아갑니다. 사진의 색과 밝기는 찍힌 그대로이고(정면 = 원래 사진), 깊이는 추정한 상대값입니다 — "
+           "100%가 깊은 컵 정도입니다.")
 S3_CD = ("입체 표면에서 기준 깊이보다 깊은 곳을 컵(노란 선)으로 본 추정값입니다. 디스크 경계(초록 선)는 "
          "[디스크 C/D] 탭의 초록 선입니다 — 거기서 맞추면 여기도 따라옵니다.")
 S3_SPREAD = 0.10         # two photos' vertical C/D further apart than this: say so
@@ -1198,12 +1199,15 @@ class Surface3DTab(_Tab):
         self.side.addWidget(card("모양 (깊이)", *rows, lines=False))
 
         self.s_depth = _Slider("깊이 과장", 0, 200, 100, 5, lambda v: f"{v:.0f}%")
+        self.s_depth.setToolTip("100%: 가장 깊은 곳이 유두 지름의 0.4배 (깊은 컵 정도, 약 0.7 mm) — 올리면 더 깊게 과장합니다")
         self.s_depth.changed.connect(lambda _v: self._draw())
         self.sw_auto = Switch("자동으로 흔들기")
         self.sw_auto.setChecked(True)
         self.sw_auto.toggled.connect(lambda _on: self._restart())
         self.sw_light = Switch("입체 조명")
         self.sw_light.setChecked(True)
+        self.sw_light.setToolTip("돌려 볼 때 보는 쪽으로 향한 경사면은 조금 밝게, 등진 경사면은 조금 어둡게 — 사진의 색은 그대로.\n"
+                                 "끄면 사진만 입힙니다 (정면에서는 켜도 원래 사진 그대로)")
         self.sw_contour = Switch("등고선")
         self.sw_contour.setToolTip("같은 깊이를 잇는 선 — 파랑은 들어간 곳, 주황은 솟은 곳")
         self.sw_ana = Switch("적청 안경")
@@ -1599,11 +1603,11 @@ class Surface3DTab(_Tab):
         lines = ((G.curve(found[0]), DISC_COLOR), (found[2], CUP_COLOR)) if found else ()
         for line_pts, col in lines:
             line = [np.round(line_pts * 8).astype(np.int32)]
-            cv2.polylines(tex, line, True, (20, 20, 20), 5, cv2.LINE_AA, shift=3)      # (seen on a pale cup too)
+            cv2.polylines(tex, line, True, (20, 20, 20), 4, cv2.LINE_AA, shift=3)      # (seen on a pale cup too)
             cv2.polylines(tex, line, True, (col.red(), col.green(), col.blue()), 2, cv2.LINE_AA, shift=3)
         for (x, y), main in zip(pts, used):
             c = (int(round(x * 8)), int(round(y * 8)))
-            cv2.circle(tex, c, 7 * 8, (20, 20, 20), 4, cv2.LINE_AA, shift=3)
+            cv2.circle(tex, c, 7 * 8, (20, 20, 20), 3, cv2.LINE_AA, shift=3)
             cv2.circle(tex, c, 7 * 8, BEND_USED if main else BEND_INNER, 2, cv2.LINE_AA, shift=3)
         return tex
 
@@ -1612,7 +1616,8 @@ class Surface3DTab(_Tab):
         if H is None:
             return None
         yaw, pitch = self._angles()
-        kw = dict(light=1.0 if self.sw_light.isChecked() else 0.0, contours=self.sw_contour.isChecked())
+        kw = dict(light=1.0 if self.sw_light.isChecked() else 0.0, contours=self.sw_contour.isChecked(),
+                  perspective=disc3d.VIEW_DIST)
         draw = disc3d.anaglyph if self.sw_ana.isChecked() else disc3d.render
         if self.comparing():                             # 나란히: each way to the shape, turned alike
             views = [draw(self._texture(key), self._surface(self.source, key)[0], self.depth_px(), yaw, pitch,
