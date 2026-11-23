@@ -93,14 +93,62 @@ def test_render_front_is_the_photo_and_turning_moves_the_deep_part():
     assert tuple(flat[2, 2]) == (0, 0, 0)
     other = disc3d.render(tex, H, 40, -30, 0, zoom=1.0, light=0.0)
     assert (cup_x(deep) - cup_x(flat)) * (cup_x(other) - cup_x(flat)) < 0       # the other way from the other side
-    lit = disc3d.render(tex, H, 40, 0, 0, zoom=1.0)
-    assert np.abs(lit.astype(int) - front.astype(int)).max() > 20   # the slopes catch the light
+    lit = disc3d.render(tex, H, 40, 0, 0, zoom=1.0)                 # from the front: the photo as it was taken,
+    assert np.abs(lit.astype(int) - front.astype(int)).max() <= 1   # its own light — nothing added
+    turned = disc3d.render(tex, H, 40, 30, 0, zoom=1.0)             # turned: the slopes towards the viewer a touch
+    change = turned.astype(int) - deep.astype(int)                  # lighter, those turned away a touch darker
+    assert change.max() > 12 and change.min() < -12
+    seen = deep.sum(axis=2) > 60
+    ratio = turned[seen].astype(float).sum(axis=1) / deep[seen].astype(float).sum(axis=1)
+    assert disc3d.SHADE_RANGE[0] - 0.03 < ratio.min() and ratio.max() < disc3d.SHADE_RANGE[1] + 0.03   # … and no more
     lines = disc3d.render(tex, H, 40, 0, 0, zoom=1.0, light=0.0, contours=True)
     assert (np.abs(lines.astype(int) - front.astype(int)).sum(axis=2) > 60).sum() > 200
     small = disc3d.render(tex, H, 40, 20, -15, out_px=200)
     assert small.shape == (200, 200, 3)
     ana = disc3d.anaglyph(tex, H, 40, 0, 0)
     assert (ana[..., 1] == ana[..., 2]).all() and not (ana[..., 0] == ana[..., 1]).all()
+
+
+def test_a_camera_at_a_distance_draws_the_near_side_larger():
+    tex = np.full((N, N, 3), 140, np.uint8)
+    H = np.zeros((256, 256), np.float32)
+    front = disc3d.render(tex, H, 40, 0, 0, perspective=disc3d.VIEW_DIST, light=0.0)
+    assert (front == disc3d.render(tex, H, 40, 0, 0, light=0.0)).all()          # from the front: no difference
+    flat = disc3d.render(tex, H, 40, 35, 0, light=0.0)                           # parallel rays: both sides as tall
+    near = disc3d.render(tex, H, 40, 35, 0, perspective=disc3d.VIEW_DIST, light=0.0)
+
+    def heights(img):
+        cols = np.nonzero((img.sum(axis=2) > 60).any(axis=0))[0]
+        tall = (img.sum(axis=2) > 60).sum(axis=0)
+        return tall[cols[0] + 2], tall[cols[-1] - 2]
+
+    a, b = heights(flat)
+    assert abs(int(a) - int(b)) <= 2
+    a, b = heights(near)
+    assert abs(int(a) - int(b)) > 0.15 * max(a, b)                              # one side nearer: taller
+    other = disc3d.render(tex, H, 40, -35, 0, perspective=disc3d.VIEW_DIST, light=0.0)
+    c, d = heights(other)
+    assert (int(a) - int(b)) * (int(c) - int(d)) < 0                            # the other side, turned the other way
+    assert tuple(near[2, 2]) == (0, 0, 0) and near.shape == flat.shape
+
+
+def test_vessels_stand_as_even_low_ridges():
+    """A vessel is as high all along, however dark it is from place to place (no beads), and low: about
+    half its width above the surface."""
+    n = N
+    plain = np.full((n, n, 3), (190, 110, 60), np.uint8)
+    img = plain.copy()
+    for x in range(20, n - 20):                                     # one vessel, its darkness going up and down
+        dark = 55 + 20 * np.sin(x / 9.0)
+        img[n // 4 - 2:n // 4 + 3, x] = (150, 110 - dark, 40)
+    img = cv2.GaussianBlur(img, (0, 0), 1.0)
+    rise = disc3d.height_from_photo(img, 1 / 3.5) - disc3d.height_from_photo(plain, 1 / 3.5)
+    row = int(round((n // 4) * rise.shape[0] / n))
+    ridge = rise[row - 2:row + 3, 40:rise.shape[1] - 40].max(axis=0)
+    assert ridge.min() > 0.5 * disc3d.VESSEL_H and ridge.max() < 1.05 * disc3d.VESSEL_H
+    assert ridge.std() < 0.05 * ridge.mean()                        # even along it
+    assert np.abs(rise[row + 25, 40:-40]).max() < 0.01              # beside it: the surface as it was
+    assert disc3d.VESSEL_H <= 0.1 and 0.3 <= disc3d.DEPTH_DD <= 0.45
 
 
 # -- the tab -----------------------------------------------------------------------------------------
@@ -142,7 +190,7 @@ def test_tab_with_one_photo(app):
     tab.s_depth.set(200)
     assert not (tab.compose() == flat).all()
     tab.set_field("wide")
-    assert tab.depth_px() == pytest.approx(2.0 * 0.5 * disc3d.TEX_PX / 5.0)
+    assert tab.depth_px() == pytest.approx(2.0 * disc3d.DEPTH_DD * disc3d.TEX_PX / 5.0)
     dlg.tabs.setCurrentWidget(tab)
     assert dlg.save_to_record() == 5 and saved[-1][1] == tab.note() and saved[-1][3] == [1]
     empty = GlaucomaDialog(None).surface
@@ -334,10 +382,13 @@ def test_the_flat_retina_keeps_its_brightness_however_far_the_surface_is_turned(
     H = np.zeros((128, 128), np.float32)
     H[40:88, 40:88] = -0.5
     H = cv2.GaussianBlur(H, (0, 0), 4)
-    for yaw, pitch in ((0, 0), (30, -35), (-60, 60), (65, -65), (-65, -65)):
+    assert (disc3d.shade(tex, H, 40.0, disc3d.rotation(0, 0)) == tex).all()     # from the front: the photo itself
+    for yaw, pitch in ((30, -35), (-60, 60), (65, -65), (-65, -65)):
         lit = disc3d.shade(tex, H, 40.0, disc3d.rotation(yaw, pitch))
         assert abs(int(lit[5, 5, 0]) - 150) <= 1                    # away from the hollow: as taken
         assert lit[40:88, 40:88].max() > 160 and lit[40:88, 40:88].min() < 140    # its walls: lit and shaded
+        lo, hi = disc3d.SHADE_RANGE                                 # … gently: the photo keeps its colours
+        assert lit.min() >= int(150 * lo) - 1 and lit.max() <= int(150 * hi) + 1
 
 
 # -- one photo: 밝기 · 혈관 꺾임 · 하이브리드 ----------------------------------------------------------
