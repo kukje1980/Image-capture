@@ -1,4 +1,6 @@
-"""디스크 2장 — the optic discs of two photos on one sheet (보험 청구용).
+"""디스크 2장 (청구용 한 장) — the optic discs of two photos on one sheet (보험 청구용).
+
+Opened from 녹내장 분석 → 스테레오 보기 → 보험 청구용 (0.13.7; before: a command of its own).
 
 The sheet is a white page: a header (title, patient), the two disc panels
 with the eye above and exam date · device under each, and a footer. The
@@ -142,7 +144,7 @@ class DiscPairDialog(QDialog):
     def __init__(self, sources, *, patient_line: str, footer: str, file_stem: str,
                  save_record=None, adjust=None, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("디스크 2장 (보험 청구용)")
+        self.setWindowTitle("청구용 한 장 — 디스크 2장 (보험 청구용)")
         self.sources = list(discpair.order_pair(*sources))
         self.patient_line, self.footer_prefix, self.file_stem = patient_line, footer, file_stem
         self._save_record, self._adjust = save_record, adjust

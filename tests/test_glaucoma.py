@@ -585,10 +585,10 @@ def test_main_window_flow(app, demo_dir, tmp_path, monkeypatch, import_and_wait)
     w = MainWindow(s, Database(tmp_path / "lib" / "fundus.db"))
     try:
         w.show()
-        btn = w.tb_cmd.widgetForAction(w.acts["glaucoma"])            # on the command toolbar, 디스크 2장 under ▾
+        btn = w.tb_cmd.widgetForAction(w.acts["glaucoma"])            # on the command toolbar, 스테레오 보기 under ▾
         assert btn.text() == "Glaucoma" and "glaucoma" in MODALITY_LABELS
-        assert [a.text() for a in btn.menu().actions()] == ["녹내장 분석", "시간별 비교 (이 눈의 유두 사진 여러 장)",
-                                                              "디스크 2장 (보험 청구용)"]
+        assert [a.text() for a in btn.menu().actions()] == ["녹내장 분석", "스테레오 보기 (고른 두 사진)",
+                                                              "시간별 비교 (이 눈의 유두 사진 여러 장)"]
         w.open_glaucoma()                                           # no photo yet
         assert said and said[-1] == ("녹내장 분석", "사진을 고르세요.")
         import_and_wait(app, w, [demo_dir / "PatientCapture", demo_dir / "RetiCam"])
@@ -767,3 +767,84 @@ def test_stereo_reference_point_holds_the_picture_still_there(app):
     st.clear_alignment()
     assert st.ref is None and st.angle == 0.0 and (st.dx, st.dy) == (0.0, 0.0)
     st._timer.stop()
+
+
+def test_two_photos_picked_by_plain_clicks_are_the_stereo_pair(app, tmp_path, monkeypatch, import_and_wait):
+    """0.13.7: two photos of one eye picked by plain clicks (as for 몽타주) go into [Glaucoma] as the pair —
+    no Ctrl+click (②). [Glaucoma] ▾ 스테레오 보기 (the former 디스크 2장) opens 녹내장 분석 on its 스테레오 보기
+    tab, and the 청구용 한 장 (the white sheet) is a button of that tab."""
+    from PySide6.QtWidgets import QMessageBox
+
+    from fundusview.config import Settings, WatchFolder
+    from fundusview.db import Database
+    from fundusview.demo import write_demo_folder
+    from fundusview.ui import main_window as mw
+    from fundusview.ui.main_window import MainWindow
+
+    said = []
+    monkeypatch.setattr(QMessageBox, "information", lambda _p, title, text, *a, **k: said.append((title, text)))
+    demo_dir = tmp_path / "drop"
+    write_demo_folder(demo_dir, small=True, history=True)           # the same eyes at two earlier visits too
+    s = Settings(library_dir=str(tmp_path / "lib"), stable_seconds=0.05, rescan_seconds=0,
+                 watch_folders=[WatchFolder(path=str(demo_dir))], watch_on_startup=False)
+    w = MainWindow(s, Database(tmp_path / "lib" / "fundus.db"))
+    try:
+        w.show()
+        import_and_wait(app, w, [demo_dir / "PatientCapture", demo_dir / "RetiCam"])
+        a = b = c = None
+        for pt in w.db.list_patients():                             # two photos of one eye, one of the other
+            rows = [r for r in w.db.images_for_patient(pt["id"])
+                    if r["disc_x"] is not None and r["laterality"] in ("OD", "OS") and r["modality"] == "color"]
+            for eye in ("OD", "OS"):
+                same = [r for r in rows if r["laterality"] == eye]
+                rest = [r for r in rows if r["laterality"] != eye]
+                if len(same) >= 2 and rest:
+                    a, b, c = same[0], same[1], rest[0]
+            if a is not None:
+                break
+        assert a is not None
+        w._select_patient_ref(a["patient_ref"])
+        w.show_simple()
+        app.processEvents()
+        w.compare = None
+
+        def pick(*rows):                                            # as plain clicks on the photo list do
+            w.clear_picks()
+            for r in rows:
+                w._toggle_pick(r["id"])
+            w._select_from_multi(rows[0]["id"])
+            app.processEvents()
+            assert w._picks == [r["id"] for r in rows] and w._own_picks() and w.compare is None
+
+        pick(a, b)
+        dlg, why = w._build_glaucoma()                              # [Glaucoma]: the other photo is the pair
+        assert why == "" and dlg.stereo.image_ids() == [a["id"], b["id"]] and dlg.progress.has_image()
+        assert dlg.tabs.currentWidget() in (dlg.stereo, dlg.progress)
+        for t in (dlg.stereo, dlg.progress):
+            t._timer.stop()
+        dlg, why = w._build_glaucoma(None, "stereo", *w._stereo_ids()[:1])   # ▾ 스테레오 보기
+        assert why == "" and dlg.tabs.currentWidget() is dlg.stereo and dlg.stereo.has_image()
+        assert dlg.tabs.tabText(dlg.tabs.indexOf(dlg.stereo)) == "스테레오 보기"
+        opened = []
+        monkeypatch.setattr(mw.DiscPairDialog, "exec", lambda self: opened.append(self) or 0)
+        assert dlg.stereo.b_sheet.isEnabled()
+        dlg.stereo.b_sheet.click()                                  # 보험 청구용: the white sheet of the two
+        assert len(opened) == 1 and {src.image_id for src in opened[0].sources} == {a["id"], b["id"]}
+        assert opened[0].parent() is dlg
+        for t in (dlg.stereo, dlg.progress):
+            t._timer.stop()
+
+        pick(a, c)                                                  # the two eyes: no pair for [Glaucoma] …
+        dlg, why = w._build_glaucoma()
+        assert why == "" and not dlg.stereo.has_image() and not dlg.stereo.b_sheet.isEnabled()
+        dlg, why = w._build_glaucoma(start="stereo")                # … 스테레오 보기 says why, the sheet is there
+        assert why == "" and not dlg.stereo.has_image() and dlg.stereo.b_sheet.isEnabled()
+
+        pick(a)                                                     # one photo: which two?
+        assert w._build_glaucoma(start="stereo") == (None, w.NEED_TWO) and "Ctrl" not in w.NEED_TWO
+        w._on_action("discpair")
+        assert said[-1] == ("스테레오 보기", w.NEED_TWO)
+        dlg, why = w._build_glaucoma()                              # [Glaucoma] itself: the one photo, as ever
+        assert why == "" and dlg.disc.has_image() and not dlg.stereo.has_image()
+    finally:
+        w.close()
