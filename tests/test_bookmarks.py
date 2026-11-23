@@ -295,6 +295,69 @@ def test_the_photos_under_the_mouse_grow_like_the_dock_and_a_click_pins(win):
     assert w.settings.hover_preview
 
 
+def test_the_list_grows_as_soon_as_the_mouse_is_on_it(win):
+    """미리 보기 needs no move over the list first (0.13.2): the photos grow like the Dock when the mouse
+    comes onto the list, when the list comes up under the resting mouse (another view, the patient list
+    going away from over it), and when the left button is said to be held without a press on the list
+    (the double click on the patient list that opened the patient) — a drag from a photo of the list
+    still changes nothing."""
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QCursor, QEnterEvent, QMouseEvent
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QApplication
+
+    app, w, db, refs, ids = win
+    _open(app, w, refs["kim"])
+    t, vp, pl = w.thumbs, w.thumbs.viewport(), w.patient_list
+    k = t.row(_item(w, ids["rf3"]))
+    at, row = t.cell_rect(k).center(), t._slots[k][0]
+    assert t.dock_row() is None and not w.dock.isVisible()
+
+    # the mouse comes onto the list (an Enter, no move yet): grown at once; off it: as in the list
+    QApplication.sendEvent(vp, QEnterEvent(QPointF(at), QPointF(at), QPointF(vp.mapToGlobal(at))))
+    app.processEvents()
+    assert t.dock_row() == row and w.dock.isVisible() and w._peek is not None
+    _move(app, w, None)
+    assert t.dock_row() is None and w._peek is None
+
+    # a move with the left button "held" that was never pressed on the list: only the mouse on it
+    QApplication.sendEvent(vp, QMouseEvent(QEvent.Type.MouseMove, QPointF(at), QPointF(vp.mapToGlobal(at)),
+                                           Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton,
+                                           Qt.KeyboardModifier.NoModifier))
+    app.processEvents()
+    assert t.dock_row() == row and w._dock_at == (row, at.x())
+    # … pressed on a photo of the list and dragged: the click decides, the way changes nothing
+    QTest.mousePress(vp, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, at)
+    QApplication.sendEvent(vp, QMouseEvent(QEvent.Type.MouseMove, QPointF(at.x() + 30, at.y()),
+                                           QPointF(vp.mapToGlobal(at)), Qt.MouseButton.NoButton,
+                                           Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+    assert w._dock_at == (row, at.x())
+    QTest.mouseRelease(vp, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, at)
+    _move(app, w, None)
+    assert t.dock_row() is None
+
+    was = QCursor.pos()
+    try:
+        QCursor.setPos(vp.mapToGlobal(at))             # the mouse on the list, then resting there
+        app.processEvents()
+        assert t.dock_row() == row
+        w._go("all")                                   # another view (a key): the list grows there too
+        assert t.dock_row() is None                    # (the last view's preview is over)
+        app.processEvents()
+        assert w._tab() == "all" and t.dock_row() == row and w.dock.isVisible()
+        w.show_patient_list()                          # the patient list over it: not on the list …
+        app.processEvents()
+        assert w._mouse_on_list() is None
+        w._end_peek()
+        pl.hide()                                      # … gone: the photos under the resting mouse grow
+        assert t.dock_row() is None
+        app.processEvents()
+        assert t.dock_row() == row and w.dock.isVisible()
+    finally:
+        QCursor.setPos(was)                            # (the next tests' windows: no mouse on their lists)
+        app.processEvents()
+
+
 def test_settings_of_before_open_on_simple_once(tmp_path):
     """A settings file of an earlier version (16장 보기): the new look once — Simple with the bookmarks;
     16장 보기 chosen after that stays."""
@@ -318,6 +381,32 @@ def test_settings_of_before_open_on_simple_once(tmp_path):
     db.close()
 
 
+def test_settings_of_before_drop_the_loupe_under_the_mouse_and_grow_the_list_once(tmp_path):
+    """0.13.2 (9): the large photos have no loupe without a button any more (as before 0.10.16) and the
+    photo list grows like the Dock under the mouse — once for a settings file of before; chosen after
+    that (보기 menu), it stays."""
+    from PySide6.QtWidgets import QApplication
+
+    from fundusview.config import Settings
+    from fundusview.ui.main_window import MainWindow
+    from test_review import _library
+
+    QApplication.instance() or QApplication([])
+    db, refs, ids = _library(tmp_path)
+    assert not Settings().hover_loupe and Settings().hover_preview
+    for version, after in ((8, (False, True)), (MainWindow.UI_VERSION, (True, False))):
+        s = Settings(library_dir=str(tmp_path / "lib"), watch_on_startup=False, auto_detect=False,
+                     last_patient="", hover_loupe=True, hover_preview=False, ui_version=version)
+        w = MainWindow(s, db)
+        try:
+            assert (s.hover_loupe, s.hover_preview) == after and s.ui_version == MainWindow.UI_VERSION
+            assert (w.act_hover_loupe.isChecked(), w.act_peek.isChecked()) == after
+            assert w.view2d.hover_loupe == after[0] == w.multi.hover_loupe
+        finally:
+            w.close()
+    db.close()
+
+
 def test_the_left_button_on_a_photo_not_zoomed_yet_shows_the_loupe(win):
     """Simple · Multi cells and Detail's big photo: with the whole photo on screen (before any zoom) the
     left button held down shows the loupe under the mouse; once zoomed, a drag moves the photo as before."""
@@ -336,9 +425,8 @@ def test_the_left_button_on_a_photo_not_zoomed_yet_shows_the_loupe(win):
     QTest.mouseMove(vp, at + QPoint(40, 10))                               # it follows the mouse
     assert abs(view._loupe.geometry().center().x() - at.x() - 40) <= 1
     QTest.mouseRelease(vp, Qt.MouseButton.LeftButton, pos=at + QPoint(40, 10))
-    assert view._fit and view._drag is None            # (let go: the loupe of the mouse over the photo stays)
-    view.set_hover_loupe(False)                        # without 큰 사진에 마우스를 올리면 돋보기: only while held
-    assert not view._loupe.isVisible()
+    assert view._fit and view._drag is None            # let go: gone (보기 → 큰 사진에 마우스를 올리면 돋보기
+    assert not view.hover_loupe and not view._loupe.isVisible()     # is off at first: only while held)
     QTest.mousePress(vp, Qt.MouseButton.LeftButton, pos=at)
     assert view._loupe.isVisible()
     QTest.mouseRelease(vp, Qt.MouseButton.LeftButton, pos=at)
@@ -355,9 +443,10 @@ def test_the_left_button_on_a_photo_not_zoomed_yet_shows_the_loupe(win):
 
 
 def test_the_mouse_over_a_photo_not_zoomed_yet_shows_the_loupe_without_a_button(win):
-    """Simple · Multi cells and Detail's big photo: with the whole photo on screen the loupe is under
-    the mouse as soon as it is over the photo — no button; off the photo, once zoomed in, or with
-    보기 → 큰 사진에 마우스를 올리면 돋보기 off (remembered) there is none."""
+    """보기 → 큰 사진에 마우스를 올리면 돋보기 — off at first (0.13.2: as before 0.10.16, the loupe only while
+    the left button is held). Switched on, Simple · Multi cells and Detail's big photo: with the whole photo
+    on screen the loupe is under the mouse as soon as it is over the photo — no button; off the photo,
+    once zoomed in, or switched off again (remembered) there is none."""
     from PySide6.QtCore import QEvent, QPoint, Qt
     from PySide6.QtTest import QTest
     from fundusview.config import Settings
@@ -367,8 +456,13 @@ def test_the_mouse_over_a_photo_not_zoomed_yet_shows_the_loupe_without_a_button(
     cell = next(c for c in w.multi.cells if c.image_id == ids["os3"])
     view, vp = cell.view, cell.view.viewport()
     at = QPoint(vp.width() // 2, vp.height() // 2)
-    assert Settings().hover_loupe and w.act_hover_loupe.isChecked() and view.hover_loupe and w.view2d.hover_loupe
-    assert not cell.zooms["disc"].hover_loupe and not view._loupe.isVisible()
+    assert not Settings().hover_loupe and not w.act_hover_loupe.isChecked()
+    assert not view.hover_loupe and not w.view2d.hover_loupe and not w.multi.hover_loupe
+    QTest.mouseMove(vp, at)
+    assert not view._loupe.isVisible()                                     # at first: no loupe without a button
+    w.act_hover_loupe.setChecked(True)                                     # 보기: on (remembered)
+    assert w.settings.hover_loupe and view.hover_loupe and w.view2d.hover_loupe
+    assert not cell.zooms["disc"].hover_loupe
     QTest.mouseMove(vp, at)
     assert view._loupe.isVisible() and abs(view._loupe.geometry().center().x() - at.x()) <= 1
     QTest.mouseMove(vp, at + QPoint(40, 10))                               # it follows the mouse
@@ -395,14 +489,11 @@ def test_the_mouse_over_a_photo_not_zoomed_yet_shows_the_loupe_without_a_button(
     assert not view._loupe.isVisible()
     view.set_tool("zoom")
     assert view._loupe.isVisible()
-    w.act_hover_loupe.setChecked(False)                                    # 보기: off
+    w.act_hover_loupe.setChecked(False)                                    # 보기: off again
     assert not w.settings.hover_loupe and not view.hover_loupe and not w.view2d.hover_loupe
     assert not view._loupe.isVisible()
     QTest.mouseMove(vp, at + QPoint(10, 0))
     assert not view._loupe.isVisible()
-    w.act_hover_loupe.setChecked(True)
-    QTest.mouseMove(vp, at)
-    assert view._loupe.isVisible()
 
 
 def test_how_large_the_preview_grows_is_chosen_in_the_view_menu(win):

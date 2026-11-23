@@ -126,8 +126,9 @@ class Settings:
     # 목록에 마우스를 올리면 미리 보기)
     hover_preview: bool = True
     # The large photos (Simple · Multi · Detail): the loupe under the mouse while it is over the whole
-    # photo, not zoomed yet — no button needed (보기 → 큰 사진에 마우스를 올리면 돋보기)
-    hover_loupe: bool = True
+    # photo, not zoomed yet — no button needed (보기 → 큰 사진에 마우스를 올리면 돋보기). Off at first
+    # (0.13.2): as before 0.10.16, the loupe is there while the left button is held
+    hover_loupe: bool = False
     # … how large: that many times its size in the list (보기 → 미리 보기 배율; peek.SCALES: 1.5 … 3)
     preview_scale: float = 2.0
     # G 필터 (설정 → 일반): what the button gives — "green" the green channel alone, "rnfl" 녹색 + RNFL 강화
