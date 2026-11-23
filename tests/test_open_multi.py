@@ -239,12 +239,25 @@ def test_simple_follows_the_clicks_and_starts_again_from_the_newest_od_and_os(wi
     # a double click: that photo large (Detail) — the pinned ones stay as they were …
     _click(app, w, od3, double=True)
     assert w._tab() == "all" and w.current["id"] == od3 and w.picks() == [rf3, od2] and _lit(w) == ["view:all"]
-    # … on Detail a click on the list shows that photo there
+    # … on Detail a click on another photo of the list: Simple picking several — the pinned ones, the
+    # one that was large and the one clicked (selected); a click on the large one itself: nothing
+    _click(app, w, od3)
+    assert w._tab() == "all" and w.current["id"] == od3 and w.picks() == [rf3, od2]
     _click(app, w, os3)
-    assert w._tab() == "all" and w.current["id"] == os3 and w.picks() == [rf3, od2]
+    assert w._tab() == "multi" and _lit(w) == ["view:simple"]
+    assert w.picks() == [rf3, od2, od3, os3] and _cells(w) == ([rf3, od2, od3, os3], os3)
+    _click(app, w, od3)                                    # … where more clicks add and take out, as ever
+    assert w.picks() == [rf3, od2, os3] and w._tab() == "multi"
+    # nothing pinned (the newest OD | OS): the one that was large and the one clicked, side by side
+    _press(w, "view:simple")
+    _click(app, w, rf3, double=True)
+    assert w._tab() == "all" and w.current["id"] == rf3 and w.picks() == [od3, os3]
+    _click(app, w, od3)
+    assert w._tab() == "multi" and w.picks() == [rf3, od3] and _cells(w) == ([rf3, od3], od3)
+    assert w.lbl_picks.text() == "2장 고정"
     # … and [Simple] starts again from the newest OD | OS, whatever was pinned
     _press(w, "view:simple")
-    assert w._tab() == "multi" and w.picks() == [od3, os3] and _cells(w) == ([od3, os3], os3)
+    assert w._tab() == "multi" and w.picks() == [od3, os3] and _cells(w)[0] == [od3, os3]
     assert "Simple — 최신 OD | OS" in w.multi.mode_text and w.lbl_picks.text() == ""
     # the last pinned one let go: the newest OD | OS again
     _click(app, w, rf3)
@@ -258,11 +271,11 @@ def test_simple_follows_the_clicks_and_starts_again_from_the_newest_od_and_os(wi
     w.btn_clear_picks.click()
     app.processEvents()
     assert w.picks() == [od3, os3] and not w.btn_clear_picks.isVisible() and _cells(w)[0] == [od3, os3]
-    # a double click on a cell: large as well
+    # a double click on a cell: not large (that is a double click on a photo of the list) — Simple stays
     cell = next(c for c in w.multi.cells if c.image_id == os3)
     QTest.mouseDClick(cell.view.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(20, 20))
     app.processEvents()
-    assert w._tab() == "all" and w.current["id"] == os3
+    assert w._tab() == "multi" and w.current["id"] == os3 and w.picks() == [od3, os3]
 
     # a patient with one eye's photos: the one photo; a click pins that photo, more clicks add to it
     w.f_eye.setCurrentIndex(w.f_eye.findData("OD"))
@@ -324,10 +337,16 @@ def test_simple_with_nothing_picked_and_multi_is_16_photos(win):
     # a double click: that photo large (Detail) — the picks stay as they were
     _click(app, w, od2, double=True)
     assert w._tab() == "all" and w.current["id"] == od2 and w.picks() == [od3, od2]
-    _click(app, w, rf3, double=True)                       # on Detail a double click on the list goes back …
+    _click(app, w, od2, double=True)                       # on Detail a double click on the photo shown goes back …
     assert w._tab() == "multi" and w.picks() == [od3, od2] and _cells(w)[0] == [od3, od2]
     _click(app, w, rf3, double=True)                       # … and from there one not picked opens large, too
     assert w._tab() == "all" and w.current["id"] == rf3 and w.picks() == [od3, od2]
+    # on Detail a double click on another photo: that one large — its first click went to Simple with it
+    # (as a click does), the double click takes that back
+    _click(app, w, od3)
+    assert w._tab() == "multi" and w.picks() == [od3, od2, rf3]
+    _click(app, w, od3, double=True)
+    assert w._tab() == "all" and w.current["id"] == od3 and w.picks() == [od3, od2]
 
     # [Multi] (from Detail, photos picked): those photos only, Multi lit; [Multi] again: 16장 보기 — every
     # photo, the picked ones still numbered
@@ -383,13 +402,16 @@ def test_a_double_click_opens_detail_and_another_goes_back(win):
         QTest.mouseDClick(view.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(60, 60))
         app.processEvents()
 
-    # Simple with three photos pinned: a cell double clicked — Detail; the big photo double clicked — back,
-    # the three photos as they were, that photo selected
+    # Simple with three photos pinned: a cell double clicked — Simple stays (Detail comes from the photo
+    # list only); a photo of the list double clicked — Detail; the big photo double clicked — back, the
+    # three photos as they were, that photo selected
     _all(w)
     for iid in (od3, os3, od2):
         _click(app, w, iid)
     assert w.picks() == [od3, os3, od2]
     dclick(next(c for c in w.multi.cells if c.image_id == os3).view)
+    assert w._tab() == "multi" and _lit(w) == ["view:simple"] and w.picks() == [od3, os3, od2]
+    _click(app, w, os3, double=True)
     assert w._tab() == "all" and w.current["id"] == os3 and _lit(w) == ["view:all"]
     assert not w.view2d.loupe_on
     dclick(w.view2d)
@@ -459,8 +481,8 @@ def test_a_double_click_opens_detail_and_another_goes_back(win):
     assert w._tab() == "multi" and _lit(w) == ["view:multi"] and _cells(w)[0] == [od3, os3, od2]
     dclick(next(c for c in w.multi.cells if c.image_id == od2).view)
     assert w._tab() == "multi" and _lit(w) == ["view:simple"] and w.picks() == [od3, os3]
-    dclick(next(c for c in w.multi.cells if c.image_id == os3).view)       # … and on Simple: Detail
-    assert w._tab() == "all" and w.current["id"] == os3
+    dclick(next(c for c in w.multi.cells if c.image_id == os3).view)       # … and on Simple: it stays
+    assert w._tab() == "multi" and _lit(w) == ["view:simple"] and w.current["id"] == os3
 
 
 def test_a_new_photo_takes_its_eyes_place(win):
@@ -671,9 +693,9 @@ def test_macula_and_disc_under_the_photos_of_simple(win):
     g = od_cell.zooms["disc"]._rgb
     assert (g[..., 0] == g[..., 2]).all()
     w._on_action("chan:redfree", False)
-    # a double click on a pane: that photo large (Detail)
+    # a double click on a pane: Simple stays (Detail: a double click on a photo of the list)
     od_cell.zooms["macula"].activated.emit()
-    assert w._tab() == "all" and w.current["id"] == od3
+    assert w._tab() == "multi" and w.current["id"] == od3
     _press(w, "view:simple")
     # more than 4 cells: no room — the panes go, and come back with fewer
     w._on_action("multi:9")

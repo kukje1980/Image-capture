@@ -21,15 +21,16 @@ Both are rebuilt here with the same order. Every entry is a key handled by
 """
 from __future__ import annotations
 
+import math
 from functools import lru_cache
 
 import numpy as np
-from PySide6.QtCore import QPoint, Qt, Signal
+from PySide6.QtCore import QPoint, QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QIcon, QImage, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout, QWidget
 
 from .. import imaging
-from . import icons
+from . import icons, theme
 from .icons import icon as line_icon
 from .image_view import TOOL_HINTS
 
@@ -42,14 +43,14 @@ COMMANDS = (
     ("next", "다음", "다음 사진 (PageDown · →)", "next", "NEXT"),
     ("view:simple", "Simple", "Simple (Ctrl+1) — 누르면 최신 OD | OS 두 장 (OD 왼쪽 · OS 오른쪽)\n"
                               "사진 목록을 클릭하면 더하고(번호) 다시 클릭하면 뺍니다 — 고른 장수에 맞게 화면이 나뉩니다 "
-                              "(1 · 2 · 4 · 6 · 9 · 16)\n칸을 누르면 그 사진만 보정 · 더블클릭: 크게 보기 (Detail)",
+                              "(1 · 2 · 4 · 6 · 9 · 16)\n칸을 누르면 그 사진만 보정 · 아래 사진을 더블클릭: 크게 보기 (Detail)",
      "simple", "—"),
     ("view:multi", "Multi", "Multi (Ctrl+2) — 16장 보기에서 클릭해 고른 사진(번호)만 한 화면에\n"
                             "다시 누르면 16장 보기로 돌아갑니다 (고른 번호는 그대로) · "
                             "더블클릭: Simple로", "multi16", "MULTI"),
     ("view:all", "Detail", "Detail (Ctrl+5) — 사진 한 장을 크게, 오른쪽에 황반과 시신경 유두를 확대해서\n"
                            "다시 누르면 보던 화면으로 · 큰 사진을 더블클릭: Simple로 · 사진 좌우의 ◀ ▶ 또는 ← → 키: 이전 / 다음 사진 · "
-                           "사진 목록을 클릭하면 그 사진", "detail", "—"),
+                           "사진 목록의 다른 사진을 클릭하면 Simple에서 함께 (여러 장 고르기) · 더블클릭: 그 사진을 크게", "detail", "—"),
     ("fit", "화면 맞춤", "화면에 맞춤 — ▾ 로 배율(100~800%)과 확대 위치(후극부·주변부)", "fit", "SCALE"),
     ("tools", "도구", "영상 처리 툴바 보이기/숨기기", "tools", "TOOLS"),
     ("edit", "정보 수정", "이 사진의 환자·검사 정보 수정/환자 지정", "edit", "EDIT DATA"),
@@ -79,13 +80,12 @@ VIEW_COMMANDS = ("view:simple", "view:multi", "view:all", "view3d")
 # VK-2 order first, then this viewer's extras. icon "fundus:<effect>" = photo thumbnail.
 PROCESSING = (
     ("op:sharpen", "선명", "선명하게 (누를 때마다 누적) — ▾ 로 약·강", "fundus:sharpen", "SHARPEN"),
-    ("adj:gamma", "감마", "감마 조정 (어두운 부분 밝게)", "fundus:gamma", "GAMMA"),
+    ("adj:gamma", "감마", "감마 조정 — 그래프(입력 → 출력 곡선)를 클릭하거나 끌어서 (어두운 부분 밝게)", "fundus:gamma", "GAMMA"),
     ("op:enhance", "향상", "국소 대비 향상 — 미세 혈관·병변 — ▾ 로 평활화·노이즈 감소", "fundus:enhance", "ENHANCE"),
     ("adj:contrast", "대비", "대비 조정", "fundus:contrast", "CONTST"),
     ("adj:bright", "밝기", "밝기 조정", "fundus:bright", "BRIGHT"),
     ("chan:red", "R 필터", "적색 성분만 (다시 누르면 컬러)", "fundus:red", "RED FILTER"),
-    ("chan:green", "G 필터", "녹색 성분만 — 흑백 (다시 누르면 컬러) — ▾ 로 녹색 + RNFL 강화 (광각 분석의 레드프리 0.9)",
-     "fundus:green", "GREEN FILTER"),
+    ("chan:green", "G 필터", "녹색 성분만 — 흑백 (다시 누르면 컬러)", "fundus:green", "GREEN FILTER"),
     ("chan:blue", "B 필터", "청색 성분만 (다시 누르면 컬러)", "fundus:blue", "BLUE FILTER"),
     ("negative", "네거티브", "반전 영상", "fundus:negative", "NEGATIVE"),
     ("flip_v", "상하반전", "위아래 뒤집기", "flip_v", "FLIP VRT"),
@@ -98,7 +98,8 @@ PROCESSING = (
     ("undo", "실행취소", "마지막 처리 되돌리기 (Ctrl+Z)", "undo", "UNDO"),
     ("original", "원본", "모든 처리·조정·측정 해제", "fundus:original", "ORIGINAL"),
     None,
-    ("chan:redfree", "Red-free", "녹색 채널 — 혈관·출혈 (다시 누르면 컬러)", "fundus:redfree", "—"),
+    ("chan:redfree", "Red-free", "레드프리 — 녹색 + RNFL 강화 0.9: 신경섬유층·혈관·출혈 "
+                                 "(녹내장 분석 → 광각 분석의 레드프리와 같음 · 다시 누르면 컬러)", "fundus:redfree", "—"),
     ("auto", "자동대비", "밝기 범위 자동 맞춤", "fundus:auto", "—"),
     ("histogram", "히스토그램", "히스토그램·레벨 조정", "histogram", "—"),
     ("tool:pan", "이동", TOOL_HINTS["pan"], "pan", "—"),
@@ -109,19 +110,12 @@ PROCESSING = (
     ("annot_undo", "지우기", "마지막 측정·글자 지우기 (Delete) — ▾ 로 모두", "annot_clear", "—"),
 )
 
-def rnfl_label(k: float = 0.9) -> str:
-    """The ▾ entry of the G 필터 for 녹색 + RNFL 강화 at strength ``k`` (설정 → 일반: 0.5 … 0.9)."""
-    return f"녹색 + RNFL 강화 ({k:g}) — 녹내장 분석 → 광각 분석의 레드프리와 같음"
-
-
 # Drop-down extras of a button (key, label)
 MENUS = {
     "op:sharpen": (("op:sharpen_light", "선명하게 (약)"), ("op:sharpen", "선명하게"),
                    ("op:sharpen_strong", "선명하게 (강)")),
     "op:enhance": (("op:enhance", "국소 대비 향상"), ("op:equalize", "히스토그램 평활화"),
                    ("op:denoise", "노이즈 감소 (중간값)"), ("op:denoise_avg", "노이즈 감소 (평균)")),
-    "chan:green": (("chan:green", "녹색 성분만 (흑백)"),
-                   ("chan:rnfl", rnfl_label())),
     "tool:cd_length": (("tool:cd_length", "C/D 비 (길이)"), ("tool:cd_area", "C/D 비 (면적)")),
     "rot_cw": (("rot_cw", "오른쪽으로 90°"), ("rot_ccw", "왼쪽으로 90°")),
     "tool:text": (("tool:text", "글자"), ("tool:arrow", "화살표 + 글자")),
@@ -258,3 +252,123 @@ class SliderPopup(QFrame):
         self.show()
         self.slider.setFocus()
 
+
+
+class GammaCurve(QWidget):
+    """감마 as a graph: across the brightness of the photo (입력), up the brightness shown (출력). The
+    curve is 출력 = 입력 ^ (1 / 감마); a click or a drag on the graph bends it through that point —
+    above the diagonal the dark parts get lighter, below it darker. ``slider`` holds the value × 100."""
+    pressed = Signal()                     # a drag begins (the window: one step of 실행 취소)
+    PAD_L, PAD_T, PAD_R, PAD_B = 26, 10, 10, 24
+
+    def __init__(self, slider: QSlider, parent=None):
+        super().__init__(parent)
+        self.slider = slider
+        self._at = 0.5                     # where on 입력 the handle sits (the last point clicked)
+        self.setCursor(Qt.CursorShape.CrossCursor)
+        self.setToolTip("그래프를 클릭하거나 끌면 곡선이 그 점을 지나도록 감마가 바뀝니다\n"
+                        "대각선 위: 어두운 부분이 밝게 · 대각선 아래: 어둡게 · 더블클릭: 초기화 (1.00)")
+        slider.valueChanged.connect(lambda _v: self.update())
+
+    def sizeHint(self) -> QSize:
+        return QSize(260, 250)
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(200, 190)
+
+    def plot(self) -> QRectF:
+        """The square of the graph inside the widget (the axis labels are outside it)."""
+        w = self.width() - self.PAD_L - self.PAD_R
+        h = self.height() - self.PAD_T - self.PAD_B
+        side = max(10.0, min(w, h))
+        return QRectF(self.PAD_L + (w - side) / 2, self.PAD_T + (h - side) / 2, side, side)
+
+    def gamma(self) -> float:
+        return max(self.slider.value(), 1) / 100.0
+
+    def point(self, x: float) -> QPointF:
+        """The place on the widget of the curve at 입력 ``x`` (0 … 1)."""
+        r = self.plot()
+        y = min(1.0, max(0.0, x)) ** (1.0 / self.gamma())
+        return QPointF(r.left() + x * r.width(), r.bottom() - y * r.height())
+
+    def gamma_at(self, pos) -> float:
+        """The 감마 whose curve goes through ``pos`` (a place on the widget), kept inside the slider's
+        range (a point next to the edges counts as a little inside: every curve meets the corners)."""
+        r = self.plot()
+        x = (pos.x() - r.left()) / r.width()
+        y = (r.bottom() - pos.y()) / r.height()
+        x, y = min(0.97, max(0.03, x)), min(0.97, max(0.03, y))
+        g = math.log(x) / math.log(y)
+        self._at = x
+        return min(self.slider.maximum(), max(self.slider.minimum(), round(g * 100))) / 100.0
+
+    def _set(self, pos) -> None:
+        self.slider.setValue(round(self.gamma_at(pos) * 100))
+        self.update()
+
+    def mousePressEvent(self, e) -> None:
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.pressed.emit()
+            self._set(e.position())
+            e.accept()
+
+    def mouseMoveEvent(self, e) -> None:
+        if e.buttons() & Qt.MouseButton.LeftButton:
+            self._set(e.position())
+            e.accept()
+
+    def mouseDoubleClickEvent(self, e) -> None:
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.pressed.emit()
+            self._at = 0.5
+            self.slider.setValue(100)
+            e.accept()
+
+    def paintEvent(self, _e) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = self.plot()
+        p.fillRect(r, QColor(18, 18, 20))
+        grid = QPen(QColor(255, 255, 255, 34), 1)
+        p.setPen(grid)
+        for i in range(1, 4):
+            x, y = r.left() + r.width() * i / 4, r.top() + r.height() * i / 4
+            p.drawLine(QPointF(x, r.top()), QPointF(x, r.bottom()))
+            p.drawLine(QPointF(r.left(), y), QPointF(r.right(), y))
+        p.setPen(QPen(QColor(255, 255, 255, 80), 1, Qt.PenStyle.DashLine))      # 감마 1.00: no change
+        p.drawLine(r.bottomLeft(), r.topRight())
+        p.setPen(QPen(QColor(255, 255, 255, 90), 1))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRect(r)
+        path = QPainterPath(self.point(0.0))
+        for i in range(1, 65):
+            path.lineTo(self.point(i / 64))
+        p.setPen(QPen(QColor(theme.ORANGE), 2.2))
+        p.drawPath(path)
+        p.setPen(QPen(QColor(255, 255, 255), 1.5))
+        p.setBrush(QColor(theme.ORANGE))
+        p.drawEllipse(self.point(self._at), 5.5, 5.5)
+        p.setPen(self.palette().color(self.foregroundRole()))
+        f = p.font()
+        f.setPointSizeF(max(7.0, f.pointSizeF() - 1.5))
+        p.setFont(f)
+        p.drawText(QRectF(r.left(), r.bottom() + 3, r.width(), self.PAD_B - 3),
+                   Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop, "입력 (사진의 밝기) →")
+        p.save()
+        p.translate(r.left() - 6, r.bottom())
+        p.rotate(-90)
+        p.drawText(QRectF(0, -self.PAD_L + 4, r.height(), self.PAD_L - 6),
+                   Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom, "출력 (화면의 밝기) →")
+        p.restore()
+        p.end()
+
+
+class GammaPopup(SliderPopup):
+    """GAMMA: the curve as a graph to click and drag on (``GammaCurve``), over the slider (fine steps)."""
+
+    def __init__(self, title: str, lo: int, hi: int, default: int, fmt, parent=None):
+        super().__init__(title, lo, hi, default, fmt, parent)
+        self.curve = GammaCurve(self.slider)
+        self.curve.pressed.connect(self.pressed.emit)
+        self.layout().insertWidget(1, self.curve)

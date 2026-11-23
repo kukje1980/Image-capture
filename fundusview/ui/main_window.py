@@ -94,7 +94,7 @@ from .landmarks_view import LandmarkPhoto
 from .slit_scan import SLIT, ScanPhotoView, SlitScanShow, ViewTween
 from .thumbs import (DATE_ROLE, DockOverlay, EYE_ROLE, KIND_ROLE, PICK_ROLE, SECOND_COLOR, SECOND_ROLE, SHOWN, EyeRail,
                      ThumbDelegate, ThumbStrip, eye_badge_html, eye_row)
-from .toolbars import CHECKABLE, CMDBAR, COMMANDS, MENUS, PROCESSING, SliderPopup, icon_for, rnfl_label
+from .toolbars import CHECKABLE, CMDBAR, COMMANDS, MENUS, PROCESSING, GammaPopup, SliderPopup, icon_for
 from .widgets import ElidedLabel, Segmented, Switch, card, segment
 from .widgets import row as setting_row
 
@@ -556,7 +556,6 @@ class MainWindow(QMainWindow):
                                         "돋보기가 나옵니다 (사진 전체가 보일 때 — 휠로 확대한 뒤에는 드래그로 이동)\n"
                                         "처음에는 꺼져 있습니다 — 돋보기는 왼쪽 버튼을 누르고 있는 동안 나옵니다")
         self.act_hover_loupe.toggled.connect(self._set_hover_loupe)
-        self._apply_rnfl_settings()            # G 필터: RNFL 강화 세기 (설정 → 일반)
         sub = m.addMenu("아이콘 모양")             # the look of the toolbar icons (icons.STYLES)
         sub.setToolTipsVisible(True)
         self._icon_styles = QActionGroup(self)
@@ -710,7 +709,7 @@ class MainWindow(QMainWindow):
         self.btn_closeups.setChecked(bool(self.settings.simple_closeups))
         self.btn_closeups.setAutoRaise(True)
         self.btn_closeups.setToolTip("켜면 사진마다 아래에 황반과 시신경 유두를 확대해서 보여 줍니다 (Detail처럼)\n"
-                                     f"화면 분할 {CLOSEUP_MAX}장 이하일 때 · 확대 화면을 더블클릭: 크게 보기 (Detail)")
+                                     f"화면 분할 {CLOSEUP_MAX}장 이하일 때")
         self.btn_closeups.toggled.connect(self._set_closeups)
         self._closeup_timer = QTimer(self, singleShot=True, interval=0, timeout=self._fill_closeups)
         # the views (Simple · Multi · Detail · 3D), Montage and Glaucoma are on the command toolbar
@@ -725,7 +724,8 @@ class MainWindow(QMainWindow):
         self.thumb_paint.show_kind = bool(self.settings.thumb_kind)
         self.thumbs.setItemDelegate(self.thumb_paint)
         self.thumbs.setToolTip(keys("마우스를 올리면 Dock처럼 사진들이 커집니다 (미리 보기) · Simple — 클릭: 고정(번호), 다시 클릭하면 빼기\n"
-                                    "Detail · 3D — 클릭: 이 사진 보기 · 더블클릭: Simple로 (Simple에서 더블클릭: Detail)\n"
+                                    "Simple에서 더블클릭: 크게 보기 (Detail) · Detail — 다른 사진을 클릭: Simple에서 함께 보기 (여러 장 고르기), "
+                                    "더블클릭: 그 사진을 크게 · 3D — 클릭: 이 사진 보기, 더블클릭: Simple로\n"
                                     "휠: 이전 / 다음 날짜 책갈피 (Shift+휠: 옆으로 넘기기) · ← →: 이전 / 다음 사진\n"
                                     "Ctrl+클릭: 두 번째 사진(②) 선택/해제 — 비교 · 디스크 2장 · "
                                     "오른쪽 클릭: 환자 지정·다시 분석"))
@@ -968,7 +968,7 @@ class MainWindow(QMainWindow):
         self.tb_proc.visibilityChanged.connect(lambda v: self.acts["tools"].setChecked(v))
         self.acts["tools"].setChecked(True)
         self.acts["list"].setChecked(False)
-        self.pop_gamma = SliderPopup("감마", 20, 400, 100, lambda v: f"{v / 100:.2f}", self)
+        self.pop_gamma = GammaPopup("감마", 20, 400, 100, lambda v: f"{v / 100:.2f}", self)
         self.pop_contrast = SliderPopup("대비", 10, 300, 100, lambda v: f"{v}%", self)
         self.pop_bright = SliderPopup("밝기", -100, 100, 0, lambda v: f"{v:+d}", self)
         self.s_gamma, self.s_contrast, self.s_bright = (
@@ -1680,7 +1680,8 @@ class MainWindow(QMainWindow):
             "+/−: 확대·축소 · 0: 화면 맞춤 · 1: 100%<br>"
             "확대하면 오른쪽 위 미니맵에 전체 사진과 보이는 곳이 나옵니다 — 눌러서 이동<br>"
             "화면 맞춤 ▾ 또는 아래쪽 [배율]: 400·800%, 후극부·위/아래/코/귀쪽 주변부로 바로 확대<br>"
-            "더블클릭: Simple의 사진은 Detail에서 크게, 그 밖의 화면(Detail · Multi · 16장 보기 · 3D)에서는 Simple로 · "
+            "더블클릭: 아래 사진 목록의 사진은 Detail에서 크게 (Simple의 큰 사진은 화면 맞춤만), "
+            "그 밖의 화면(Detail의 큰 사진 · Multi · 16장 보기 · 3D)에서는 Simple로 · "
             "돋보기는 아래 툴바의 [돋보기] (누르는 동안)<br>"
             "오른쪽 클릭: 메뉴 (시신경 유두 · 황반 위치 지정, 돋보기 배율, 미니맵)<br><br>"
             "<b>3D 안구</b><br>"
@@ -1739,8 +1740,9 @@ class MainWindow(QMainWindow):
             "다시 클릭하면 뺍니다 (모두 빼면 모든 사진, 화면 분할로 장수 고르기)<br>"
             "Simple · Multi의 칸 좌우 끝 ◀ ▶ (칸을 누른 뒤 ← →): 그 칸에 같은 눈의 이전 / 다음 사진 · "
             "메뉴 옆 <b>황반 · 디스크</b>: 사진마다 아래에 황반과 시신경 유두 확대 (4칸 이하)<br>"
-            "<b>Detail</b> (어느 사진이든 더블클릭): 큰 사진 + 오른쪽에 황반과 시신경 유두 확대 (큰 사진 위 점선 틀이 그 자리). "
-            "사진 좌우 끝의 ◀ ▶ 또는 ← → 키: 이전 / 다음 사진 · 사진 목록을 클릭하면 그 사진<br>"
+            "<b>Detail</b> (아래 사진 목록의 사진을 더블클릭): 큰 사진 + 오른쪽에 황반과 시신경 유두 확대 (큰 사진 위 점선 틀이 그 자리). "
+            "사진 좌우 끝의 ◀ ▶ 또는 ← → 키: 이전 / 다음 사진 · 사진 목록의 다른 사진을 클릭하면 Simple에서 두 장을 함께 "
+            "(더 클릭하면 여러 장 고르기)<br>"
             "칸 제목을 누르거나 칸을 더블클릭하면 큰 사진을 그 쪽으로 확대 · 큰 사진 전체로: 0 · "
             "잘못 찾았으면 큰 사진에서 오른쪽 클릭 → 황반 / 시신경 유두로 지정<br>"
             "<b>3D</b>: 보고 있는 사진을 3D 안구로 — Simple에 두 장이면 두 장 모두, 여러 장 골라 두었으면 한 장 / 모두를 물어봄(9장까지) · "
@@ -1974,22 +1976,6 @@ class MainWindow(QMainWindow):
         if self.current is not None:
             self._show_image(self.current["id"])
 
-    def _apply_rnfl_settings(self, refresh: bool = False) -> None:
-        """설정 → 일반: the strength of 녹색 + RNFL 강화 (0.5 … 0.9), said in the ▾ of the G 필터 too.
-        ``refresh``: photos shown with that filter are drawn again at the new strength."""
-        was = imaging.rnfl_k()
-        k = self.settings.rnfl_strength = imaging.set_rnfl_k(self.settings.rnfl_strength)
-        if self.settings.green_filter != "rnfl":
-            self.settings.green_filter = "green"
-        entry = self.menus["chan:green"].actions()[1]
-        entry.setText(rnfl_label(k))
-        entry.setToolTip(rnfl_label(k))
-        if refresh and k != was:
-            self._proc_cache.clear()
-            if self.current is not None:
-                self._apply_adjust()
-            self._refill_multis()
-
     def _open_settings(self) -> None:
         dlg = SettingsDialog(self.settings, self)
         if dlg.exec():
@@ -2003,7 +1989,6 @@ class MainWindow(QMainWindow):
             self._set_3d_detail(self.settings.view3d_detail, save=False)
             self.c_walkclick3d.setChecked(bool(self.settings.walk_click3d))   # 3D 마우스 휠
             self._set_wheel3d(self.settings.wheel3d, save=False)
-            self._apply_rnfl_settings(refresh=True)                          # G 필터: RNFL 강화 세기
             self.act_thumb_date.setChecked(bool(self.settings.thumb_date))   # 사진 목록: 날짜 · 종류
             self.act_thumb_kind.setChecked(bool(self.settings.thumb_kind))
             if self.settings.open_view != old_view and self.current is not None:
@@ -2175,12 +2160,12 @@ class MainWindow(QMainWindow):
             self.lbl_status.setText(self.MULTI_HINT)
 
     SIMPLE_HINT = ("Simple — 최신 OD | OS · 아래 사진에 마우스를 올리면 미리 보기, 클릭하면 고정(번호) · 다시 클릭: 빼기 · "
-                   "휠: 날짜 책갈피 · 더블클릭: 크게 보기 (Detail)")
+                   "휠: 날짜 책갈피 · 아래 사진을 더블클릭: 크게 보기 (Detail)")
     MULTI_HINT = ("16장 보기 — 사진을 클릭해 고르고(번호) 왼쪽 툴바의 [Multi]를 누르면 고른 사진만 봅니다 "
                   "(다시 [Multi]: 16장으로) · 더블클릭: Simple로 · 휠: 다음 / 이전 16장")
     PICK_FIRST_HINT = "Multi — 먼저 16장 보기에서 사진을 클릭해 고르세요(번호). 그다음 [Multi]를 누르면 고른 사진만 나옵니다"
-    DETAIL_HINT = ("Detail — 다시 더블클릭(큰 사진 · 아래 사진 목록): Simple로 · [Detail] 다시: 보던 화면으로 · 사진 좌우의 ◀ ▶ 또는 ← → 키: 이전 / 다음 사진 · "
-                   "사진 목록을 클릭하면 그 사진")
+    DETAIL_HINT = ("Detail — 아래의 다른 사진을 클릭: Simple에서 함께 보기(여러 장 고르기) · 더블클릭: 그 사진을 크게 · "
+                   "큰 사진을 더블클릭: Simple로 · [Detail] 다시: 보던 화면으로 · 사진 좌우의 ◀ ▶ 또는 ← → 키: 이전 / 다음 사진")
 
     def _newest_pair(self, exam: str | None = None) -> list[int]:
         """The patient's newest OD and newest OS photo, OD first (on the left, as the patient
@@ -2289,7 +2274,7 @@ class MainWindow(QMainWindow):
         return [self.thumbs.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.thumbs.count())]
 
     def open_large(self, image_id: int) -> None:
-        """That photo large (Detail) — a double click on a cell of Simple or a photo of Multi. The
+        """That photo large (Detail) — a double click on a photo of the list below. The
         photo list goes to its exam's bookmark (◀ ▶ on Detail go through the list)."""
         day = next((d for i, _eye, d in self._listed if i == image_id), None)
         if day is not None and self._book not in (ALL_DATES, day):
@@ -2316,13 +2301,14 @@ class MainWindow(QMainWindow):
             self.show_simple()
 
     def _open_cell(self, image_id: int) -> None:
-        """A double click on a cell of the 다중 보기 page: on Simple that photo large (Detail); on Multi
-        (the photos numbered in 16장 보기) Simple, as [Simple] gives — the newest OD | OS."""
+        """A double click on a cell of the 다중 보기 page: on Multi (the photos numbered in 16장 보기)
+        Simple, as [Simple] gives — the newest OD | OS. On Simple nothing but the cell's own 화면 맞춤:
+        Detail comes from a double click on a photo of the list below only."""
         if self._split_via == MULTI:
             self._pick_pre = None
             self.show_simple()
-        else:
-            self.open_large(image_id)
+        elif self.current is None or self.current["id"] != image_id:
+            self._select_from_multi(image_id)     # (the cell double clicked is the selected one)
 
     def _leave_detail(self) -> None:
         """[Detail] again: back to the view it was opened from,
@@ -3065,8 +3051,12 @@ class MainWindow(QMainWindow):
     def _click_pick(self, image_id: int) -> None:
         """A plain click on a photo of the strip. On Simple the view follows the clicks: a photo
         not picked joins it as the selected cell, a picked one leaves it, and the layout fits the
-        number picked (1 · 2 · 4 · 6 · 9 · 16; none: all the photos). On Detail · 3D the photo is
+        number picked (1 · 2 · 4 · 6 · 9 · 16; none: all the photos). On Detail another photo
+        clicked goes to Simple with the two side by side (``_detail_to_simple``). On 3D the photo is
         shown there — the photos of Simple stay as they are."""
+        if self._tab() == "all" and self.current is not None and self.current["id"] != image_id:
+            self._detail_to_simple(image_id)
+            return
         if self._tab() != "multi":
             self._select_from_multi(image_id)
             return
@@ -3089,7 +3079,26 @@ class MainWindow(QMainWindow):
             self.lbl_status.setText(self.SIMPLE_HINT if n else self.MULTI_ALL_HINT)
         else:
             self.lbl_status.setText(f"{name} {n}장 고정 — 사진을 클릭하면 더하고, 다시 클릭하면 뺍니다 · "
-                                    "더블클릭: 크게 보기 (Detail)")
+                                    "아래 사진을 더블클릭: 크게 보기 (Detail)")
+
+    def _detail_to_simple(self, image_id: int) -> None:
+        """Detail, and another photo of the list clicked: not that photo large, but Simple picking
+        several — the photos pinned before (if any), the one that was large and the one clicked, the
+        clicked one selected. More clicks add and take out, as ever on Simple."""
+        pre = self._pick_pre                  # (the click may begin a double click: ``_open_photo``)
+        picks = list(self._picks) if self._own_picks() else []
+        for iid in (self.current["id"], image_id):
+            if iid not in picks and len(picks) < MAX_PICKS:
+                picks.append(iid)
+        self._picks, self._default_picks, self._multi_auto = picks, [], True
+        self._split_via = SIMPLE
+        self._mark_picks()
+        self.open_picks()
+        if image_id in self._picks:
+            self._select_from_multi(image_id)
+        self._pick_pre = pre                  # (another view came up: kept for the double click all the same)
+        self.lbl_status.setText(f"Simple {len(picks)}장 — 사진을 클릭하면 더하고, 다시 클릭하면 뺍니다 · "
+                                "아래 사진을 더블클릭: 크게 보기 (Detail)")
 
     MULTI_ALL_HINT = "모든 사진 · 사진 목록에서 사진을 클릭하면 고른 사진만 모아 봅니다 (다시 클릭하면 빠집니다)"
 
@@ -3323,7 +3332,8 @@ class MainWindow(QMainWindow):
 
     def _open_photo(self, image_id: int) -> None:
         """A double click on a photo of the strip or of 16장 보기: on Simple the photo large (Detail) —
-        anywhere else (Detail, 3D, 16장 보기, Multi) Simple, as a double click on the view itself."""
+        on Detail another photo large there (its first click went to Simple: taken back), the photo
+        shown itself Simple; anywhere else (3D, 16장 보기, Multi) Simple, as a double click on the view."""
         tab = self._tab()
         if tab in ("all", "3d", "3d2"):
             self._to_simple()
@@ -3339,8 +3349,8 @@ class MainWindow(QMainWindow):
         self._pick_pre = None
         if tab == "grid":
             self._to_simple()
-        elif tab == "multi":
-            self._open_cell(image_id)
+        elif tab == "multi" and self._split_via == MULTI:
+            self.show_simple()                # (Multi: Simple, as a double click on one of its cells)
         else:
             self.open_large(image_id)
 
@@ -3783,7 +3793,7 @@ class MainWindow(QMainWindow):
         """Light up the toolbar buttons whose effect is on the photo (VK-2 pushed state)."""
         A = self.acts
         for ch in ("red", "green", "blue", "redfree"):
-            A[f"chan:{ch}"].setChecked(self._channel == ch or (ch == "green" and self._channel == "rnfl"))
+            A[f"chan:{ch}"].setChecked(self._channel == ch)
         A["auto"].setChecked(self._auto)
         A["negative"].setChecked(self._invert)
         A["slideshow"].setChecked(self._slide_timer.isActive())
@@ -3823,11 +3833,8 @@ class MainWindow(QMainWindow):
             v.setFocus()
         elif key.startswith("chan:"):
             ch = key[5:]
-            lit = "green" if self._channel == "rnfl" else self._channel   # (G 필터 is lit for ▾ RNFL 강화 too)
-            if checked is False and ch == lit:            # clicked the lit filter again
+            if checked is False and ch == self._channel:  # clicked the lit filter again
                 ch = "rgb"
-            elif checked and ch == "green" and self.settings.green_filter == "rnfl":
-                ch = "rnfl"                               # 설정 → 일반: the G 필터 button gives RNFL 강화
             self._push_history()
             self._channel = ch
             self._apply_adjust()

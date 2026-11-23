@@ -227,7 +227,7 @@ def test_images_load_from_a_settings_folder_with_spaces(app, tmp_path, monkeypat
 def test_toolbar_icons_are_colour_tiles_with_white_glyphs(app):
     """0.10.18: every toolbar icon is a rounded colour tile (photo thumbnails: a rounded photo) with
     clear corners; the glyph alone (``plain``) stays a light line drawing with no tile behind it.
-    (0.13.5: one of the looks of 보기 → 아이콘 모양 — "tile".)"""
+    (0.13.6: one of the looks of 보기 → 아이콘 모양 — "tile".)"""
     from fundusview.ui import icons
     from fundusview.ui.toolbars import COMMANDS, PROCESSING, icon_for
 
@@ -257,7 +257,7 @@ def test_toolbar_icons_are_colour_tiles_with_white_glyphs(app):
 
 
 def test_icon_looks_put_the_glyph_first(app):
-    """0.13.5: 보기 → 아이콘 모양 — the line looks have no tile and a glyph that fills its square, in few
+    """0.13.6: 보기 → 아이콘 모양 — the line looks have no tile and a glyph that fills its square, in few
     colours with a meaning ("group", as first set); the tile looks keep a tile but a quiet one."""
     from PySide6.QtGui import QColor
 
@@ -306,7 +306,7 @@ def test_icon_looks_put_the_glyph_first(app):
 
 
 def test_icon_look_is_chosen_in_the_view_menu(app, tmp_path):
-    """0.13.5: 보기 → 아이콘 모양 redraws every toolbar icon at once and is remembered."""
+    """0.13.6: 보기 → 아이콘 모양 redraws every toolbar icon at once and is remembered."""
     from fundusview.config import Settings
     from fundusview.db import Database
     from fundusview.ui import icons

@@ -5,7 +5,7 @@ with ``set_style`` (보기 → 아이콘 모양; ``STYLES``): the glyph alone as
 square — in one colour per kind of command ("group", as first set), light grey ("mono") or a colour
 of its own ("color") — or the glyph on a rounded square ("squircle") tile: a dark one ("dark"), one
 tinted with the glyph's colour ("tint"), a flat one in the colour of its kind ("flat"), or the
-colour tile with a gradient and a white glyph of before 0.13.5 ("tile").
+colour tile with a gradient and a white glyph of before 0.13.6 ("tile").
 ``icon(name, plain=True)`` is the glyph alone, as a light line drawing, for places that bring their
 own background (the ◀ ▶ over a photo, a badge) — the same in every look.
 """
