@@ -3683,9 +3683,12 @@ class MainWindow(QMainWindow):
             disc, fovea = self._find_marks(row, rgb)
             meta = json.loads(self.db.get_image(row["id"])["meta_json"] or "{}")
             meta["landmarks"] = imaging.LANDMARKS_VERSION
-            self.db.update_image(row["id"], meta_json=meta,
-                                 disc_x=disc[0] if disc else None, disc_y=disc[1] if disc else None,
-                                 fovea_x=fovea[0] if fovea else None, fovea_y=fovea[1] if fovea else None)
+            marks = {}
+            if disc is not None:                    # (nothing found now: what was found before stays —
+                marks = dict(disc_x=disc[0], disc_y=disc[1],                # a photo never loses its disc
+                             fovea_x=fovea[0] if fovea else None,           # by being looked at)
+                             fovea_y=fovea[1] if fovea else None)
+            self.db.update_image(row["id"], meta_json=meta, **marks)
             return self.db.get_image(row["id"])
         if row["fovea_x"] is not None or row["disc_x"] is None:
             return row

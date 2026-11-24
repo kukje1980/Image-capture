@@ -158,6 +158,17 @@ def test_marks_found_the_old_way_are_found_again_when_the_photo_is_shown(app, tm
         as_old(os_, sources={**json.loads(os_["meta_json"]).get("sources", {}), "disc": "manual"})
         w._show_image(os_["id"])
         assert (w.current["disc_x"], w.current["disc_y"]) == wrong
+        # nothing found the new way: the disc found before stays (0.13.11) — looked for once all the same
+        as_old(od)
+        w._fovea_tried.clear()
+        orig = imaging.detect_landmarks
+        imaging.detect_landmarks = lambda *a, **k: (None, None)
+        try:
+            w._show_image(od["id"])
+        finally:
+            imaging.detect_landmarks = orig
+        assert (w.current["disc_x"], w.current["disc_y"]) == wrong
+        assert json.loads(w.current["meta_json"])["landmarks"] == imaging.LANDMARKS_VERSION
     finally:
         w.close()
         db.close()

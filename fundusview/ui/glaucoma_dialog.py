@@ -1088,6 +1088,9 @@ S3_HINT = ("사진을 끌면 돌아갑니다. 사진의 색과 밝기는 찍힌 
            "100%가 깊은 컵 정도입니다.")
 S3_CD = ("입체 표면에서 기준 깊이보다 깊은 곳을 컵(노란 선)으로 본 추정값입니다. 디스크 경계(초록 선)는 "
          "[디스크 C/D] 탭의 초록 선입니다 — 거기서 맞추면 여기도 따라옵니다.")
+S3_NERVE = ("망막 위의 신경섬유가 유두로 모여 림을 넘어 뒤쪽 다발로 나가는 모습을 그린 설명용 그림입니다. 림이 얇은 "
+            "방향은 가닥이 줄어듭니다. 초록빛 구간은 사진의 결에서 방향을 읽은 곳이고, 나머지는 일반적인 주행 모양입니다 — "
+            "섬유 수나 두께를 잰 것이 아닙니다.")
 S3_SPREAD = 0.10         # two photos' vertical C/D further apart than this: say so
 S3_NO_CUP = "컵이 뚜렷하지 않아 이 표면에서는 C/D를 추정하지 못했습니다 — [디스크 C/D] 탭에서 직접 맞추세요."
 # one photo: three ways to the shape (disc3d.METHODS)
@@ -1248,6 +1251,36 @@ class Surface3DTab(_Tab):
         self.b_apply.setVisible(disc_tab is not None)
         self.side.addWidget(card("수직 C/D (추정)", self.lbl_cd, self.lbl_cd2, self.s_level, self.sw_lines,
                                  self.b_apply, _note(S3_CD)))
+        # the nerve behind the disc: a picture to explain with (off until asked for)
+        self._fields: dict = {}
+        self._fibres: tuple = (None, [], None)             # (what they were made for, the strands, the photo with them)
+        self.sw_nerve = Switch("시신경 다발 보기")
+        self.sw_nerve.setToolTip("망막 위 신경섬유가 유두로 모여 뒤로 나가는 모습을 그려 넣습니다 (설명용 그림)")
+        self.sw_rnfl = Switch("망막 위 신경섬유")
+        self.sw_rnfl.setChecked(True)
+        self.sw_read = Switch("사진에서 읽은 방향 따르기")
+        self.sw_read.setChecked(True)
+        self.sw_read.setToolTip("사진에 신경섬유층의 결이 보이는 곳에서는 가닥이 그 방향을 따릅니다 (초록빛 구간)")
+        self.sw_xray = Switch("망막 비쳐 보기")
+        self.sw_xray.setChecked(True)
+        self.sw_xray.setToolTip("망막을 반투명하게 해서 뒤쪽 다발이 비쳐 보이게 합니다")
+        self.sw_pulse = Switch("신호 흐름")
+        self.sw_pulse.setChecked(True)
+        self.s_strands = _Slider("가닥 수", 20, disc3d.FIBRE_MAX, 150, 10, lambda v: f"{v:.0f}")
+        self.lbl_nerve = _note()
+        self.lbl_nerve.setTextFormat(Qt.TextFormat.RichText)
+        self.nerve_note = _note(S3_NERVE)
+        self.nerve_rows = QWidget()                        # (shown with the option)
+        rows = QVBoxLayout(self.nerve_rows)
+        rows.setContentsMargins(0, 0, 0, 0)
+        rows.setSpacing(6)
+        for w in (self.sw_rnfl, self.sw_read, self.sw_xray, self.sw_pulse, self.s_strands, self.lbl_nerve,
+                  self.nerve_note):
+            rows.addWidget(w)
+        for sw in (self.sw_nerve, self.sw_rnfl, self.sw_read, self.sw_xray, self.sw_pulse):
+            sw.toggled.connect(lambda _on: self._restart())
+        self.s_strands.changed.connect(lambda _v: self._draw())
+        self.side.addWidget(card("시신경 다발 (그림)", self.sw_nerve, self.nerve_rows, lines=False))
         self.side.addStretch(1)
         self.view.pressed.connect(self._press)
         self.view.moved.connect(self._move)
@@ -1266,7 +1299,7 @@ class Surface3DTab(_Tab):
         onto the first."""
         self.field = field
         self.fields.set(field)
-        self._tex, self._heights = [], {}
+        self._tex, self._heights, self._fields, self._fibres = [], {}, {}, (None, [], None)
         size = np.empty((disc3d.TEX_PX, disc3d.TEX_PX, 3), np.uint8)
         for ph in self.photos:
             crop, _, _ = G.crop_square(ph.rgb, *ph.disc, self._factor() * ph.disc_px)
@@ -1414,9 +1447,13 @@ class Surface3DTab(_Tab):
     def _flickering(self) -> bool:
         return self.same_eye and len(self._tex) == 2 and self.sw_flick.isChecked()
 
+    def _pulsing(self) -> bool:
+        return self.sw_nerve.isChecked() and self.sw_pulse.isChecked()
+
     def _restart(self) -> None:
         self.speed.setVisible(self._flickering())
-        if self._tex and self.isVisible() and (self.sw_auto.isChecked() or self._flickering()):
+        self.nerve_rows.setVisible(self.sw_nerve.isChecked())
+        if self._tex and self.isVisible() and (self.sw_auto.isChecked() or self._flickering() or self._pulsing()):
             self._timer.start()
         else:
             self._timer.stop()
@@ -1599,10 +1636,56 @@ class Surface3DTab(_Tab):
             return none
         return b["xy"] * disc3d.TEX_PX, b["weight"] >= 0.4 * float(b["weight"].max())
 
+    # -- the nerve behind the disc ---------------------------------------------------------------
+    def temporal(self) -> float:
+        """The direction from the disc to the macula in the picture (radians, y down): to the
+        marked fovea, or by the eye — the macula of a right eye lies to the left of its disc."""
+        ph = self.photos[self.shown_photo()]
+        if ph.fovea is not None and ph.disc is not None:
+            dx, dy = ph.fovea[0] - ph.disc[0], ph.fovea[1] - ph.disc[1]
+            if math.hypot(dx, dy) > ph.disc_px:
+                return math.atan2(dy, dx)
+        return 0.0 if ph.eye == "OS" else math.pi
+
+    def fibres(self) -> tuple[list, np.ndarray, dict] | None:
+        """(the strands, the photo with those over the retina drawn on it, the disc outline) for
+        what is shown now — ``disc3d.fibre_paths`` — or None: the option is off or nothing is shown."""
+        H = self.heights()
+        if H is None or not self.sw_nerve.isChecked() or self.comparing():       # (나란히 비교: the shapes only)
+            return None
+        i = self.shown_photo()
+        found = self.cup()
+        disc = found[0] if found else self.disc_outline()
+        if found:
+            cup = found[1]
+        else:                                             # (no cup to see: every strand)
+            mid = np.asarray(G.centre(disc))
+            cup = {"poly": mid + (G.curve(disc) - mid) * 0.3}
+        read = self.sw_read.isChecked()
+        key = (i, self.source, self.current_method(), self.sw_flip.isChecked(), self.field, G.curve(disc).round(2).tobytes(), G.curve(cup).round(2).tobytes(),
+               self.s_strands.value(), self.depth_px(), read, self.sw_rnfl.isChecked())
+        if self._fibres[0] != key:
+            tex = self._tex[i]
+            if read and i not in self._fields:
+                self._fields[i] = disc3d.fibre_field(tex, 1.0 / self._factor())
+            paths = disc3d.fibre_paths(disc, cup, H, self.depth_px(), disc3d.TEX_PX, int(self.s_strands.value()),
+                                       self.temporal(), self._fields[i] if read else None, tex.sum(axis=2) > 60)
+            drawn = disc3d.fibres_on_texture(tex, paths) if self.sw_rnfl.isChecked() else tex
+            self._fibres = (key, paths, drawn)
+        return self._fibres[1], self._fibres[2], disc
+
     def _texture(self, method: str | None = None) -> np.ndarray:
         """The photo to lay on the surface, with the disc (green) and cup (yellow) lines on it, and
-        where the vessels bend (혈관 꺾임 · 하이브리드)."""
+        where the vessels bend (혈관 꺾임 · 하이브리드) — and the nerve's strands over the retina, when
+        they are shown."""
         tex = self._tex[self.shown_photo()]
+        nerve = self.fibres()
+        if nerve:
+            tex = nerve[1]
+            if self.sw_pulse.isChecked() and self.sw_rnfl.isChecked():
+                tex = tex.copy()
+                for x, y in disc3d.pulses(nerve[0], time.monotonic() - self._t0)[0]:
+                    cv2.circle(tex, (int(round(x * 8)), int(round(y * 8))), 20, (255, 250, 215), -1, cv2.LINE_AA, shift=3)
         found = self.cup(method=method) if self.sw_lines.isChecked() else None
         pts, used = self.bends(method) if self.sw_bends.isChecked() else (np.zeros((0, 2)), np.zeros(0, bool))
         if not found and not len(pts):
@@ -1626,6 +1709,12 @@ class Surface3DTab(_Tab):
         yaw, pitch = self._angles()
         kw = dict(light=1.0 if self.sw_light.isChecked() else 0.0, contours=self.sw_contour.isChecked(),
                   perspective=disc3d.VIEW_DIST)
+        nerve = self.fibres()
+        if nerve:
+            dots = (disc3d.pulses(nerve[0], time.monotonic() - self._t0, self.sw_rnfl.isChecked())[1]
+                    if self.sw_pulse.isChecked() else None)
+            kw.update(behind=disc3d.fibres_behind(nerve[0], nerve[2], self.depth_px(), disc3d.TEX_PX, dots),
+                      sheet_alpha=0.62 if self.sw_xray.isChecked() else 1.0)
         draw = disc3d.anaglyph if self.sw_ana.isChecked() else disc3d.render
         if self.comparing():                             # 나란히: each way to the shape, turned alike
             views = [draw(self._texture(key), self._surface(self.source, key)[0], self.depth_px(), yaw, pitch,
@@ -1657,6 +1746,13 @@ class Surface3DTab(_Tab):
     def _draw(self) -> None:
         self._report()
         self.view.set_rgb(self.compose())
+        nerve = self.fibres()
+        if nerve:
+            text = f"그려진 가닥 <b>{len(nerve[0])}</b> / {self.s_strands.value():.0f}"
+            if self.sw_read.isChecked() and self.sw_rnfl.isChecked():
+                text += (f"<br>사진에서 방향을 읽은 구간 <b style='color:{theme.GREEN}'>"
+                         f"{disc3d.read_share(nerve[0]) * 100:.0f}%</b>")
+            self.lbl_nerve.setText(text)
 
     def note(self) -> str:
         stereo = self.source == "stereo"
@@ -1672,7 +1768,7 @@ class Surface3DTab(_Tab):
             kind = ("(1장 추정)" if self.method == "pallor" else f"(1장 추정 · {S3_METHOD_NAMES[self.method]})")
         return ("녹내장 분석 — 유두 3D " + kind
                 + (f" · 추정 수직 C/D {m['vertical']:.2f}" if m else "")
-                + self._both_note())
+                + self._both_note() + (" · 시신경 다발 그림 표시" if self.sw_nerve.isChecked() else ""))
 
     def _both_note(self) -> str:
         v = self.both()

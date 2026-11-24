@@ -194,6 +194,8 @@ def test_fovea_can_correct_only_automatic_eye_guess(storage, monkeypatch, known_
     monkeypatch.setattr(imaging, "detect_disc", lambda *args, **kwargs: (10., 16., .9))
     monkeypatch.setattr(imaging, "laterality_from_disc", lambda *args: "OD")
     monkeypatch.setattr(imaging, "detect_fovea", lambda *args, **kwargs: (22., 16., .9, "OS"))
+    # (0.13.11: the importer finds the disc and the macula together)
+    monkeypatch.setattr(imaging, "detect_landmarks", lambda *args, **kwargs: ((10., 16., .9), (22., 16., .9, "OS")))
     result = imp.import_file(path, wait=False)
     assert result.status == "imported"
     stored = db.get_image(result.image_id)
