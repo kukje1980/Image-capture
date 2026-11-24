@@ -277,7 +277,7 @@ def test_icon_looks_put_the_glyph_first(app):
         return max(max(xs) - min(xs), max(ys) - min(ys))        # (a chevron is narrow, but tall)
 
     for name in names:
-        for look in ("group", "mono", "color"):
+        for look in ("group", "mono", "color", "accent"):
             img = picture(name, look)
             assert img.pixelColor(1, 1).alpha() == 0 and img.pixelColor(62, 62).alpha() == 0, (name, look)
             assert box(img) >= 34, (name, look)                     # the glyph is large …
@@ -294,6 +294,21 @@ def test_icon_looks_put_the_glyph_first(app):
                   and abs(img.pixelColor(x, y).red() - want.red()) + abs(img.pixelColor(x, y).green() - want.green())
                   + abs(img.pixelColor(x, y).blue() - want.blue()) < 12)
         assert hit > 25, name
+    # 0.13.10 "accent": the mono lines, and colour only where it says something — the retina in the colour of
+    # a fundus photo, the end in red; a glyph with nothing to say (a chevron) is the mono one
+    def near(img, color, tol=40):
+        c = QColor(color)
+        return sum(1 for x in range(64) for y in range(64)
+                   if img.pixelColor(x, y).alpha() == 255
+                   and abs(img.pixelColor(x, y).red() - c.red()) + abs(img.pixelColor(x, y).green() - c.green())
+                   + abs(img.pixelColor(x, y).blue() - c.blue()) < tol)
+
+    assert picture("prev", "accent") == picture("prev", "mono")
+    for name, color in (("glaucoma", icons.A_RETINA), ("fit", icons.A_RETINA), ("montage", icons.A_RETINA),
+                        ("exit", icons.A_RED), ("cd", icons.A_GREEN), ("cd", icons.A_YELLOW), ("angle", icons.A_YELLOW)):
+        assert near(picture(name, "accent"), color) > 15, (name, color)
+        assert near(picture(name, "mono"), color) == 0, (name, color)
+    assert near(picture("glaucoma", "accent"), "#e6e9ee") > 30          # … on light grey lines
     assert icons.group_of("simple") == icons.group_of("multi16") == icons.group_of("detail") == "view"
     assert icons.group_of("glaucoma") == icons.group_of("eye3d") == "exam" and icons.group_of("exit") == "danger"
     # the tiles of "dark" are all the same quiet grey; an unknown look is the first one
