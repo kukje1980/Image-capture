@@ -94,7 +94,8 @@ from .landmarks_view import LandmarkPhoto
 from .slit_scan import SLIT, ScanPhotoView, SlitScanShow, ViewTween
 from .thumbs import (DATE_ROLE, DockOverlay, EYE_ROLE, KIND_ROLE, PICK_ROLE, SECOND_COLOR, SECOND_ROLE, SHOWN, EyeRail,
                      ThumbDelegate, ThumbStrip, eye_badge_html, eye_row)
-from .toolbars import CHECKABLE, CMDBAR, COMMANDS, MENUS, PROCBAR, PROCESSING, GammaPopup, SliderPopup, icon_for
+from .toolbars import (CHECKABLE, CMDBAR, COMMANDS, MENUS, PROCBAR, PROCESSING, FitToolBar, GammaPopup, SliderPopup,
+                       icon_for)
 from .widgets import ElidedLabel, Segmented, Switch, card, segment
 from .widgets import row as setting_row
 
@@ -961,6 +962,9 @@ class MainWindow(QMainWindow):
                                     | Qt.ToolBarArea.TopToolBarArea)
         self.tb_cmd.setToolTip("명령 툴바 — 맨 위의 점 손잡이를 끌어 오른쪽이나 화면 위쪽으로 옮깁니다 "
                                "(오른쪽 클릭: 위치 고르기 — 큰 사진 아래에도)")
+        # a low window: its buttons get smaller rather than its last ones (Glaucoma · 인쇄 · 설정 · 종료)
+        # going behind the » at its end
+        self.cmd_fit = FitToolBar(self.tb_cmd, 28)
         self.tb_cmd.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tb_cmd.customContextMenuRequested.connect(self._cmdbar_menu)
         self._cmdbar_under = False               # … or in a row under the large photos, over the photo list

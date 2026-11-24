@@ -321,3 +321,56 @@ def test_the_command_toolbar_moves_to_the_right_or_the_top(tmp_path, demo_dir):
     finally:
         w.close()
         db.close()
+
+
+def test_command_toolbar_keeps_every_button_on_screen(tmp_path, demo_dir):
+    """A low window (a laptop · a display scaled 125 ~ 150 %): the buttons of the command toolbar get
+    smaller rather than its last ones — Glaucoma · 인쇄 · 설정 · 종료 — going behind the » (0.13.12)."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication
+
+    from fundusview.ui.toolbars import CMDBAR
+
+    app = QApplication.instance() or QApplication([])
+    w, db = _window(tmp_path, demo_dir)
+
+    def hidden():
+        tb = w.tb_cmd
+        out = []
+        for key in CMDBAR:
+            b = tb.widgetForAction(w.acts[key])
+            if not (b.isVisible() and tb.rect().contains(b.geometry())):
+                out.append(key)
+        return out
+
+    def settle():
+        for _ in range(10):
+            app.processEvents()
+
+    try:
+        w.resize(1920, 1080)
+        w.show()
+        settle()
+        tb = w.tb_cmd
+        assert w.cmd_fit.step == 0 and not hidden()                   # room: the large buttons with their names
+        assert tb.iconSize().width() == 28 and tb.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextUnderIcon
+        steps = []
+        for size in ((1366, 768), (1280, 720), (1280, 600), (1024, 520)):
+            w.resize(*size)
+            settle()
+            assert not hidden(), (size, hidden())
+            steps.append(w.cmd_fit.step)
+        assert steps[0] > 0 and steps == sorted(steps)                # lower window, smaller buttons
+        assert tb.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonIconOnly
+        assert "Glaucoma" in w.acts["glaucoma"].text() and w.acts["glaucoma"].toolTip()   # (its name: the tooltip)
+        w.resize(1920, 1080)                                          # … and back as soon as there is room
+        settle()
+        assert w.cmd_fit.step == 0 and tb.iconSize().width() == 28 and not hidden()
+        for where in ("top", "under"):                                # in a row as well
+            w.move_cmdbar(where)
+            w.resize(1280, 720)
+            settle()
+            assert not hidden(), (where, hidden())
+    finally:
+        w.close()
+        db.close()
