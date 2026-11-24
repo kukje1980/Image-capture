@@ -306,6 +306,9 @@ class MainWindow(QMainWindow):
                 # 9: no loupe over the large photos without a button (as before 0.10.16: the left button
                 # held) — and the photo list grows like the Dock as soon as the mouse is on it
                 settings.hover_loupe, settings.hover_preview = False, True
+            if settings.ui_version < 10:
+                # 10: the toolbar icons as light grey lines with colour only where it says something
+                settings.icon_style = "accent"
             settings.ui_version = self.UI_VERSION
         else:
             relabel = False
@@ -4946,7 +4949,7 @@ class MainWindow(QMainWindow):
     # -- 효과: 입체 조명 · 자동 회전 -----------------------------------------------------------
     RELIEF = 0.6            # strength of 입체 조명
     SPIN = 10.0             # 자동 회전, degrees per second
-    UI_VERSION = 9          # 2: the dark look — 자세히, 유리 공막 and 자동 회전 from the start; 3: the 3D tab
+    UI_VERSION = 10         # 2: the dark look — 자세히, 유리 공막 and 자동 회전 from the start; 3: the 3D tab
                             # as the web page (자세히, 황반·유두 자동으로 찾기); 4: the 3D eye shows the
                             # original photo (망막 입체 — 표면 높낮이 and 입체 조명 — off from the start);
                             # 5: the 3D wheel zooms, the depth is on the 깊이 막대 beside the eye;

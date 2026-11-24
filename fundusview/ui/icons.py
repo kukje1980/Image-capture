@@ -2,9 +2,9 @@
 
 ``icon(name)`` returns a QIcon for the toolbar keys used in the main window, in the look chosen
 with ``set_style`` (보기 → 아이콘 모양; ``STYLES``): the glyph alone as a line drawing that fills its
-square — in one colour per kind of command ("group", as first set), light grey ("mono") or a colour
-of its own ("color"), or light grey with colour only on the part that says what it is ("accent": the
-retina in the colour of a fundus photo, the disc green and its cup yellow, what is measured yellow …) — or the glyph on a rounded square ("squircle") tile: a dark one ("dark"), one
+square — light grey with colour only on the part that says what it is ("accent", as first set: the
+retina in the colour of a fundus photo, the disc green and its cup yellow, what is measured yellow …),
+in one colour per kind of command ("group"), light grey ("mono") or a colour of its own ("color") — or the glyph on a rounded square ("squircle") tile: a dark one ("dark"), one
 tinted with the glyph's colour ("tint"), a flat one in the colour of its kind ("flat"), or the
 colour tile with a gradient and a white glyph of before 0.13.6 ("tile").
 ``icon(name, plain=True)`` is the glyph alone, as a light line drawing, for places that bring their
@@ -65,11 +65,11 @@ TILE_OF = {
 # -- the looks (보기 → 아이콘 모양) -------------------------------------------------------------
 # (key, name in the menu, what it is) — in the order of the menu; the first is the one first set
 STYLES = (
+    ("accent", "모노 라인 + 포인트 색", "밝은 회색 선에, 뜻이 있는 곳에만 색 — 사진·망막은 망막색, 고른 것·보는 곳 파랑, "
+                                "측정 노랑, 디스크 초록 · 컵 노랑, 종료·지우기 빨강"),
     ("group", "기능별 색 라인", "타일 없이 그림만 크게 — 색은 기능별로: 탐색·파일 회색, 보기 파랑, 분석 초록, 측정 주황, "
                            "영상 처리 보라, 방향 청록, 종료·지우기 빨강"),
     ("mono", "모노 라인", "타일 없이 그림만 크게 — 모두 밝은 회색 선"),
-    ("accent", "모노 라인 + 포인트 색", "밝은 회색 선에, 뜻이 있는 곳에만 색 — 사진·망막은 망막색, 고른 것·보는 곳 파랑, "
-                                "측정 노랑, 디스크 초록 · 컵 노랑, 종료·지우기 빨강"),
     ("color", "컬러 라인", "타일 없이 그림만 크게 — 그림마다 제 색"),
     ("dark", "어두운 타일 + 컬러 그림", "차분한 어두운 타일 위에 색 그림"),
     ("tint", "옅은 색 타일 + 컬러 그림", "제 색을 옅게 깐 타일 위에 색 그림"),

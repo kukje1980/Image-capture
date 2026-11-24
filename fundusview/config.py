@@ -109,9 +109,9 @@ class Settings:
     # where the command toolbar is (dragged by the handle at its top): "left", "right", "top" — or "under"
     # (its right-click menu: in a row under the large photos, over the photo list)
     cmdbar_area: str = "left"
-    # the look of the toolbar icons (보기 → 아이콘 모양; ui/icons.py STYLES): "group" 기능별 색 라인 (처음 설정) ·
+    # the look of the toolbar icons (보기 → 아이콘 모양; ui/icons.py STYLES): "accent" 모노 라인 + 포인트 색 (처음 설정) · "group" ·
     # "mono" · "color" · "dark" · "tint" · "flat" · "tile" (the colour tiles of before 0.13.6)
-    icon_style: str = "group"
+    icon_style: str = "accent"
     # … and what is written on its photos (보기 → 사진 목록 표시): the exam date, the kind of photo
     # (컬러 · 몽타주 …). The eye is said once per row, at its left.
     thumb_date: bool = True
