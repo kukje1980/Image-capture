@@ -322,7 +322,7 @@ def test_main_window_tools(app, tmp_path, demo_dir, import_and_wait):
         assert w.tb_proc.isHidden() and not w.acts["tools"].isChecked()
         w._on_action("tools")
         assert w.tb_proc.isVisible()
-        # 0.13.7: 확대 · 연속 · 히스토그램 · 이동 · 돋보기 · 회색조 · 지우기 are not on the toolbar (the 영상 처리
+        # 0.13.9: 확대 · 연속 · 히스토그램 · 이동 · 돋보기 · 회색조 · 지우기 are not on the toolbar (the 영상 처리
         # menu has them); a lit tool button again: back to 확대
         for gone in ("tool:zoom", "slideshow", "histogram", "tool:pan", "tool:loupe", "tool:profile", "annot_undo"):
             assert w.tb_proc.widgetForAction(w.acts[gone]) is None, gone

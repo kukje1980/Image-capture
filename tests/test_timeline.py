@@ -239,7 +239,7 @@ def test_main_window_collects_the_photos_of_the_eye(app, tmp_path, import_and_wa
     try:
         w.show()
         btn = w.tb_cmd.widgetForAction(w.acts["glaucoma"])
-        assert [a.text() for a in btn.menu().actions()][1].startswith("시간별 비교")
+        assert [a.text() for a in btn.menu().actions()][2].startswith("시간별 비교")
         import_and_wait(app, w, [demo_dir / "PatientCapture", demo_dir / "RetiCam"])
         first = None
         for pt in w.db.list_patients():                             # a patient with two photos of one eye

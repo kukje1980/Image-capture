@@ -39,8 +39,8 @@ COMMANDS = (
     ("search", "환자 검색", "환자 ID·이름으로 찾기 (Ctrl+F)", "search", "ID# SEARCH"),
     ("list", "환자 목록", "환자 목록 창 열기/닫기 (Ctrl+0) — 환자를 찾아 두 번 누르면 그 환자의 사진", "log",
      "OPEN LIST"),
-    ("prev", "이전", "이전 사진 (PageUp · ←)", "prev", "PREV"),
-    ("next", "다음", "다음 사진 (PageDown · →)", "next", "NEXT"),
+    ("prev", "이전", "이전 사진 (PageUp · ←) — 사진 왼쪽 끝의 ◀ 와 같음: Simple · Multi에서는 고른 칸에 같은 눈의 이전 사진", "prev", "PREV"),
+    ("next", "다음", "다음 사진 (PageDown · →) — 사진 오른쪽 끝의 ▶ 와 같음: Simple · Multi에서는 고른 칸에 같은 눈의 다음 사진", "next", "NEXT"),
     ("view:simple", "Simple", "Simple (Ctrl+1) — 누르면 최신 OD | OS 두 장 (OD 왼쪽 · OS 오른쪽)\n"
                               "사진 목록을 클릭하면 더하고(번호) 다시 클릭하면 뺍니다 — 고른 장수에 맞게 화면이 나뉩니다 "
                               "(1 · 2 · 4 · 6 · 9 · 16)\n칸을 누르면 그 사진만 보정 · 아래 사진을 더블클릭: 크게 보기 (Detail)",
@@ -56,16 +56,16 @@ COMMANDS = (
     ("edit", "정보 수정", "이 사진의 환자·검사 정보 수정/환자 지정", "edit", "EDIT DATA"),
     ("import", "가져오기", "사진 파일 가져오기 — ▾ 로 폴더·지금 검사", "import", "CAPTURE"),
     ("save", "저장", "편집 영상 저장 — ▾ 로 파일·환자 기록·클립보드", "save", "SAVE"),
-    ("discpair", "디스크 2장", "고른 두 사진(Ctrl+클릭)의 시신경 유두만 확대해 한 장으로 — 보험 청구용",
-     "discpair", "—"),
+    ("discpair", "스테레오 보기", "고른 두 사진(같은 눈 — 사진 목록에서 차례로 클릭)을 스테레오로: 위글 · 평행 · 교차 · "
+                              "적청 · 깊이 지도 — 보험 청구용 한 장도 그 안에", "discpair", "—"),
     ("view3d", "3D", "광각 사진을 3D 안구 모형으로 보기 (Ctrl+3) — 다시 누르면 보던 화면으로\n"
                      "Simple에 사진이 두 장이면 두 장 모두 3D로 나란히", "eye3d", "—"),
     ("montage", "Montage", "몽타주 — Simple · Multi에서 고른 사진(2장 이상, 같은 눈)을 자동·수동으로 맞춰 한 장으로 "
                            "합칩니다\n반투명 겹치기 · 기준점 맞추기 · 3D 안구에서 보기", "montage", "—"),
     ("glaucoma", "Glaucoma", "녹내장 분석 — 보고 있는 사진의 디스크 C/D · 유두 3D 입체 · 광각 RNFL 분석,\n"
-                             "두 번째 사진을 Ctrl+클릭(②)하면 스테레오 보기 · 경과 비교(깜빡임)\n"
-                             "▾ 시간별 비교: 같은 눈의 유두 사진 여러 장을 시간순으로 나란히 · 겹쳐서\n"
-                             "▾ 디스크 2장: 두 사진의 시신경 유두만 확대해 한 장으로 (보험 청구용)", "glaucoma", "—"),
+                             "사진 목록에서 같은 눈의 사진 두 장을 클릭해 고르면 (몽타주처럼) 스테레오 보기 · 경과 비교(깜빡임)\n"
+                             "▾ 스테레오 보기: 고른 두 사진을 위글 · 평행 · 교차 · 적청 · 깊이 지도로 (보험 청구용 한 장도 그 안에)\n"
+                             "▾ 시간별 비교: 같은 눈의 유두 사진 여러 장을 시간순으로 나란히 · 겹쳐서", "glaucoma", "—"),
     ("print", "인쇄", "화면 영상과 환자 정보를 인쇄", "print", "PRINT"),
     ("settings", "설정", "감시 폴더·라이브러리·파일 이름 규칙", "settings", "—"),
     ("exit", "종료", "프로그램 종료", "exit", "EXIT"),
@@ -110,7 +110,7 @@ PROCESSING = (
     ("annot_undo", "지우기", "마지막 측정·글자 지우기 (Delete) — ▾ 로 모두", "annot_clear", "—"),
 )
 
-# in the 영상 처리 menu (and the keys: wheel · drag · Delete) but not on the toolbar — 0.13.7
+# in the 영상 처리 menu (and the keys: wheel · drag · Delete) but not on the toolbar — 0.13.9
 PROCBAR_HIDDEN = ("tool:zoom", "slideshow", "histogram", "tool:pan", "tool:loupe", "tool:profile", "annot_undo")
 # the image processing toolbar, left to right
 PROCBAR = tuple(spec for spec in PROCESSING if spec is None or spec[0] not in PROCBAR_HIDDEN)
@@ -126,8 +126,8 @@ MENUS = {
     "tool:text": (("tool:text", "글자"), ("tool:arrow", "화살표 + 글자")),
     "annot_undo": (("annot_undo", "마지막 측정 지우기"), ("annot_clear", "측정·글자 모두 지우기")),
     "multi": tuple((f"multi:{n}", f"{n}장") for n in (1, 2, 4, 6, 9, 16)),     # Simple's 화면 분할
-    "glaucoma": (("glaucoma", "녹내장 분석"), ("timeline", "시간별 비교 (이 눈의 유두 사진 여러 장)"),
-                 ("discpair", "디스크 2장 (보험 청구용)")),
+    "glaucoma": (("glaucoma", "녹내장 분석"), ("discpair", "스테레오 보기 (고른 두 사진)"),
+                 ("timeline", "시간별 비교 (이 눈의 유두 사진 여러 장)")),
     # None = separator; region:* zoom onto a part of an (ultra-)wide-field photo
     "fit": (("fit", "화면에 맞춤"), ("actual", "100% (실제 크기)"), ("zoom2", "200%"), ("zoom4", "400%"),
             ("zoom8", "800%"), None,

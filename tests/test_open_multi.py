@@ -618,8 +618,15 @@ def test_arrows_at_the_sides_of_a_photo_and_the_arrow_keys(win):
     assert _cells(w) == ([od3, os2, od2], os2)
     QTest.keyClick(w.thumbs, Qt.Key.Key_Left)
     assert _cells(w) == ([od3, os2, od2], od3) and w.picks() == [od3, os2, od2]
-    w._on_action("next")                                          # 다음 (PageDown): the same
-    assert w.current["id"] == os2 and w._tab() == "multi"
+    # 이전 / 다음 of the toolbar (PageUp · PageDown): as ◀ ▶ on the selected cell — the same eye, in its place
+    w._on_action("next")
+    assert _cells(w) == ([sheet, os2, od2], sheet) and w.picks() == [sheet, os2, od2] and w._tab() == "multi"
+    w._on_action("prev")
+    assert _cells(w) == ([od3, os2, od2], od3)
+    w._on_action("prev")                                          # (rf3 before od3)
+    assert _cells(w) == ([rf3, os2, od2], rf3)
+    w._on_action("prev")                                          # nothing before it: stays
+    assert _cells(w) == ([rf3, os2, od2], rf3)
 
 
 @pytest.mark.parametrize("way", ["grid", "odos"])
