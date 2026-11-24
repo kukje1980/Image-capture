@@ -2025,8 +2025,8 @@ class EyeView(QOpenGLWidget):
     # -- GL ------------------------------------------------------------------
     def initializeGL(self) -> None:
         try:
-            from OpenGL import GL as gl
-            self.gl = gl
+            from .glbind import gl as _gl
+            gl = self.gl = _gl()          # (Windows: the library Qt's context lives in — glbind.py)
             # a new context (e.g. after re-parenting) owns none of the old buffers
             self._loc.clear()
             self._meshes, self._keys, self._stale = {}, {}, []
