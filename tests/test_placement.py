@@ -212,3 +212,48 @@ def test_old_libraries_get_the_fovea_columns(tmp_path):
     finally:
         db.close()
     Database(path).close()                                                       # opening again: nothing to add
+
+
+def _bright_patches(rgb, circle, where, n, spread, size, seed=1):
+    """Yellow-white blobs (hard exudates, laser scars) around ``where`` (fractions of the circle radius)."""
+    rng = np.random.default_rng(seed)
+    out = rgb.astype(np.float32)
+    cx, cy, r = circle
+    yy, xx = np.mgrid[0:rgb.shape[0], 0:rgb.shape[1]]
+    for _ in range(n):
+        x, y = cx + (where[0] + rng.normal(0, spread)) * r, cy + (where[1] + rng.normal(0, spread)) * r
+        s = size * r * rng.uniform(0.6, 1.6)
+        m = np.exp(-((xx - x) ** 2 + (yy - y) ** 2) / (2 * s * s))[..., None]
+        out = out * (1 - m) + np.array([255.0, 235.0, 150.0]) * m
+    return out.clip(0, 255).astype(np.uint8)
+
+
+@pytest.mark.parametrize("eye,gaze,patches", [
+    ("OS", (10.0, 5.0), dict(where=(0.2, -0.4), n=10, spread=0.05, size=0.03)),  # a plaque of exudates
+    ("OS", (30.0, 0.0), dict(where=(0.2, -0.4), n=10, spread=0.05, size=0.03)),  # a plaque; the disc far out
+    ("OD", (-30.0, 10.0), None),                                                 # the disc beyond the search radius
+])
+def test_disc_and_macula_are_found_together_not_a_bright_lesion(eye, gaze, patches):
+    """An ultra-wide photo (176°) with bright lesions, or with the eye turned so that the disc lies
+    further out than the device's search radius: the strongest contrast alone is a lesion (or half a
+    disc at the edge of the search) — the nerve would leave the 3D eye beside the photo's disc.
+    ``detect_landmarks`` takes the bright place that has a macula where a disc's macula lies."""
+    rgb = demo.synth_fundus(eye=eye, fov_deg=176.0, size=(768, 768), gaze=gaze, seed=1)
+    circle = imaging.detect_circle(rgb)
+    cam = placement.Camera(*circle, 176.0, "internal", "equidistant")
+    if patches:
+        rgb = _bright_patches(rgb, circle, **patches)
+    turn = demo.gaze_rotation(*gaze) if gaze else np.eye(3)
+    true_disc, true_fovea = cam.pixel(turn.T @ placement.anatomical_disc(eye)), cam.pixel(turn.T @ placement.POLE)
+    per_deg = cam.r / math.degrees(cam.tmax)
+
+    old = imaging.detect_disc(rgb, circle, disc_frac=3.8 / math.degrees(cam.tmax), search=0.5)
+    assert old is None or math.hypot(old[0] - true_disc[0], old[1] - true_disc[1]) > 5 * per_deg   # (the trap works)
+
+    disc, fovea = imaging.detect_landmarks(rgb, cam, eye, search=0.5)
+    assert disc is not None and math.hypot(disc[0] - true_disc[0], disc[1] - true_disc[1]) < 2.5 * per_deg
+    assert fovea is not None and math.hypot(fovea[0] - true_fovea[0], fovea[1] - true_fovea[1]) < 3.5 * per_deg
+    # … so in 3D the macula is at the posterior pole (straight behind the pupil) and the nerve at the disc
+    pl = placement.place(cam, fovea=fovea[:2], disc=disc[:2], laterality=eye)
+    assert pl.by == "fovea" and placement.angle_between(pl.fovea, placement.POLE) < 1e-6
+    assert placement.angle_between(pl.disc, placement.anatomical_disc(eye)) < 4.0

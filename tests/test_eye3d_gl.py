@@ -96,7 +96,10 @@ def _at(v, p, r: int = 0):
 @pytest.mark.parametrize("detail", ["simple", "detailed"])
 def test_closed_eye_front(eye, detail):
     px = _render(eye, detail, yaw=0.0, pitch=0.0, dist=3.3)
-    assert sum(px(0.5, 0.5)) < (60 if detail == "detailed" else 110)   # pupil (simple: under a glassy cornea)
+    # the pupil is not black: the retina behind it is seen through it — the photo's macula (fundus orange)
+    samples = [px(0.5 + dx, 0.5 + dy) for dx in (-0.03, 0.03) for dy in (-0.03, 0.03)]
+    r, g, b = (sum(c[i] for c in samples) / len(samples) for i in range(3))
+    assert r > g > b and r > 90
     r, g, b = px(0.5 + 0.11, 0.5)                      # iris stroma, nasal of the pupil
     assert r > b + 15 and r > g
     assert min(px(0.5, 0.17)) > 150                    # sclera above the cornea, lit
