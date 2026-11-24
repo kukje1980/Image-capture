@@ -110,6 +110,11 @@ PROCESSING = (
     ("annot_undo", "지우기", "마지막 측정·글자 지우기 (Delete) — ▾ 로 모두", "annot_clear", "—"),
 )
 
+# in the 영상 처리 menu (and the keys: wheel · drag · Delete) but not on the toolbar — 0.13.9
+PROCBAR_HIDDEN = ("tool:zoom", "slideshow", "histogram", "tool:pan", "tool:loupe", "tool:profile", "annot_undo")
+# the image processing toolbar, left to right
+PROCBAR = tuple(spec for spec in PROCESSING if spec is None or spec[0] not in PROCBAR_HIDDEN)
+
 # Drop-down extras of a button (key, label)
 MENUS = {
     "op:sharpen": (("op:sharpen_light", "선명하게 (약)"), ("op:sharpen", "선명하게"),
