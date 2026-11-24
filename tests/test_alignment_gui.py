@@ -112,3 +112,63 @@ def test_alignment_setting_is_kept(tmp_path):
     from fundusview.config import Settings
 
     assert Settings(library_dir=str(tmp_path / "lib")).align3d is True
+
+
+def test_marks_found_the_old_way_are_found_again_when_the_photo_is_shown(app, tmp_path, demo_dir, import_and_wait):
+    """A photo imported by an older version (its disc may be a bright lesion): shown for the first time, its
+    disc and macula are found again, together — once; marks made by hand are left alone."""
+    import json
+
+    from fundusview import imaging
+    from fundusview.config import Settings, WatchFolder
+    from fundusview.db import Database
+    from fundusview.ui.main_window import MainWindow
+
+    s = Settings(library_dir=str(tmp_path / "lib"), stable_seconds=0.05, rescan_seconds=0,
+                 watch_folders=[WatchFolder(path=str(demo_dir))], watch_on_startup=False)
+    db = Database(tmp_path / "lib" / "fundus.db")
+    w = MainWindow(s, db)
+    try:
+        w.resize(1500, 950)
+        w.show()
+        import_and_wait(app, w, [demo_dir / "RetiCam"])
+        w._select_patient_ref(db.find_patient("PID20260310-0A1B2C3D")["id"])
+        app.processEvents()
+        rows = [r for r in db.images_for_patient(w.current["patient_ref"]) if r["modality"] != "montage"]
+        od, os_ = (next(r for r in rows if r["laterality"] == eye) for eye in ("OD", "OS"))
+        assert json.loads(od["meta_json"])["landmarks"] == imaging.LANDMARKS_VERSION     # (stamped at import)
+        cx, cy, r = od["circle_cx"], od["circle_cy"], od["circle_r"]
+        wrong = (cx - 0.3 * r, cy + 0.35 * r)
+
+        def as_old(row, **more):                 # as an older version left it: no stamp, the disc on a "lesion"
+            meta = json.loads(row["meta_json"])
+            meta.pop("landmarks", None)
+            meta.update(more)
+            db.update_image(row["id"], meta_json=meta, disc_x=wrong[0], disc_y=wrong[1], fovea_x=None, fovea_y=None)
+
+        as_old(od)
+        w._fovea_tried.clear()
+        w._show_image(od["id"])
+        row = w.current
+        assert np.hypot(row["disc_x"] - od["disc_x"], row["disc_y"] - od["disc_y"]) < 0.03 * r
+        assert row["fovea_x"] is not None and np.hypot(row["fovea_x"] - cx, row["fovea_y"] - cy) < 0.04 * r
+        assert json.loads(row["meta_json"])["landmarks"] == imaging.LANDMARKS_VERSION
+        assert w.eye3d.placement.by == "fovea" and w.eye3d.disc_dir[0] > 0.25         # the nerve at the photo's disc
+        # a disc marked by hand is not looked for again
+        as_old(os_, sources={**json.loads(os_["meta_json"]).get("sources", {}), "disc": "manual"})
+        w._show_image(os_["id"])
+        assert (w.current["disc_x"], w.current["disc_y"]) == wrong
+        # nothing found the new way: the disc found before stays (0.13.11) — looked for once all the same
+        as_old(od)
+        w._fovea_tried.clear()
+        orig = imaging.detect_landmarks
+        imaging.detect_landmarks = lambda *a, **k: (None, None)
+        try:
+            w._show_image(od["id"])
+        finally:
+            imaging.detect_landmarks = orig
+        assert (w.current["disc_x"], w.current["disc_y"]) == wrong
+        assert json.loads(w.current["meta_json"])["landmarks"] == imaging.LANDMARKS_VERSION
+    finally:
+        w.close()
+        db.close()

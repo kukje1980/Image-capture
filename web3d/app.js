@@ -1151,7 +1151,7 @@ function paintScene(w, h) {
       drawMesh(dynamic('nerve', E.discDir.map((x) => x.toFixed(6)).join() + E.laterality, () => nerveMesh(E.discDir, E.laterality)));
     }
     if (E.showMuscles) { use('tissue', { kind: 5 }); drawMesh(R.meshes[E.laterality === 'OS' ? 'muscles_OS' : 'muscles_OD']); }
-    if (closed && !within) { use('cornea'); drawMesh(R.meshes.cornea); }
+    if (closed && !within) { use('cornea', mapping); drawMesh(R.meshes.cornea); }   // (the photo: seen through the pupil)
   }
   if (!closed || glass > 0 || within) {
     if (inside || half || E.cut > K.IRIS_BACK_Z) {

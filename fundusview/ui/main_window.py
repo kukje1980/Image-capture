@@ -3635,9 +3635,62 @@ class MainWindow(QMainWindow):
         found = imaging.detect_fovea(rgb, cam, (row["disc_x"], row["disc_y"]), row["laterality"])
         return None if found is None else (found[0], found[1])
 
+    def _find_marks(self, row, rgb, circle=None) -> tuple:
+        """The disc and the macula of a photo, found together (``imaging.detect_landmarks``: a bright
+        lesion is not taken for the disc): ``(disc, fovea)`` in pixels, None where not found. An eye
+        that was only guessed is set from the side of the disc the macula is on."""
+        prof = get_profile(row["profile"])
+        circle = circle or ((row["circle_cx"], row["circle_cy"], row["circle_r"]) if row["circle_r"] else None)
+        if circle is None or row["modality"] in ("montage", "anterior"):
+            return None, None
+        cam = placement.Camera(*circle, row["fov_deg"] or prof.fov_deg, row["fov_type"] or prof.fov_type,
+                               row["projection"] or prof.projection, prof.viewpoint, prof.radial_c)
+        try:
+            src = json.loads(row["meta_json"] or "{}").get("sources", {}).get("laterality")
+        except (ValueError, TypeError):
+            src = None
+        guessed = row["laterality"] not in ("OD", "OS") or src in ("disc-estimate", "fovea-estimate")
+        disc, found = imaging.detect_landmarks(rgb, cam, None if guessed else row["laterality"],
+                                               search=prof.disc_search)
+        if row["modality"] in ("disc", "glaucoma"):
+            found = None
+        if guessed:
+            if found is not None and found[3] != row["laterality"]:
+                self._set_laterality(row["id"], found[3], "fovea-estimate")
+            elif found is None and row["laterality"] not in ("OD", "OS") and disc is not None:
+                eye = imaging.laterality_from_disc(disc, circle)
+                if eye:
+                    self._set_laterality(row["id"], eye, "disc-estimate")
+        return (disc[:2] if disc else None), (found[:2] if found else None)
+
     def _ensure_fovea(self, row):
-        """A photo imported before the fovea was looked for: find it once, when the photo is first shown."""
-        if row["fovea_x"] is not None or row["disc_x"] is None or row["id"] in self._fovea_tried:
+        """When a photo is first shown: its disc and macula found the way of an older version are found
+        again, together (once; marks made by hand stay), and a photo imported before the fovea was
+        looked for gets its fovea."""
+        if row["id"] in self._fovea_tried:
+            return row
+        try:
+            version = int(json.loads(row["meta_json"] or "{}").get("landmarks") or 1)
+        except (ValueError, TypeError):
+            version = 1
+        by_hand = self._by_hand(row, "disc") or self._by_hand(row, "fovea")
+        if (version < imaging.LANDMARKS_VERSION and not by_hand and row["circle_r"]
+                and row["modality"] not in ("montage", "anterior")):
+            self._fovea_tried.add(row["id"])
+            rgb = self._load(row)
+            if rgb is None:
+                return row
+            disc, fovea = self._find_marks(row, rgb)
+            meta = json.loads(self.db.get_image(row["id"])["meta_json"] or "{}")
+            meta["landmarks"] = imaging.LANDMARKS_VERSION
+            marks = {}
+            if disc is not None:                    # (nothing found now: what was found before stays —
+                marks = dict(disc_x=disc[0], disc_y=disc[1],                # a photo never loses its disc
+                             fovea_x=fovea[0] if fovea else None,           # by being looked at)
+                             fovea_y=fovea[1] if fovea else None)
+            self.db.update_image(row["id"], meta_json=meta, **marks)
+            return self.db.get_image(row["id"])
+        if row["fovea_x"] is not None or row["disc_x"] is None:
             return row
         self._fovea_tried.add(row["id"])
         rgb = self._load(row)
@@ -4854,22 +4907,10 @@ class MainWindow(QMainWindow):
             self._set_landmark_source(iid, field, None)
         row = self.db.get_image(iid)
         circle = (row["circle_cx"], row["circle_cy"], row["circle_r"]) if row["circle_r"] else imaging.detect_circle(rgb)
-        prof = get_profile(row["profile"])
-        cam = self._photo_camera(row)
-        tmax = math.degrees(cam.tmax) if cam is not None else 45.0
-        disc = imaging.detect_disc(rgb, circle, disc_frac=min(0.25, 3.8 / max(tmax, 5.0)), search=prof.disc_search)
-        fovea = None
-        if disc is not None and cam is not None:
-            try:
-                src = json.loads(row["meta_json"] or "{}").get("sources", {}).get("laterality")
-            except (ValueError, TypeError):
-                src = None
-            guessed = row["laterality"] not in ("OD", "OS") or src in ("disc-estimate", "fovea-estimate")
-            found = imaging.detect_fovea(rgb, cam, disc[:2], None if guessed else row["laterality"], with_side=True)
-            if found is not None:
-                fovea = found[:2]
-                if guessed and found[3] != row["laterality"]:
-                    self._set_laterality(iid, found[3], "fovea-estimate")
+        disc, fovea = self._find_marks(row, rgb, circle)
+        meta = json.loads(self.db.get_image(iid)["meta_json"] or "{}")
+        meta["landmarks"] = imaging.LANDMARKS_VERSION
+        self.db.update_image(iid, meta_json=meta)
         self.db.update_image(iid, disc_x=disc[0] if disc else None, disc_y=disc[1] if disc else None,
                              fovea_x=fovea[0] if fovea else None, fovea_y=fovea[1] if fovea else None)
         self._fovea_tried.add(iid)
@@ -5030,6 +5071,7 @@ class MainWindow(QMainWindow):
             row = self.db.get_image(iid)
             if row is None:
                 return False
+            row = self._ensure_fovea(row)
             k = 1.0
             rgb = self._small_photo(row, 2048) if len(ids) > 2 and row["width"] else None
             if rgb is not None:
@@ -5980,14 +6022,14 @@ class MainWindow(QMainWindow):
         if rgb is None:
             return
         circle = imaging.detect_circle(rgb)
-        prof = get_profile(row["profile"])
-        tmax = math.degrees(proj.theta_max(row["fov_deg"] or prof.fov_deg, row["fov_type"] or prof.fov_type,
-                                           prof.viewpoint))
-        disc = imaging.detect_disc(rgb, circle, disc_frac=min(0.25, 3.8 / max(tmax, 5)), search=prof.disc_search)
-        self.db.update_image(image_id, circle_cx=circle[0], circle_cy=circle[1], circle_r=circle[2],
+        disc, fovea = (self._find_marks(row, rgb, circle) if row["modality"] not in ("montage", "anterior")
+                       else (None, None))
+        meta = json.loads(self.db.get_image(image_id)["meta_json"] or "{}")
+        meta["landmarks"] = imaging.LANDMARKS_VERSION
+        self.db.update_image(image_id, circle_cx=circle[0], circle_cy=circle[1], circle_r=circle[2], meta_json=meta,
                              disc_x=disc[0] if disc else None, disc_y=disc[1] if disc else None,
-                             fovea_x=None, fovea_y=None)
-        self._fovea_tried.discard(image_id)     # looked for again when shown
+                             fovea_x=fovea[0] if fovea else None, fovea_y=fovea[1] if fovea else None)
+        self._fovea_tried.add(image_id)
         self._show_image(image_id)
 
     def _remove_image(self, image_id: int) -> None:

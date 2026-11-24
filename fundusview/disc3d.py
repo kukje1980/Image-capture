@@ -15,6 +15,11 @@ seen: its own colours and its own light (:func:`shade` adds only what turning it
 depth a real cup has — the front view is the photo as it was taken.
 
 Heights run from -1 (deepest) to about +1, 0 = the retina around the disc; x right, y down.
+
+The **nerve behind the disc** (시신경 다발) is a picture to explain with, not a finding: strands run over
+the retina into the disc, across the rim and out behind as one bundle (:func:`fibre_paths`). Where
+the photo shows the stripes of the nerve fibre layer their direction is read off it
+(:func:`fibre_field`) and the strands follow it; elsewhere they follow the usual course.
 """
 from __future__ import annotations
 
@@ -681,7 +686,8 @@ def shade(tex: np.ndarray, H: np.ndarray, depth_px: float, R: np.ndarray, streng
 
 def render(tex: np.ndarray, H: np.ndarray, depth_px: float, yaw_deg: float = 0.0, pitch_deg: float = 0.0,
            out_px: int | None = None, zoom: float = 0.86, light: float = 1.0, contours: bool = False,
-           background=(0, 0, 0), perspective: float = 0.0) -> np.ndarray:
+           background=(0, 0, 0), perspective: float = 0.0, behind: dict | None = None,
+           sheet_alpha: float = 1.0) -> np.ndarray:
     """The square photo ``tex`` on the surface ``H`` (heights -1…1, ``depth_px`` texture pixels
     for 1, towards the viewer) seen turned by ``yaw`` / ``pitch``, as an ``out_px``² RGB picture.
 
@@ -693,6 +699,9 @@ def render(tex: np.ndarray, H: np.ndarray, depth_px: float, yaw_deg: float = 0.0
     ``perspective``: the camera this many sides of the picture away (0: none, parallel rays) — the
     near side of the turned sheet is then larger than the far one, as a thing in front of the eye is.
     The sheet's own depth sets the size (the relief's height on it is small against the distance).
+
+    ``behind`` (:func:`fibres_behind`) is drawn under the sheet — seen beside it, and through it
+    when ``sheet_alpha`` < 1 (with the same ``perspective`` as the sheet).
     """
     n = tex.shape[0]
     out_px = out_px or n
@@ -749,8 +758,17 @@ def render(tex: np.ndarray, H: np.ndarray, depth_px: float, yaw_deg: float = 0.0
     qx, qy = (seen - cc) / q, (ry - cc) / q
     tx = (ct + cs * qx - sn * qy).astype(np.float32)
     ty = (ct + sn * qx + cs * qy).astype(np.float32)
-    return cv2.remap(src, tx, ty, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT,
-                     borderValue=tuple(int(v) for v in background))
+    out = cv2.remap(src, tx, ty, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT,
+                    borderValue=tuple(int(v) for v in background))
+    if not behind:
+        return out
+    back = np.empty_like(out)
+    back[:] = tuple(int(v) for v in background)
+    _draw_behind(back, behind, R, n, out_px, zoom, perspective)
+    on = ((seen > -1e5) & (tx > -0.5) & (tx < n - 0.5) & (ty > -0.5) & (ty < n - 0.5))[..., None]    # where the photo is
+    a = float(np.clip(sheet_alpha, 0.0, 1.0))
+    sheet = out if a >= 1.0 else cv2.addWeighted(out, a, back, 1.0 - a, 0.0)
+    return np.where(on, sheet, back)
 
 
 def anaglyph(tex: np.ndarray, H: np.ndarray, depth_px: float, yaw_deg: float, pitch_deg: float,
@@ -759,3 +777,271 @@ def anaglyph(tex: np.ndarray, H: np.ndarray, depth_px: float, yaw_deg: float, pi
     left = render(tex, H, depth_px, yaw_deg - eye_deg, pitch_deg, **kw)
     right = render(tex, H, depth_px, yaw_deg + eye_deg, pitch_deg, **kw)
     return G.anaglyph(left, right)
+
+
+# -- the nerve behind the disc (a picture to explain with) ----------------------------------------
+FIBRE_MAX = 300          # strands at most
+FIBRE_STEP = 0.045       # a step over the retina, of half the picture
+FIBRE_STEPS = 44
+FIELD_MIN = 0.2          # the photo's stripes: less sure of their direction than this is not read
+BUNDLE = 0.56            # the bundle's width against the disc's
+STRAND_RGB = (255, 242, 200)
+READ_RGB = (95, 240, 192)        # a stretch whose direction was read off the photo
+_GOLDEN = 0.6180339887
+
+
+def _seeds() -> np.ndarray:
+    """The strands' fixed traits, (FIBRE_MAX, 6): angle round the disc, the rim it needs, place in
+    the bundle, place across the rim, phase, speed. Any first part of them is spread evenly."""
+    rng = np.random.default_rng(11)
+    i = np.arange(FIBRE_MAX)
+    a = ((i * _GOLDEN + rng.random(FIBRE_MAX) * 0.004) % 1.0) * 2.0 * math.pi
+    return np.stack([a, rng.random(FIBRE_MAX), 0.25 + 0.75 * np.sqrt(rng.random(FIBRE_MAX)), rng.random(FIBRE_MAX),
+                     rng.random(FIBRE_MAX) * 2.0 * math.pi, 0.16 + 0.12 * rng.random(FIBRE_MAX)], axis=1)
+
+
+SEEDS = _seeds()
+
+
+def _wrap(a: float) -> float:
+    return math.atan2(math.sin(a), math.cos(a))
+
+
+def fibre_field(tex: np.ndarray, disc_frac: float, m: int = 128) -> np.ndarray:
+    """The direction of the nerve fibre layer's stripes in a disc-centred photo, as (``m``, ``m``, 2):
+    (cos 2θ, sin 2θ) · confidence, θ the direction along the stripes (mod 180°), confidence 0…1.
+
+    Green channel with the vessels taken out, the fine stripes kept, and the direction they agree
+    on around each place (a structure tensor). Sure only where stripes are seen: mostly in the
+    arching bundles above and below the disc of a sharp photo, hardly anywhere in a wide one."""
+    n = tex.shape[0]
+    k = max(disc_frac * n / 2.0, 4.0) / 86.0                    # (the sizes below are for a disc 172 px across)
+    out = np.zeros((m, m, 2), np.float32)
+    fov = (tex.sum(axis=2) > 60).astype(np.uint8)
+    e = 2 * max(1, int(round(12 * k))) + 1
+    fov = cv2.erode(fov, np.ones((e, e), np.uint8))
+    if not fov.any():
+        return out
+    cl = cv2.createCLAHE(3.0, (8, 8)).apply(np.ascontiguousarray(tex[..., 1]))
+    hk = 2 * max(2, int(round(8 * k))) + 1
+    hat = cv2.morphologyEx(cl, cv2.MORPH_BLACKHAT, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (hk, hk)))
+    lo, top = np.percentile(hat[fov > 0], (86, 99.5))
+    ves = (hat > max(float(lo), 0.25 * float(top))).astype(np.uint8)      # (a vessel is dark, a stripe faint)
+    dk = 2 * max(1, int(round(3 * k))) + 1
+    ves = cv2.dilate(ves, np.ones((dk, dk), np.uint8))
+    flat = cv2.inpaint(cl, ves, max(3.0, 7.0 * k), cv2.INPAINT_TELEA).astype(np.float32)
+    bp = cv2.GaussianBlur(flat, (0, 0), 1.5 * k) - cv2.GaussianBlur(flat, (0, 0), 5.0 * k)
+    gx = cv2.Sobel(bp, cv2.CV_32F, 1, 0, ksize=3)
+    gy = cv2.Sobel(bp, cv2.CV_32F, 0, 1, ksize=3)
+    wk = 2 * max(2, int(round(6 * k))) + 1                     # (a vessel's shoulder runs along it: not a stripe)
+    near = cv2.dilate(ves, np.ones((wk, wk), np.uint8))
+    w = ((near == 0) & (fov > 0) & (_radius(n, disc_frac) > 1.2)).astype(np.float32)
+    s = 16.0 * k
+    ws = cv2.GaussianBlur(w, (0, 0), s)
+
+    def mean(a):
+        return cv2.GaussianBlur(a * w, (0, 0), s) / np.maximum(ws, 1e-3)
+    jxx, jyy, jxy = mean(gx * gx), mean(gy * gy), mean(gx * gy)
+    coh = np.sqrt((jxx - jyy) ** 2 + 4.0 * jxy ** 2) / np.maximum(jxx + jyy, 1e-6)
+    coh = coh * np.clip((ws - 0.3) * 3.0, 0.0, 1.0)           # (little but vessels around: not to be read)
+    a2 = np.arctan2(2.0 * jxy, jxx - jyy) + math.pi           # twice the direction along the stripes
+    out[..., 0] = cv2.resize(np.cos(a2) * coh, (m, m), interpolation=cv2.INTER_AREA)
+    out[..., 1] = cv2.resize(np.sin(a2) * coh, (m, m), interpolation=cv2.INTER_AREA)
+    return out
+
+
+def _spline(pts: np.ndarray, k: int) -> np.ndarray:
+    """``k`` points along the smooth curve through ``pts`` (Catmull–Rom)."""
+    p = np.vstack([pts[:1], pts, pts[-1:]])
+    u = np.linspace(0.0, len(pts) - 1.0, k)
+    i = np.minimum(u.astype(int), len(pts) - 2)
+    t = (u - i)[:, None]
+    p0, p1, p2, p3 = p[i], p[i + 1], p[i + 2], p[i + 3]
+    return 0.5 * (2 * p1 + (p2 - p0) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t * t + (3 * (p1 - p2) + p3 - p0) * t ** 3)
+
+
+def _mean_radius(e: dict) -> float:
+    """The radius of the circle as large as the outline."""
+    return math.sqrt(G.area(e) / math.pi)
+
+
+def fibre_paths(disc: dict, cup: dict, H: np.ndarray, depth_px: float, n: int = TEX_PX, count: int = 150,
+                temporal: float = math.pi, field: np.ndarray | None = None, mask: np.ndarray | None = None) -> list:
+    """The strands of the nerve for a disc and cup outline (texture pixels of an ``n``² picture) on
+    the surface ``H``: each ``{"retina": (k, 2) x, y from far out to the rim, "read": (k,) bool —
+    direction read off the photo there, "behind": (j, 3) x, y, z from the rim down and out behind
+    (z in pixels, towards the viewer), "seed": its row of SEEDS}``.
+
+    A strand leaves the rim at its angle: straight on the nasal side, arching towards ``temporal``
+    (the direction of the macula from the disc, radians, y down) elsewhere, and along the stripes
+    of ``field`` (:func:`fibre_field`) where they are sure. It is drawn only while the rim that way
+    is wide enough — the thinner the rim, the fewer strands. ``mask`` (``n``², bool): where the
+    photo is; a strand ends at its edge."""
+    half = n / 2.0
+    hq = H.shape[0]
+    fm = field.shape[0] if field is not None else 0
+
+    def h_at(x, y):
+        return float(H[int(np.clip(round(y * (hq - 1) / (n - 1)), 0, hq - 1)),
+                       int(np.clip(round(x * (hq - 1) / (n - 1)), 0, hq - 1))])
+
+    dcx, dcy = G.centre(disc)                                   # (any outline: an ellipse, the C/D tab's 8 points …)
+    lines = {id(disc): G.curve(disc), id(cup): G.curve(cup)}
+
+    def at(e, a):                                               # where the ray from the disc's middle leaves ``e``
+        r = G.reach(lines[id(e)], (dcx, dcy), a)
+        return dcx + r * math.cos(a), dcy + r * math.sin(a)
+    rad = _mean_radius(disc)
+    z_l = -depth_px - 0.09 * half                               # the lamina: under the cup's floor
+    length, step = 1.0 * half, FIBRE_STEP * half
+    nasal = temporal + math.pi
+
+    def axis(t):
+        return (dcx + 0.34 * half * t * t * math.cos(nasal), dcy + 0.05 * half * t * t, z_l - length * t)
+    out = []
+    for seed in SEEDS[:int(np.clip(count, 0, FIBRE_MAX))]:
+        a, need, rho, across, phase, _speed = (float(v) for v in seed)
+        pd, pc = at(disc, a), at(cup, a)
+        rd = math.hypot(pd[0] - dcx, pd[1] - dcy)
+        rc = math.hypot(pc[0] - dcx, pc[1] - dcy)
+        if max(0.0, 1.0 - rc / max(rd, 1e-6)) < 0.06 + need * 0.5:      # the rim's share of the radius this way
+            continue
+        mix = 0.3 + 0.5 * across
+        sx, sy = pc[0] + (pd[0] - pc[0]) * mix, pc[1] + (pd[1] - pc[1]) * mix
+        # over the retina, outwards from the rim
+        th, x, y = _wrap(a), sx, sy
+        arch = min(1.0, max(0.0, (abs(_wrap(a - nasal)) - 0.7) / 0.5))
+        pts, read = [], []
+        for i in range(FIBRE_STEPS):
+            if not (2 <= x <= n - 3 and 2 <= y <= n - 3) or (mask is not None and not mask[int(y), int(x)]):
+                break
+            pts.append((x, y))
+            th += 1.25 * arch * math.sin(temporal - th) * FIBRE_STEP + 0.012 * math.sin(i * 0.5 + phase)
+            hit = False
+            if fm:
+                fx, fy = field[int(np.clip(round(y * (fm - 1) / (n - 1)), 0, fm - 1)),
+                               int(np.clip(round(x * (fm - 1) / (n - 1)), 0, fm - 1))]
+                if math.hypot(fx, fy) > FIELD_MIN:
+                    d = _wrap(0.5 * math.atan2(fy, fx) - th)
+                    if abs(d) > math.pi / 2:                     # (a direction mod 180°: the way the strand runs)
+                        d = _wrap(d + math.pi)
+                    if abs(d) < 0.9:
+                        th += d * 0.6
+                        hit = True
+            read.append(hit)
+            x += math.cos(th) * step
+            y += math.sin(th) * step
+        # from the rim down to the lamina and out behind
+        h0 = h_at(sx, sy) * depth_px
+        tx, ty = dcx + math.cos(a) * rad * BUNDLE * rho, dcy + math.sin(a) * rad * BUNDLE * rho
+        ctl = [(sx, sy, h0), (sx + (tx - sx) * 0.35, sy + (ty - sy) * 0.35, min(h0, 0.0) * 0.5 + z_l * 0.55), (tx, ty, z_l)]
+        for t in (0.1, 0.28, 0.5, 0.75, 1.0):
+            b = a + 0.22 * math.sin(t * 3.0 + phase)
+            r = rad * rho * BUNDLE * (1.0 + 0.3 * min(1.0, t * 5.0))
+            ox, oy, oz = axis(t)
+            ctl.append((ox + math.cos(b) * r, oy + math.sin(b) * r, oz))
+        out.append({"retina": np.float32(pts[::-1]).reshape(-1, 2), "read": np.array(read[::-1], bool),
+                    "behind": _spline(np.float64(ctl), 28).astype(np.float32), "seed": seed})
+    return out
+
+
+def read_share(paths: list) -> float:
+    """The part of the strands' way over the retina whose direction was read off the photo (0…1)."""
+    total = sum(len(p["read"]) for p in paths)
+    return sum(int(p["read"].sum()) for p in paths) / total if total else 0.0
+
+
+def fibres_on_texture(tex: np.ndarray, paths: list) -> np.ndarray:
+    """The photo with the strands over the retina drawn on it: faint far out, bright at the disc;
+    the stretches read off the photo in their own colour."""
+    n = tex.shape[0]
+    alpha = np.zeros((n, n), np.uint8)
+    col = np.empty((n, n, 3), np.uint8)
+    col[:] = STRAND_RGB
+    w = max(1, int(round(n / 520)))
+    for p in paths:
+        pts = p["retina"]
+        k = len(pts)
+        if k < 2:
+            continue
+        q = np.round(pts * 8).astype(np.int32)
+        for lo, hi, a in ((0, k // 3 + 1, 70), (k // 3, 2 * k // 3 + 1, 130), (2 * k // 3, k, 205)):
+            if hi - lo >= 2:
+                cv2.polylines(alpha, [q[lo:hi]], False, a, w, cv2.LINE_AA, shift=3)
+        run = []
+        for i in range(k + 1):                                   # the stretches read off the photo
+            if i < k and p["read"][i]:
+                run.append(q[i])
+                continue
+            if len(run) >= 3:
+                cv2.polylines(col, [np.int32(run)], False, READ_RGB, w + 2, cv2.LINE_8, shift=3)
+                cv2.polylines(alpha, [np.int32(run)], False, 215, w, cv2.LINE_AA, shift=3)
+            run = []
+    a = (alpha.astype(np.float32) / 255.0)[..., None]
+    return (tex.astype(np.float32) * (1.0 - a) + col.astype(np.float32) * a).astype(np.uint8)
+
+
+def pulses(paths: list, t: float, on_retina: bool = True) -> tuple[np.ndarray, np.ndarray]:
+    """Where each strand's signal is at time ``t`` (seconds): on its way over the retina, (k, 2)
+    x, y, or behind the disc, (j, 3) x, y, z."""
+    flat, deep = [], []
+    for p in paths:
+        head = len(p["retina"]) if on_retina else 0
+        total = head + len(p["behind"])
+        s = ((t * p["seed"][5] * 0.7 + p["seed"][1]) % 1.0) * (total - 4)
+        i = int(s)
+        f = s - i
+        if i + 1 < head:
+            flat.append(p["retina"][i] * (1 - f) + p["retina"][i + 1] * f)
+        else:
+            j = min(max(i - head, 0), len(p["behind"]) - 2)
+            deep.append(p["behind"][j] * (1 - f) + p["behind"][j + 1] * f)
+    return np.float32(flat).reshape(-1, 2), np.float32(deep).reshape(-1, 3)
+
+
+def fibres_behind(paths: list, disc: dict, depth_px: float, n: int = TEX_PX, dots: np.ndarray | None = None) -> dict:
+    """What :func:`render` draws under the sheet: the strands from the rim out behind, the ring of
+    the lamina they pass, and the signals on them (``dots``, (j, 3))."""
+    (cx, cy), rad = G.centre(disc), _mean_radius(disc)
+    a = np.linspace(0.0, 2.0 * math.pi, 49)
+    ring = np.stack([cx + np.cos(a) * rad * BUNDLE * 1.1, cy + np.sin(a) * rad * BUNDLE * 1.1,
+                     np.full(49, -depth_px - 0.09 * n / 2.0)], axis=1).astype(np.float32)
+    return {"lines": [p["behind"] for p in paths], "ring": ring,
+            "dots": dots if dots is not None else np.zeros((0, 3), np.float32)}
+
+
+_FADE = np.float32([(255, 242, 196), (241, 223, 174), (185, 154, 106), (58, 44, 32), (0, 0, 0)])   # along a strand
+
+
+def _draw_behind(img: np.ndarray, behind: dict, R: np.ndarray, n: int, out_px: int, zoom: float,
+                 perspective: float = 0.0) -> None:
+    """Draw the nerve into ``img`` as :func:`render` sees it: farther strands first."""
+    ct, co, s = (n - 1) / 2.0, (out_px - 1) / 2.0, out_px * zoom / n
+    A, d = R[:2, :2], R[:2, 2]
+
+    def screen(p):                                              # (k, 3) → (k, 2) pixels, and how near each is
+        xy = (p[:, :2] - ct) @ A.T + p[:, 2:3] * d[None, :]
+        near = (p[:, :2] - ct) @ R[2, :2] + p[:, 2] * R[2, 2]
+        if perspective > 0.0:                                   # (the camera of :func:`render`: nearer is larger)
+            xy = xy * (perspective * n / np.maximum(perspective * n - near, 1e-6))[:, None]
+        return co + s * xy, near
+    w = max(1, int(round(out_px / 520)))
+    lines = []
+    for p in behind.get("lines", ()):
+        q, near = screen(p)
+        lines.append((float(near.mean()), q))
+    ring = behind.get("ring")
+    if ring is not None and len(ring):
+        cv2.polylines(img, [np.round(screen(ring)[0] * 8).astype(np.int32)], True, (150, 156, 166), w + 1, cv2.LINE_AA, shift=3)
+    stops = (0.0, 0.6, 0.86, 0.96, 1.0)
+    for _, q in sorted(lines, key=lambda v: v[0]):
+        k = len(q)
+        qi = np.round(q * 8).astype(np.int32)
+        for lo in range(0, k - 1, 4):
+            t = (lo + 2) / (k - 1)
+            c = [float(np.interp(t, stops, _FADE[:, ch])) for ch in range(3)]
+            cv2.polylines(img, [qi[lo:lo + 5]], False, c, w, cv2.LINE_AA, shift=3)
+    dots = behind.get("dots")
+    if dots is not None and len(dots):
+        for x, y in np.round(screen(dots)[0] * 8).astype(np.int32):
+            cv2.circle(img, (int(x), int(y)), (w + 1) * 8, (255, 250, 215), -1, cv2.LINE_AA, shift=3)

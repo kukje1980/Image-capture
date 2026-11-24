@@ -12,8 +12,9 @@ The rest of the eye is an anatomical model (``eye_model.py``, 1 = 12 mm):
 * outer coat — wet sclera with conjunctival, episcleral, anterior ciliary,
   vortex and short posterior ciliary vessels (procedural stereographic maps)
 * cornea — ray traced per pixel: Fresnel reflection of a studio soft box
-  (the catchlight), refraction (n = 1.336) onto the iris, the dark pupil
-  with the faint reflex of the anterior lens surface, the limbal transition
+  (the catchlight), refraction (n = 1.336) onto the iris, the pupil — the
+  retina behind it seen through it (straight on: the photo's macula) — with the
+  faint reflex of the anterior lens surface, the limbal transition
 * iris — crypts, collarette, furrows and ruff with relief shading
 * eye wall with thickness — the section face shows sclera, choroid, RPE
   and the retinal layers, or the ciliary body in front of the ora serrata
@@ -88,7 +89,7 @@ _CONSTS = {
     "PI": math.pi,
     "SCLERA_T": em.SCLERA_T, "CHOROID_T": em.CHOROID_T, "RETINA_T": em.RETINA_T,
     "LIMBUS_R": em.LIMBUS_R, "LIMBUS_Z": em.LIMBUS_Z, "CORNEA_CZ": em.CORNEA_CENTER_Z, "N_AQ": em.N_AQUEOUS,
-    "IRIS_Z": em.IRIS_Z, "IRIS_ROOT_R": em.IRIS_ROOT_R, "PUPIL_R": em.PUPIL_R,
+    "IRIS_Z": em.IRIS_Z, "IRIS_ROOT_R": em.IRIS_ROOT_R, "PUPIL_R": em.PUPIL_R, "R_RET": em.R_RET,
     "IRIS_K": 1.0 / (2 * em.IRIS_ROOT_R), "IRIS_TEXEL": 2 * em.IRIS_ROOT_R / 1024, "IRIS_RELIEF": 0.009,
     "LENS_FRONT_Z": em.LENS_FRONT_Z, "LENS_CURV": em.LENS_FRONT_CURV,
     "ORA": em.ORA_THETA, "NPROC": float(em.CILIARY_PROCESSES),
@@ -484,6 +485,17 @@ vec3 pupil_view(vec3 Q, vec3 T) {
     }
     return c;
 }
+// 동공으로 보이는 안저: the pupil is not a black hole — the ray goes on through it (the lens left clear)
+// to the inner wall, and the retina there is seen: from straight in front the posterior pole, the
+// macula of a photo placed by its fovea.
+vec3 pupil_fundus(vec3 Q, vec3 T) {
+    float b = dot(Q, T);
+    float t = -b + sqrt(max(b * b - dot(Q, Q) + @R_RET@ * @R_RET@, 0.0));
+    vec3 H = Q + T * t;
+    float w;
+    vec3 f = fundus(normalize(H), H.z, w);
+    return f * mix(0.80, 0.96, w) * (0.86 + 0.14 * max(-T.z, 0.0));
+}
 void main() {
     if (cut_away(v_obj)) discard;
     vec3 P = v_obj;
@@ -495,10 +507,13 @@ void main() {
     float lk = dot(N, u_key);
     vec3 Lin = lk > 0.0 ? -refract(-u_key, N, 1.0 / @N_AQ@) : u_key;
     vec3 trans = vec3(0.0);
+    vec3 seen = vec3(0.0);                   // the retina through the pupil (display colour)
     if (T.z < -1e-4) {
         vec3 Q = P + T * ((@IRIS_Z@ - P.z) / T.z);
         vec3 ir = iris_lit(Q.xy, normalize(Lin), -T, smoothstep(-0.05, 0.2, lk));
-        trans = mix(pupil_view(Q, T), ir, smoothstep(@PUPIL_R@ - 0.0025, @PUPIL_R@ + 0.0025, length(Q.xy)));
+        float iris_w = smoothstep(@PUPIL_R@ - 0.0025, @PUPIL_R@ + 0.0025, length(Q.xy));
+        trans = mix(pupil_view(Q, T), ir, iris_w);
+        if (iris_w < 1.0) seen = pupil_fundus(Q, T) * (1.0 - iris_w);
     }
     vec3 col = trans * vec3(0.97, 0.98, 0.99) * (1.0 - F) + refl * F;
     float m = smoothstep(0.90, 1.0, length(P.xy) / @LIMBUS_R@);
@@ -506,7 +521,7 @@ void main() {
         vec3 pn = normalize(P);
         col = mix(col, sclera_shade(lin(sclera_albedo(pn)), pn, -I, 1.0), m * m);
     }
-    gl_FragColor = vec4(tonemap(col), 1.0);
+    gl_FragColor = vec4(min(tonemap(col) + seen * (1.0 - F) * (1.0 - m * m), vec3(1.0)), 1.0);
 }
 """
 
@@ -916,7 +931,7 @@ void main() {
     if (u_kind == 1) {
         float rr = length(v_obj.xy);
         float ang = atan(v_obj.y, v_obj.x);
-        if (rr < 0.16) { gl_FragColor = vec4(0.015, 0.015, 0.02, 1.0); return; }
+        if (rr < 0.16) discard;          // the pupil: open — the retina behind it is seen (not black)
         float streak = 0.5 + 0.5 * sin(ang * 70.0 + sin(ang * 11.0) * 4.0 + rr * 30.0);
         c = mix(vec3(0.20, 0.12, 0.06), vec3(0.47, 0.31, 0.15), streak * 0.7);
         c = mix(c, vec3(0.55, 0.38, 0.18), (1.0 - smoothstep(0.16, 0.24, rr)) * 0.6);   // collarette
@@ -2021,7 +2036,8 @@ class EyeView(QOpenGLWidget):
                 "bg": self._program(_glsl(BG_VERT), _glsl(BG_FRAG)),
                 "sclera": self._program(_glsl(VERT), _glsl(COMMON, SCLERA_LIB, MAPPING_LIB, RETINA_LIB,
                                                             SCLERA_FRAG)),
-                "cornea": self._program(_glsl(VERT), _glsl(COMMON, SCLERA_LIB, IRIS_LIB, CORNEA_FRAG)),
+                "cornea": self._program(_glsl(VERT), _glsl(COMMON, SCLERA_LIB, IRIS_LIB, MAPPING_LIB, RETINA_LIB,
+                                                            CORNEA_FRAG)),
                 "wall": self._program(_glsl(VERT), _glsl(COMMON, MAPPING_LIB, RETINA_LIB, WALL_FRAG)),
                 "tissue": self._program(_glsl(VERT), _glsl(COMMON, IRIS_LIB, WALL_LAYERS_LIB, TISSUE_FRAG)),
                 "clear": self._program(_glsl(VERT), _glsl(COMMON, CLEAR_FRAG)),
@@ -2694,7 +2710,7 @@ class EyeView(QOpenGLWidget):
                 self._dynamic("muscles", self.laterality, lambda: em.muscle_mesh(self.laterality)).draw(gl)
             # -- cornea (ray traced: iris, pupil, limbus, catchlight) --------------
             if closed and not within:
-                use("cornea")
+                use("cornea", **mapping)        # (the photo: seen through the pupil)
                 self._meshes["cornea"].draw(gl)
 
         # -- iris, chamber angle, retina and inner wall ------------------------------

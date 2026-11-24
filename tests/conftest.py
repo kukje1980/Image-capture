@@ -35,6 +35,29 @@ def _no_blocking_message_boxes(monkeypatch):
     assert not shown, "message box shown during the test (it would hang the CI): " + "; ".join(shown)
 
 
+def _collect_on_the_gui_thread() -> None:
+    try:
+        from PySide6.QtWidgets import QApplication
+    except ImportError:
+        return
+    if QApplication.instance() is not None:
+        from fundusview.ui import gui_gc
+        gui_gc.install()
+        gui_gc.collect()
+
+
+@pytest.fixture(autouse=True)
+def _gui_thread_gc():
+    """As the program does (fundusview/ui/gui_gc.py, installed by app.main): once a QApplication
+    exists, reference cycles are collected on this thread only, here between tests and on the
+    event loop's timer. Windows an earlier test left in a cycle are then never destroyed on a
+    worker thread of a later test: that hung the bulk import of test_import_stress (a reader
+    holding the database lock waited in ~QWidget for this thread, which waited for the lock)."""
+    _collect_on_the_gui_thread()
+    yield
+    _collect_on_the_gui_thread()
+
+
 @pytest.fixture(scope="session")
 def demo_dir(tmp_path_factory):
     from fundusview.demo import write_demo_folder

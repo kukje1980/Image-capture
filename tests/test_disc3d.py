@@ -649,3 +649,125 @@ def test_tab_stereo_depth_with_or_without_the_bends(app):
     tab.sw_compare.setChecked(False)
     tab.set_method("vessels")
     assert tab.note().startswith("녹내장 분석 — 유두 3D (1장 추정 · 혈관 꺾임)")
+
+
+# -- the nerve behind the disc -------------------------------------------------------------------------
+def _outlines(n, frac=1 / 3.5, cup=0.4):
+    c, r = (n - 1) / 2, frac * n / 2
+    def oval(k):
+        return {"cx": c, "cy": c, "top": r * k, "right": r * k, "bottom": r * k, "left": r * k}
+    return oval(1.0), oval(cup)
+
+
+def test_the_stripes_of_a_photo_give_their_direction_and_grain_gives_none():
+    n, ang = 400, np.radians(30.0)
+    yy, xx = np.mgrid[0:n, 0:n].astype(np.float32)
+    rng = np.random.default_rng(3)
+    grain = rng.normal(0, 0.6, (n, n)).astype(np.float32) + 40 * np.cos(xx / n * 3) * np.sin(yy / n * 2.5)   # (and shading)
+    across = -xx * np.sin(ang) + yy * np.cos(ang)                   # constant along the 30° direction
+    striped = 120 + 1.3 * np.sin(across * 2 * np.pi / 9.0) + grain    # faint stripes …
+    for g, sure in ((striped, True), (120 + grain, False)):
+        tex = np.clip(np.stack([g + 60, g, g - 60], -1), 0, 255).astype(np.uint8)
+        for x in range(20, n, 130):                                  # … under dark vessels running another way
+            cv2.line(tex, (x, 0), (x + 40, n), (110, 30, 25), 7, cv2.LINE_AA)
+        f = disc3d.fibre_field(tex, 1 / 3.5)
+        conf = np.hypot(f[..., 0], f[..., 1])
+        far = disc3d._radius(f.shape[0], 1 / 3.5) > 1.6
+        assert f.shape == (128, 128, 2)
+        if not sure:
+            assert (conf[far] > disc3d.FIELD_MIN).mean() < 0.05
+            continue
+        assert (conf[far] > disc3d.FIELD_MIN).mean() > 0.5
+        theta = np.degrees(0.5 * np.arctan2(f[..., 1], f[..., 0]))[far & (conf > disc3d.FIELD_MIN)]
+        assert abs(float(np.median(theta)) - 30.0) < 4.0
+        assert conf[disc3d._radius(f.shape[0], 1 / 3.5) < 0.8].max() < disc3d.FIELD_MIN  # nothing is read on the disc itself
+
+
+def test_strands_thin_out_with_the_rim_and_follow_the_photo_where_it_was_read():
+    n = disc3d.TEX_PX
+    H = np.zeros((64, 64), np.float32)
+    disc, cup = _outlines(n)
+    full = disc3d.fibre_paths(disc, cup, H, 40.0, n, 150)
+    assert 100 < len(full) <= 150 and len(disc3d.fibre_paths(disc, cup, H, 40.0, n, 40)) < 41
+    wide = _outlines(n, cup=0.85)[1]
+    assert len(disc3d.fibre_paths(disc, wide, H, 40.0, n, 150)) < len(full) / 2       # a thin rim: few strands
+    # a cup grown downwards only: the strands lost are the ones below
+    low = {**cup, "bottom": disc["bottom"] * 0.9}
+    lost = [p for p, q in zip(full, [None] * len(full))
+            if not any((p["seed"] == r["seed"]).all() for r in disc3d.fibre_paths(disc, low, H, 40.0, n, 150))]
+    assert lost and all(np.sin(p["seed"][0]) > 0 for p in lost)
+    c = (n - 1) / 2
+    for p in full:
+        assert np.hypot(*(p["retina"][0] - c)) > np.hypot(*(p["retina"][-1] - c))    # from far out to the rim
+        assert p["behind"][0][2] == pytest.approx(0.0) and p["behind"][-1][2] < -40.0 - 0.09 * n / 2     # … and out behind
+    assert disc3d.read_share(full) == 0.0
+    # the photo's stripes run straight up and down: the strands turn that way where they can
+    field = np.zeros((32, 32, 2), np.float32)
+    field[..., 0] = -1.0                                             # 2θ = 180°: θ = 90°
+    read = disc3d.fibre_paths(disc, cup, H, 40.0, n, 150, field=field)
+    assert disc3d.read_share(read) > 0.3
+    turned = [p["retina"][0] - p["retina"][3] for p in read if p["read"][:8].all()]
+    assert turned and all(abs(d[1]) > abs(d[0]) for d in turned)
+    # … and a strand ends where the photo does
+    mask = np.ones((n, n), bool)
+    mask[:, :n // 3] = False
+    assert all(p["retina"][:, 0].min() >= n // 3 for p in disc3d.fibre_paths(disc, cup, H, 40.0, n, 150, mask=mask)
+               if len(p["retina"]))
+
+
+def test_the_nerve_is_drawn_behind_the_sheet_and_shows_through_it():
+    tex = cv2.resize(_disc_picture(), (disc3d.TEX_PX, disc3d.TEX_PX))
+    H = disc3d.height_from_photo(tex, 1 / 3.5)
+    disc, cup = _outlines(disc3d.TEX_PX)
+    paths = disc3d.fibre_paths(disc, cup, H, 60.0)
+    drawn = disc3d.fibres_on_texture(tex, paths)
+    assert drawn.shape == tex.shape and not (drawn == tex).all()
+    flat, deep = disc3d.pulses(paths, 2.0)
+    assert len(flat) + len(deep) == len(paths) and len(disc3d.pulses(paths, 2.0, on_retina=False)[1]) == len(paths)
+    behind = disc3d.fibres_behind(paths, disc, 60.0, dots=deep)
+    plain = disc3d.render(tex, H, 60.0, -60, 10)
+    solid = disc3d.render(tex, H, 60.0, -60, 10, behind=behind)
+    glass = disc3d.render(tex, H, 60.0, -60, 10, behind=behind, sheet_alpha=0.6)
+    sheet = cv2.erode((plain.sum(axis=2) > 0).astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
+    assert (solid[sheet] == plain[sheet]).all()                      # an opaque sheet hides what is behind it
+    assert (solid != plain).any()                                    # … the bundle comes out beside it
+    assert not (glass[sheet] == plain[sheet]).all()
+    front = disc3d.render(tex, H, 60.0, 0, 0, behind=behind)
+    assert (front[60:-60, 60:-60] == disc3d.render(tex, H, 60.0, 0, 0)[60:-60, 60:-60]).all()        # from the front it is all behind the photo
+
+
+def test_tab_shows_the_nerve_only_when_asked(app):
+    from fundusview.ui.glaucoma_dialog import GlaucomaDialog
+
+    dlg = GlaucomaDialog(_photo(1, _disc_picture(), eye="OS"))
+    tab = dlg.surface
+    tab.set_view(-50, 10)
+    assert not tab.sw_nerve.isChecked() and tab.fibres() is None and tab.nerve_rows.isHidden()
+    before = tab.compose()
+    assert not tab._timer.isActive() and "시신경" not in tab.note()
+    dlg.tabs.setCurrentWidget(tab)
+    dlg.show()
+    assert not tab._timer.isActive()
+    tab.sw_nerve.setChecked(True)
+    assert tab._timer.isActive() and not tab.nerve_rows.isHidden()  # (the signals move)
+    paths, drawn, _disc = tab.fibres()
+    assert paths and tab.temporal() == 0.0 and "가닥" in tab.lbl_nerve.text() and "시신경 다발" in tab.note()
+    shown = tab.compose()
+    assert shown.shape == before.shape and not (shown == before).all()
+    tab.sw_pulse.setChecked(False)
+    assert not tab._timer.isActive()
+    still = tab.compose()
+    assert (still == tab.compose()).all()
+    tab.sw_xray.setChecked(False)
+    tab.sw_rnfl.setChecked(False)
+    solid = tab.compose()
+    sheet = cv2.erode((before.sum(axis=2) > 0).astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
+    assert (solid[sheet] == before[sheet]).all() and not (solid == before).all()
+    tab.s_strands.set(40)
+    assert len(tab.fibres()[0]) <= 40
+    tab.sw_ana.setChecked(True)
+    assert tab.compose().shape == before.shape
+    tab.sw_nerve.setChecked(False)
+    tab.sw_ana.setChecked(False)
+    assert (tab.compose() == before).all()
+    dlg.close()
