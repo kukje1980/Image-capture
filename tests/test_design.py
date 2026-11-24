@@ -265,7 +265,7 @@ def test_icon_looks_put_the_glyph_first(app):
     from fundusview.ui import icons
     from fundusview.ui.toolbars import COMMANDS, PROCESSING
 
-    assert Settings().icon_style == icons.DEFAULT_STYLE == "group"
+    assert Settings().icon_style == icons.DEFAULT_STYLE == "accent"
     names = [c[3] for c in COMMANDS] + [c[3] for c in PROCESSING if c and not c[3].startswith("fundus:")]
 
     def picture(name, look):
@@ -277,7 +277,7 @@ def test_icon_looks_put_the_glyph_first(app):
         return max(max(xs) - min(xs), max(ys) - min(ys))        # (a chevron is narrow, but tall)
 
     for name in names:
-        for look in ("group", "mono", "color"):
+        for look in ("group", "mono", "color", "accent"):
             img = picture(name, look)
             assert img.pixelColor(1, 1).alpha() == 0 and img.pixelColor(62, 62).alpha() == 0, (name, look)
             assert box(img) >= 34, (name, look)                     # the glyph is large …
@@ -294,13 +294,28 @@ def test_icon_looks_put_the_glyph_first(app):
                   and abs(img.pixelColor(x, y).red() - want.red()) + abs(img.pixelColor(x, y).green() - want.green())
                   + abs(img.pixelColor(x, y).blue() - want.blue()) < 12)
         assert hit > 25, name
+    # 0.13.10 "accent": the mono lines, and colour only where it says something — the retina in the colour of
+    # a fundus photo, the end in red; a glyph with nothing to say (a chevron) is the mono one
+    def near(img, color, tol=40):
+        c = QColor(color)
+        return sum(1 for x in range(64) for y in range(64)
+                   if img.pixelColor(x, y).alpha() == 255
+                   and abs(img.pixelColor(x, y).red() - c.red()) + abs(img.pixelColor(x, y).green() - c.green())
+                   + abs(img.pixelColor(x, y).blue() - c.blue()) < tol)
+
+    assert picture("prev", "accent") == picture("prev", "mono")
+    for name, color in (("glaucoma", icons.A_RETINA), ("fit", icons.A_RETINA), ("detail", icons.A_RETINA),
+                        ("exit", icons.A_RED), ("cd", icons.A_GREEN), ("cd", icons.A_YELLOW), ("angle", icons.A_YELLOW)):
+        assert near(picture(name, "accent"), color) > 15, (name, color)
+        assert near(picture(name, "mono"), color) == 0, (name, color)
+    assert near(picture("glaucoma", "accent"), "#e6e9ee") > 30          # … on light grey lines
     assert icons.group_of("simple") == icons.group_of("multi16") == icons.group_of("detail") == "view"
     assert icons.group_of("glaucoma") == icons.group_of("eye3d") == "exam" and icons.group_of("exit") == "danger"
     # the tiles of "dark" are all the same quiet grey; an unknown look is the first one
     assert picture("simple", "dark").pixelColor(32, 6) == picture("exit", "dark").pixelColor(32, 6)
     was = icons.style()
     try:
-        assert icons.set_style("nonsense") == "group"
+        assert icons.set_style("nonsense") == "accent"
     finally:
         icons.set_style(was)
 
@@ -316,8 +331,8 @@ def test_icon_look_is_chosen_in_the_view_menu(app, tmp_path):
                  watch_on_startup=False, auto_detect=False)
     window = MainWindow(s, Database(tmp_path / "lib" / "fundus.db"))
     try:
-        assert window.settings.icon_style == icons.style() == "group"
-        assert window.icon_style_acts["group"].isChecked() and len(window.icon_style_acts) == len(icons.STYLES)
+        assert window.settings.icon_style == icons.style() == "accent"
+        assert window.icon_style_acts["accent"].isChecked() and len(window.icon_style_acts) == len(icons.STYLES)
 
         def corner(key):
             return window.acts[key].icon().pixmap(64, 64).toImage().pixelColor(32, 5).alpha()
@@ -331,4 +346,14 @@ def test_icon_look_is_chosen_in_the_view_menu(app, tmp_path):
     finally:
         icons.set_style(icons.DEFAULT_STYLE)
         window.close()
+    # a settings file of before 0.13.10 takes the new first look once; one of now keeps what was chosen
+    for version, before, after in ((9, "group", "accent"), (MainWindow.UI_VERSION, "group", "group")):
+        s = Settings(library_dir=str(tmp_path / f"lib{version}"), stable_seconds=0.05, rescan_seconds=0,
+                     watch_on_startup=False, auto_detect=False, icon_style=before, ui_version=version)
+        w = MainWindow(s, Database(tmp_path / f"lib{version}" / "fundus.db"))
+        try:
+            assert s.icon_style == icons.style() == after
+        finally:
+            icons.set_style(icons.DEFAULT_STYLE)
+            w.close()
 

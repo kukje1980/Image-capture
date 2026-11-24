@@ -2,8 +2,9 @@
 
 ``icon(name)`` returns a QIcon for the toolbar keys used in the main window, in the look chosen
 with ``set_style`` (보기 → 아이콘 모양; ``STYLES``): the glyph alone as a line drawing that fills its
-square — in one colour per kind of command ("group", as first set), light grey ("mono") or a colour
-of its own ("color") — or the glyph on a rounded square ("squircle") tile: a dark one ("dark"), one
+square — light grey with colour only on the part that says what it is ("accent", as first set: the
+retina in the colour of a fundus photo, the disc green and its cup yellow, what is measured yellow …),
+in one colour per kind of command ("group"), light grey ("mono") or a colour of its own ("color") — or the glyph on a rounded square ("squircle") tile: a dark one ("dark"), one
 tinted with the glyph's colour ("tint"), a flat one in the colour of its kind ("flat"), or the
 colour tile with a gradient and a white glyph of before 0.13.6 ("tile").
 ``icon(name, plain=True)`` is the glyph alone, as a light line drawing, for places that bring their
@@ -64,6 +65,8 @@ TILE_OF = {
 # -- the looks (보기 → 아이콘 모양) -------------------------------------------------------------
 # (key, name in the menu, what it is) — in the order of the menu; the first is the one first set
 STYLES = (
+    ("accent", "모노 라인 + 포인트 색", "밝은 회색 선에, 뜻이 있는 곳에만 색 — 사진·망막은 망막색, 고른 것·보는 곳 파랑, "
+                                "측정 노랑, 디스크 초록 · 컵 노랑, 종료·지우기 빨강"),
     ("group", "기능별 색 라인", "타일 없이 그림만 크게 — 색은 기능별로: 탐색·파일 회색, 보기 파랑, 분석 초록, 측정 주황, "
                            "영상 처리 보라, 방향 청록, 종료·지우기 빨강"),
     ("mono", "모노 라인", "타일 없이 그림만 크게 — 모두 밝은 회색 선"),
@@ -77,6 +80,14 @@ DEFAULT_STYLE = STYLES[0][0]
 PAGE = QColor("#1c1c1e")           # the bars the icons sit on (theme.BG): behind a glyph with no tile
 DARK_TILE = QColor("#2f3136")
 MONO_INK, MONO_SOFT = QColor("#e6e9ee"), QColor("#8f97a3")
+# "accent": light grey lines, and colour only on the part that says what the glyph is —
+A_RETINA = "#ef7f45"       # a fundus photo, the retina
+A_CUP = "#ffe2a8"          # the pale cup of the optic disc
+A_BLUE = "#4da3ff"         # what is picked, looked at, moved (the accent of the app)
+A_GREEN = "#34d399"        # go · the line of the disc
+A_YELLOW = "#ffd24a"       # what is measured or written on the photo
+A_RED = "#ff6b61"          # ends, removes
+A_TEAL = "#4fd1d9"         # the axis a photo is turned about
 # what kind of command a glyph is (the rest: "image") …
 GROUP_OF = {
     **dict.fromkeys(("log", "search", "prev", "next", "print", "settings", "undo", "copy", "save", "record", "edit",
@@ -125,8 +136,17 @@ class _Glyph:
     is drawn smaller, so its lines are made thicker to stay as strong).
     """
 
-    def __init__(self, p: QPainter, ink: QColor, soft: QColor, hole: QColor, k: float, tiled: bool):
+    def __init__(self, p: QPainter, ink: QColor, soft: QColor, hole: QColor, k: float, tiled: bool,
+                 accents: bool = False):
         self.p, self.ink, self.soft, self.hole, self.k, self.tiled = p, ink, soft, hole, k, tiled
+        self.accents = accents     # the look "accent": the part that says what the glyph is, in a colour
+
+    def hi(self, color: str, fallback: QColor | None = None, alpha: int = 255) -> QColor:
+        """``color`` where the look puts colour on the telling part of a glyph (``accents``); otherwise
+        ``fallback`` (the ink)."""
+        if not self.accents:
+            return fallback if fallback is not None else self.ink
+        return _with_alpha(QColor(color), alpha)
 
     def pen(self, color: QColor | None = None, w: float = 4.5) -> QPen:
         pen = QPen(color or self.ink, w * self.k)
@@ -178,8 +198,10 @@ class _Glyph:
     def disc(self, cx: float, cy: float, r: float, cup: float) -> None:
         """An optic disc: the rim as a ring, the cup filled."""
         self.stroke(w=3.5)
+        if self.accents:
+            self.p.setBrush(QBrush(self.hi(A_RETINA, alpha=215)))
         self.p.drawEllipse(QPointF(cx, cy), r, r)
-        self.fill()
+        self.fill(self.hi(A_CUP))
         self.p.drawEllipse(QPointF(cx, cy), cup, cup * 1.1)
 
 
@@ -194,7 +216,8 @@ def _draw(name: str, g: _Glyph) -> None:
     r = QRectF(6, 6, 52, 52)
     if name in ("red", "green", "blue", "redfree"):
         g.text(QRectF(0, 0, 64, 64), {"red": "R", "green": "G", "blue": "B", "redfree": "RF"}[name],
-               46 if name != "redfree" else 34)
+               46 if name != "redfree" else 34,
+               g.hi({"red": A_RED, "green": A_GREEN, "blue": A_BLUE, "redfree": A_GREEN}[name]))
     elif name == "color":
         for i, c in enumerate((QColor(255, 99, 88), QColor(72, 214, 110), QColor(74, 150, 255))):
             g.fill(c)
@@ -203,13 +226,13 @@ def _draw(name: str, g: _Glyph) -> None:
     elif name == "sharpen":
         g.stroke()
         p.drawPolygon(QPolygonF([QPointF(32, 8), QPointF(56, 54), QPointF(8, 54)]))
-        g.line(32, 24, 32, 44, soft, 3.5)
+        g.line(32, 24, 32, 44, g.hi(A_BLUE, soft), 3.5)
     elif name == "gamma":
         g.stroke(soft, 3)
         p.drawRoundedRect(r, 6, 6)
         path = QPainterPath(QPointF(10, 54))
         path.cubicTo(QPointF(14, 20), QPointF(30, 12), QPointF(54, 10))
-        g.stroke()
+        g.stroke(g.hi(A_BLUE))
         p.drawPath(path)
     elif name == "enhance":    # a sparkle: a large four-pointed star and a small one
         g.fill()
@@ -220,6 +243,7 @@ def _draw(name: str, g: _Glyph) -> None:
                 ang = math.radians(-90 + i * 45)
                 path.lineTo(QPointF(cx + rr * math.cos(ang), cy + rr * math.sin(ang)))
             path.closeSubpath()
+            g.fill(g.hi(A_YELLOW) if a < 20 else ink)
             p.drawPath(path)
     elif name in ("contrast", "auto"):
         g.stroke()
@@ -232,7 +256,7 @@ def _draw(name: str, g: _Glyph) -> None:
         if name == "auto":
             g.text(QRectF(30, 28, 30, 30), "A", 22, soft if not g.tiled else ink)
     elif name == "bright":
-        g.fill()
+        g.fill(g.hi(A_YELLOW))
         p.drawEllipse(QPointF(32, 32), 11, 11)
         for i in range(8):
             a = math.radians(i * 45)
@@ -254,7 +278,7 @@ def _draw(name: str, g: _Glyph) -> None:
             p.translate(32, 32)
             p.rotate(-90)
             p.translate(-32, -32)
-        g.line(6, 32, 58, 32, soft, 3)
+        g.line(6, 32, 58, 32, g.hi(A_TEAL, soft), 3)
         g.fill()
         p.setPen(g.pen(w=3.5))
         p.drawPolygon(QPolygonF([QPointF(14, 24), QPointF(50, 24), QPointF(32, 6)]))
@@ -278,14 +302,14 @@ def _draw(name: str, g: _Glyph) -> None:
         tangent = end_ang + (math.pi / 2 if name != "rot_cw" else -math.pi / 2)
         g.arrow(QPointF(tip.x() - 6 * math.cos(tangent), tip.y() + 6 * math.sin(tangent)), tip)
         if name == "loop":
-            g.fill(soft if not g.tiled else ink)
+            g.fill(g.hi(A_GREEN, soft if not g.tiled else ink))
             p.drawPolygon(QPolygonF([QPointF(27, 23), QPointF(42, 32), QPointF(27, 41)]))
     elif name == "zoom":
         g.magnifier()
-        g.line(17, 23, 33, 23, soft if not g.tiled else ink, 4)
-        g.line(25, 15, 25, 31, soft if not g.tiled else ink, 4)
+        g.line(17, 23, 33, 23, g.hi(A_BLUE, soft if not g.tiled else ink), 4)
+        g.line(25, 15, 25, 31, g.hi(A_BLUE, soft if not g.tiled else ink), 4)
     elif name == "loupe":
-        g.magnifier(_with_alpha(soft, 130) if not g.tiled else _with_alpha(ink, 110))
+        g.magnifier(g.hi(A_RETINA, _with_alpha(soft, 130) if not g.tiled else _with_alpha(ink, 110), alpha=230))
     elif name == "search":
         g.magnifier()
     elif name == "pan":
@@ -297,32 +321,32 @@ def _draw(name: str, g: _Glyph) -> None:
         g.stroke(w=3.5)
         p.drawRoundedRect(QRectF(-28, -10, 56, 20), 4, 4)
         for i, x in enumerate((-18, -9, 0, 9, 18)):
-            g.line(x, -10, x, -1 if i % 2 == 0 else -4, w=3)
+            g.line(x, -10, x, -1 if i % 2 == 0 else -4, g.hi(A_YELLOW), w=3)
     elif name == "angle":
         g.line(10, 54, 56, 54)
         g.line(10, 54, 46, 12)
-        g.stroke(soft, 4)
+        g.stroke(g.hi(A_YELLOW, soft), 4)
         p.drawArc(QRectF(-12, 32, 44, 44), 0, 50 * 16)
-    elif name == "cd":        # the disc and the cup in it
-        g.stroke()
+    elif name == "cd":        # the disc and the cup in it (as measured: the disc line green, the cup yellow)
+        g.stroke(g.hi(A_GREEN))
         p.drawEllipse(QPointF(32, 32), 24, 24)
-        g.fill(soft if not g.tiled else ink)
+        g.fill(g.hi(A_YELLOW, soft if not g.tiled else ink))
         p.drawEllipse(QPointF(32, 32), 11, 12)
     elif name == "text":
         g.line(14, 14, 50, 14, w=6.5)
         g.line(32, 14, 32, 52, w=6.5)
     elif name == "arrow":
-        g.arrow(QPointF(52, 52), QPointF(14, 14), head=15)
+        g.arrow(QPointF(52, 52), QPointF(14, 14), g.hi(A_YELLOW), head=15)
     elif name == "profile":
         g.line(6, 54, 58, 54, soft, 3)
         path = QPainterPath(QPointF(6, 44))
         for x, y in ((14, 32), (20, 38), (28, 12), (34, 42), (42, 26), (50, 32), (58, 20)):
             path.lineTo(QPointF(x, y))
-        g.stroke(w=4)
+        g.stroke(g.hi(A_YELLOW), w=4)
         p.drawPath(path)
     elif name == "histogram":
-        g.fill()
         for i, h in enumerate((16, 30, 46, 36, 22, 12)):
+            g.fill(g.hi(A_BLUE) if h == 46 else ink)
             p.drawRoundedRect(QRectF(7 + i * 8.6, 56 - h, 6.6, h), 2.5, 2.5)
     elif name == "equalize":
         g.fill()
@@ -340,7 +364,7 @@ def _draw(name: str, g: _Glyph) -> None:
     elif name == "original":  # the photo as it was taken: a frame with the fundus in it
         g.stroke(w=3.5)
         p.drawRoundedRect(QRectF(6, 10, 52, 44), 7, 7)
-        g.fill()
+        g.fill(g.hi(A_RETINA))
         p.drawEllipse(QPointF(32, 32), 13, 13)
     elif name == "fit":       # the corners of the screen, and the photo filling it
         g.stroke()
@@ -350,7 +374,7 @@ def _draw(name: str, g: _Glyph) -> None:
             path.quadTo(x, y, x, y + 5 * dy)
             path.lineTo(x, y + 15 * dy)
             p.drawPath(path)
-        g.fill(soft if not g.tiled else _with_alpha(ink, 235))
+        g.fill(g.hi(A_RETINA, soft if not g.tiled else _with_alpha(ink, 235)))
         p.drawRoundedRect(QRectF(20, 20, 24, 24), 5, 5)
     elif name == "actual":
         g.text(r, "1:1", 28)
@@ -371,7 +395,7 @@ def _draw(name: str, g: _Glyph) -> None:
         g.stroke(soft if not g.tiled else _with_alpha(ink, 190), 3.5)
         p.drawRoundedRect(QRectF(5, 7, 54, 48), 8, 8)
         g.stroke(w=4.5)
-        p.setBrush(QBrush(_with_alpha(ink, 70)))
+        p.setBrush(QBrush(g.hi(A_RETINA, _with_alpha(ink, 70))))
         p.drawEllipse(QPointF(28, 28), 11, 11)
         g.line(36.5, 36.5, 47, 47, w=6)
     elif name.startswith("multi"):   # a grid of photos (16 as 3 × 3: the cells stay readable)
@@ -381,6 +405,7 @@ def _draw(name: str, g: _Glyph) -> None:
         cell = (50 - gap * (n - 1)) / n
         for i in range(n):
             for j in range(n):
+                g.fill(g.hi(A_BLUE) if i == j == 0 else ink)     # (the photo picked)
                 p.drawRoundedRect(QRectF(7 + i * (cell + gap), 7 + j * (cell + gap), cell, cell),
                                   cell * 0.24, cell * 0.24)
     elif name == "copy":
@@ -389,7 +414,7 @@ def _draw(name: str, g: _Glyph) -> None:
         p.setBrush(QBrush(hole))
         p.drawRoundedRect(QRectF(22, 20, 32, 36), 5, 5)
     elif name == "save":      # a tray and an arrow down into it
-        g.arrow(QPointF(32, 6), QPointF(32, 38), head=12)
+        g.arrow(QPointF(32, 6), QPointF(32, 38), g.hi(A_BLUE), head=12)
         g.stroke()
         path = QPainterPath(QPointF(8, 40))
         path.lineTo(8, 50)
@@ -401,8 +426,8 @@ def _draw(name: str, g: _Glyph) -> None:
     elif name == "record":
         g.stroke(w=3.5)
         p.drawRoundedRect(QRectF(6, 10, 40, 38), 6, 6)
-        g.line(48, 38, 48, 60, soft, 5)
-        g.line(37, 49, 59, 49, soft, 5)
+        g.line(48, 38, 48, 60, g.hi(A_GREEN, soft), 5)
+        g.line(37, 49, 59, 49, g.hi(A_GREEN, soft), 5)
     elif name == "print":
         g.stroke(w=3.5)
         p.drawRoundedRect(QRectF(18, 6, 28, 18), 3, 3)
@@ -420,8 +445,8 @@ def _draw(name: str, g: _Glyph) -> None:
         p.setBrush(QBrush(_with_alpha(ink, 70)))
         p.drawRoundedRect(QRectF(-8, -30, 16, 40), 3, 3)
         g.line(-8, -20, 8, -20, w=3)
-        g.fill()
-        p.setPen(g.pen(w=3.5))
+        g.fill(g.hi(A_YELLOW))
+        p.setPen(g.pen(g.hi(A_YELLOW), w=3.5))
         p.drawPolygon(QPolygonF([QPointF(-8, 12), QPointF(8, 12), QPointF(0, 30)]))
     elif name == "folder":
         g.stroke(w=4)
@@ -432,10 +457,10 @@ def _draw(name: str, g: _Glyph) -> None:
         path.lineTo(58, 52)
         path.lineTo(6, 52)
         path.closeSubpath()
-        p.setBrush(QBrush(_with_alpha(ink, 70)))
+        p.setBrush(QBrush(g.hi(A_YELLOW, _with_alpha(ink, 70), alpha=200)))
         p.drawPath(path)
     elif name == "import":
-        g.arrow(QPointF(32, 6), QPointF(32, 40), head=12)
+        g.arrow(QPointF(32, 6), QPointF(32, 40), g.hi(A_GREEN), head=12)
         g.line(8, 44, 8, 56, w=4)
         g.line(8, 56, 56, 56, w=4)
         g.line(56, 56, 56, 44, w=4)
@@ -445,7 +470,9 @@ def _draw(name: str, g: _Glyph) -> None:
         path.cubicTo(QPointF(18, 12), QPointF(46, 12), QPointF(60, 32))
         path.cubicTo(QPointF(46, 52), QPointF(18, 52), QPointF(4, 32))
         p.drawPath(path)
-        if g.tiled:
+        if g.accents:
+            g.fill(QColor(A_GREEN if name == "watch_on" else A_RED))
+        elif g.tiled:
             g.fill()
         else:
             p.setBrush(QBrush(QColor(40, 150, 90) if name == "watch_on" else QColor(200, 70, 60)))
@@ -458,14 +485,14 @@ def _draw(name: str, g: _Glyph) -> None:
             g.line(32 + 19 * math.cos(a), 32 + 19 * math.sin(a), 32 + 25 * math.cos(a), 32 + 25 * math.sin(a), w=7)
     elif name == "log":       # a list: a dot and a line, three times
         for y in (16, 32, 48):
-            g.fill()
+            g.fill(g.hi(A_BLUE))
             p.drawEllipse(QPointF(11, y), 4.2, 4.2)
             g.line(23, y, 55, y, w=5.5)
     elif name == "tools":     # sliders: the image processing controls
         for y, x in ((14, 40), (32, 20), (50, 44)):
             g.line(6, y, 58, y, soft if not g.tiled else _with_alpha(ink, 170), 4)
-            p.setPen(g.pen(w=3.5))
-            p.setBrush(QBrush(ink if g.tiled else hole))
+            p.setPen(g.pen(g.hi(A_BLUE), w=3.5))
+            p.setBrush(QBrush(g.hi(A_BLUE, ink if g.tiled else hole)))
             p.drawEllipse(QPointF(x, y), 7, 7)
     elif name == "annot_clear":   # an eraser over a line
         g.line(6, 57, 58, 57, soft, 3.5)
@@ -473,27 +500,27 @@ def _draw(name: str, g: _Glyph) -> None:
         p.setBrush(QBrush(_with_alpha(ink, 70)))
         p.drawPolygon(QPolygonF([QPointF(9, 39), QPointF(34, 10), QPointF(55, 28), QPointF(30, 54),
                                  QPointF(20, 54)]))
-        p.setBrush(QBrush(ink))
+        p.setBrush(QBrush(g.hi(A_RED)))
         p.drawPolygon(QPolygonF([QPointF(9, 39), QPointF(22, 25), QPointF(41, 43), QPointF(30, 54),
                                  QPointF(20, 54)]))
     elif name == "exit":      # the power symbol
-        g.stroke(w=6.5)
+        g.stroke(g.hi(A_RED), w=6.5)
         p.drawArc(QRectF(10, 12, 44, 44), 125 * 16, 290 * 16)
-        g.line(32, 6, 32, 30, w=6.5)
+        g.line(32, 6, 32, 30, g.hi(A_RED), w=6.5)
     elif name == "discpair":  # two optic discs side by side
         for cx in (17.0, 47.0):
             g.disc(cx, 32, 13, 5.5)
     elif name == "glaucoma":  # one disc with a large cup
         g.stroke()
         p.drawEllipse(QPointF(32, 32), 24, 25)
-        g.fill(_with_alpha(ink, 90))
+        g.fill(g.hi(A_RETINA, _with_alpha(ink, 90), alpha=225))
         p.drawEllipse(QPointF(32, 32), 24, 25)
-        g.fill()
+        g.fill(g.hi(A_CUP))
         p.drawEllipse(QPointF(32, 33), 13, 15)
     elif name == "montage":   # three overlapping photos of one eye, put together into one
         for cx, cy in ((20.0, 41.0), (44.0, 41.0), (32.0, 21.0)):
             g.stroke(w=3.5)
-            p.setBrush(QBrush(_with_alpha(ink, 95)))
+            p.setBrush(QBrush(g.hi(A_RETINA, _with_alpha(ink, 95), alpha=185)))
             p.drawEllipse(QPointF(cx, cy), 15, 15)
     elif name == "eye3d":     # the eyeball: a globe with its meridians, looking to the side
         g.stroke()
@@ -501,7 +528,7 @@ def _draw(name: str, g: _Glyph) -> None:
         g.stroke(soft if not g.tiled else _with_alpha(ink, 190), 3)
         p.drawArc(QRectF(7, 21, 50, 22), 180 * 16, 180 * 16)
         p.drawArc(QRectF(20, 7, 24, 50), 90 * 16, 180 * 16)
-        g.fill()
+        g.fill(g.hi(A_BLUE))
         p.drawEllipse(QPointF(43, 27), 8, 8)
     else:
         g.text(r, name[:2].upper(), 26)
@@ -555,11 +582,11 @@ def _flat_tile(p: QPainter, color: QColor, border: QColor | None = None) -> None
 
 
 def _glyph(p: QPainter, name: str, ink: QColor, soft: QColor, hole: QColor, scale: float, k: float,
-           dy: float = 0.0) -> None:
+           dy: float = 0.0, accents: bool = False) -> None:
     p.translate(32, 32 + dy)
     p.scale(scale, scale)
     p.translate(-32, -32)
-    _draw(name, _Glyph(p, ink, soft, hole, k, tiled=True))
+    _draw(name, _Glyph(p, ink, soft, hole, k, tiled=True, accents=accents))
 
 
 def _paint(p: QPainter, name: str, look: str) -> None:
@@ -568,6 +595,8 @@ def _paint(p: QPainter, name: str, look: str) -> None:
     line, flat = (QColor(c) for c in GROUPS[group_of(name)])
     if look == "mono":
         _glyph(p, name, MONO_INK, MONO_SOFT, PAGE, 0.92, 1.0)
+    elif look == "accent":
+        _glyph(p, name, MONO_INK, MONO_SOFT, PAGE, 0.92, 1.0, accents=True)
     elif look == "color":
         c = _own_color(name)
         _glyph(p, name, c, _with_alpha(c, 150), PAGE, 0.92, 1.0)
