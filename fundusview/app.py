@@ -84,6 +84,8 @@ def main(argv: list[str] | None = None) -> int:
     app = QApplication(sys.argv[:1])
     app.setApplicationName(APP_NAME)
     app.setOrganizationName(APP_NAME)
+    from .ui import gui_gc
+    gui_gc.install(app)               # reference cycles (closed windows among them) freed on this thread only
     from .ui import theme
     from .ui.icon import qicon
     app.setWindowIcon(qicon())
