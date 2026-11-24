@@ -271,11 +271,11 @@ def test_simple_follows_the_clicks_and_starts_again_from_the_newest_od_and_os(wi
     w.btn_clear_picks.click()
     app.processEvents()
     assert w.picks() == [od3, os3] and not w.btn_clear_picks.isVisible() and _cells(w)[0] == [od3, os3]
-    # a double click on a cell: not large (that is a double click on a photo of the list) — Simple stays
+    # a double click on a cell: that photo large (Detail, 0.13.12) — the photos of Simple as they were
     cell = next(c for c in w.multi.cells if c.image_id == os3)
     QTest.mouseDClick(cell.view.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(20, 20))
     app.processEvents()
-    assert w._tab() == "multi" and w.current["id"] == os3 and w.picks() == [od3, os3]
+    assert w._tab() == "all" and w.current["id"] == os3 and w.picks() == [od3, os3]
 
     # a patient with one eye's photos: the one photo; a click pins that photo, more clicks add to it
     w.f_eye.setCurrentIndex(w.f_eye.findData("OD"))
@@ -402,15 +402,18 @@ def test_a_double_click_opens_detail_and_another_goes_back(win):
         QTest.mouseDClick(view.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(60, 60))
         app.processEvents()
 
-    # Simple with three photos pinned: a cell double clicked — Simple stays (Detail comes from the photo
-    # list only); a photo of the list double clicked — Detail; the big photo double clicked — back, the
-    # three photos as they were, that photo selected
+    # Simple with three photos pinned: a cell double clicked — Detail with its photo (0.13.12), the big
+    # photo double clicked — back; a photo of the list double clicked — Detail; the big photo double
+    # clicked — back, the three photos as they were, that photo selected
     _all(w)
     for iid in (od3, os3, od2):
         _click(app, w, iid)
     assert w.picks() == [od3, os3, od2]
     dclick(next(c for c in w.multi.cells if c.image_id == os3).view)
+    assert w._tab() == "all" and w.current["id"] == os3 and _lit(w) == ["view:all"]
+    dclick(w.view2d)
     assert w._tab() == "multi" and _lit(w) == ["view:simple"] and w.picks() == [od3, os3, od2]
+    assert _cells(w) == ([od3, os3, od2], os3)
     _click(app, w, os3, double=True)
     assert w._tab() == "all" and w.current["id"] == os3 and _lit(w) == ["view:all"]
     assert not w.view2d.loupe_on
@@ -481,8 +484,8 @@ def test_a_double_click_opens_detail_and_another_goes_back(win):
     assert w._tab() == "multi" and _lit(w) == ["view:multi"] and _cells(w)[0] == [od3, os3, od2]
     dclick(next(c for c in w.multi.cells if c.image_id == od2).view)
     assert w._tab() == "multi" and _lit(w) == ["view:simple"] and w.picks() == [od3, os3]
-    dclick(next(c for c in w.multi.cells if c.image_id == os3).view)       # … and on Simple: it stays
-    assert w._tab() == "multi" and _lit(w) == ["view:simple"] and w.current["id"] == os3
+    dclick(next(c for c in w.multi.cells if c.image_id == os3).view)       # … and on Simple: Detail
+    assert w._tab() == "all" and _lit(w) == ["view:all"] and w.current["id"] == os3
 
 
 def test_a_new_photo_takes_its_eyes_place(win):
@@ -700,9 +703,14 @@ def test_macula_and_disc_under_the_photos_of_simple(win):
     g = od_cell.zooms["disc"]._rgb
     assert (g[..., 0] == g[..., 2]).all()
     w._on_action("chan:redfree", False)
-    # a double click on a pane: Simple stays (Detail: a double click on a photo of the list)
+    # a double click on a pane: Simple stays; on the cell's big photo: that photo large (Detail, 0.13.12)
     od_cell.zooms["macula"].activated.emit()
     assert w._tab() == "multi" and w.current["id"] == od3
+    os_cell.view.activated.emit()
+    assert w._tab() == "all" and w.current["id"] == os3
+    w.view2d.activated.emit()                                 # (and back with a double click there)
+    assert w._tab() == "multi"
+    w._select_from_multi(od3)
     _press(w, "view:simple")
     # more than 4 cells: no room — the panes go, and come back with fewer
     w._on_action("multi:9")
@@ -732,14 +740,10 @@ def test_the_cell_title_lies_on_the_photo(win):
         assert view.rect().contains(lab.geometry()) and lab.y() < 20
         port = view.viewport()
         assert view.childAt(lab.geometry().center()) is port            # the mouse goes through it
-    # the badge right after the title of the selected cell, on the same line
-    assert left.badge.isVisible() and not right.badge.isVisible()
-    b, lab = left.badge.geometry(), left.label.geometry()
-    assert b.left() > lab.right() and abs(b.center().y() - lab.center().y()) <= 2
     # a click on the title of the other cell selects it
     QTest.mouseClick(right.view.viewport(), Qt.MouseButton.LeftButton, pos=right.label.geometry().center())
     app.processEvents()
-    assert right.selected and w.current["id"] == right.image_id and right.badge.isVisible()
+    assert right.selected and w.current["id"] == right.image_id
     # an empty cell has no title
     w.multi.set_count(4)
     app.processEvents()
@@ -747,9 +751,9 @@ def test_the_cell_title_lies_on_the_photo(win):
     assert empty and not any(c.label.isVisible() for c in empty)
 
 
-def test_the_photo_being_adjusted_is_framed_in_blue_with_a_badge(win):
+def test_the_photo_being_adjusted_is_framed_in_blue(win):
     """Simple · Multi: the photo the processing toolbar works on (the cell clicked last) is framed in blue
-    and has a small blue 보정 badge right after its title (the badge with two photos or more)."""
+    — the frame only: no 보정 badge after its title (0.13.12)."""
     from PySide6.QtCore import QPoint, Qt
     from PySide6.QtTest import QTest
 
@@ -761,19 +765,15 @@ def test_the_photo_being_adjusted_is_framed_in_blue_with_a_badge(win):
     cells = [c for c in w.multi.cells if c.isVisible() and c.image_id]
     assert [c.image_id for c in cells] == [od3, os3]
 
-    def badges():
-        return [c.image_id for c in w.multi.cells if c.badge.isVisible()]
-
     def framed():
         return [c.image_id for c in w.multi.cells if c.isVisible() and theme.ACCENT.lower() in c.styleSheet().lower()]
 
-    assert badges() == [w.current["id"]] == framed()
-    # a click on the other cell: the badge goes with it (and the processing with it)
+    assert [w.current["id"]] == framed()
+    assert not any(hasattr(c, "badge") for c in w.multi.cells)
+    # a click on the other cell: the frame goes with it (and the processing with it)
     other = next(c for c in cells if c.image_id != w.current["id"])
     QTest.mouseClick(other.view.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(20, 20))
     app.processEvents()
-    assert badges() == [other.image_id] == [w.current["id"]] == framed()   # the frame went with the click
-    assert "적용" in other.badge.toolTip()
-    # one photo on the page: no badge (there is no other it could be)
+    assert [other.image_id] == [w.current["id"]] == framed()
     _click(app, w, od3)                                    # (od3 pinned: alone)
-    assert [c.image_id for c in w.multi.cells if c.isVisible() and c.image_id] == [od3] and badges() == []
+    assert [c.image_id for c in w.multi.cells if c.isVisible() and c.image_id] == [od3]
