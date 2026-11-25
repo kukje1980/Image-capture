@@ -25,9 +25,9 @@ import math
 from functools import lru_cache
 
 import numpy as np
-from PySide6.QtCore import QPoint, QPointF, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QIcon, QImage, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSlider, QToolBar, QVBoxLayout, QWidget
 
 from .. import imaging
 from . import icons, theme
@@ -212,6 +212,62 @@ def icon_for(spec: str) -> QIcon:
 # ---------------------------------------------------------------------------
 # gamma / contrast / brightness popups (VK-2 opens a small slider for these)
 # ---------------------------------------------------------------------------
+class FitToolBar(QObject):
+    """Keeps every button of a toolbar on screen: where the bar is too short for its buttons (a low
+    window — a laptop, a display scaled 125 ~ 150 %), Qt puts the last ones behind the » at its end,
+    and on the command toolbar those are Glaucoma · 인쇄 · 설정 · 종료. So the buttons get smaller
+    one step at a time — smaller pictures, then pictures without their names (the name is in the
+    tooltip) — until all of them fit, and larger again as soon as there is room."""
+
+    STEPS = ((1.0, True), (0.8, True), (0.65, True), (0.85, False), (0.65, False), (0.5, False))
+
+    def __init__(self, bar: QToolBar, icon_px: int):
+        super().__init__(bar)
+        self.bar, self.icon_px, self.step = bar, icon_px, 0
+        self._busy = False
+        bar.installEventFilter(self)
+        bar.orientationChanged.connect(lambda _o: self.fit())
+
+    def eventFilter(self, obj, ev) -> bool:
+        if ev.type() in (QEvent.Type.Resize, QEvent.Type.Show):
+            self.fit()
+        return False
+
+    def _apply(self, step: int) -> None:
+        scale, names = self.STEPS[step]
+        px = max(12, round(self.icon_px * scale))
+        self.bar.setIconSize(QSize(px, px))
+        self.bar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon if names
+                                    else Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.step = step
+
+    def _needs(self) -> int:
+        lay = self.bar.layout()
+        if lay is not None:
+            lay.invalidate()
+        hint = self.bar.sizeHint()
+        return hint.height() if self.bar.orientation() == Qt.Orientation.Vertical else hint.width()
+
+    def fit(self) -> None:
+        if self._busy:
+            return
+        bar = self.bar
+        room = bar.height() if bar.orientation() == Qt.Orientation.Vertical else bar.width()
+        if room <= 0:
+            return
+        self._busy = True
+        try:
+            before = self.step
+            for step in range(len(self.STEPS)):
+                self._apply(step)
+                if self._needs() <= room:
+                    break
+            if self.step != before:
+                bar.updateGeometry()
+        finally:
+            self._busy = False
+
+
 class SliderPopup(QFrame):
     """A slider under a toolbar button; ``slider`` holds the value."""
     pressed = Signal()
