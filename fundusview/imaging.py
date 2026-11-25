@@ -353,7 +353,8 @@ def detect_fovea(rgb: np.ndarray, cam, disc, laterality: str | None = None, *,
     return best[:4] if with_side else best[:3]
 
 
-LANDMARKS_VERSION = 2       # how the disc and the macula are found (photos found an older way: again)
+LANDMARKS_VERSION = 3       # how the disc and the macula are found (photos found an older way: again)
+# 3 (0.13.15): the edge of a glare band along the rim (the lid's reflex) is not taken for the disc
 
 
 def _vessel_map(small: np.ndarray, r: float, disc_frac: float) -> np.ndarray:
@@ -371,13 +372,17 @@ def _vessel_map(small: np.ndarray, r: float, disc_frac: float) -> np.ndarray:
 
 
 def disc_candidates(rgb: np.ndarray, circle: tuple[float, float, float], *, disc_frac: float = 0.11,
-                    search: float = 0.7, reach: float = 0.9, count: int = 6) -> list[tuple[float, float, float, float, float]]:
+                    search: float = 0.7, reach: float = 0.9, count: int = 6) -> list[tuple[float, ...]]:
     """Places that could be the optic disc, the likeliest first: ``(x, y, contrast, brightness,
-    vessels)`` — the peaks of the local contrast :func:`detect_disc` goes by (z-scores against the field inside
+    vessels, open)`` — the peaks of the local contrast :func:`detect_disc` goes by (z-scores against the field inside
     ``search`` × radius, as there; the peaks out to ``reach`` × radius), each at least two disc diameters from the others; ``vessels`` is how much
     more vessel runs through and around the place than over the field (z-score: the vessels of the
-    retina all come out of the disc). Hard exudates, scars and reflexes are among the candidates: a
-    bright patch with strong contrast is not yet a disc (:func:`detect_landmarks` picks)."""
+    retina all come out of the disc); ``open`` is the share of the surroundings (two rings, 3 and 5
+    disc radii out, inside the field) brighter than the place itself — a disc is a bright spot with
+    darker retina all round (about 0), the edge of a glare band or a lid reflex along the rim of the
+    field is not: beyond it the picture only gets brighter. Hard exudates, scars and reflexes are
+    among the candidates: a bright patch with strong contrast is not yet a disc
+    (:func:`detect_landmarks` picks)."""
     small, step = _downsample(rgb, 384)
     cx, cy, r = (v / step for v in circle)
     lum = luminance(small.astype(np.float32))
@@ -400,17 +405,60 @@ def disc_candidates(rgb: np.ndarray, circle: tuple[float, float, float], *, disc
     cover = np.maximum(gaussian_blur(field, 2.5 * dr), 1e-6)
     ves = gaussian_blur(np.where(ordinary, th, 0.0) * field, 2.5 * dr) / cover
     zv = (ves - np.median(ves[inside])) / (ves[inside].std() + 1e-6)
-    out = []
-    for _ in range(count):
-        iy, ix = np.unravel_index(np.argmax(z), z.shape)
-        conf = float(z[iy, ix])
-        if conf < 3.0:
-            break
-        # (the dark macula with its reflex at the centre of a fovea-centred photo is not a disc)
-        if d2[iy, ix] >= (0.08 * r) ** 2 or zb[iy, ix] >= 1.0:
-            out.append(((ix + 0.5) * step, (iy + 0.5) * step, conf, float(zb[iy, ix]), float(zv[iy, ix])))
-        z[(xx - ix) ** 2 + (yy - iy) ** 2 <= (4.0 * dr) ** 2] = -1e9
-    return out
+    z0 = z
+
+    def scan(floor: float):
+        """The peaks of ``z`` down to ``floor``: ``(closed, open)`` — at most ``count`` of each, and as
+        before at most ``count`` in all while no peak is an edge."""
+        z = z0.copy()
+        closed, opened = [], []
+        for _ in range(8 * count):
+            iy, ix = np.unravel_index(np.argmax(z), z.shape)
+            conf = float(z[iy, ix])
+            if conf < floor:
+                break
+            z[(xx - ix) ** 2 + (yy - iy) ** 2 <= (4.0 * dr) ** 2] = -1e9
+            # (the dark macula with its reflex at the centre of a fovea-centred photo is not a disc)
+            if not (d2[iy, ix] >= (0.08 * r) ** 2 or zb[iy, ix] >= 1.0):
+                continue
+            share = _open_share(mean, ix, iy, dr, cx, cy, r)
+            item = ((ix + 0.5) * step, (iy + 0.5) * step, conf, float(zb[iy, ix]), float(zv[iy, ix]), share)
+            if share > OPEN_MAX:
+                if len(opened) < count:
+                    opened.append(item)
+            else:
+                closed.append(item)
+            if len(closed) >= count or len(closed) + len(opened) >= (count if not opened else 2 * count):
+                break
+        return closed, opened
+
+    # A glare band along the rim (the lid's reflex on an ultra-wide-field photo) has a sharp, bright edge:
+    # peak after peak along it, which do not take the places of the candidates. When every place found
+    # was such an edge, the field's contrast was set by the band: a weaker bright spot with darker retina
+    # all round is looked for as well.
+    closed, opened = scan(3.0)
+    if not closed and opened:
+        closed, _ = scan(2.0)
+    return sorted(closed + opened, key=lambda c: -c[2])
+
+
+OPEN_MAX = 0.25            # a disc candidate brighter beyond than this share of its surroundings: an edge
+
+
+def _open_share(mean: np.ndarray, ix: int, iy: int, dr: float, cx: float, cy: float, r: float) -> float:
+    """The share of the places 3 and 5 disc radii around ``(ix, iy)``, inside the field, that are at
+    least as bright as it (``mean``: the picture blurred over a disc radius)."""
+    h, w = mean.shape
+    here = mean[iy, ix]
+    hits = seen = 0
+    for k in (3.0, 5.0):
+        for a in np.linspace(0.0, 2.0 * math.pi, 16, endpoint=False):
+            x, y = ix + k * dr * math.cos(a), iy + k * dr * math.sin(a)
+            if not (0 <= x < w and 0 <= y < h) or (x - cx) ** 2 + (y - cy) ** 2 > (0.97 * r) ** 2:
+                continue                       # (outside the field: black — says nothing either way)
+            seen += 1
+            hits += mean[int(y), int(x)] >= here
+    return hits / seen if seen else 0.0
 
 
 def detect_landmarks(rgb: np.ndarray, cam, laterality: str | None = None, *, search: float = 0.7):
@@ -425,18 +473,21 @@ def detect_landmarks(rgb: np.ndarray, cam, laterality: str | None = None, *, sea
     contrasty place of the whole field is a candidate (:func:`disc_candidates`), and the one is taken
     that looks most like a disc *and* has a macula where a disc's macula lies (≈ 21.5° temporal, a
     little below): contrast, brightness and how dark that macula is add up. Beyond ``search`` × radius
-    a candidate must earn it (the rim of the field has reflexes, lashes and the lid).
+    a candidate must earn it (the rim of the field has reflexes, lashes and the lid), and a place the
+    picture gets brighter beyond — the edge of a glare band, a lid reflex along the bottom of an
+    ultra-wide-field photo — is not a disc however bright and contrasty it is.
     """
     if cam is None or not cam.r:
         return None, None
     circle = (cam.cx, cam.cy, cam.r)
     tmax = math.degrees(cam.tmax)
     best = None
-    for x, y, conf, bright, ves in disc_candidates(rgb, circle, disc_frac=min(0.25, 3.8 / max(tmax, 5.0)),
-                                             search=search):
+    for x, y, conf, bright, ves, open_ in disc_candidates(rgb, circle, disc_frac=min(0.25, 3.8 / max(tmax, 5.0)),
+                                                    search=search):
         fovea = detect_fovea(rgb, cam, (x, y), laterality, with_side=True)
         score = (min(conf, 8.0) + min(max(bright, 0.0), 2.0) + min(max(ves, -1.0), 2.0)
-                 + (1.5 * min(fovea[2], 6.0) if fovea else 0.0))
+                 + (1.5 * min(fovea[2], 6.0) if fovea else 0.0)
+                 - 20.0 * max(0.0, open_ - 0.1))      # (a little brighter beyond: a reflex beside a disc)
         if math.hypot(x - cam.cx, y - cam.cy) > search * cam.r:
             score -= 2.5
         if best is None or score > best[0]:
