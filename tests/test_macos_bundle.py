@@ -156,18 +156,18 @@ def test_check_app_writes_the_version_for_the_download_page(tmp_path, capsys):
     assert "(x86_64)" in out and "26.0" in out                    # the binding labels are reported
 
 
-def test_download_page_names_every_mac_build():
-    """The release notes have a @MAC_MIN_<label>@ for each Mac build the workflow makes (Apple
-    Silicon only: no Intel build is published), and build_mac.sh names the dmg and the version
-    file with the same labels."""
+def test_only_windows_is_built_and_published_and_the_page_says_mac_stopped():
+    """0.13.14: Windows only (the owner asked). The workflow no longer builds a Mac app or waits for one
+    to publish, the download page has no Mac version left to fill in, and it says the Mac file there
+    is the last one (0.13.13). build_mac.sh stays, to build on a Mac by hand."""
     workflow = (ROOT / ".github" / "workflows" / "fundus-viewer.yml").read_text(encoding="utf-8")
-    labels = re.findall(r"^\s+label:\s*(\w+)\s*$", workflow, re.M)
-    assert labels == ["AppleSilicon"]
+    jobs = re.findall(r"^  ([\w-]+):\s*$", workflow, re.M)
+    assert jobs == ["test-linux", "build-windows", "publish"]
+    assert not re.search(r"runs-on:.*macos", workflow) and "macmin-" not in workflow
+    assert re.search(r"needs:\s*\[build-windows\]", workflow)
     notes = (ROOT / "docs" / "release_notes.md").read_text(encoding="utf-8")
-    assert sorted(re.findall(r"@MAC_MIN_(\w+)@", notes)) == sorted(labels)
+    assert "@MAC_MIN_" not in notes
+    head = notes.split("### 버전", 1)[0]
+    assert "0.13.13" in head and "새로 만들지 않습니다" in head
     script = (ROOT / "build_mac.sh").read_text(encoding="utf-8")
-    for label in labels:
-        assert f'LABEL="{label}"' in script
-    assert 'DMG="dist/FundusViewer-mac-$LABEL.dmg"' in script and 'mac-min-$LABEL.txt' in script
-    assert "dist/FundusViewer-mac-${{ matrix.label }}.dmg" in workflow
-    assert "dist/mac-min-${{ matrix.label }}.txt" in workflow
+    assert 'DMG="dist/FundusViewer-mac-$LABEL.dmg"' in script

@@ -54,9 +54,9 @@ https://github.com/kukje1980/Image-capture/releases/download/fundus-viewer-lates
 — 로그인 없이 받아지며 항상 최신 빌드입니다. 압축을 풀고 `FundusViewer\FundusViewer.exe`를 실행합니다
 ("Windows의 PC 보호" 창이 뜨면 **추가 정보 → 실행**).
 
-**내려받기 (Mac — Apple Silicon M1 · M2 · M3 · M4 …):**
+**내려받기 (Mac — Apple Silicon M1 · M2 · M3 · M4 …) — 0.13.13에서 멈춤:**
 https://github.com/kukje1980/Image-capture/releases/download/fundus-viewer-latest/FundusViewer-mac-AppleSilicon.dmg
-— Intel Mac용은 만들지 않습니다(내 Mac의 칩과 macOS 버전은 화면 왼쪽 위  메뉴 → **이 Mac에 관하여**에 나옵니다). **macOS 14.4 (Sonoma) 이상**이
+— **Mac용은 0.13.14부터 새로 만들지 않습니다**: 이 주소의 파일은 마지막 Mac 빌드인 0.13.13 그대로입니다. Intel Mac용은 만들지 않습니다(내 Mac의 칩과 macOS 버전은 화면 왼쪽 위  메뉴 → **이 Mac에 관하여**에 나옵니다). **macOS 14.4 (Sonoma) 이상**이
 필요합니다 — 함께 들어가는 Qt 6.12가 그 버전용으로 만들어져 있어, 더 낮은 macOS에서는 "이 버전의 macOS에서는
 사용할 수 없습니다"라고 나옵니다(정확한 버전은 내려받기 페이지의 표에 빌드마다 나옵니다). dmg를 열어
 FundusViewer를 응용 프로그램 폴더로 끌어다 놓습니다. 애플 개발자 인증서 없이 임시(ad-hoc) 서명만 한 앱이라
@@ -71,11 +71,10 @@ FundusViewer를 응용 프로그램 폴더로 끌어다 놓습니다. 애플 개
 사용). Mac은 `./build_mac.sh` → `dist/FundusViewer.app`과 `dist/FundusViewer-mac-<AppleSilicon|Intel>.dmg`
 (빌드하는 Mac의 칩용 — 배포하는 것은 Apple Silicon용뿐). 앱의 최소 macOS(Info.plist `LSMinimumSystemVersion`)는 `macos_bundle.py`가 앱에 들어간
 라이브러리에서 읽어 정합니다(PySide6·shiboken6의 바인딩 모듈은 PyPI 빌드 기계의 macOS가 적혀 있을 뿐이라 빼고 셉니다).
-GitHub Actions(`fundus-viewer` 워크플로)가 커밋마다 Linux에서 시험(3D 안구 OpenGL 렌더링 포함)하고 Windows exe와
-Mac 앱(Apple Silicon)을 빌드·시험하며, 기본 브랜치(`fundus-viewer`)의 빌드만 위 주소(릴리스
-`fundus-viewer-latest`)에 올립니다(다른 브랜치·PR은 빌드·시험만). Mac 빌드는 전체 시험 뒤 번들 앱을 데모 사진으로
-실제 실행해 보고, 3D 안구를 macOS OpenGL로 렌더링하는 시험도 거칩니다(macOS 15 러너 — GitHub에 macOS 14 러너는 이제
-없습니다).
+GitHub Actions(`fundus-viewer` 워크플로)가 커밋마다 Linux에서 시험(3D 안구 OpenGL 렌더링 포함)하고 Windows exe를
+빌드·시험하며, 기본 브랜치(`fundus-viewer`)의 빌드만 위 주소(릴리스 `fundus-viewer-latest`)에 올립니다(다른
+브랜치·PR은 빌드·시험만). Mac 앱 빌드는 0.13.13을 마지막으로 워크플로에서 뺐습니다 — `build_mac.sh` ·
+`macos_bundle.py`는 그대로 있어 Mac에서 직접 빌드할 수 있습니다.
 
 **3D 안구 미리보기 (웹 페이지):** `web3d/eye3d.html` 하나를 브라우저(Chrome·Edge·Safari·Firefox)로 열면 프로그램의
 3D 안구를 설치 없이 돌려 볼 수 있습니다. 새 3D 기능은 여기서 먼저 확인한 뒤 프로그램에 넣습니다. 자세한 내용은

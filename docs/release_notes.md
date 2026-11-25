@@ -1,13 +1,14 @@
-## 안저 사진 뷰어 — 최신 빌드 (Windows · Mac)
+## 안저 사진 뷰어 — 최신 빌드 (Windows)
 
 아래 **Assets** 에서 내 컴퓨터에 맞는 파일을 눌러 내려받으세요 (로그인 필요 없음).
 
 | 컴퓨터 | 파일 | 필요한 버전 |
 |---|---|---|
 | Windows | **FundusViewer-windows.zip** | Windows 10 / 11 |
-| Mac — Apple Silicon (M1 · M2 · M3 · M4 …) | **FundusViewer-mac-AppleSilicon.dmg** | @MAC_MIN_AppleSilicon@ 이상 |
+| Mac — Apple Silicon (M1 · M2 · M3 · M4 …) | FundusViewer-mac-AppleSilicon.dmg — **0.13.13 (마지막 Mac 빌드)** | macOS 15 Sequoia 이상 |
 
-Mac용은 **Apple Silicon**(M1 · M2 · M3 · M4 …)용만 있습니다 — Intel Mac용은 만들지 않습니다.
+**Mac용은 0.13.14부터 새로 만들지 않습니다.** 받을 수 있는 Mac 파일은 0.13.13 그대로이며, 그 뒤의 고침은 들어 있지 않습니다.
+Mac용은 **Apple Silicon**(M1 · M2 · M3 · M4 …)용만 있었습니다 — Intel Mac용은 만들지 않았습니다.
 내 Mac의 칩과 macOS 버전은 화면 왼쪽 위  메뉴 → **이 Mac에 관하여**에 나옵니다 — "칩"(Apple M…), 그리고
 "macOS Sonoma 14.…" 같은 버전. 버전이 낮으면  메뉴 → **시스템 설정 → 일반 →
 소프트웨어 업데이트**로 올립니다(그보다 낮은 macOS에서는 "이 버전의 macOS에서는 사용할 수 없습니다"라고 나옵니다).
@@ -36,6 +37,9 @@ Mac용은 **Apple Silicon**(M1 · M2 · M3 · M4 …)용만 있습니다 — Int
 * **보기 → 환자 목록 (Ctrl+0)** 도 툴바의 **[환자 목록]** 처럼 누를 때마다 열고 닫습니다.
 * **3D 크게 보기**에서 **Esc**: 전안부 선택 중이면 첫 Esc는 선택만 풀고, 다음 Esc에 크게 보기를 닫습니다(다른 화면의 Esc와 같게).
 * 사진 목록 오른쪽 클릭의 「비교 대상으로 (오른쪽)」 → **「두 번째 사진(②)으로」** (Ctrl+클릭과 같습니다).
+
+**Mac용은 이번부터 만들지 않습니다**
+* 내려받기 페이지의 Mac 파일(dmg)은 **0.13.13**으로 남고, 더 이상 새 버전으로 바뀌지 않습니다.
 
 **보이지 않던 화면 정리**
 * 0.3.0부터 들어갈 방법이 없던 **검토** · **비교** 화면을 없앴습니다. 화면에 보이는 것은 그대로이고, 시작할 때와 공유 라이브러리가
