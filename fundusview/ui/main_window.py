@@ -2006,7 +2006,7 @@ class MainWindow(QMainWindow):
                 self._show_opening()                                        # Simple (OD | OS) / 16장 보기
             autosetup.remember_removed(self.settings, before)
             if dlg.redetect:
-                autosetup.apply(self.settings, autosetup.detect())
+                autosetup.apply(self.settings, autosetup.detect(), force=True)   # (the button: asked by hand)
             try:   # a new 가져오기 폴더 is watched at once, the old one no longer
                 inbox = autosetup.change_inbox(self.settings, old_inbox)
             except OSError as e:
@@ -3156,6 +3156,9 @@ class MainWindow(QMainWindow):
             ids, shown = self._picked_ids(), self.pair3d.image_ids
             if ids[:len(shown)] != shown or (len(shown) == 2 and ids != shown):
                 if not self._open_pair3d(ids if len(ids) != 2 else None):
+                    # leave the 3D page first: open_picks() comes back here, and with the page still
+                    # on screen it asked for the 3D again, and again (RecursionError, the page stuck)
+                    self._go("multi")
                     self.open_picks()
 
     def _on_multi_layout(self, _n: int) -> None:
@@ -5483,8 +5486,11 @@ class MainWindow(QMainWindow):
 
     def _ov_apply(self) -> None:
         """Each pane on its place, that place's width across the pane."""
-        if not self._ov_on:
+        if not self._ov_on or self._closing:
             return
+        from shiboken6 import isValid
+        if not (isValid(self.ov_macula) and isValid(self.ov_zoom)):
+            return                                 # (asked for by a timer, run after the window was taken down)
         self._ov_busy = True                       # the scroll bars move: keep the asked-for centres
         try:
             for key, view in (("macula", self.ov_macula), ("zoom", self.ov_zoom)):
@@ -6036,6 +6042,11 @@ class MainWindow(QMainWindow):
         if rgb is None:
             return
         circle = imaging.detect_circle(rgb)
+        # found again: what is written below is no longer "marked by hand" (as 3D 설정 → [다시 찾기]) —
+        # left so, the found places counted as the user's own and were never looked for again
+        for field in ("disc", "fovea"):
+            self._set_landmark_source(image_id, field, None)
+        row = self.db.get_image(image_id)
         disc, fovea = (self._find_marks(row, rgb, circle) if row["modality"] not in ("montage", "anterior")
                        else (None, None))
         meta = json.loads(self.db.get_image(image_id)["meta_json"] or "{}")

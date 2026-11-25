@@ -180,8 +180,21 @@ class ImageDialog(QDialog):
                            if v and v != existing[k]}
                 if changes:
                     self.db.update_patient(ref, **changes)
+        eye = self.eye.currentData() or None
+        extra = {}
+        now = self.db.get_image(self.image["id"])
+        if now is not None and eye in ("OD", "OS") and eye != now["laterality"]:
+            # the eye stated here is the user's: not a guess the next search for the macula may turn
+            # round (as 3D 설정 → 눈 writes it)
+            import json
+            try:
+                meta = json.loads(now["meta_json"] or "{}")
+            except (ValueError, TypeError):
+                meta = {}
+            meta.setdefault("sources", {})["laterality"] = "manual"
+            extra["meta_json"] = meta
         self.db.update_image(
-            self.image["id"], patient_ref=ref,
+            self.image["id"], patient_ref=ref, **extra,
             exam_date=norm_date(self.exam_date.text().strip()) if self.exam_date.text().strip() else None,
             exam_time=norm_time(self.exam_time.text().strip()) if self.exam_time.text().strip() else None,
             laterality=self.eye.currentData() or None, modality=self.modality.currentData() or None,

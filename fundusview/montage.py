@@ -395,7 +395,8 @@ def _coarse_vessels(shot: Shot, scale: float) -> np.ndarray:
     """The vessels alone at a reduced size: smoothed against noise, the uneven light taken out, dark
     lines turned into bright ones. Blurred, noisy or pale photos still give points here."""
     g = cv2.GaussianBlur(np.ascontiguousarray(shot.rgb[..., 1]), (0, 0), 1.0 / scale)
-    g = cv2.resize(g, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+    size = (max(1, int(round(g.shape[1] * scale))), max(1, int(round(g.shape[0] * scale))))
+    g = cv2.resize(g, size, interpolation=cv2.INTER_AREA)   # (never 0 across: a photo one pixel wide)
     g = cv2.medianBlur(g, 5)
     k = max(9, int(round(min(g.shape) * 0.035)) | 1)
     v = cv2.morphologyEx(g, cv2.MORPH_BLACKHAT, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))

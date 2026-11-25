@@ -28,6 +28,7 @@ import os
 import re
 import shutil
 import tempfile
+import threading
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -123,7 +124,7 @@ def safe_component(s: str, fallback: str = "_") -> str:
 def describe_error(exc: BaseException) -> str:
     """An import failure in the user's words, the technical message after it."""
     kind, text = type(exc).__name__, str(exc)
-    if kind == "DecompressionBombError":
+    if kind in ("DecompressionBombError", "DecompressionBombWarning"):
         said = "사진이 너무 큽니다 (4억 화소 초과)"
     elif kind == "UnidentifiedImageError":
         said = "사진 파일이 아니거나 손상된 파일입니다"
@@ -155,6 +156,9 @@ def is_candidate(path: Path) -> bool:
     return ext == "" and is_dicom(path)
 
 
+OLD_FILE_SECONDS = 30.0     # last written this long ago: not a file still being copied in
+
+
 def wait_until_stable(path: Path, seconds: float, timeout: float = 180.0) -> bool:
     """True once the file stopped changing and can be opened.
 
@@ -172,7 +176,12 @@ def wait_until_stable(path: Path, seconds: float, timeout: float = 180.0) -> boo
         except OSError:
             return False
         now = time.monotonic()
-        if sig != last:
+        if last is None and st.st_size > 0 and time.time() - st.st_mtime >= max(seconds, OLD_FILE_SECONDS):
+            # a file nobody has written to for a while (a folder of older photos, the first look at a
+            # camera's folder): looked at once more after a moment instead of waiting ``seconds`` —
+            # thousands of photos took 1.65 s each
+            last, stable_since = sig, now - seconds + min(seconds, 0.1)
+        elif sig != last:
             last, stable_since = sig, now
         elif st.st_size == 0:
             if now >= empty_deadline:
@@ -186,6 +195,9 @@ def wait_until_stable(path: Path, seconds: float, timeout: float = 180.0) -> boo
                 stable_since = now
         time.sleep(min(0.25, max(seconds / 4, 0.05)))
     return False
+
+
+_IMPORT_LOCK = threading.RLock()
 
 
 class Importer:
@@ -253,7 +265,11 @@ class Importer:
                 and abs((seen["mtime"] or 0) - st.st_mtime) < 1e-3 and seen["status"] != "error"):
             return ImportResult("skipped", spath, "이미 처리됨", seen["image_id"])
         try:
-            return self._import(path, folder, st, assign)
+            # one photo at a time, whoever asks (the watcher's worker, a photo sent by another
+            # computer, a second service): two imports of the same photo both found it "new", and the
+            # one that lost at the database took the files of the one that won away with its own
+            with _IMPORT_LOCK:
+                return self._import(path, folder, st, assign)
         except Exception as exc:  # keep the watcher alive on any bad file
             msg = describe_error(exc)
             self.db.mark_seen(spath, st.st_size, st.st_mtime, "error", None, msg[:500])

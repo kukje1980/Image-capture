@@ -285,3 +285,38 @@ def test_the_3d_question_itself(tmp_path):
         assert w._ask_3d_which(3) is None
     finally:
         w.close()
+
+
+def test_leaving_two_up_3d_when_its_photos_cannot_be_shown_does_not_recurse(tmp_path, demo_dir, import_and_wait,
+                                                                           monkeypatch):
+    """극한 테스트 (무작위 조작): on 두 장 3D the photos changed and the 3D could not be opened again
+    (fewer than two photos, a photo that cannot be read …) — the way back to the photos asked for
+    the 3D again while its page was still on screen, without end (RecursionError, the page stuck)."""
+    from PySide6.QtWidgets import QApplication
+
+    from fundusview.config import Settings
+    from fundusview.db import Database
+    from fundusview.ui.main_window import MainWindow
+
+    app = QApplication.instance() or QApplication([])
+    s = Settings(library_dir=str(tmp_path / "lib"), stable_seconds=0.05, rescan_seconds=0,
+                 watch_on_startup=False, auto_detect=False)
+    db = Database(tmp_path / "lib" / "fundus.db")
+    w = MainWindow(s, db)
+    try:
+        w.show()
+        import_and_wait(app, w, [demo_dir])
+        w._select_patient_ref(db.find_patient("20260115001")["id"])
+        w.show_simple()
+        app.processEvents()
+        assert w._open_pair3d() and w._tab() == "3d2"
+        calls = []
+        monkeypatch.setattr(w, "_open_pair3d", lambda ids=None: calls.append(ids) or False)
+        w._picks = list(reversed(w._picks))                 # the photos of the page changed
+        w._refill_multis()
+        app.processEvents()
+        assert len(calls) == 1 and w._tab() == "multi"      # asked once, then back to the photos
+    finally:
+        w.close()
+        w.deleteLater()
+        app.processEvents()

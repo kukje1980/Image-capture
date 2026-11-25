@@ -86,11 +86,26 @@ def normalize_url(text: str) -> str:
         return ""
     if "://" not in text:
         text = "http://" + text
-    parts = urlsplit(text)
-    host = parts.hostname or ""
-    if not host:
+    try:
+        parts = urlsplit(text)
+        host, port = parts.hostname or "", parts.port
+    except ValueError:                           # "host:abc", a port over 65535, "[::1" …
         return ""
-    return f"http://{host}:{parts.port or DEFAULT_PORT}"
+    if not host or host in ("http", "https"):
+        return ""
+    return f"http://{host}:{port or DEFAULT_PORT}"
+
+
+def _reply(data: bytes) -> dict:
+    """A server's answer: a JSON object. Anything else at that address (a router's page, a proxy,
+    another program) is not this program's server — said so, not a JSONDecodeError."""
+    try:
+        reply = json.loads(data)
+    except ValueError:
+        reply = None
+    if not isinstance(reply, dict):
+        raise ShareError("이 주소는 안저 사진 뷰어 서버가 아닙니다")
+    return reply
 
 
 def _row(row) -> dict | None:
@@ -270,7 +285,16 @@ class _Handler(BaseHTTPRequestHandler):
     def _guard(self) -> bool:
         if self._authorized():
             return True
-        self._body()                             # keep the connection in step
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            n = 0
+        if n > 1_000_000:
+            # not read: anyone on the network could have the server hold hundreds of megabytes in
+            # memory without the password. The connection ends with the answer instead
+            self.close_connection = True
+        else:
+            self._body()                         # keep the connection in step
         self._json({"error": "unauthorized"}, 401)
         return False
 
@@ -474,7 +498,7 @@ class RemoteDatabase:
 
     def _post(self, path: str, body: bytes, headers: dict | None = None):
         data, _ = self.request("POST", path, body, headers)
-        reply = json.loads(data)
+        reply = _reply(data)
         with self._lock:
             if self._rev is not None and reply.get("before") != self._rev:
                 self._foreign = True
@@ -484,7 +508,7 @@ class RemoteDatabase:
     def ping(self) -> dict:
         """Is the server there, and is the password right? Raises :class:`ShareError`."""
         data, _ = self.request("GET", "/api/ping", quiet=True)
-        info = json.loads(data)
+        info = _reply(data)
         if info.get("app") != APP_NAME:
             raise ShareError("이 주소는 안저 사진 뷰어 서버가 아닙니다")
         if not info.get("auth"):
@@ -499,7 +523,10 @@ class RemoteDatabase:
             data, _ = self.request("GET", "/api/rev", quiet=True)
         except ShareError:
             return False
-        rev = json.loads(data).get("rev")
+        try:
+            rev = _reply(data).get("rev")
+        except ShareError:
+            return False
         with self._lock:
             hit = self._foreign or (self._rev is not None and rev != self._rev)
             self._rev, self._foreign = rev, False

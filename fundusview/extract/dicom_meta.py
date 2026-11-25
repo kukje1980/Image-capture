@@ -7,6 +7,7 @@ character set; those are re-decoded here so names are not garbled.
 """
 from __future__ import annotations
 
+import math
 import re
 import warnings
 from pathlib import Path
@@ -132,12 +133,16 @@ def dicom_meta(path: Path) -> ExtractedMeta:
     fov = ds.get("HorizontalFieldOfView")
     if fov is not None:
         try:
-            meta.set("fov_deg", float(fov), SOURCE)
+            fov = float(fov)
+        except (TypeError, ValueError):
+            fov = None
+        # an angle no fundus camera has (0, negative, 720, inf …) is left to the camera's profile:
+        # taken as it was, every length measured on the photo was wrong
+        if fov is not None and math.isfinite(fov) and 5.0 <= fov <= 270.0:
+            meta.set("fov_deg", fov, SOURCE)
             # Fundus-camera convention (VK-2 writes the camera's 45°/50°):
             # the angle at the pupil. Profiles may override for wide-field.
             meta.fov_type = "external"
-        except (TypeError, ValueError):
-            pass
     meta.set("study_uid", _str(ds, "StudyInstanceUID"), SOURCE)
     meta.set("description", _str(ds, "SeriesDescription") or _str(ds, "StudyDescription"), SOURCE)
     for kw in ("Modality", "SOPClassUID", "Manufacturer", "ManufacturerModelName", "SoftwareVersions",

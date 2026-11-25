@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import math
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -24,6 +25,15 @@ except ImportError:          # pragma: no cover - listed in requirements.txt
     cv2 = None
 
 Image.MAX_IMAGE_PIXELS = 400_000_000  # montages are large; files are local and trusted
+
+
+def _check_size(img: Image.Image) -> None:
+    """Past the limit Pillow itself only warns, up to twice as many pixels: a 1 MB PNG of
+    21000 × 20000 was decoded into gigabytes of memory. The limit is the limit (the importer's
+    describe_error tells the user of it)."""
+    if img.width * img.height > Image.MAX_IMAGE_PIXELS:
+        raise Image.DecompressionBombError(
+            f"Image size ({img.width * img.height} pixels) exceeds limit of {Image.MAX_IMAGE_PIXELS} pixels")
 
 
 _EXIF_ORIENTATION = 0x0112
@@ -46,7 +56,11 @@ def load_rgb(path: Path | str) -> np.ndarray:
 
     if is_dicom(path):
         return _dicom_rgb(path)
-    with Image.open(path) as img:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", Image.DecompressionBombWarning)   # (checked below, as an error)
+        img = Image.open(path)
+    with img:
+        _check_size(img)
         img = _upright(img)
         if img.mode in ("I;16", "I;16B", "I;16L", "I"):
             a = np.asarray(img, dtype=np.float64)

@@ -102,8 +102,9 @@ def detect(roots: list[str] | None = None, home: Path | None = None) -> list[tup
     return found
 
 
-def apply(settings: Settings, detected: list[tuple[str, str]]) -> list[WatchFolder]:
-    """Add the inbox and newly detected folders to ``settings``; returns the additions."""
+def apply(settings: Settings, detected: list[tuple[str, str]], force: bool = False) -> list[WatchFolder]:
+    """Add the inbox and newly detected folders to ``settings``; returns the additions. ``force``:
+    asked for by hand (설정 → [지금 장비 폴더 다시 찾기]) — also with 자동으로 찾기 switched off."""
     from .watcher import is_network_path
 
     existing = {_key(f.path) for f in settings.watch_folders}
@@ -117,7 +118,7 @@ def apply(settings: Settings, detected: list[tuple[str, str]]) -> list[WatchFold
     except OSError:
         pass
     candidates = [WatchFolder(path=str(inbox), profile="auto", recursive=True, action=ACTION_MOVE)]
-    if settings.auto_detect:
+    if settings.auto_detect or force:
         for path, profile in detected:
             candidates.append(WatchFolder(path=path, profile=profile, recursive=True, action=ACTION_COPY,
                                           polling=is_network_path(path)))

@@ -167,7 +167,7 @@ function draw() {
     photos.forEach((r, i) => { if ((r.exam_date || "") !== d) return;
       html += `<div class="ph" data-i="${i}"><img loading="lazy" src="/api/file/${r.id}/thumb" alt="">
         <div><span class="eye ${esc(r.laterality || "")}">${esc(r.laterality || "미상")}</span>
-        ${esc(MOD[r.modality] || r.modality || "")} ${r.fov_deg ? r.fov_deg + "°" : ""} ${esc((r.exam_time || "").slice(0,5))}
+        ${esc(MOD[r.modality] || r.modality || "")} ${r.fov_deg ? esc(String(r.fov_deg)) + "°" : ""} ${esc((r.exam_time || "").slice(0,5))}
         ${r.note ? "· " + esc(r.note) : ""}</div></div>`; });
     html += "</div></div>";
   }

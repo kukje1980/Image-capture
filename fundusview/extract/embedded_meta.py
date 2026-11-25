@@ -170,14 +170,16 @@ def _read_text(p: Path) -> str:
     return raw.decode("latin-1", errors="replace")
 
 
-def _flatten_json(obj, prefix="") -> list[tuple[str, str]]:
+def _flatten_json(obj, prefix="", depth: int = 0) -> list[tuple[str, str]]:
     items = []
+    if depth > 40:                               # (nested without end: nothing a camera writes)
+        return items
     if isinstance(obj, dict):
         for k, v in obj.items():
-            items += _flatten_json(v, str(k))
+            items += _flatten_json(v, str(k), depth + 1)
     elif isinstance(obj, list):
         for v in obj[:50]:
-            items += _flatten_json(v, prefix)
+            items += _flatten_json(v, prefix, depth + 1)
     elif obj is not None:
         items.append((prefix, str(obj)))
     return items
@@ -210,8 +212,8 @@ def sidecar_meta(path: Path) -> ExtractedMeta:
                     pairs = list(zip(rows[0], rows[1]))  # header row + value row
                 else:
                     pairs = [(r[0], r[1]) for r in rows if len(r) >= 2]
-        except (ValueError, ET.ParseError):
-            pairs = []
+        except Exception:                        # a file beside the photo that cannot be read is not
+            pairs = []                           # a reason to refuse the photo (csv.Error, RecursionError …)
         names: dict[str, str] = {}
         for k, v in pairs:
             field = canonical_key(k)
