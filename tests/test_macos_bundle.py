@@ -161,7 +161,7 @@ def test_only_windows_is_built_and_published_and_the_page_says_mac_stopped():
     to publish, the download page has no Mac version left to fill in, and it says the Mac file there
     is the last one (0.13.13). build_mac.sh stays, to build on a Mac by hand."""
     workflow = (ROOT / ".github" / "workflows" / "fundus-viewer.yml").read_text(encoding="utf-8")
-    jobs = re.findall(r"^  ([\w-]+):\s*$", workflow, re.M)
+    jobs = re.findall(r"^  ([\w-]+):\s*$", workflow.split("\njobs:\n", 1)[1], re.M)
     assert jobs == ["test-linux", "build-windows", "publish"]
     assert not re.search(r"runs-on:.*macos", workflow) and "macmin-" not in workflow
     assert re.search(r"needs:\s*\[build-windows\]", workflow)
