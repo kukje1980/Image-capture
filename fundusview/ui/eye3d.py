@@ -2025,6 +2025,8 @@ class EyeView(QOpenGLWidget):
     # -- GL ------------------------------------------------------------------
     def initializeGL(self) -> None:
         try:
+            from . import glbind
+            glbind.bind_pyopengl_to_qt()      # 소프트웨어 렌더링 (Windows): PyOpenGL into Qt's own library
             from OpenGL import GL as gl
             self.gl = gl
             # a new context (e.g. after re-parenting) owns none of the old buffers
@@ -2081,7 +2083,15 @@ class EyeView(QOpenGLWidget):
             self._ok = True
         except Exception as exc:  # no usable OpenGL
             self._ok = False
-            self.glError.emit(f"OpenGL 초기화 실패: {exc}")
+            msg = f"OpenGL 초기화 실패: {exc}"
+            try:
+                from . import glbind
+                info = glbind.renderer_text(self.context())
+            except Exception:
+                info = ""
+            if info:
+                msg += f"\n(이 PC 의 OpenGL: {info})"
+            self.glError.emit(msg)
 
     def _program(self, vs: str, fs: str):
         gl = self.gl

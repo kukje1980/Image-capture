@@ -276,9 +276,12 @@ def test_click_a_patient_shows_its_exams_not_its_photos(win):
     # [Simple]: the newest OD | OS of the exam selected in the list
     w.tb_cmd.widgetForAction(w.acts["view:simple"]).click()
     assert w._tab() == "multi" and _grid_ids(w) == [ids["od2"], ids["os2"]]
-    # a double click on a cell: selected, Simple stays (large: a double click on the photo list)
+    # a double click on a cell: that photo large (Detail, 0.13.12); the big photo double clicked: back
     cell = next(c for c in w.multi.cells if c.image_id == ids["os2"])
     QTest.mouseDClick(cell.view.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(20, 20))
+    app.processEvents()
+    assert w._tab() == "all" and w.current["id"] == ids["os2"]
+    QTest.mouseDClick(w.view2d.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(60, 60))
     app.processEvents()
     assert w._tab() == "multi" and w.current["id"] == ids["os2"]
     assert _grid_ids(w) == [ids["od2"], ids["os2"]] and w.current["id"] == ids["os2"]

@@ -61,6 +61,15 @@ jobs:
         timeout-minutes: 15
         env:
           QT_QPA_PLATFORM: offscreen
+      # 설정 → 3D 렌더링 → 소프트웨어 렌더링: Qt draws with the bundled Mesa (opengl32sw.dll), a library of
+      # its own beside the system opengl32.dll — the 3D eye must start and render there too
+      - name: 3D eye on software OpenGL (Mesa opengl32sw.dll)
+        timeout-minutes: 20
+        env:
+          QT_QPA_PLATFORM: windows
+          QT_OPENGL: software
+          FUNDUSVIEW_REQUIRE_GL: "1"
+        run: python -m pytest -q -rs tests/test_eye3d_gl.py
       - run: pyinstaller fundus_viewer.spec --noconfirm
       - uses: actions/upload-artifact@v4
         with:

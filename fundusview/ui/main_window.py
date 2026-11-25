@@ -94,7 +94,8 @@ from .landmarks_view import LandmarkPhoto
 from .slit_scan import SLIT, ScanPhotoView, SlitScanShow, ViewTween
 from .thumbs import (DATE_ROLE, DockOverlay, EYE_ROLE, KIND_ROLE, PICK_ROLE, SECOND_COLOR, SECOND_ROLE, SHOWN, EyeRail,
                      ThumbDelegate, ThumbStrip, eye_badge_html, eye_row)
-from .toolbars import CHECKABLE, CMDBAR, COMMANDS, MENUS, PROCBAR, PROCESSING, GammaPopup, SliderPopup, icon_for
+from .toolbars import (CHECKABLE, CMDBAR, COMMANDS, MENUS, PROCBAR, PROCESSING, FitToolBar, GammaPopup, SliderPopup,
+                       icon_for)
 from .widgets import ElidedLabel, Segmented, Switch, card, segment
 from .widgets import row as setting_row
 
@@ -805,6 +806,7 @@ class MainWindow(QMainWindow):
         self.multi = MultiView()                 # Simple and Multi
         self.multi.selected.connect(self._select_from_multi)
         self.multi.opened.connect(self._open_cell)
+        self.multi.paneOpened.connect(lambda i: self._open_cell(i, pane=True))
         self.multi.layoutChanged.connect(self._on_multi_layout)
         self.multi.stepped.connect(self._step_cell)
         self.multi.menuRequested.connect(self._cell_menu)
@@ -961,6 +963,9 @@ class MainWindow(QMainWindow):
                                     | Qt.ToolBarArea.TopToolBarArea)
         self.tb_cmd.setToolTip("명령 툴바 — 맨 위의 점 손잡이를 끌어 오른쪽이나 화면 위쪽으로 옮깁니다 "
                                "(오른쪽 클릭: 위치 고르기 — 큰 사진 아래에도)")
+        # a low window: its buttons get smaller rather than its last ones (Glaucoma · 인쇄 · 설정 · 종료)
+        # going behind the » at its end
+        self.cmd_fit = FitToolBar(self.tb_cmd, 28)
         self.tb_cmd.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tb_cmd.customContextMenuRequested.connect(self._cmdbar_menu)
         self._cmdbar_under = False               # … or in a row under the large photos, over the photo list
@@ -1683,7 +1688,7 @@ class MainWindow(QMainWindow):
             "+/−: 확대·축소 · 0: 화면 맞춤 · 1: 100%<br>"
             "확대하면 오른쪽 위 미니맵에 전체 사진과 보이는 곳이 나옵니다 — 눌러서 이동<br>"
             "화면 맞춤 ▾ 또는 아래쪽 [배율]: 400·800%, 후극부·위/아래/코/귀쪽 주변부로 바로 확대<br>"
-            "더블클릭: 아래 사진 목록의 사진은 Detail에서 크게 (Simple의 큰 사진은 화면 맞춤만), "
+            "더블클릭: Simple의 큰 사진과 아래 사진 목록의 사진은 Detail에서 크게, "
             "그 밖의 화면(Detail의 큰 사진 · Multi · 16장 보기 · 3D)에서는 Simple로 · "
             "돋보기는 영상 처리 메뉴의 [돋보기] (누르는 동안)<br>"
             "오른쪽 클릭: 메뉴 (시신경 유두 · 황반 위치 지정, 돋보기 배율, 미니맵)<br><br>"
@@ -1743,7 +1748,7 @@ class MainWindow(QMainWindow):
             "다시 클릭하면 뺍니다 (모두 빼면 모든 사진, 화면 분할로 장수 고르기)<br>"
             "Simple · Multi의 칸 좌우 끝 ◀ ▶ (칸을 누른 뒤 ← →): 그 칸에 같은 눈의 이전 / 다음 사진 · "
             "메뉴 옆 <b>황반 · 디스크</b>: 사진마다 아래에 황반과 시신경 유두 확대 (4칸 이하)<br>"
-            "<b>Detail</b> (아래 사진 목록의 사진을 더블클릭): 큰 사진 + 오른쪽에 황반과 시신경 유두 확대 (큰 사진 위 점선 틀이 그 자리). "
+            "<b>Detail</b> (Simple의 큰 사진이나 아래 사진 목록의 사진을 더블클릭): 큰 사진 + 오른쪽에 황반과 시신경 유두 확대 (큰 사진 위 점선 틀이 그 자리). "
             "사진 좌우 끝의 ◀ ▶ 또는 ← → 키: 이전 / 다음 사진 · 사진 목록의 다른 사진을 클릭하면 Simple에서 두 장을 함께 "
             "(더 클릭하면 여러 장 고르기)<br>"
             "칸 제목을 누르거나 칸을 더블클릭하면 큰 사진을 그 쪽으로 확대 · 큰 사진 전체로: 0 · "
@@ -2165,7 +2170,7 @@ class MainWindow(QMainWindow):
             self.lbl_status.setText(self.MULTI_HINT)
 
     SIMPLE_HINT = ("Simple — 최신 OD | OS · 아래 사진에 마우스를 올리면 미리 보기, 클릭하면 고정(번호) · 다시 클릭: 빼기 · "
-                   "휠: 날짜 책갈피 · 아래 사진을 더블클릭: 크게 보기 (Detail)")
+                   "휠: 날짜 책갈피 · 큰 사진이나 아래 사진을 더블클릭: 크게 보기 (Detail)")
     MULTI_HINT = ("16장 보기 — 사진을 클릭해 고르고(번호) 왼쪽 툴바의 [Multi]를 누르면 고른 사진만 봅니다 "
                   "(다시 [Multi]: 16장으로) · 더블클릭: Simple로 · 휠: 다음 / 이전 16장")
     PICK_FIRST_HINT = "Multi — 먼저 16장 보기에서 사진을 클릭해 고르세요(번호). 그다음 [Multi]를 누르면 고른 사진만 나옵니다"
@@ -2305,13 +2310,17 @@ class MainWindow(QMainWindow):
         else:
             self.show_simple()
 
-    def _open_cell(self, image_id: int) -> None:
+    def _open_cell(self, image_id: int, pane: bool = False) -> None:
         """A double click on a cell of the 다중 보기 page: on Multi (the photos numbered in 16장 보기)
-        Simple, as [Simple] gives — the newest OD | OS. On Simple nothing but the cell's own 화면 맞춤:
-        Detail comes from a double click on a photo of the list below only."""
+        Simple, as [Simple] gives — the newest OD | OS. On Simple the cell's photo large (Detail), as a
+        double click on a photo of the list below (0.13.12); on one of its 황반 · 디스크 panes
+        (``pane``) nothing but the pane's own 화면 맞춤."""
         if self._split_via == MULTI:
             self._pick_pre = None
             self.show_simple()
+        elif not pane:
+            self._pick_pre = None
+            self.open_large(image_id)
         elif self.current is None or self.current["id"] != image_id:
             self._select_from_multi(image_id)     # (the cell double clicked is the selected one)
 
@@ -5396,7 +5405,12 @@ class MainWindow(QMainWindow):
 
     def _on_gl_error(self, msg: str) -> None:
         self._sync_detail_buttons()           # (자세히 that could not be prepared fell back to 간단히)
-        msg += "\n\n설정 > 일반 > 3D 렌더링을 '소프트웨어 렌더링'으로 바꾸고 다시 시작해 보세요."
+        if self.settings.opengl == "software" or os.getenv("FUNDUSVIEW_SOFTWARE_GL") == "1":
+            # already the software renderer: the advice below would send the user in a circle
+            msg += ("\n\n이미 '소프트웨어 렌더링'으로 켜져 있습니다. 프로그램 폴더에 opengl32sw.dll 이 있는지 "
+                    "확인하고, 없으면 프로그램을 다시 설치해 보세요.")
+        else:
+            msg += "\n\n설정 > 일반 > 3D 렌더링을 '소프트웨어 렌더링'으로 바꾸고 다시 시작해 보세요."
         if self._ov_gl and not self.eye3d._ok and self.split3d.parent() is self.ov_3d:
             # OpenGL failed in the small 3D pane: no pop-up at every start — the pane becomes a
             # button, and the message is shown when the 3D tab is opened

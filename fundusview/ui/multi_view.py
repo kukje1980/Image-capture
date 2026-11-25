@@ -23,7 +23,6 @@ from PySide6.QtWidgets import QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabe
 
 from . import theme
 from .edge_nav import EdgeNav
-from .icons import icon as line_icon
 from .image_view import ImageView
 from .widgets import RoundCorners
 
@@ -57,9 +56,7 @@ class _Cell(QFrame):
         self.label.setStyleSheet(f"QLabel#cellHead {{ background: {HEAD_BG}; color: {theme.TEXT}; border: none; "
                                  "border-radius: 6px; padding: 2px 7px; font-size: 12px; }")
         self.label.hide()
-        # the photo the processing toolbar works on: framed in blue (select), and a small blue 보정 badge
-        # right after its title (with two cells or more)
-        self.badge = _active_badge(self.view)
+        # (the photo the processing toolbar works on: framed in blue — select)
         lay.addWidget(self.view, 3)
         # 황반 · 디스크: the photo's macula and optic disc enlarged, side by side under it (set_closeups)
         self.closeups = QWidget()
@@ -93,56 +90,25 @@ class _Cell(QFrame):
         self.select(False)
 
     def set_head(self, html: str) -> None:
-        """The title on the photo's top-left corner ('' : none), the 보정 badge right after it."""
-        lab, badge = self.label, self.badge
+        """The title on the photo's top-left corner ('' : none)."""
+        lab = self.label
         lab.setText(html)
         lab.adjustSize()
         lab.move(HEAD_MARGIN, HEAD_MARGIN)
         lab.setVisible(bool(html))
-        badge.adjustSize()
-        x = lab.x() + lab.width() + 6 if html else HEAD_MARGIN
-        badge.move(x, lab.y() + (lab.height() - badge.height()) // 2 if html else HEAD_MARGIN)
         lab.raise_()
-        badge.raise_()
 
     def select(self, on: bool) -> None:
-        """The cell whose photo the processing toolbar works on (the one clicked last): framed in blue,
-        with its blue 보정 badge (MultiView._sync_badges)."""
+        """The cell whose photo the processing toolbar works on (the one clicked last): framed in blue."""
         self.selected = on
         self.setStyleSheet("QFrame { border: 2px solid %s; }" % (theme.ACCENT if on else theme.CARD))
         self.round.set_border(theme.ACCENT if on else theme.CARD)
 
 
-def _active_badge(parent: QWidget | None = None) -> QFrame:
-    """보정: a blue pill with a white tools icon — on the cell whose photo the processing toolbar works on."""
-    from PySide6.QtGui import QPainter
-
-    badge = QFrame(parent)
-    badge.setObjectName("cellActive")
-    badge.setStyleSheet(f"QFrame#cellActive {{ background:{theme.ACCENT}; border:none; border-radius:6px; }}"
-                        "QLabel { background:transparent; border:none; color:#ffffff; font-size:11px; "
-                        "font-weight:600; padding:0; }")
-    bl = QHBoxLayout(badge)
-    bl.setContentsMargins(6, 1, 8, 1)
-    bl.setSpacing(3)
-    pm = line_icon("tools", plain=True).pixmap(13, 13)
-    p = QPainter(pm)                                   # the icon in white on the blue
-    p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
-    p.fillRect(pm.rect(), Qt.GlobalColor.white)
-    p.end()
-    pic = QLabel()
-    pic.setPixmap(pm)
-    bl.addWidget(pic)
-    bl.addWidget(QLabel("보정"))
-    badge.setToolTip("아래 영상 처리 툴바(밝기 · 대비 · Red-free · 선명 …)는 이 사진에 적용됩니다 — "
-                     "다른 칸을 누르면 그 사진으로 바뀝니다")
-    badge.hide()
-    return badge
-
-
 class MultiView(QWidget):
     selected = Signal(int)
     opened = Signal(int)
+    paneOpened = Signal(int)            # a double click on a 황반 · 디스크 pane of a cell
     layoutChanged = Signal(int)
     stepped = Signal(int, int)          # (the photo of a cell, -1 / +1): ◀ ▶ at its sides · ← / →
     menuRequested = Signal(int, object)  # (the photo of a cell, its right-click QMenu to put entries in)
@@ -218,7 +184,7 @@ class MultiView(QWidget):
             cell.view.menuOpening.connect(lambda m, c=cell: self._menu(c, m))
             for z in cell.zooms.values():
                 z.clicked.connect(lambda c=cell: self._select(c))
-                z.activated.connect(lambda c=cell: c.image_id is not None and self.opened.emit(c.image_id))
+                z.activated.connect(lambda c=cell: c.image_id is not None and self.paneOpened.emit(c.image_id))
             self.cells.append(cell)
         for cell in self.cells:
             self.grid.removeWidget(cell)
@@ -245,7 +211,6 @@ class MultiView(QWidget):
                 cell.select(False)
                 cell.nav.set_available(False, False)
         self._show_closeups()
-        self._sync_badges()
         for r in range(4):
             self.grid.setRowStretch(r, 1 if r < rows else 0)
         for c in range(4):
@@ -309,14 +274,6 @@ class MultiView(QWidget):
     def mark_selected(self, image_id: int | None) -> None:
         for c in self.cells:
             c.select(c.image_id is not None and c.image_id == image_id)
-        self._sync_badges()
-
-    def _sync_badges(self) -> None:
-        """The blue 보정 badge on the selected cell — with two photos or more on the page (with one there
-        is no other it could be)."""
-        shown = [c for c in self.cells if c.image_id is not None and not c.isHidden()]
-        for c in self.cells:
-            c.badge.setVisible(len(shown) >= 2 and c in shown and c.selected)
 
     def _menu(self, cell: _Cell, menu) -> None:
         """Right click on a cell's photo: it is the selected one now, and the main window puts its
@@ -332,5 +289,4 @@ class MultiView(QWidget):
             return
         for c in self.cells:
             c.select(c is cell)
-        self._sync_badges()
         self.selected.emit(cell.image_id)
