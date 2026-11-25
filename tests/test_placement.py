@@ -228,6 +228,99 @@ def _bright_patches(rgb, circle, where, n, spread, size, seed=1):
     return out.clip(0, 255).astype(np.uint8)
 
 
+def _glare_band(rgb, circle, top, seed=3):
+    """A sharp, bright orange-yellow band along the bottom of the field — the lid's reflex on an
+    ultra-wide-field photo (RetiCam): its top edge is a long run of high contrast."""
+    h, w = rgb.shape[:2]
+    cx, cy, r = circle
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float64)
+    inside = (xx - cx) ** 2 + (yy - cy) ** 2 <= r * r
+    edge = cy + r * top + 0.06 * r * np.sin((xx - cx) / r * 4) + 0.03 * r * np.sin((xx - cx) / r * 11)
+    t = (np.clip((yy - edge) / (0.02 * r), 0, 1) * inside)[..., None]
+    return np.clip(rgb * (1 - t) + np.array([255.0, 230.0, 100.0]) * t, 0, 255).astype(np.uint8)
+
+
+@pytest.mark.parametrize("eye,fov,top,seed", [
+    ("OS", 100, 0.45, 3), ("OS", 120, 0.3, 3), ("OS", 100, 0.6, 5), ("OD", 120, 0.45, 5), ("OS", 90, 0.3, 5),
+])
+def test_a_glare_band_along_the_rim_is_not_taken_for_the_disc(eye, fov, top, seed):
+    """0.13.15: a left-eye RetiCam photo opened in 녹내장 분석 on the bright band at its bottom — the
+    band's edge was the strongest contrast of the field, peak after peak along it took every place of
+    the candidates (and set the contrast scale, the real disc then fell below it). A disc has darker
+    retina all round; beyond a band's edge the picture only gets brighter."""
+    W, H = 1222, 918                                             # (clipped top and bottom, as the photo)
+    circle0 = (W * 0.505, H * 0.497, W * 0.417)
+    rgb = demo.synth_fundus(eye=eye, fov_deg=fov, fov_type="internal", projection="equidistant",
+                            size=(W, H), seed=seed, circle=circle0)
+    clean = imaging.detect_circle(rgb)
+    rgb = _glare_band(rgb, circle0, top)
+    circle = imaging.detect_circle(rgb)
+    cam = placement.Camera(*circle, 176.0, "internal", "equidistant")      # (the profile: 176°)
+    clean_cam = placement.Camera(*clean, 176.0, "internal", "equidistant")
+    want, _ = imaging.detect_landmarks(demo.synth_fundus(eye=eye, fov_deg=fov, fov_type="internal",
+                                                         projection="equidistant", size=(W, H), seed=seed,
+                                                         circle=circle0), clean_cam, None, search=0.5)
+    disc, _ = imaging.detect_landmarks(rgb, cam, None, search=0.5)
+    assert want is not None and disc is not None
+    assert math.hypot(disc[0] - want[0], disc[1] - want[1]) < 0.05 * circle0[2]   # where it is without the band
+    assert (disc[1] - circle0[1]) / circle0[2] < 0.2                                # (not down on the band)
+
+
+def test_glare_and_shadow_are_taken_out_of_the_field_before_the_disc_is_looked_for():
+    """The band of glare is no candidate at all (a bright area larger than a few discs, reaching in
+    from the rim), and the disc beside it is found as bright as without the band — left in, the band
+    lifted the "retina's brightness" of everything near it."""
+    rgb = demo.synth_fundus(eye="OS", fov_deg=100, fov_type="internal", projection="equidistant",
+                            size=(900, 900), seed=3)
+    circle = imaging.detect_circle(rgb)
+    clean = imaging.disc_candidates(rgb, circle, disc_frac=3.8 / 88.0, search=0.5)
+    banded = _glare_band(rgb, circle, 0.45)
+    cands = imaging.disc_candidates(banded, circle, disc_frac=3.8 / 88.0, search=0.5)
+    assert cands and all(len(c) == 6 for c in cands)
+    on_band = [c for c in cands if (c[1] - circle[1]) / circle[2] > 0.4]     # (the band: from 0.45 down)
+    assert all(c[2] < 0.7 * cands[0][2] for c in on_band)                    # its edge at most a weak candidate
+    assert math.hypot(cands[0][0] - clean[0][0], cands[0][1] - clean[0][1]) < 0.076 * circle[2]      # (within the disc)
+    assert cands[0][5] <= imaging.OPEN_MAX                                   # darker retina all round it
+    field = imaging._Field(banded, circle)
+    away = field.clean(circle[2] / field.step * 3.8 / 88.0)
+    ys, xs = np.nonzero(away)
+    assert away.mean() > 0.05 and ((ys * field.step - circle[1]) / circle[2]).min() > 0.25
+    # a lid's shadow and lashes: far darker than the retina — not field either, and not thick vessels
+    dark = rgb.copy()
+    dark[:260] = (dark[:260] * 0.12).astype(np.uint8)
+    f2 = imaging._Field(dark, circle)
+    gone = f2.clean(circle[2] / f2.step * 3.8 / 88.0)
+    rows = int(240 // f2.step)
+    assert gone[:rows][f2.d2[:rows] < (0.9 * f2.r) ** 2].mean() > 0.8
+    d2 = imaging.disc_candidates(dark, circle, disc_frac=3.8 / 88.0, search=0.5)
+    assert d2 and math.hypot(d2[0][0] - clean[0][0], d2[0][1] - clean[0][1]) < 0.076 * circle[2]
+
+
+def test_a_dark_photo_and_lashes_do_not_spoil_the_field_circle():
+    """detect_circle: a dark photo is measured by its own brightness, and rows whose chord is cut short
+    by a lid's shadow or lashes are left out of the fit (they shortened the circle before)."""
+    rgb = demo.synth_fundus(eye="OD", fov_deg=45, fov_type="external", projection="perspective",
+                            size=(800, 800), seed=2)
+    c0 = imaging.detect_circle(rgb)
+    dim = (255.0 * (rgb / 255.0) ** 1.8 * 0.35).astype(np.uint8)
+    c1 = imaging.detect_circle(dim)
+    assert abs(c1[2] - c0[2]) < 0.03 * c0[2] and math.hypot(c1[0] - c0[0], c1[1] - c0[1]) < 0.03 * c0[2]
+    cut = rgb.copy()
+    for x in range(120, 700, 45):                                  # lashes reaching down from the top
+        cut[:300, x:x + 14] = (8, 5, 4)
+    c2 = imaging.detect_circle(cut)
+    assert abs(c2[2] - c0[2]) < 0.03 * c0[2] and math.hypot(c2[0] - c0[0], c2[1] - c0[1]) < 0.03 * c0[2]
+
+
+def test_the_disc_is_found_at_its_centre_not_on_its_rim():
+    """A 45° photo: the strongest local contrast (the old way) lies on the disc's rim, about a radius
+    beside its centre — measured on real photos marked by experts (docs/landmarks.md): right within a
+    radius in 5 % of them before, 99 % now."""
+    rgb, cam, _, disc_true, _, _ = _turned("OD")
+    disc, _ = imaging.detect_landmarks(rgb, cam, "OD")
+    assert disc is not None and _apart(cam, disc[:2], disc_true) < 1.5
+
+
 @pytest.mark.parametrize("eye,gaze,patches", [
     ("OS", (10.0, 5.0), dict(where=(0.2, -0.4), n=10, spread=0.05, size=0.03)),  # a plaque of exudates
     ("OS", (30.0, 0.0), dict(where=(0.2, -0.4), n=10, spread=0.05, size=0.03)),  # a plaque; the disc far out
