@@ -1327,6 +1327,7 @@ tests/              pytest (추출·투영·영상·가져오기·감시·GUI·�
 web3d/              3D 안구 미리보기 웹 페이지 (build.py → eye3d.html)
 fundus_viewer.spec  PyInstaller (Windows exe · Mac .app), build_windows.bat · build_mac.sh
 macos_bundle.py     Mac 앱의 최소 macOS: 앱에 든 라이브러리(Mach-O)에서 읽어 Info.plist에 쓰고 빌드 뒤 확인
+tools/eval_landmarks.py  유두 · 황반 찾기의 정확도 재기 (전문가가 표시한 공개 사진 IDRiD — 방법과 수치: docs/landmarks.md)
 ```
 
 라이브러리 폴더(기본: `문서\FundusViewerLibrary`)에는 `fundus.db`, `images\<환자ID>\<검사일>\`

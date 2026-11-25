@@ -321,7 +321,11 @@ def test_a_large_jpeg_is_analysed_reduced_and_found_in_its_own_pixels(lib):
     assert row["circle_cx"] == pytest.approx(cx, abs=8) and row["circle_cy"] == pytest.approx(cy, abs=8)
     assert row["circle_r"] == pytest.approx(cr, abs=8)
     assert row["disc_x"] is not None and row["fovea_x"] is not None
-    disc = imaging.detect_disc(full, (cx, cy, cr))
+    from fundusview import placement
+    from fundusview.profiles import get_profile
+    prof = get_profile(row["profile"])
+    cam = placement.Camera(cx, cy, cr, prof.fov_deg, prof.fov_type, prof.projection, prof.viewpoint, prof.radial_c)
+    disc, _ = imaging.detect_landmarks(full, cam, None, search=prof.disc_search)     # (as the import finds it)
     assert (row["disc_x"], row["disc_y"]) == pytest.approx(disc[:2], abs=30)
 
 

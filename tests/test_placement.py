@@ -314,8 +314,8 @@ def test_a_dark_photo_and_lashes_do_not_spoil_the_field_circle():
 
 def test_the_disc_is_found_at_its_centre_not_on_its_rim():
     """A 45° photo: the strongest local contrast (the old way) lies on the disc's rim, about a radius
-    beside its centre — measured on 516 real photos (docs/landmarks.md): right within a radius in 34 %
-    before, 98 % now."""
+    beside its centre — measured on real photos marked by experts (docs/landmarks.md): right within a
+    radius in 5 % of them before, 99 % now."""
     rgb, cam, _, disc_true, _, _ = _turned("OD")
     disc, _ = imaging.detect_landmarks(rgb, cam, "OD")
     assert disc is not None and _apart(cam, disc[:2], disc_true) < 1.5
