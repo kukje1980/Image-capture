@@ -1,7 +1,5 @@
 """Patient/eye identity and geometry stay consistent through failure and shared edits."""
 import os
-import threading
-import time
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -72,7 +70,7 @@ def _show(w, patient, image_id):
 
 
 def _assert_detail_empty(w):
-    for view in (w.view2d, w.ov_macula, w.ov_zoom, *w.cmp_views):
+    for view in (w.view2d, w.ov_macula, w.ov_zoom):
         assert not view.has_image()
         assert view.geometry is None
     assert w.eye3d._rgba is None and w.eye3d._marks == (None, None, None)
@@ -95,7 +93,7 @@ def test_failed_or_empty_selection_clears_every_patient_panel(window, failure):
     _show(w, a, ids["od"])
     w._set_marking3d("fovea")
     assert w._open_pair3d([ids["od"], ids["od2"]])
-    for view in (w.ov_macula, w.ov_zoom, *w.cmp_views):
+    for view in (w.ov_macula, w.ov_zoom):
         view.set_rgb(rgb)
         view.geometry = w.view2d.geometry
     w.multi.set_count(4, quiet=True)
@@ -330,16 +328,13 @@ def test_shared_refresh_drops_compare_that_no_longer_belongs_to_current_patient(
     w, ids, (a, b), _rgb = window
     _show(w, a, ids["od"])
     w.compare = w.db.get_image(ids["os"])
-    w._fill_compare()
-    assert w.cmp_views[1].has_image()
     w._share_sig = w._photo_sig()
     if change == "move":
         w.db.update_image(ids["os"], patient_ref=b)
     else:
         w.db.delete_image(ids["os"])
     w._on_shared_change()
-    assert w.compare is None and not w.cmp_views[1].has_image()
-    assert "비교할 사진을 고르세요" in w.cmp_labels[1].text()
+    assert w.compare is None
     dlg, why = w._build_glaucoma()
     try:
         assert not why and dlg.disc.has_image() and not dlg.stereo.has_image()
@@ -347,71 +342,3 @@ def test_shared_refresh_drops_compare_that_no_longer_belongs_to_current_patient(
         _close_analysis(dlg)
 
 
-def test_review_set_photos_detects_geometry_changes_without_changing_ids(window):
-    w, ids, (a, _), _rgb = window
-    _show(w, a, ids["od"])
-    rv = w.review
-    rows = w.db.images_for_patient(a)
-    rv.set_photos(rows)
-    generation = rv._reader.generation
-    rv.set_photos(w.db.images_for_patient(a))
-    assert rv._reader.generation == generation           # unchanged refresh keeps the user's view
-    w.db.update_image(ids["od2"], fov_deg=176, fovea_x=88)
-    rv.set_photos(w.db.images_for_patient(a))
-    assert rv._reader.generation > generation
-    cell = next(c for c in rv.views if c.row is not None and c.row["id"] == ids["od2"])
-    assert cell.row["fov_deg"] == 176 and cell.row["fovea_x"] == 88
-
-
-def test_hidden_review_refresh_rejects_a_real_late_reader_result(window, app, tmp_path, monkeypatch):
-    from fundusview import imaging
-
-    w, ids, (a, _), rgb = window
-    _show(w, a, ids["od"])
-    rv = w.review
-    rv.set_photos(w.db.images_for_patient(a))
-    rv.hide()
-    started, release = threading.Event(), threading.Event()
-    guard = threading.Lock()
-    blocked = []
-    real = imaging.load_reduced
-
-    def delayed(path, side):
-        result = real(path, side)
-        with guard:
-            hold = not blocked
-            if hold:
-                blocked.append(True)
-        if hold:
-            started.set()
-            assert release.wait(10), "test did not release the paused image read"
-        return result
-
-    monkeypatch.setattr(imaging, "load_reduced", delayed)
-    rv.set_layout(4)
-    old_generation = rv._reader.generation
-    delivered = []
-    rv._reader.loaded.connect(lambda key, pixels, generation: delivered.append(generation))
-    try:
-        assert started.wait(5), "the actual background reader did not start"
-        w._share_sig = w._photo_sig()
-        changed = np.full_like(rgb, [20, 150, 50])
-        path = tmp_path / "review-new-source.png"
-        Image.fromarray(changed).save(path)
-        w.db.update_image(ids["od2"], file_path=str(path), original_path=str(path), sha256="review-replacement",
-                          fov_deg=176, fovea_x=88)
-        w._on_shared_change()
-        assert not rv.isVisible() and rv._reader.generation > old_generation
-        cell = next(c for c in rv.views if c.row is not None and c.row["id"] == ids["od2"])
-        assert np.array_equal(cell._rgb, changed)
-        assert cell.row["fov_deg"] == 176 and cell.row["fovea_x"] == 88
-        assert not rv._small and rv._small_bytes == 0
-        release.set()
-        deadline = time.monotonic() + 5
-        while old_generation not in delivered and time.monotonic() < deadline:
-            app.processEvents()
-            time.sleep(.005)
-        assert old_generation in delivered             # stale pixels really arrived through the Qt signal
-        assert np.array_equal(cell._rgb, changed) and not rv._small and rv._small_bytes == 0
-    finally:
-        release.set()

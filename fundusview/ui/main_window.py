@@ -31,8 +31,9 @@ the photo list (thumbnails: OD row, OS row) lies under the photos, as low as its
 * **3D**: the photo shown on the eye model (the icon again: back to the view before).
 
 The 2D view and the 3D eye are moved between Detail and their own pages (like 크게 보기 does for
-the 3D eye), so the tools and the 3D state stay the same. 검토 (review_view.py) has its own
-timeline, so the photo list is hidden while it is shown (not shown since v0.3.0)."""
+the 3D eye), so the tools and the 3D state stay the same. 검토 (review_view.py) had its own
+timeline … — 검토 and 비교 were taken out in 0.13.14 (not shown since v0.3.0); the 2D page is only
+where the 2D view is kept while Detail is not on screen."""
 from __future__ import annotations
 
 import json
@@ -48,7 +49,7 @@ from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, QSize, Qt, QT
 from PySide6.QtGui import QAction, QActionGroup, QBrush, QColor, QCursor, QDesktopServices, QFont, QIcon, QImage, \
     QKeySequence, QPainter, QPen, QPixmap, QShortcut
 from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QCheckBox, QComboBox, QDockWidget, QDoubleSpinBox, QFileDialog,
+    QAbstractItemView, QApplication, QComboBox, QDockWidget, QDoubleSpinBox, QFileDialog,
     QFrame, QGraphicsRectItem, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QListWidget,
     QListWidgetItem, QMainWindow, QMenu,
     QMessageBox, QPushButton, QScrollArea, QSizePolicy, QSlider, QSplitter, QStackedWidget, QStatusBar, QStyle,
@@ -89,7 +90,6 @@ from .sample_compare import SampleCompareDialog
 from .peek import SCALES as PEEK_SCALES, scale_name
 from .patient_list import SEX_LABEL, UNASSIGNED, PatientListWindow, age_on
 from .photo_grid import GridPhoto, PhotoGrid
-from .review_view import ReviewPage
 from .landmarks_view import LandmarkPhoto
 from .slit_scan import SLIT, ScanPhotoView, SlitScanShow, ViewTween
 from .thumbs import (DATE_ROLE, DockOverlay, EYE_ROLE, KIND_ROLE, PICK_ROLE, SECOND_COLOR, SECOND_ROLE, SHOWN, EyeRail,
@@ -117,8 +117,8 @@ VIEWS = (
 )
 SIMPLE, MULTI = "simple", "multi"            # the view keys of Simple and Multi (both on the 다중 보기 page)
 GRID_MODE, SIMPLE_MODE = "grid", "odos"      # Settings.open_view: a patient opens on 16장 보기 · on Simple
-# views no longer shown (검토 · 2D 보기 · 비교): whatever led there stays on Detail, whose big
-# photo is the 2D view with all its tools
+# views no longer shown (검토 · 2D 보기 · 비교 — the first and the last taken out in 0.13.14): whatever
+# led there stays on Detail, whose big photo is the 2D view with all its tools
 GONE_VIEWS = {"review": "all", "2d": "all", "cmp": "all"}
 PATIENT_LIST_KEY = "Ctrl+0"                  # the 환자 목록 window
 THUMB_GRID = (94, 72)                        # 사진 목록(아래): a cell — the photo fills it (a 4:3 photo: 84 × 63),
@@ -374,7 +374,6 @@ class MainWindow(QMainWindow):
                                              # double click it begins undoes it
         self._per_photo: dict[int, dict] = {}  # processing of each picked photo {"state", "history"}
         self._3d_dirty = True
-        self._review_dirty = True            # the 검토 tab's photos are read when it is shown
         self._hold_follow = False            # a bulk import (--demo) must not jump to the workspace
         self._hold_release = False
         self._closing = False
@@ -505,13 +504,15 @@ class MainWindow(QMainWindow):
         m.addAction(A["exit"])
 
         m = mb.addMenu("보기(&V)")
-        self.act_patients = m.addAction("환자 목록", self.show_patient_list)
+        # (as [환자 목록] on the command toolbar: up, and again away — it only opened before 0.13.14)
+        self.act_patients = m.addAction("환자 목록", lambda: self._on_action("list"))
         self.act_patients.setShortcut(QKeySequence(PATIENT_LIST_KEY))
         self.act_patients.setToolTip("환자 목록 창 — 환자를 찾아 누르면 그 환자의 사진이 한 화면에 16장씩 나옵니다")
         m.addSeparator()
         self.view_acts = {}
         for key, label, shortcut in VIEWS:
-            a = m.addAction(label, lambda k=key: self._show_view(k))
+            # as the command toolbar's icon (0.13.14): 3D again goes back, and Simple's two go on two eyes
+            a = m.addAction(label, lambda k=key: self._show_view(k, toggle=True))
             a.setShortcut(QKeySequence(shortcut))
             self.view_acts[key] = a
         sub = m.addMenu("Simple 화면 분할 (장수)")
@@ -801,7 +802,7 @@ class MainWindow(QMainWindow):
         self.page3d = self._build_3d()
         self.page_all = self._build_overview()
         self.tabs.addTab(self.page_all, "Detail")
-        self.tabs.addTab(self.page2d, "2D 보기")
+        self.tabs.addTab(self.page2d, "2D 보기")      # (never shown: where view2d waits while Detail is not on screen)
         self.tabs.addTab(self.page3d, "3D 안구")
         self.multi = MultiView()                 # Simple and Multi
         self.multi.selected.connect(self._select_from_multi)
@@ -813,45 +814,6 @@ class MainWindow(QMainWindow):
         self.multi.set_closeups(bool(self.settings.simple_closeups))     # 황반 · 디스크 as left last time
         self.multi.set_hover_loupe(bool(self.settings.hover_loupe))
         self.tabs.addTab(self.multi, "다중 보기")
-        cmp_w = QWidget()
-        cmp_l = QVBoxLayout(cmp_w)
-        cmp_l.setContentsMargins(0, 0, 0, 0)
-        self.cmp_labels = (QLabel(), QLabel())
-        lab_row = QHBoxLayout()
-        for lab in self.cmp_labels:
-            lab.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lab_row.addWidget(lab)
-        cmp_l.addLayout(lab_row)
-        cmp_split = QSplitter(Qt.Orientation.Horizontal)
-        self.cmp_views = (ImageView(), ImageView())
-        for v in self.cmp_views:
-            v.dblclick_loupe = True
-            cmp_split.addWidget(v)
-        cmp_l.addWidget(cmp_split, 1)
-        self.cmp_sync = QCheckBox("확대·이동 동기화")
-        self.cmp_sync.setChecked(True)
-        cmp_row = QHBoxLayout()
-        cmp_row.addWidget(self.cmp_sync)
-        cmp_row.addStretch()
-        b_pair = QPushButton("스테레오 보기…")
-        b_pair.setToolTip("이 두 사진을 스테레오로 봅니다 (위글 · 평행 · 교차 · 적청 · 깊이) — 보험 청구용 한 장도 그 안에")
-        b_pair.clicked.connect(lambda: self._on_action("discpair"))
-        cmp_row.addWidget(b_pair)
-        cmp_l.addLayout(cmp_row)
-        a, b = self.cmp_views
-        for src, dst in ((a, b), (b, a)):
-            src.horizontalScrollBar().valueChanged.connect(
-                lambda val, d=dst: self.cmp_sync.isChecked() and d.horizontalScrollBar().setValue(val))
-            src.verticalScrollBar().valueChanged.connect(
-                lambda val, d=dst: self.cmp_sync.isChecked() and d.verticalScrollBar().setValue(val))
-            src.zoomChanged.connect(lambda f, s=src, d=dst: self.cmp_sync.isChecked()
-                                    and abs(d.zoom - f) > 1e-9 and d.sync_from(s))
-        self.tabs.addTab(cmp_w, "비교")
-        # 검토: both eyes · an eye and its earlier exams (the first tab; no longer shown)
-        self.review = ReviewPage(self._load, self._image_path)
-        self.review.handOff.connect(self._review_hand_off)
-        self.review.status.connect(lambda t: self.lbl_status.setText(t))
-        self.tabs.insertTab(0, self.review, "검토")
         self.tabs.addTab(self.grid, "16장 보기")
         # 여러 장 3D: Simple's two photos (or the photos picked), each on its own 3D eye (pair3d.py)
         self.pair3d = Pair3D()
@@ -859,8 +821,8 @@ class MainWindow(QMainWindow):
         self.pair3d.activated.connect(self._to_simple)
         self.tabs.addTab(self.pair3d, "여러 장 3D")
         self.tabs.setCurrentWidget(self.page_all)
-        self._pages = {"review": self.review, "all": self.page_all, "2d": self.page2d, "3d": self.page3d,
-                       "multi": self.multi, "cmp": cmp_w, "grid": self.grid, "3d2": self.pair3d}
+        self._pages = {"all": self.page_all, "2d": self.page2d, "3d": self.page3d,
+                       "multi": self.multi, "grid": self.grid, "3d2": self.pair3d}
         self._ov_on = False
         self.dock = DockOverlay(self.thumbs, centre)     # 미리 보기: the grown row of the list, painted over it
         self.tabs.installEventFilter(self)
@@ -949,7 +911,6 @@ class MainWindow(QMainWindow):
         self.patient_list.shown.connect(lambda on: self.acts["list"].setChecked(on))
         # 미리 보기: the patient list goes away with the mouse resting on the photo list under it
         self.patient_list.shown.connect(lambda on: on or QTimer.singleShot(0, self._grow_under_resting_mouse))
-        self.review.examPicked.connect(self.patient_list.set_exam)
 
         # -- VK-2 toolbars ---------------------------------------------------------------
         specs = {c[0]: c for c in COMMANDS}
@@ -1687,7 +1648,7 @@ class MainWindow(QMainWindow):
             "왼쪽 드래그: 사진 이동 (길이·각도 같은 도구를 쓰는 중에는 가운데 버튼 드래그)<br>"
             "+/−: 확대·축소 · 0: 화면 맞춤 · 1: 100%<br>"
             "확대하면 오른쪽 위 미니맵에 전체 사진과 보이는 곳이 나옵니다 — 눌러서 이동<br>"
-            "화면 맞춤 ▾ 또는 아래쪽 [배율]: 400·800%, 후극부·위/아래/코/귀쪽 주변부로 바로 확대<br>"
+            "화면 맞춤 ▾: 400·800%, 후극부·위/아래/코/귀쪽 주변부로 바로 확대<br>"
             "더블클릭: Simple의 큰 사진과 아래 사진 목록의 사진은 Detail에서 크게, "
             "그 밖의 화면(Detail의 큰 사진 · Multi · 16장 보기 · 3D)에서는 Simple로 · "
             "돋보기는 영상 처리 메뉴의 [돋보기] (누르는 동안)<br>"
@@ -1907,11 +1868,8 @@ class MainWindow(QMainWindow):
             owner = None if self._patient_ref == UNASSIGNED else self._patient_ref
             if candidate is not None and self._patient_ref is not None and candidate["patient_ref"] == owner:
                 self.compare = candidate
-            self._fill_compare()
             self._mark_pair()
             self._refill_multis()
-            self.review.set_photos(self._images(), self.patient_list.current_exam(), force=True)
-            self._review_dirty = False
             if pair_ids:
                 valid = {r["id"] for r in self._images()}
                 if all(i in valid for i in pair_ids):
@@ -2093,9 +2051,7 @@ class MainWindow(QMainWindow):
             # the new photo is shown, wherever the windows were: the patient list makes way for it
             self.patient_list.hide()
             self._raise_main()
-            if self._tab() == "review" and last.image_id not in self.review.slot_ids():
-                self._go("all")                    # not one of the two photos under review: the big view
-            elif self._tab() == "multi" and last.image_id not in self._picks and self._picks:
+            if self._tab() == "multi" and last.image_id not in self._picks and self._picks:
                 self._go("all")                    # not among Simple's photos (changed by hand, unknown eye …): Detail
         elif any((r.patient_ref if r.patient_ref is not None else UNASSIGNED) == self._patient_ref
                  for r in imported):
@@ -2350,12 +2306,7 @@ class MainWindow(QMainWindow):
 
     def _on_exam_checked(self, exam_date: str) -> None:
         """Another exam was selected in the patient list (or picked in the timeline): its newest
-        OD | OS on Simple unless other photos were put there by hand; it is the current exam of the
-        검토 tab now, earlier ones are its priors."""
-        if self._tab() == "review" and not self._review_dirty:
-            self.review.set_current_exam(exam_date)
-        else:
-            self._review_dirty = True
+        OD | OS on Simple unless other photos were put there by hand."""
         if self.patient_list.current() != self._patient_ref:
             return
         self._default_exam = exam_date                 # [Simple]: this exam's newest OD | OS
@@ -2376,21 +2327,6 @@ class MainWindow(QMainWindow):
             if self._picks:
                 self._select_from_multi(self._picks[0])
             self._refill_multis()
-
-    def _fill_review(self) -> None:
-        if self._review_dirty:
-            self._review_dirty = False
-            self.review.set_photos(self._images(), self.patient_list.current_exam())
-
-    def _review_hand_off(self, where: str, image_id: int, second) -> None:
-        """검토 → 2D 보기 / 3D 안구 / 녹내장 with the photo of the active view."""
-        self._select_from_multi(image_id)
-        if self.current is None or self.current["id"] != image_id:
-            return
-        if where == "glaucoma":
-            self.open_glaucoma(second)
-        else:
-            self._go(where)
 
     # -- the 환자 목록 window ---------------------------------------------------------------------------
     def show_patient_list(self, search: bool = False) -> None:
@@ -2603,10 +2539,6 @@ class MainWindow(QMainWindow):
             self._fill_dates()
         d, eye = self.f_date.currentData() or "", self.f_eye.currentData() or ""
         mod = self.f_mod.currentData() or ""
-        if not _ and not keep:                 # not a filter of the strip: the patient or its photos changed
-            self._review_dirty = True
-            if self._tab() == "review":
-                self._fill_review()
         self.thumbs.set_dock(None)             # (미리 보기: the row under the mouse grows again below)
         self.thumbs.blockSignals(True)
         self.thumbs.clear()
@@ -3379,8 +3311,6 @@ class MainWindow(QMainWindow):
             self.compare = None
             self._mark_pair()
             self.lbl_status.setText("두 번째 사진 선택을 해제했습니다")
-            if self._tab() == "cmp":
-                self._fill_compare()
             return
         self._set_compare(image_id)
 
@@ -3418,7 +3348,7 @@ class MainWindow(QMainWindow):
         menu.addAction("환자 지정/정보 수정…", lambda: (self._show_image(iid), self._edit_image()))
         cur = self.current["id"] if self.current else None
         if iid != cur:
-            menu.addAction("비교 대상으로 (오른쪽)", lambda: self._set_compare(iid))
+            menu.addAction("두 번째 사진(②)으로", lambda: self._set_compare(iid))
             menu.addAction("스테레오 보기 (보고 있는 사진과)…", lambda: self.open_stereo(iid))
             menu.addAction("녹내장 분석 (보고 있는 사진과)…", lambda: self.open_glaucoma(iid))
         elif self.compare is not None:
@@ -3545,13 +3475,11 @@ class MainWindow(QMainWindow):
         self._ov3d_timer.stop()
         self._show.stop()
         self._3d_dirty = False
-        for view in (self.view2d, self.ov_macula, self.ov_zoom, *self.cmp_views):
+        for view in (self.view2d, self.ov_macula, self.ov_zoom):
             view.set_rgb(None)
             view.set_captions()
             view.geometry = None
             view.set_overlays(None, None, None)
-        for label in self.cmp_labels:
-            label.setText("")
         self.eye3d.set_image(None)
         self.eye3d.set_landmarks(None, None, None, None)
         self.eye3d.field_from_cover = False
@@ -3577,7 +3505,6 @@ class MainWindow(QMainWindow):
             self.multi.clear()
             self.ov_multi.clear()
             self.grid.set_items([], None)
-            self.review.set_photos([])
         self._sync_samples()
 
     def _show_image(self, image_id: int | None) -> None:
@@ -3809,8 +3736,6 @@ class MainWindow(QMainWindow):
                     self._fill_closeups([cid])   # (황반 · 디스크 with the same processing)
             else:
                 self._fill_multi()
-        if self._tab() == "cmp":
-            self._fill_compare()
         if self._tab() == "all":
             self._fill_overview()
 
@@ -4623,7 +4548,7 @@ class MainWindow(QMainWindow):
         lay = QVBoxLayout(win)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self.split3d)           # re-parented: the 3D view makes its GL context again
-        for key, fn in (("Esc", self._exit_full_3d), ("F11", self._exit_full_3d), ("Space", self._toggle_scan)):
+        for key, fn in (("Esc", self._esc_full_3d), ("F11", self._exit_full_3d), ("Space", self._toggle_scan)):
             QShortcut(QKeySequence(key), win, activated=fn)
         self._full3d = win
         self._full3d_note = QLabel("3D 안구를 화면 전체로 보고 있습니다 — Esc 또는 [돌아가기]")
@@ -4638,6 +4563,16 @@ class MainWindow(QMainWindow):
             win.setGeometry(screen.geometry())
         win.showFullScreen()
         self.eye3d.setFocus()
+
+    def _esc_full_3d(self) -> None:
+        """Esc on the whole screen: 전안부 선택 is let go first (as Esc does on the eye everywhere else —
+        the window's shortcut took the key before the eye saw it), the next Esc leaves the whole screen."""
+        eye = self.eye3d
+        if eye.walk:
+            eye.interacted.emit()
+            eye.set_walk(False)
+            return
+        self._exit_full_3d()
 
     def _exit_full_3d(self) -> None:
         win, self._full3d = self._full3d, None
@@ -5280,18 +5215,12 @@ class MainWindow(QMainWindow):
         if key != "3d2" and self.pair3d.image_ids:
             self.pair3d.clear()               # (its two photos are let go)
         self._sync_views()
-        # 검토 has its own timeline: the photo strip and its filters are for the other tabs
-        self.strip_w.setVisible(key != "review")
-        self.view_bar.setVisible(key != "review")
         # 16장 보기 is the photo list itself: its pages take the strip's place
         self._sync_strip()
         self.grid_bar.setVisible(key == "grid")
         if key == "grid":
             self._sync_grid_bar()
         self._fit_banner()
-        if key == "review":
-            self._fill_review()
-            self.review.views[self.review.active].setFocus()
         self._place_overview(key == "all")
         if key != "3d":
             self._show.stop()
@@ -5303,8 +5232,6 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "3D", msg)
         if key == "multi":
             self._fill_multi()
-        if key == "cmp":
-            self._fill_compare()
         if key == "all":
             self._fill_overview()
             self.view2d.setFocus()            # ← / →: the photo before / after
@@ -5619,17 +5546,6 @@ class MainWindow(QMainWindow):
         self._mark_pair()
         self.lbl_status.setText(keys("두 사진을 골랐습니다 (② = 두 번째) — [Glaucoma] (스테레오 보기 · 경과 비교) · "
                                      "Ctrl+클릭으로 해제"))
-
-    def _fill_compare(self) -> None:
-        for view, lab, row in zip(self.cmp_views, self.cmp_labels, (self.current, self.compare)):
-            if row is None:
-                view.set_rgb(None)
-                lab.setText(keys("Ctrl+클릭으로 비교할 사진을 고르세요") if row is self.compare else "")
-                continue
-            rgb = self._load(row)
-            view.set_rgb(self._adjusted(self._processed(row, rgb)) if rgb is not None else None)
-            mod = MODALITY_LABELS.get(row["modality"] or "", "")
-            lab.setText(f"<b>{row['exam_date'] or ''}</b> {row['laterality'] or ''} {mod}")
 
     # -- disc pair (디스크 2장 — discpair.py, disc_pair.py) ---------------------------------------
     def _disc_source(self, row, rgb: np.ndarray) -> discpair.DiscSource:
@@ -6116,6 +6032,5 @@ class MainWindow(QMainWindow):
             self.share_server.stop()
             self.share_server = None
         self._preloader.shutdown()
-        self.review.shutdown()
         self.service.shutdown()
         super().closeEvent(e)

@@ -320,3 +320,75 @@ def test_leaving_two_up_3d_when_its_photos_cannot_be_shown_does_not_recurse(tmp_
         w.close()
         w.deleteLater()
         app.processEvents()
+
+
+def test_ctrl_3_in_the_view_menu_does_what_the_3d_icon_does(tmp_path, demo_dir, import_and_wait):
+    """보기 → 3D (Ctrl+3) only opened the 3D of the photo on screen; the icon — as its tooltip says of
+    Ctrl+3 too — puts Simple's two photos on two eyes, and again goes back to the view before."""
+    from PySide6.QtWidgets import QApplication
+
+    from fundusview.config import Settings
+    from fundusview.db import Database
+    from fundusview.ui.main_window import MainWindow
+
+    app = QApplication.instance() or QApplication([])
+    s = Settings(library_dir=str(tmp_path / "lib"), stable_seconds=0.05, rescan_seconds=0,
+                 watch_on_startup=False, auto_detect=False)
+    db = Database(tmp_path / "lib" / "fundus.db")
+    w = MainWindow(s, db)
+    try:
+        w.show()
+        import_and_wait(app, w, [demo_dir])
+        w._select_patient_ref(db.find_patient("20260115001")["id"])
+        w.show_simple()
+        app.processEvents()
+        act = w.view_acts["3d"]
+        assert act.shortcut().toString() == "Ctrl+3" and len(w._picks) == 2
+        act.trigger()
+        app.processEvents()
+        assert w._tab() == "3d2" and w.pair3d.image_ids == w._picks          # both photos, as the icon
+        act.trigger()                                                          # again: back to Simple
+        app.processEvents()
+        assert w._tab() == "multi"
+        w._go("all")
+        act.trigger()
+        assert w._tab() == "3d"
+        act.trigger()
+        assert w._tab() == "all"
+    finally:
+        w.close()
+        w.deleteLater()
+        app.processEvents()
+
+
+def test_esc_on_the_whole_screen_lets_the_anterior_segment_go_first(tmp_path, demo_dir, import_and_wait):
+    """3D 크게 보기: the window's Esc took the key before the eye — 전안부 선택 could not be let go
+    there with Esc as everywhere else; it left the whole screen instead."""
+    from PySide6.QtWidgets import QApplication
+
+    from fundusview.config import Settings
+    from fundusview.db import Database
+    from fundusview.ui.main_window import MainWindow
+
+    app = QApplication.instance() or QApplication([])
+    s = Settings(library_dir=str(tmp_path / "lib"), stable_seconds=0.05, rescan_seconds=0,
+                 watch_on_startup=False, auto_detect=False)
+    db = Database(tmp_path / "lib" / "fundus.db")
+    w = MainWindow(s, db)
+    try:
+        w.show()
+        import_and_wait(app, w, [demo_dir])
+        w._select_patient_ref(db.find_patient("20260115001")["id"])
+        w._go("3d")
+        w._toggle_full_3d()
+        assert w._full3d is not None
+        w.eye3d.set_walk(True)
+        w._esc_full_3d()                                  # the first Esc: 전안부 선택 off, the screen stays
+        assert not w.eye3d.walk and w._full3d is not None
+        w._esc_full_3d()                                  # the next: back from the whole screen
+        assert w._full3d is None
+    finally:
+        w._exit_full_3d()
+        w.close()
+        w.deleteLater()
+        app.processEvents()

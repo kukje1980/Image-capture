@@ -247,12 +247,10 @@ def test_main_window_tools(app, tmp_path, demo_dir, import_and_wait):
         assert w.thumbs.count() == 3
         w.f_mod.setCurrentIndex(w.f_mod.findData("color"))   # the two single shots (no montage)
         assert w.thumbs.count() == 2 and w.view2d.geometry is not None
-        # 확대 is on from the start (wheel zoom, drag moves): 2D, compare and multi views, the ZOOM button lit
+        # 확대 is on from the start (wheel zoom, drag moves): the 2D and multi views, the ZOOM button lit
         assert w.view2d.tool == "zoom" and w.acts["tool:zoom"].isChecked()
-        assert all(v.tool == "zoom" for v in w.cmp_views)
-        # a double click shows the loupe in 비교; on Detail's big photo it goes back where one was (the multi
-        # view opens the photo instead)
-        assert w.view2d.dblclick_leaves and not w.view2d.dblclick_loupe and all(v.dblclick_loupe for v in w.cmp_views)
+        # a double click on Detail's big photo goes back where one was (the multi view opens the photo instead)
+        assert w.view2d.dblclick_leaves and not w.view2d.dblclick_loupe
         first = w.current["id"]
         w._on_action("op:sharpen")
         w._on_action("op:enhance")
