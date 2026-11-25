@@ -5396,7 +5396,12 @@ class MainWindow(QMainWindow):
 
     def _on_gl_error(self, msg: str) -> None:
         self._sync_detail_buttons()           # (자세히 that could not be prepared fell back to 간단히)
-        msg += "\n\n설정 > 일반 > 3D 렌더링을 '소프트웨어 렌더링'으로 바꾸고 다시 시작해 보세요."
+        if self.settings.opengl == "software" or os.getenv("FUNDUSVIEW_SOFTWARE_GL") == "1":
+            # already the software renderer: the advice below would send the user in a circle
+            msg += ("\n\n이미 '소프트웨어 렌더링'으로 켜져 있습니다. 프로그램 폴더에 opengl32sw.dll 이 있는지 "
+                    "확인하고, 없으면 프로그램을 다시 설치해 보세요.")
+        else:
+            msg += "\n\n설정 > 일반 > 3D 렌더링을 '소프트웨어 렌더링'으로 바꾸고 다시 시작해 보세요."
         if self._ov_gl and not self.eye3d._ok and self.split3d.parent() is self.ov_3d:
             # OpenGL failed in the small 3D pane: no pop-up at every start — the pane becomes a
             # button, and the message is shown when the 3D tab is opened
