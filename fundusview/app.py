@@ -56,6 +56,53 @@ def _connect(settings):
                 return False
 
 
+def _open_library(settings, gui: bool):
+    """This computer's library. A database file that cannot be read (damaged by a power cut, a
+    disk error, another program's file under its name) used to end the program without a word:
+    now the user is told and may start an empty library — the damaged file is kept beside it
+    (``fundus.db.corrupt-날짜``), never deleted, and the photos themselves are not touched. None:
+    not opened."""
+    import sqlite3
+    import time
+
+    from .db import Database
+
+    path = settings.library / "fundus.db"
+    try:
+        settings.library.mkdir(parents=True, exist_ok=True)
+        return Database(path)
+    except (sqlite3.Error, OSError) as exc:
+        text = (f"라이브러리를 열 수 없습니다.\n{path}\n{exc}\n\n"
+                "데이터베이스 파일이 손상되었거나 다른 프로그램의 파일입니다.")
+        if not gui:
+            print(text, file=sys.stderr)
+            return None
+        if isinstance(exc, OSError) or not path.is_file():
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.critical(None, APP_TITLE, text + "\n\n설정의 라이브러리 폴더를 확인하세요.")
+            return None
+    from PySide6.QtWidgets import QMessageBox
+
+    box = QMessageBox(QMessageBox.Icon.Critical, APP_TITLE,
+                      text + "\n\n손상된 파일을 옆에 보관하고 빈 라이브러리로 시작할 수 있습니다. "
+                             "사진 파일은 그대로 있으며, 사진 폴더를 다시 가져오면 목록이 만들어집니다.")
+    fresh = box.addButton("보관하고 새로 시작", QMessageBox.ButtonRole.AcceptRole)
+    box.addButton("끝내기", QMessageBox.ButtonRole.RejectRole)
+    box.exec()
+    if box.clickedButton() is not fresh:
+        return None
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    try:
+        for tail in ("", "-wal", "-shm"):
+            part = path.with_name(path.name + tail)
+            if part.exists():
+                os.replace(part, path.with_name(f"{path.name}.corrupt-{stamp}{tail}"))
+        return Database(path)
+    except (sqlite3.Error, OSError) as exc:
+        QMessageBox.critical(None, APP_TITLE, f"새 라이브러리를 만들지 못했습니다.\n{exc}")
+        return None
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="fundusview", description=APP_TITLE)
     ap.add_argument("--home", help="settings + library folder (portable mode)")
@@ -71,8 +118,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.serve:
         from .db import Database
         from .share import serve
-        settings.library.mkdir(parents=True, exist_ok=True)
-        db = Database(settings.library / "fundus.db")
+        db = _open_library(settings, gui=False)
+        if db is None:
+            return 1
         try:
             return serve(settings, db)
         finally:
@@ -98,8 +146,9 @@ def main(argv: list[str] | None = None) -> int:
     if db is False:                   # no server, and the user chose to quit
         return 1
     if db is None:                    # this computer's own library
-        settings.library.mkdir(parents=True, exist_ok=True)
-        db = Database(settings.library / "fundus.db")
+        db = _open_library(settings, gui=True)
+        if db is None:                # the library's database cannot be read, and the user chose to quit
+            return 1
     win = MainWindow(settings, db)
     if args.demo and not db.list_patients() and db.count_unassigned() == 0:
         from .config import config_dir

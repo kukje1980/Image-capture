@@ -110,7 +110,11 @@ def _associate(s: Settings, node: Node, contexts: Iterable[tuple[str, list[str]]
         raise DicomError("서버 주소와 포트가 설정되지 않았습니다 — 설정 → DICOM")
     from pynetdicom import AE
 
-    ae = AE(ae_title=own_ae(s))
+    try:
+        ae = AE(ae_title=own_ae(s))
+    except ValueError:                           # Hangul, a backslash …: an AE title is ASCII
+        raise DicomError(f"이 프로그램의 AE Title '{own_ae(s)}' 은(는) 쓸 수 없습니다 — 영문 · 숫자 16자까지 "
+                         "(설정 → DICOM)") from None
     ae.acse_timeout = ae.connection_timeout = timeout
     ae.dimse_timeout = ae.network_timeout = max(timeout, 30.0)
     for abstract, syntaxes in contexts:
@@ -355,11 +359,28 @@ def item_of(row, patient, order: Order | None = None, label: str = "", path: str
 
 
 def _da(text: str) -> str:
-    return (text or "").replace("-", "")[:8]
+    """A date of the library as DICOM's DA (YYYYMMDD) — "" for what is not a date ("날짜없음",
+    "2024-3-5" …: written as it was, the file could not be saved or held a date no PACS reads)."""
+    m = re.fullmatch(r"(\d{4})-?(\d{2})-?(\d{2})", (text or "").strip())
+    if not m:
+        return ""
+    y, mo, d = (int(g) for g in m.groups())
+    try:
+        datetime(y, mo, d)
+    except ValueError:
+        return ""
+    return f"{y:04d}{mo:02d}{d:02d}"
 
 
 def _tm(text: str) -> str:
-    return (text or "").replace(":", "")[:6]
+    """A time as DICOM's TM (HHMMSS, or HHMM) — "" for what is not a time."""
+    m = re.fullmatch(r"(\d{2}):?(\d{2})(?::?(\d{2}))?(?:\.\d+)?", (text or "").strip())
+    if not m:
+        return ""
+    h, mi, sec = int(m.group(1)), int(m.group(2)), int(m.group(3) or 0)
+    if h > 23 or mi > 59 or sec > 59:
+        return ""
+    return f"{h:02d}{mi:02d}{sec:02d}" if m.group(3) else f"{h:02d}{mi:02d}"
 
 
 def _patient_name(item: Item) -> str:

@@ -59,6 +59,44 @@ class WatchFolder:
     enabled: bool = True
 
 
+def _coerce(default, value):
+    """``value`` of a settings file as the kind of thing its default is — a file edited by hand (or
+    written by another version) with "60" for 60, a word for a number, null for a list … must not
+    stop the program at start-up or fail every import later. What cannot be read: the default."""
+    import math
+
+    if isinstance(default, bool):
+        return value if isinstance(value, bool) else default
+    if isinstance(default, (int, float)):
+        if isinstance(value, bool):
+            return default
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return default
+        if not math.isfinite(number):
+            return default
+        return int(number) if isinstance(default, int) else number
+    if isinstance(default, str):
+        return value if isinstance(value, str) else default
+    if isinstance(default, list):
+        if not isinstance(value, list):
+            return list(default)
+        return [v for v in value if isinstance(v, str)]
+    if isinstance(default, dict):
+        return value if isinstance(value, dict) else dict(default)
+    return value
+
+
+def _keep_aside(path: Path) -> None:
+    """A settings file that cannot be read is kept as ``settings.json.bad`` (the newest one)."""
+    try:
+        os.replace(path, path.with_name(path.name + ".bad"))
+    except OSError:
+        pass
+
+
+
 @dataclass
 class Settings:
     library_dir: str = ""
@@ -187,12 +225,29 @@ class Settings:
         if not path.exists():
             return cls()
         try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+            # utf-8-sig: Windows Notepad saves with a byte order mark — read as plain UTF-8 the file
+            # "could not be read", every setting went back to its default and the next save wrote that
+            raw = json.loads(path.read_text(encoding="utf-8-sig"))
+            if not isinstance(raw, dict):
+                raise ValueError("settings.json is not an object")
+        except OSError:
             return cls()
-        folders = [WatchFolder(**{k: v for k, v in f.items() if k in WatchFolder.__dataclass_fields__})
-                   for f in raw.pop("watch_folders", [])]
-        known = {k: v for k, v in raw.items() if k in cls.__dataclass_fields__}
+        except ValueError:
+            _keep_aside(path)                 # the next save() must not be the end of what was in it
+            return cls()
+        folders = []
+        listed = raw.pop("watch_folders", [])
+        for f in listed if isinstance(listed, list) else []:
+            if not isinstance(f, dict) or not isinstance(f.get("path"), str) or not f["path"].strip():
+                continue                      # (a row without a folder)
+            row = WatchFolder(path=f["path"])
+            for k, v in f.items():
+                if k in WatchFolder.__dataclass_fields__ and k != "path":
+                    setattr(row, k, _coerce(getattr(row, k), v))
+            folders.append(row)
+        defaults = cls()
+        known = {k: _coerce(getattr(defaults, k), v) for k, v in raw.items()
+                 if k in cls.__dataclass_fields__ and k != "watch_folders"}
         return cls(watch_folders=folders, **known)
 
     def save(self, path: Path | None = None) -> None:

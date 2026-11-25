@@ -108,16 +108,20 @@ class Database:
         self._batch = 0                      # depth of batch(): writes inside are committed together
         self._con = sqlite3.connect(str(self.path), check_same_thread=False)
         self._con.row_factory = sqlite3.Row
-        with self._lock:
-            self._con.execute("PRAGMA journal_mode=WAL")
-            self._con.execute("PRAGMA foreign_keys=ON")
-            self._con.executescript(SCHEMA)
-            for table, column, kind in ADDED_COLUMNS:
-                have = {r["name"] for r in self._con.execute(f"PRAGMA table_info({table})")}
-                if column not in have:
-                    self._con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
-            self._con.execute("CREATE INDEX IF NOT EXISTS ix_images_content ON images(content_sha256)")
-            self._con.commit()
+        try:
+            with self._lock:
+                self._con.execute("PRAGMA journal_mode=WAL")
+                self._con.execute("PRAGMA foreign_keys=ON")
+                self._con.executescript(SCHEMA)
+                for table, column, kind in ADDED_COLUMNS:
+                    have = {r["name"] for r in self._con.execute(f"PRAGMA table_info({table})")}
+                    if column not in have:
+                        self._con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
+                self._con.execute("CREATE INDEX IF NOT EXISTS ix_images_content ON images(content_sha256)")
+                self._con.commit()
+        except BaseException:
+            self._con.close()                # (a file that is not a database: not left open — it is renamed)
+            raise
 
     def close(self) -> None:
         with self._lock:
@@ -220,8 +224,11 @@ class Database:
         )
         args: tuple = ()
         if search:
-            like = f"%{search}%"
-            sql += " WHERE p.patient_id LIKE ? OR p.name LIKE ? OR p.birth_date LIKE ?"
+            # the text as typed: "%" and "_" are letters to look for, not "anything"
+            esc = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            like = f"%{esc}%"
+            sql += (" WHERE p.patient_id LIKE ? ESCAPE '\\' OR p.name LIKE ? ESCAPE '\\'"
+                    " OR p.birth_date LIKE ? ESCAPE '\\'")
             args = (like, like, like)
         sql += " GROUP BY p.id ORDER BY COALESCE(MAX(i.imported_at), p.updated_at) DESC"
         return self._all(sql, args)
@@ -240,10 +247,13 @@ class Database:
 
     def merge_patients(self, from_ref: int, into_ref: int) -> None:
         """Move all images of ``from_ref`` to ``into_ref`` and drop ``from_ref``."""
-        with self._lock:
-            self._con.execute("UPDATE images SET patient_ref = ? WHERE patient_ref = ?", (into_ref, from_ref))
-            self._con.execute("DELETE FROM patients WHERE id = ?", (from_ref,))
-            self._con.commit()
+        if from_ref == into_ref or from_ref is None or into_ref is None:
+            return                            # (into itself: the patient was deleted, the photos left without one)
+        with self.batch():
+            if self._one("SELECT id FROM patients WHERE id = ?", (into_ref,)) is None:
+                return
+            self._exec("UPDATE images SET patient_ref = ? WHERE patient_ref = ?", (into_ref, from_ref))
+            self._exec("DELETE FROM patients WHERE id = ?", (from_ref,))
 
     # -- images ------------------------------------------------------------
     def insert_image(self, **values) -> int:

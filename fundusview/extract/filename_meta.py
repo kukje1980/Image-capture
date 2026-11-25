@@ -188,7 +188,7 @@ def match_patterns(text: str, patterns, meta: ExtractedMeta, source: str) -> boo
     for pat in patterns:
         try:
             m = re.match(pat, text, re.IGNORECASE)
-        except re.error:
+        except (re.error, TypeError):            # (TypeError: a pattern that is not text)
             continue
         if m and "pid" in m.groupdict() and m.group("pid") and (
                 not plausible_pid(m.group("pid")) or _stamp_not_pid(m)

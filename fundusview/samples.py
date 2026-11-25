@@ -53,6 +53,18 @@ def folder_name(disease: str) -> str:
     return name or "_"
 
 
+# A disease's name is its folder's and the start of its photos' file names ("이름_001.jpg"): a file
+# name holds 255 bytes, and a Korean letter takes three.
+NAME_MAX = 60
+
+
+def _check_name(name: str) -> None:
+    if not name:
+        raise ValueError("질환 이름을 적으세요")
+    if len(name) > NAME_MAX:
+        raise ValueError(f"질환 이름이 너무 깁니다 ({NAME_MAX}자까지)")
+
+
 class SampleLibrary:
     def __init__(self, library: Path | str):
         self.root = Path(library) / FOLDER
@@ -66,6 +78,10 @@ class SampleLibrary:
                 idx = json.loads((self.root / INDEX).read_text("utf-8"))
             except (OSError, ValueError):
                 pass
+            if not isinstance(idx, dict):         # (an index that is JSON, but not ours)
+                idx = {}
+            if isinstance(idx.get("diseases"), list):
+                idx["diseases"] = [d for d in idx["diseases"] if isinstance(d, str) and d.strip()]
             if not isinstance(idx.get("diseases"), list):
                 # a new library: the usual diseases (and the folders put there by hand)
                 idx["diseases"] = list(DEFAULT_DISEASES)
@@ -96,12 +112,12 @@ class SampleLibrary:
 
     def add_disease(self, name: str) -> str:
         name = " ".join(name.split())
-        if not name:
-            raise ValueError("질환 이름을 적으세요")
+        _check_name(name)
         if any(folder_name(d) == folder_name(name) for d in self.diseases()):
             raise ValueError(f"'{name}'은(는) 이미 있습니다")
-        self._load()["diseases"].append(name)
+        # the folder first: a name the disk refuses (OSError) must not stay in the list
         (self.root / folder_name(name)).mkdir(parents=True, exist_ok=True)
+        self._load()["diseases"].append(name)
         self._save()
         return name
 
@@ -110,10 +126,9 @@ class SampleLibrary:
         idx = self._load()
         if old not in idx["diseases"]:
             raise ValueError(f"'{old}'이(가) 없습니다")
-        if not new:
-            raise ValueError("질환 이름을 적으세요")
         if new == old:
             return old
+        _check_name(new)
         if folder_name(new) != folder_name(old) and any(folder_name(d) == folder_name(new) for d in idx["diseases"]):
             raise ValueError(f"'{new}'은(는) 이미 있습니다")
         src, dst = self.root / folder_name(old), self.root / folder_name(new)
@@ -145,7 +160,10 @@ class SampleLibrary:
     def photos(self, disease: str) -> list[Path]:
         """The disease's photos, in the order they were added (by their numbers)."""
         folder = self.root / folder_name(disease)
-        if not folder.is_dir():
+        try:
+            if not folder.is_dir():
+                return []
+        except OSError:                       # (a name no file system takes, from an older index)
             return []
         return sorted((p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in PHOTO_EXTS),
                       key=lambda p: (p.stat().st_mtime, p.name))

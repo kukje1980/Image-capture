@@ -176,3 +176,25 @@ def test_registering_the_photo_on_screen_from_the_menu(win, monkeypatch):
     monkeypatch.setattr(QInputDialog, "getItem", staticmethod(lambda *a, **k: ("새로운 질환", True)))
     w.register_sample()                                        # a name not there: a new disease
     assert w.samples.count("새로운 질환") == 1
+
+
+def test_a_name_too_long_for_a_folder_is_refused_and_never_stays_in_the_list(tmp_path):
+    """극한 테스트: a 500-letter name made mkdir fail (File name too long) after the name was already
+    in the list — from then on every look at the list raised."""
+    from fundusview.samples import NAME_MAX
+
+    lib = SampleLibrary(tmp_path)
+    before = lib.diseases()
+    for bad in ("x" * 500, "가" * (NAME_MAX + 1)):
+        with pytest.raises(ValueError):
+            lib.add_disease(bad)
+        with pytest.raises(ValueError):
+            lib.rename_disease(before[0], bad)
+    assert lib.diseases() == before and all(lib.count(d) == 0 for d in before)
+    longest = "가" * NAME_MAX                                  # the longest name allowed works on disk
+    assert lib.add_disease(longest) == longest
+    rgb = np.zeros((8, 8, 3), np.uint8)
+    assert lib.add_rgb(longest, rgb).is_file() and lib.count(longest) == 1
+    # an index written before this check: the name is listed, and counted as empty (no OSError)
+    lib._load()["diseases"].append("y" * 500)
+    assert lib.count("y" * 500) == 0
