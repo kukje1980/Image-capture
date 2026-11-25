@@ -2,7 +2,7 @@
 the earlier exams of an eye that the current one is compared with.
 
 The rows are ``images`` rows (``db.images_for_patient``). Nothing here touches Qt — the patient
-list (검사 목록), the 검토 tab (ui/review_view.py) and the newest OD | OS a patient opens with on
+list (검사 목록) and the newest OD | OS a patient opens with on
 다중 보기 (ui/main_window.py) all read their photos from these functions.
 
 Rules
