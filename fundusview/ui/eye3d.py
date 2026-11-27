@@ -2759,8 +2759,10 @@ class EyeView(QOpenGLWidget):
             gl.glDisable(gl.GL_BLEND)
 
         # -- transparent media ----------------------------------------------------
-        if inside or half or within or ((not closed or glass > 0.0) and self.cut > em.LENS_BACK_Z
-                                         and not front_clear):
+        # (들어가며 보기: within the eye the lens and the cornea are not drawn — no white veil over the
+        # photo, the retina in the photo's own colours from the start)
+        if not within and (inside or half or ((not closed or glass > 0.0) and self.cut > em.LENS_BACK_Z
+                                              and not front_clear)):
             gl.glEnable(gl.GL_BLEND)
             # Keep destination alpha at 1: QOpenGLWidget composites its FBO as
             # premultiplied, so alpha < 1 here shows as colour artifacts.
@@ -2771,7 +2773,7 @@ class EyeView(QOpenGLWidget):
             if half_clip:
                 gl.glEnable(gl.GL_CLIP_PLANE1)
             # (from within the eye the studio's lights are not mirrored in the lens and the cornea)
-            p = use("clear", kind=2, within=1.0 if (within or inside) else 0.0)
+            p = use("clear", kind=2, within=1.0 if inside else 0.0)
             if self.simple < 0.999:
                 self._meshes["zonules"].draw(gl)
             self._set(p, kind=0)
@@ -2789,9 +2791,6 @@ class EyeView(QOpenGLWidget):
                 if half_clip:
                     gl.glEnable(gl.GL_CLIP_PLANE1)
                 p = use("clear", kind=3)
-                self._meshes["cornea"].draw(gl)
-            elif within and closed:               # the cornea as a clear shell on the way in
-                use("clear", kind=3)
                 self._meshes["cornea"].draw(gl)
             elif not inside:
                 lens_cap = self._dynamic("rim_lens", round(self.cut, 4), lambda: self._rim("lens"))
