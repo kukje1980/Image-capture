@@ -1174,12 +1174,14 @@ function paintScene(w, h) {
     if (sheet) { setU(pw, { hole: 0 }); drawMesh(sheet); }
     gl.depthMask(true); gl.disable(gl.BLEND);
   }
-  if (inside || half || within || ((!closed || glass > 0) && E.cut > K.LENS_BACK_Z)) {
+  // (들어가며 보기: within the eye the lens and the cornea are not drawn — no white veil over the photo,
+  // the retina in the photo's own colours from the start)
+  if (!within && (inside || half || ((!closed || glass > 0) && E.cut > K.LENS_BACK_Z))) {
     gl.enable(gl.BLEND);
     gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ZERO, gl.ONE);
     gl.depthMask(false);
     // from within the eye the studio's lights are not mirrored in the lens and the cornea
-    const p = use('clear', { kind: 2, within: within || inside ? 1 : 0 });
+    const p = use('clear', { kind: 2, within: inside ? 1 : 0 });
     if (E.simple < 0.999) drawMesh(R.meshes.zonules);
     setU(p, { kind: 0 });
     gl.enable(gl.CULL_FACE);
@@ -1188,8 +1190,6 @@ function paintScene(w, h) {
     if (half) {
       use('section', { part: 1 }); drawMesh(R.dyn.half_face);
       use('clear', { kind: 3 }); drawMesh(R.meshes.cornea);
-    } else if (within && closed) {
-      use('clear', { kind: 3 }); drawMesh(R.meshes.cornea);   // the cornea as a clear shell on the way in
     } else if (!inside) {
       const g = dynamic('rim_lens', E.cut.toFixed(4), () => rimFor(E.cut).lens || null);
       if (g) { setU(p, { kind: 1 }); drawMesh(g); }

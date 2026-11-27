@@ -479,18 +479,28 @@ def test_walking_in_sees_the_retina_through_the_pupil(eye):
     pupil is not dark); at the end the inside view."""
     v, app, errors = eye
     _render(eye, cut=0.25)
+    lens, drawn = v._meshes["lens"], []
+    draw = lens.draw
+    lens.draw = lambda gl: (drawn.append(1), draw(gl))[1]
     try:
         for j in (0.45, 0.62, 0.72, 0.9):
             v.journey_scrub(j)
             v.update()
             _settle(app, 0.2)
+            del drawn[:]
             v._last_img = v.grabFramebuffer()
+            assert not drawn, j                                       # no lens over the photo: its own colours
             r, g, b = v._last_img.pixelColor(v.width() // 2, v.height() // 2).getRgb()[:3]
             assert not errors and r > 60 and r > b, (j, r, g, b)      # the orange retina, not black
             assert v.mode == "outside"
         v.journey_scrub(1.0)
         assert v.mode == "inside" and v.in_z == pytest.approx(v.JOURNEY_Z)
+        v.journey_end()
+        v.set_mode("outside")
+        _render(eye, cut=0.9)
+        assert drawn                                                  # (from outside the lens is there)
     finally:
+        lens.draw = draw
         v.journey_end()
         v.set_mode("outside")
 
