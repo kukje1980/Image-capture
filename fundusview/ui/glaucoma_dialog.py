@@ -1115,8 +1115,8 @@ S3_SPREAD = 0.10         # two photos' vertical C/D further apart than this: say
 S3_NO_CUP = "컵이 뚜렷하지 않아 이 표면에서는 C/D를 추정하지 못했습니다 — [디스크 C/D] 탭에서 직접 맞추세요."
 # one photo: three ways to the shape (disc3d.METHODS)
 S3_METHODS = (("pallor", "밝기", "창백한 곳 = 깊은 곳"),
-              ("vessels", "혈관 꺾임", "혈관이 꺾이는 곳 = 컵 경계 (색은 쓰지 않음)"),
-              ("hybrid", "하이브리드", "혈관이 꺾이는 쪽은 그 경계, 혈관이 없는 쪽과 바닥 모양은 밝기"))
+              ("vessels", "혈관 꺾임", "혈관이 지나는 모양(꺾임 · 몰림)으로 읽은 컵 경계 — 색은 쓰지 않음"),
+              ("hybrid", "하이브리드", "혈관 모양과 밝기를 함께 읽은 경계, 바닥 모양은 밝기"))
 S3_METHOD_NAMES = {k: name for k, name, _ in S3_METHODS}
 # two photos of one day: the stereo depth alone, or its cup's margin where the vessels bend
 # (disc3d.STEREO_METHODS)
@@ -1135,19 +1135,18 @@ def s3_status(method: str, info: dict) -> str:
     if method == "pallor":
         return S3_ONE
     b = info.get("bends") or {}
-    k, v = len(b.get("r", ())), b.get("vessels", 0)
-    found = f"꺾임 {k}곳 · 혈관 {v}개"
-    share = f"경계의 {info.get('support', 0.0):.0%}"
+    k = len(b.get("r", ()))
+    dots = f"꺾임 {k}곳은 점으로 표시" if k else "뚜렷한 꺾임은 찾지 못함"
     if method == "vessels":
         if not info.get("cup"):
-            return (f"혈관 꺾임을 충분히 찾지 못했습니다 ({found}) — 디스크가 작게 찍혔거나 경계를 지나는 혈관이 "
-                    "적습니다. 그림의 오목한 곳은 자리만 채운 것입니다. [밝기]나 [하이브리드]로 보세요.")
-        return (f"혈관이 꺾이는 곳을 컵 경계로 본 모양입니다 ({found} · {share}가 꺾임에 가까움, 나머지는 이어 그림). "
+            return ("혈관을 충분히 찾지 못했습니다 — 디스크가 작게 찍혔거나 흐린 사진입니다. 그림의 오목한 곳은 자리만 "
+                    "채운 것입니다. [밝기]나 [하이브리드]로 보세요.")
+        return (f"혈관이 지나는 모양으로 읽은 컵 경계입니다 ({dots}) — 전문가가 경계를 표시한 사진으로 맞춘 추정입니다. "
                 "색은 쓰지 않으며 깊이는 정해 둔 모양입니다 — 실제 깊이를 잰 것이 아닙니다.")
     if not info.get("support"):
-        return f"혈관 꺾임을 찾지 못해 ({found}) [밝기]와 같은 모양입니다. " + S3_ONE
-    return (f"경계는 혈관이 꺾이는 곳 ({found} · {share}), 혈관이 없는 쪽과 바닥 모양은 밝기로 추정한 모양입니다. "
-            "실제 깊이를 잰 것이 아닙니다.")
+        return "혈관도 창백한 곳도 뚜렷하지 않아 [밝기]와 같은 모양입니다. " + S3_ONE
+    return (f"경계는 혈관이 지나는 모양과 밝기를 함께 읽은 것 ({dots} — 전문가가 경계를 표시한 사진으로 맞춘 추정), "
+            "바닥 모양은 밝기로 추정한 모양입니다. 실제 깊이를 잰 것이 아닙니다.")
 
 
 class Surface3DTab(_Tab):

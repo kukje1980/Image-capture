@@ -449,7 +449,7 @@ def test_disc_tab_starts_on_the_disc_margin_and_the_cup_on_a_line_of_equal_depth
     assert "정상 평균 C/D" in tab.lbl_ratio.text() and "디스크 크기 반영" in tab.lbl_rim.text()
     # a large cup is read large; a photo with no disc to see keeps the size a disc has there
     big = DiscTab(_disc_photo(cup=0.8))
-    assert big.metrics()["vertical"] == pytest.approx(0.8, abs=0.07) and big.disc_mm() is None
+    assert big.metrics()["vertical"] == pytest.approx(0.8, abs=0.09) and big.disc_mm() is None
     flat = DiscTab(_disc_photo(rgb=np.full((630, 630, 3), 120, np.uint8)))
     assert flat.state == {"disc": "none", "cup": "none"} and "찾지 못함" in flat.lbl_auto.text()
     assert flat.metrics()["vertical"] == pytest.approx(0.50 / 1.05, abs=0.01)

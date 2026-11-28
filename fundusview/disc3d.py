@@ -29,6 +29,7 @@ import math
 import cv2
 import numpy as np
 
+from . import cuplearn
 from . import glaucoma as G
 
 TEX_PX = 640             # side of the disc-centred texture (and of the picture drawn from it)
@@ -381,56 +382,115 @@ def _walled(p: dict, radius: np.ndarray, floor: np.ndarray) -> np.ndarray:
     return D / max(float(D.max()), 1e-6)
 
 
+DISC_SIZE = (0.6, 1.6)   # a disc margin found this much smaller or larger than expected is not believed
+
+
+def learned_margin(crop: np.ndarray, disc_frac: float, p: dict, which: str, k: int = 360) -> np.ndarray:
+    """The cup's margin as ``cuplearn`` reads it off the photo (0.13.21): its radius (disc radii, as
+    ``p["r"]`` counts them) at ``k`` angles round ``p["centre"]``. ``which``: ``"vessels"`` — by the
+    vessel pattern alone, ``"both"`` — with the brightness. The disc the reach is a part of is the margin
+    the photo shows (``glaucoma.find_disc_margin``); where none stands out, a disc of the expected size
+    round the pale patch."""
+    side, n = float(crop.shape[0]), p["n"]
+    expected = disc_frac * side / 2.0
+    cx, cy = (p["centre"][0] + 0.5) * side / n - 0.5, (p["centre"][1] + 0.5) * side / n - 0.5
+    found = G.find_disc_margin(crop, disc_frac)
+    curve = G.curve({"pts": found["pts"]}) if found is not None else None
+    if curve is not None:
+        size = float(np.hypot(*(curve - curve.mean(axis=0)).T).mean()) / max(expected, 1.0)
+        if not DISC_SIZE[0] <= size <= DISC_SIZE[1]:
+            curve = None
+    if curve is None:
+        t = np.linspace(0.0, 2.0 * math.pi, 96, endpoint=False)
+        curve = np.stack([cx + expected * np.cos(t), cy + expected * np.sin(t)], axis=1)
+    cup = cuplearn.cup_curve(crop, curve, which)
+    ang = np.arctan2(cup[:, 1] - cy, cup[:, 0] - cx)
+    rad = np.hypot(cup[:, 0] - cx, cup[:, 1] - cy) / max(expected, 1.0)
+    order = np.argsort(ang)
+    grid = np.linspace(0.0, 2.0 * math.pi, k, endpoint=False)
+    want = np.where(grid > math.pi, grid - 2.0 * math.pi, grid)
+    out = np.interp(want, np.concatenate([ang[order] - 2 * math.pi, ang[order], ang[order] + 2 * math.pi]),
+                    np.tile(rad[order], 3))
+    return np.clip(out, 0.12, 0.97).astype(np.float32)
+
+
+BEND_TRUST = 1.0         # where bends back a margin of their own, it counts this much against the learned one
+
+
+VESSELS_SHOWN = 0.003    # less of the disc than this under vessels: none to read a pattern from
+
+
+def _vessels_shown(crop: np.ndarray, disc_frac: float, bends: dict) -> bool:
+    """Are there vessels on the disc to go by at all (a blank or washed-out picture has none)?"""
+    if bends["vessels"] > 0:
+        return True
+    m = 160
+    g = cv2.resize(crop[..., 1], (m, m), interpolation=cv2.INTER_AREA).astype(np.float32)
+    rd = disc_frac * m / 2.0
+    k = _odd(0.26 * rd)
+    shut = cv2.morphologyEx(cv2.GaussianBlur(g, (0, 0), 0.8), cv2.MORPH_CLOSE,
+                            cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+    hat = (shut - g) / np.maximum(shut, 20.0)
+    on = _radius(m, disc_frac) < 1.0
+    return float((hat[on] > 0.06).mean()) > VESSELS_SHOWN
+
+
+def _with_bends(radius: np.ndarray, bends: dict) -> np.ndarray:
+    """The learned margin, drawn towards the margin through the bends where enough bends back one
+    (``margin_from_bends``: its support, 0…1 round the disc)."""
+    margin = margin_from_bends(bends, len(radius)) if BEND_TRUST > 0 else None
+    if margin is None:
+        return radius
+    w = BEND_TRUST * margin[1]
+    return (w * margin[0] + (1.0 - w) * radius).astype(np.float32)
+
+
 def height_from_vessels(crop: np.ndarray, disc_frac: float, n: int = 256, info: dict | None = None) -> np.ndarray:
-    """Heights (``n``², -1…1) with the cup's margin where the vessels bend (혈관 꺾임) — the colour
-    is not used. The floor is a plain bowl: the bends say where the wall is, not how deep.
-    ``info`` is told ``"cup"`` (False: too few bends, the hollow is a stand-in), ``"bends"``
-    (``find_bends``) and ``"support"`` (how much of the margin the bends back, 0…1)."""
+    """Heights (``n``², -1…1) with the cup's margin where the vessels say (혈관 꺾임) — the colour is not
+    used. Since 0.13.21 the margin is read off the vessel pattern all round the disc by a model fitted
+    to expert outlines (``learned_margin``, ``cuplearn.py``): the single bends a rule can pick out
+    (``find_bends`` — still shown as dots) are too few and too loose to carry it alone. The floor is a
+    plain bowl: the vessels say where the wall is, not how deep. ``info`` is told ``"cup"`` (True),
+    ``"bends"`` and ``"support"`` (1: the whole margin is backed)."""
     p = _pallor(crop, disc_frac, n)
     bends = find_bends(crop, disc_frac, (p["centre"][0] / n, p["centre"][1] / n))
-    margin = margin_from_bends(bends)
-    if margin is None:
-        D = 0.35 * _smoothstep(1.0 - p["r"] / 0.45)
-    else:
-        edge = _around(margin[0], _polar(p))
-        D = _walled(p, margin[0], 1.0 - (p["r"] / np.maximum(edge, 0.05)) ** 2)
+    radius = _with_bends(learned_margin(crop, disc_frac, p, "vessels"), bends)
+    edge = _around(radius, _polar(p))
+    D = _walled(p, radius, 1.0 - (p["r"] / np.maximum(edge, 0.05)) ** 2)
+    shown = _vessels_shown(crop, disc_frac, bends)
+    if not shown:                                               # nothing to go by: a shallow stand-in
+        D = 0.35 * _smoothstep(1.0 - p["r"] / 0.45) * (1.0 - _smoothstep((p["r"] - 0.9) / 0.25))
     if info is not None:
-        info.update(cup=margin is not None, bends=bends,
-                    support=float(margin[1].mean()) if margin is not None else 0.0)
-    inside = 1.0 - _smoothstep((p["r"] - 0.9) / 0.25) if margin is None else 1.0
-    H = -D * inside + RIM_H * np.exp(-((p["r"] - 1.0) / 0.3) ** 2) * (1.0 - np.clip(D / FLOOR, 0.0, 1.0))
+        info.update(cup=shown, bends=bends, support=1.0 if shown else 0.0, learned=True)
+    H = -D + RIM_H * np.exp(-((p["r"] - 1.0) / 0.3) ** 2) * (1.0 - np.clip(D / FLOOR, 0.0, 1.0))
     return _finish(H, p)
 
 
 def height_hybrid(crop: np.ndarray, disc_frac: float, n: int = 256, info: dict | None = None) -> np.ndarray:
-    """Heights (``n``², -1…1) from both (하이브리드): where vessels bend, the cup's margin is there
-    and its floor is shaped by the pallor (the paler, the deeper); round the rest of the disc, where
-    no vessel says, the pallor alone (as ``height_from_photo``). No bends at all: the same as the
-    brightness. ``info``: ``"cup"``, ``"bends"``, ``"support"`` as ``height_from_vessels``."""
+    """Heights (``n``², -1…1) from both (하이브리드): the cup's margin where the vessel pattern and the
+    brightness together put it (``learned_margin`` — fitted to expert outlines, 0.13.21), its floor
+    shaped by the pallor (the paler, the deeper). ``info``: ``"cup"``, ``"bends"`` (shown as dots),
+    ``"support"`` as ``height_from_vessels``."""
     p = _pallor(crop, disc_frac, n)
     bends = find_bends(crop, disc_frac, (p["centre"][0] / n, p["centre"][1] / n))
-    margin = margin_from_bends(bends)
-    pale = _pallor_depth(p)
-    if margin is None:
-        D = pale
-    else:
-        radius, support = margin
-        edge = _around(radius, _polar(p))
-        hollow = 1.0 - (p["r"] / np.maximum(edge, 0.05)) ** 2
-        if p["seen"]:
-            within = _smoothstep((WALL / 2.0 - (p["r"] - edge)) / WALL) > 0.5
-            top = float(pale[within].max()) if within.any() else 0.0
-            floor = 0.5 * hollow + 0.5 * pale / top if top > 0.05 else hollow
-            vessel_cup = _walled(p, radius, floor)
-            c = _around(support, _polar(p))
-            D = c * vessel_cup + (1.0 - c) * pale
-        else:                                                   # no pallor to fall back on: the vessels'
-            D = _walled(p, radius, hollow)
+    radius = _with_bends(learned_margin(crop, disc_frac, p, "both"), bends)
+    edge = _around(radius, _polar(p))
+    hollow = 1.0 - (p["r"] / np.maximum(edge, 0.05)) ** 2
+    floor = hollow
+    if p["seen"]:
+        pale = _pallor_depth(p)
+        within = _smoothstep((WALL / 2.0 - (p["r"] - edge)) / WALL) > 0.5
+        top = float(pale[within].max()) if within.any() else 0.0
+        if top > 0.05:
+            floor = 0.5 * hollow + 0.5 * pale / top
+    D = _walled(p, radius, floor)
+    shown = bool(p["seen"]) or _vessels_shown(crop, disc_frac, bends)
+    if not shown:                                               # neither pallor nor vessels: as the brightness
+        D = _pallor_depth(p)
     if info is not None:
-        info.update(cup=p["seen"] or margin is not None, bends=bends,
-                    support=float(margin[1].mean()) if margin is not None else 0.0)
+        info.update(cup=shown, bends=bends, support=1.0 if shown else 0.0, learned=True)
     H = -D + RIM_H * np.exp(-((p["r"] - 1.0) / 0.3) ** 2) * (1.0 - np.clip(D / FLOOR, 0.0, 1.0))
-    if margin is None:                                          # (the same surface as the brightness)
+    if not shown:
         H = -D + RIM_H * np.exp(-((p["r"] - 1.0) / 0.3) ** 2)
     return _finish(H, p)
 

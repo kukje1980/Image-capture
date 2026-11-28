@@ -482,7 +482,8 @@ def test_vessels_and_hybrid_read_a_cup_wider_than_its_pallor():
     assert np.array_equal(surfaces["pallor"][0], disc3d.height_from_photo(img, frac))
     cd = {k: _vertical_cd(H)["vertical"] for k, (H, _) in surfaces.items()}
     assert cd["pallor"] < 0.55                                      # the pale part only
-    assert cd["vessels"] == pytest.approx(0.7, abs=0.07) and cd["hybrid"] == pytest.approx(0.7, abs=0.08)
+    # (0.13.21: the margin is the learned one drawn to the bends — on this drawing a little inside them)
+    assert all(0.55 < cd[k] < 0.8 and cd[k] > cd["pallor"] + 0.08 for k in ("vessels", "hybrid"))
     for k in ("vessels", "hybrid"):
         info = surfaces[k][1]
         assert info["bends"]["vessels"] >= 7 and info["support"] > 0.6
@@ -490,14 +491,20 @@ def test_vessels_and_hybrid_read_a_cup_wider_than_its_pallor():
     partial = disc3d.height_hybrid(_cupped_picture(angles=(70, 110, 250, 290)), frac)
     m = _vertical_cd(partial)
     assert m["vertical"] == pytest.approx(0.7, abs=0.08) and m["horizontal"] < m["vertical"] - 0.1
-    # no bends: no cup from the vessels (a stand-in), and the hybrid is the brightness
+    # no bends (0.13.21): the vessels' pattern still gives a margin — no bend is needed for it
     straight = _cupped_picture(bend=False)
     info = {}
-    disc3d.height_from_vessels(straight, frac, info=info)
+    H = disc3d.height_from_vessels(straight, frac, info=info)
+    assert info["cup"] is True and info["learned"] and len(info["bends"]["r"]) == 0
+    assert 0.2 < _vertical_cd(H)["vertical"] < 0.9
+    # nothing on the picture at all: no cup from the vessels (a stand-in), and the hybrid is the brightness
+    blank = np.full((400, 400, 3), 120, np.uint8)
+    info = {}
+    disc3d.height_from_vessels(blank, frac, info=info)
     assert info["cup"] is False and info["support"] == 0.0
     info = {}
-    assert np.array_equal(disc3d.height_hybrid(straight, frac, info=info), disc3d.height_from_photo(straight, frac))
-    assert info["cup"] and info["support"] == 0.0
+    assert np.array_equal(disc3d.height_hybrid(blank, frac, info=info), disc3d.height_from_photo(blank, frac))
+    assert info["cup"] is False and info["support"] == 0.0
 
 
 def _big_photo(i, rgb):
@@ -517,12 +524,12 @@ def test_tab_shows_the_three_estimates_alone_and_side_by_side(app):
     assert tab.status.text() == S3_ONE and not tab.methods.isHidden()
     assert tab.sw_bends.isHidden() and not len(tab.bends()[0])
     v = tab.by_method()
-    assert v["pallor"] < 0.55 and v["vessels"] == pytest.approx(0.7 / 1.05, abs=0.08)
+    assert v["pallor"] < 0.55 and 0.5 < v["vessels"] < 0.78 and v["vessels"] > v["pallor"] + 0.05
     assert v["hybrid"] == pytest.approx(v["vessels"], abs=0.06)
     assert "추정 방식별 수직 C/D" in tab.lbl_cd2.text() and f"<b>밝기 {v['pallor']:.2f}</b>" in tab.lbl_cd2.text()
     tab.set_method("vessels")
     assert tab.metrics()["vertical"] == v["vessels"] and f"<b>혈관 꺾임 {v['vessels']:.2f}</b>" in tab.lbl_cd2.text()
-    assert "혈관이 꺾이는 곳" in tab.status.text() and "혈관 8개" in tab.status.text()
+    assert "혈관이 지나는 모양으로 읽은 컵 경계" in tab.status.text() and "점으로 표시" in tab.status.text()
     assert tab.note().startswith("녹내장 분석 — 유두 3D (1장 추정 · 혈관 꺾임) · 추정 수직 C/D")
     pts, used = tab.bends()
     assert len(pts) >= 8 and used.sum() >= 7 and not tab.sw_bends.isHidden()
@@ -543,11 +550,16 @@ def test_tab_shows_the_three_estimates_alone_and_side_by_side(app):
                           f"밝기 {v['pallor']:.2f} · 혈관 꺾임 {v['vessels']:.2f} · 하이브리드 {v['hybrid']:.2f}")
     tab.sw_compare.setChecked(False)
     assert tab.compose().shape == (disc3d.TEX_PX, disc3d.TEX_PX, 3)
-    plain = GlaucomaDialog(_big_photo(1, _cupped_picture(bend=False))).surface      # straight vessels
+    # straight vessels (0.13.21): their pattern is read all the same — said without bends to show
+    plain = GlaucomaDialog(_big_photo(1, _cupped_picture(bend=False))).surface
     plain.set_method("vessels")
-    assert "충분히 찾지 못했습니다" in plain.status.text() and plain.metrics() is None and plain.lbl_cd.text() == "–"
-    plain.set_method("hybrid")
-    assert "[밝기]와 같은 모양" in plain.status.text() and plain.metrics()["vertical"] == plain.by_method()["pallor"]
+    assert "뚜렷한 꺾임은 찾지 못함" in plain.status.text() and plain.metrics() is not None
+    # a picture with nothing on it: no cup from the vessels, the hybrid as the brightness
+    blank = GlaucomaDialog(_big_photo(1, np.full((400, 400, 3), 120, np.uint8))).surface
+    blank.set_method("vessels")
+    assert "충분히 찾지 못했습니다" in blank.status.text() and blank.metrics() is None and blank.lbl_cd.text() == "–"
+    blank.set_method("hybrid")
+    assert "[밝기]와 같은 모양" in blank.status.text()
 
 
 def test_the_window_opens_on_the_estimate_set_in_the_settings(app):
