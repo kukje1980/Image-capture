@@ -104,7 +104,7 @@ def test_a_pin_is_put_on_the_photo_shown_on_the_3d_eye_and_kept(tmp_path, monkey
         app.processEvents()
         assert w._tab() == "all" and w.current["id"] == row["id"]
         # the button is on the 영상 처리 toolbar, with its ▾ entries
-        assert any(sp and sp[0] == "tool:pin" for sp in PROCBAR) and len(MENUS["tool:pin"]) == 4
+        assert any(sp and sp[0] == "tool:pin" for sp in PROCBAR) and len(MENUS["tool:pin"]) == 5
         w._on_action("tool:pin", True)
         v = w.view2d
         assert v.tool == "pin" and w.acts["tool:pin"].isChecked()

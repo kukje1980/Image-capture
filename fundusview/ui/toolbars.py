@@ -130,7 +130,7 @@ MENUS = {
     "rot_cw": (("rot_cw", "오른쪽으로 90°"), ("rot_ccw", "왼쪽으로 90°")),
     "tool:text": (("tool:text", "글자"), ("tool:arrow", "화살표 + 글자")),
     "tool:pin": (("tool:pin", "병변 핀 꽂기"), ("pin_note", "마지막 핀에 메모…"), ("pin_undo", "마지막 핀 지우기"),
-                 ("pin_clear", "이 사진의 핀 모두 지우기")),
+                 ("pin_clear", "이 사진의 핀 모두 지우기"), ("pin_sight", "환자가 보는 모습 (시야 시뮬레이션)…")),
     "annot_undo": (("annot_undo", "마지막 측정 지우기"), ("annot_clear", "측정·글자 모두 지우기")),
     "multi": tuple((f"multi:{n}", f"{n}장") for n in (1, 2, 4, 6, 9, 16)),     # Simple's 화면 분할
     "glaucoma": (("glaucoma", "녹내장 분석"), ("discpair", "스테레오 보기 (고른 두 사진)"),
