@@ -5787,6 +5787,18 @@ class MainWindow(QMainWindow):
                                        source_version=self._analysis_source_version(row)))
         return shots
 
+    def _fellow_row(self, first, eye: str | None):
+        """The photo of the patient's other eye that OD · OS 비교 shows next to ``first``: one with its disc
+        found (not a picture made by the viewer), of the same day if there is one, else the nearest."""
+        from .. import fellow
+
+        if first["patient_ref"] is None or eye not in ("OD", "OS"):
+            return None
+        return fellow.pick(self.db.images_for_patient(first["patient_ref"]), eye, first["exam_date"] or "",
+                           eye_of=self._glaucoma_eye,
+                           usable=lambda r: (r["disc_x"] is not None and r["id"] != first["id"]
+                                             and r["modality"] not in ("anterior", "disc", "glaucoma", "montage")))
+
     def _glaucoma_shot(self, row) -> Photo | None:
         """Read one photo of the timeline (not into the cache of the photos on screen)."""
         rgb = self._cache.get(row["id"])
@@ -5841,7 +5853,9 @@ class MainWindow(QMainWindow):
             return self._save_glaucoma(rgb, note, eye, ids, expected_patient=first["patient_ref"],
                                        expected_sources=source_versions)
 
+        other = self._fellow_row(first, photos[0].eye)                # OD · OS 비교: the other eye's disc photo
         dlg = GlaucomaDialog(photos[0], photos[1] if len(photos) == 2 else None, title_line="  ·  ".join(bits),
+                             fellow=(lambda: self._glaucoma_shot(other)) if other is not None else None,
                              file_stem=safe_component(stem, "녹내장"), save_record=save_record, parent=self,
                              series=series,
                              prefer=prefer, start=start, method=self.settings.disc3d_method,
