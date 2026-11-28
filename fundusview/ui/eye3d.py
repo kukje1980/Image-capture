@@ -1126,6 +1126,8 @@ class EyeView(QOpenGLWidget):
     depthWheel = Signal(float)         # wheel notches over the eye seen from outside (``wheel_mode`` "depth")
     journeyChanged = Signal(float)     # 들어가며 보기: where on the way (0 the whole eye … 1 the retina)
     walkChanged = Signal(bool)         # 휠로 들어가기: the anterior segment picked (the wheel walks in) or let go
+    pinPlaced = Signal(float, float)   # 병변 핀 (``pin_mode``): a click on the photo's retina — the photo's pixel
+    pinMissed = Signal()               # … a click where the photo is not
 
     DETAILS = ("simple", "detailed")
     SPIN_WAIT = 3.0                    # seconds left alone before 자동 회전 starts turning again
@@ -1169,6 +1171,8 @@ class EyeView(QOpenGLWidget):
         # depth (depthWheel; outside only, inside it zooms); "walk" — in from the cornea to the retina and
         # back out (휠로 들어가기, the anterior segment picked by the wheel itself). Ctrl+wheel zooms in all
         self.wheel_mode = "zoom"
+        self.pin_mode = False          # 병변 핀: a left click on the retina asks for a pin there (``pinPlaced``)
+        self._pin_px: list[tuple[float, float, str]] = []   # the pins of the photo: pixel and number
         self.pick_walk = True          # a click on the cornea picks the anterior segment: then the wheel walks
         self.mode = "outside"
         self.cut = 0.25
@@ -1318,6 +1322,50 @@ class EyeView(QOpenGLWidget):
                  circle: tuple[float, float, float] | None) -> None:
         """:meth:`set_landmarks` with the disc alone."""
         self.set_landmarks(laterality, disc_px, None, circle)
+
+    # -- 병변 핀 (pins.py): the photo's pins on the retina, and a click there for a new one ---------------
+    PIN_COLOR = QColor(255, 92, 138)
+
+    def set_pins(self, pins) -> None:
+        """The pins of the photo on the eye: ``[(x, y, text), …]`` in the photo's pixels."""
+        self._pin_px = [(float(x), float(y), str(text)) for x, y, text in (pins or [])]
+        self.update()
+
+    def _retina_radius(self) -> float:
+        return 1.0 if self.detail == "simple" else em.R_RET
+
+    def pin_points(self) -> list[tuple[np.ndarray, str]]:
+        """Where the pins are on the retina (eye coordinates) — those inside the photo's field."""
+        circle = self._marks[2]
+        if not self._pin_px or circle is None or not circle[2]:
+            return []
+        cam, m, r = self.photo_camera(circle), self.placement.matrix, self._retina_radius()
+        out = []
+        for x, y, text in self._pin_px:
+            q = cam.direction(x, y)
+            if q is not None:
+                out.append((m @ q * r, text))
+        return out
+
+    def photo_pixel_at(self, pos: QPointF) -> tuple[float, float] | None:
+        """The photo's pixel under the widget position — None where the retina with the photo on it is
+        not what is seen there (the sclera, the cut face, outside the photo's field)."""
+        circle = self._marks[2]
+        if circle is None or not circle[2] or self._rgba is None:
+            return None
+        hit = self._pick(*self._ray(pos))
+        if hit is None:
+            return None
+        r = self._retina_radius()
+        if self.mode != "inside" and (abs(float(np.linalg.norm(hit)) - r) > 0.004 or not self._facing_inside(hit)):
+            return None                                   # (the outer coat, seen from outside, or the section face)
+        q = self.placement.matrix.T @ _unit(hit)
+        return self.photo_camera(circle).pixel(q)
+
+    def _facing_inside(self, hit: np.ndarray) -> bool:
+        """Is the surface at ``hit`` seen from inside the globe (its concave, retinal side)?"""
+        eye = self._view_basis()[0]
+        return float((eye - hit) @ hit) < 0.0
 
     def photo_camera(self, circle) -> placement.Camera:
         return placement.Camera(circle[0], circle[1], circle[2], self.fov_deg, self.fov_type, self.projection,
@@ -1788,7 +1836,13 @@ class EyeView(QOpenGLWidget):
         """A left click (no drag): on the way, that place comes to the middle; at the start of the way,
         the anterior segment is picked (휠로 들어가기, while ``pick_walk``) — a click anywhere else lets
         it go."""
-        if self.on_the_way():
+        if self.pin_mode:                      # (also inside the eye, where a click else looks that way)
+            px = self.photo_pixel_at(pos)
+            if px is None:
+                self.pinMissed.emit()
+            else:
+                self.pinPlaced.emit(*px)
+        elif self.on_the_way():
             self.look_toward(pos)
         elif self.pick_walk and self.anterior_at(pos):
             self.set_walk(True)
@@ -2375,7 +2429,7 @@ class EyeView(QOpenGLWidget):
         self.update()
 
     def _overlay_wanted(self) -> bool:
-        return self._section_marks() or self._walk_ring_alpha() > 0.0
+        return self._section_marks() or self._walk_ring_alpha() > 0.0 or bool(self._pin_px)
 
     def _section_marks(self) -> bool:
         return self._half_on() and ((self.fov_alpha > 0.005 and self.fov_sweep > 0.0)
@@ -2408,6 +2462,8 @@ class EyeView(QOpenGLWidget):
                 self._paint_overlay(painter, mvp)
             if self._walk_ring_alpha() > 0.0:
                 self._paint_walk_ring(painter, mvp)
+            if self._pin_px:
+                self._paint_pins(painter, mvp)
         finally:
             painter.end()
 
@@ -3016,6 +3072,52 @@ class EyeView(QOpenGLWidget):
             pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
             painter.setPen(pen)
             painter.drawPath(path)
+
+    def pins_on_screen(self, mvp: np.ndarray) -> list[tuple[QPointF, str]]:
+        """Where the pins that can be seen are in the widget, each with its text: a pin is seen when the
+        view ray to it meets nothing before it (the coats, the section face, the far side of the eye)."""
+        w, h = self.width(), self.height()
+        eye = self._view_basis()[0]
+        out = []
+        for p, text in self.pin_points():
+            v = mvp @ np.array([p[0], p[1], p[2], 1.0], np.float32)
+            if v[3] <= 1e-6:
+                continue
+            ray = p - eye
+            dist = float(np.linalg.norm(ray))
+            if dist < 1e-6:
+                continue
+            first = self._pick(eye, ray / dist)
+            if first is None or float(np.linalg.norm(first - p)) > 0.04:
+                continue                                   # (something else is in front of it)
+            out.append((QPointF((v[0] / v[3] + 1.0) * 0.5 * w, (1.0 - v[1] / v[3]) * 0.5 * h), text))
+        return out
+
+    def _paint_pins(self, painter: QPainter, mvp: np.ndarray) -> None:
+        """병변 핀: a numbered dot on the retina for each pin of the photo, its text beside it."""
+        shown = self.pins_on_screen(mvp)
+        if not shown:
+            return
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        f = QFont(painter.font())
+        f.setPixelSize(13)
+        f.setBold(True)
+        painter.setFont(f)
+        r = 6.5
+        for pt, text in shown:
+            painter.setPen(QPen(QColor(0, 0, 0, 170), 3.0))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(pt, r + 1.5, r + 1.5)
+            painter.setPen(QPen(QColor(255, 255, 255), 1.6))
+            painter.setBrush(self.PIN_COLOR)
+            painter.drawEllipse(pt, r, r)
+            if text:
+                at = QPointF(pt.x() + r + 5, pt.y() + 4.5)
+                painter.setPen(QColor(0, 0, 0, 200))
+                for dx, dy in ((1, 1), (-1, 1), (1, -1), (-1, -1)):
+                    painter.drawText(QPointF(at.x() + dx, at.y() + dy), text)
+                painter.setPen(QColor(255, 255, 255))
+                painter.drawText(at, text)
 
     def _paint_walk_ring(self, painter: QPainter, mvp: np.ndarray) -> None:
         """휠로 들어가기: the picked anterior segment — a glowing ring on the limbus round the cornea (the

@@ -94,6 +94,8 @@ PROCESSING = (
     ("tool:length", "길이", TOOL_HINTS["length"], "length", "LENGTH"),
     ("tool:cd_length", "C/D", "C/D 비 — " + TOOL_HINTS["cd_length"] + " (▾ 면적)", "cd", "C/D RATIO"),
     ("tool:angle", "각도", TOOL_HINTS["angle"], "angle", "ANGLE"),
+    ("tool:pin", "병변 핀", "병변 핀 — " + TOOL_HINTS["pin"] + " (▾ 지우기) · 3D 안구에도 같은 핀이 보입니다",
+     "pin", "—"),
     ("slideshow", "연속", "이 환자의 사진을 차례로 (클릭하면 멈춤)", "loop", "LOOP"),
     ("undo", "실행취소", "마지막 처리 되돌리기 (Ctrl+Z)", "undo", "UNDO"),
     ("original", "원본", "모든 처리·조정·측정 해제", "fundus:original", "ORIGINAL"),
@@ -127,6 +129,8 @@ MENUS = {
     "tool:cd_length": (("tool:cd_length", "C/D 비 (길이)"), ("tool:cd_area", "C/D 비 (면적)")),
     "rot_cw": (("rot_cw", "오른쪽으로 90°"), ("rot_ccw", "왼쪽으로 90°")),
     "tool:text": (("tool:text", "글자"), ("tool:arrow", "화살표 + 글자")),
+    "tool:pin": (("tool:pin", "병변 핀 꽂기"), ("pin_note", "마지막 핀에 메모…"), ("pin_undo", "마지막 핀 지우기"),
+                 ("pin_clear", "이 사진의 핀 모두 지우기")),
     "annot_undo": (("annot_undo", "마지막 측정 지우기"), ("annot_clear", "측정·글자 모두 지우기")),
     "multi": tuple((f"multi:{n}", f"{n}장") for n in (1, 2, 4, 6, 9, 16)),     # Simple's 화면 분할
     "glaucoma": (("glaucoma", "녹내장 분석"), ("discpair", "스테레오 보기 (고른 두 사진)"),

@@ -52,7 +52,7 @@ TILE_OF = {
     "print": "slate", "settings": "gray", "exit": "red",
     "flip_v": "teal", "flip_h": "teal", "rot_cw": "mint", "rot_ccw": "mint",
     "zoom": "blue", "loupe": "sky", "pan": "indigo",
-    "length": "amber", "angle": "orange", "cd": "green", "text": "indigo", "arrow": "indigo",
+    "length": "amber", "angle": "orange", "cd": "green", "text": "indigo", "arrow": "indigo", "pin": "pink",
     "profile": "purple", "histogram": "purple", "equalize": "purple", "denoise": "teal",
     "loop": "pink", "undo": "gray", "annot_clear": "red",
     "red": "red", "green": "green", "blue": "blue", "redfree": "mint", "color": "gray",
@@ -94,7 +94,7 @@ GROUP_OF = {
                      "folder", "import"), "nav"),
     **dict.fromkeys(("simple", "detail", "fit", "actual", "tools", "zoom", "loupe", "pan", "loop"), "view"),
     **dict.fromkeys(("eye3d", "montage", "glaucoma", "discpair", "watch_on"), "exam"),
-    **dict.fromkeys(("length", "angle", "cd", "text", "arrow", "profile", "histogram"), "measure"),
+    **dict.fromkeys(("length", "angle", "cd", "text", "arrow", "profile", "histogram", "pin"), "measure"),
     **dict.fromkeys(("flip_v", "flip_h", "rot_cw", "rot_ccw"), "turn"),
     **dict.fromkeys(("exit", "annot_clear", "watch_off"), "danger"),
 }
@@ -322,6 +322,14 @@ def _draw(name: str, g: _Glyph) -> None:
         p.drawRoundedRect(QRectF(-28, -10, 56, 20), 4, 4)
         for i, x in enumerate((-18, -9, 0, 9, 18)):
             g.line(x, -10, x, -1 if i % 2 == 0 else -4, g.hi(A_YELLOW), w=3)
+    elif name == "pin":       # 병변 핀: a map pin standing on the retina (the dot where it points)
+        path = QPainterPath(QPointF(32, 56))
+        path.cubicTo(QPointF(14, 36), QPointF(12, 8), QPointF(32, 8))
+        path.cubicTo(QPointF(52, 8), QPointF(50, 36), QPointF(32, 56))
+        g.stroke(w=3.5)
+        p.drawPath(path)
+        g.fill(g.hi(A_YELLOW))
+        p.drawEllipse(QPointF(32, 25), 6.5, 6.5)
     elif name == "angle":
         g.line(10, 54, 56, 54)
         g.line(10, 54, 46, 12)
