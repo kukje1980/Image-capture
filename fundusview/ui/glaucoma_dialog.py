@@ -1022,7 +1022,7 @@ class DiscTab(_Tab):
         f.setPixelSize(max(8, round(15 * u)))
         f.setBold(True)
         p.setFont(f)
-        for i in (0, 2, 4, 6):
+        for i in (0, 2, 4, 6) if getattr(self, "letters", True) else ():   # (off: a picture to be mirrored)
             x, y = self.disc["pts"][i]
             d = math.hypot(x - mid.x(), y - mid.y()) or 1.0
             x, y = x + (x - mid.x()) / d * 17 * u, y + (y - mid.y()) / d * 17 * u
@@ -2063,6 +2063,7 @@ class GlaucomaDialog(QDialog):
     def __init__(self, current: Photo | None, second: Photo | None = None, *, title_line: str = "",
                  file_stem: str = "녹내장", save_record=None, parent=None, series=None, prefer=(),
                  start: str | None = None, method: str = "hybrid", stereo_method: str = "parallax_vessels",
+                 fellow=None,
                  sheet=None):
         """``series``: the photos of this eye over time (``timeline.Shot`` — 시간별 비교), ``prefer``:
         those of them the user picked; ``start="timeline"`` · ``"stereo"`` opens on that tab.
@@ -2070,7 +2071,8 @@ class GlaucomaDialog(QDialog):
         입체 tab estimates one photo's shape at first (``disc3d.METHODS``; 설정 → 일반), ``stereo_method``:
         how it draws the stereo depth at first (``disc3d.STEREO_METHODS``; 설정 → 일반)."""
         super().__init__(parent)
-        from .timeline_tab import TimelineTab        # (it builds on the widgets of this module)
+        from .fellow_tab import FellowTab            # (they build on the widgets of this module)
+        from .timeline_tab import TimelineTab
 
         self.setWindowTitle("녹내장 분석")
         self._save_record, self.file_stem = save_record, file_stem
@@ -2095,9 +2097,10 @@ class GlaucomaDialog(QDialog):
         self.progress = ProgressTab(candidates)
         self.timeline = TimelineTab(series, current.image_id if current is not None else None, prefer)
         self.explain = ExplainTab()
+        self.fellow = FellowTab(self.disc, fellow, method=method)      # the other eye (fellow.py)
         for tab, text in ((self.disc, "디스크 C/D"), (self.surface, "3D 입체"), (self.wide, "광각 분석"),
                           (self.stereo, "스테레오 보기"), (self.progress, "경과 비교"), (self.timeline, "시간별 비교"),
-                          (self.explain, "환자 설명")):
+                          (self.fellow, "OD · OS 비교"), (self.explain, "환자 설명")):
             self.tabs.addTab(tab, text)
         if pair is not None:        # two photos of one day: a stereo pair; of two days: a follow-up
             same_day = current.day and current.day == second.day

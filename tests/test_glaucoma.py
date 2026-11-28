@@ -687,7 +687,7 @@ def test_patient_explanation_tab(tmp_path):
         app.processEvents()
         names = [dlg.tabs.tabText(i) for i in range(dlg.tabs.count())]
         assert names == ["디스크 C/D", "3D 입체", "광각 분석", "스테레오 보기", "경과 비교", "시간별 비교",
-                         "환자 설명"]
+                         "OD · OS 비교", "환자 설명"]
         assert dlg.tabs.currentWidget() is dlg.disc                  # the analysis still comes first
         tab = dlg.explain
         dlg.tabs.setCurrentWidget(tab)
@@ -848,3 +848,92 @@ def test_two_photos_picked_by_plain_clicks_are_the_stereo_pair(app, tmp_path, mo
         assert why == "" and dlg.disc.has_image() and not dlg.stereo.has_image()
     finally:
         w.close()
+
+
+def test_od_os_compare_puts_the_fellow_eye_next_to_and_over_this_one(app):
+    """녹내장 분석 → OD · OS 비교 (fellow.py): the fellow eye's disc is read when the tab is first shown, cut
+    to the same number of disc diameters, shown side by side (OD left · OS right) and — turned left ↔
+    right — flicked or faded over this eye's; each eye's C/D and their difference are said."""
+    from fundusview import fellow as F
+    from fundusview.ui.fellow_tab import NONE_TEXT
+    from fundusview.ui.glaucoma_dialog import GlaucomaDialog, Photo
+
+    od, twin = _photo(1, "OD"), _photo(2, "OD", seed=9)
+    w = twin.rgb.shape[1]                                            # the fellow: another eye's photo, mirrored
+    os_ = Photo(2, np.ascontiguousarray(twin.rgb[:, ::-1]), "OS", (w - 1 - twin.disc[0], twin.disc[1]), twin.disc_px,
+                (w - 1 - twin.fovea[0], twin.fovea[1]), True, twin.when, "45°")
+    asked = []
+    dlg = GlaucomaDialog(od, None, fellow=lambda: asked.append(1) or os_)
+    try:
+        dlg.show()
+        app.processEvents()
+        tab = dlg.fellow
+        assert not asked and tab.other is None                       # (not read until the tab is looked at)
+        dlg.tabs.setCurrentWidget(tab)
+        app.processEvents()
+        assert asked == [1] and tab.other is not None and tab.other.photo is os_ and tab.has_image()
+        mine = dlg.disc.render()
+        side = tab.compose()
+        assert side.shape == (mine.shape[0], 2 * mine.shape[1] + F.GAP, 3)
+        assert (side[:, :mine.shape[1]] == mine).all()               # OD on the left, as taken
+        assert (side[:, mine.shape[1] + F.GAP:] == G.match_size(tab.other.render(), mine)).all()
+        m = tab.cds()
+        assert m["OD"]["vertical"] == dlg.disc.metrics()["vertical"] and m["OS"] is not None
+        assert "수직" in tab.lbl.text() and "(이 눈)" in tab.lbl.text() and "수직 C/D 차이" in tab.lbl.text()
+        assert tab.note().startswith("녹내장 분석 — OD · OS 비교 (수직 C/D OD ") and tab.image_ids() == [1]
+        assert tab.eye() == "OD" and dlg.shown() is not None
+        # the same field in both: 디스크 C/D's 범위 follows
+        dlg.disc.set_field("wide")
+        tab.refresh()
+        assert tab.other.field == "wide"
+        # 깜빡임: this eye, then the fellow turned left ↔ right, in the same place
+        tab.modes.set("flick")
+        tab._mode_changed()
+        a, b = tab._pics
+        assert (tab.compose() == a).all()
+        tab._tick()
+        t = tab._turned                                            # (the fellow mirrored, without its letters)
+        assert (tab.compose() == t).all() and "좌우 뒤집음" in tab.hint.text() and t.shape == a.shape
+        assert (t != b[:, ::-1]).any() and (t != b[:, ::-1]).mean() < 0.02
+        # 겹치기: half of each
+        tab.modes.set("blend")
+        tab._mode_changed()
+        assert tab.s_blend.isVisible() and not tab._timer.isActive()
+        mix = tab.compose().astype(int)
+        assert abs(mix - (a.astype(int) + t.astype(int)) / 2).max() <= 1
+        # the lines of this eye moved by hand: a cup much larger than the fellow's is said
+        r = dlg.disc.img.shape[0] / dlg.disc._factor() / 2.0
+        c = dlg.disc.img.shape[0] / 2.0
+        dlg.disc.set_outlines({"cx": c, "cy": c, "rx": r, "ry": r}, {"cx": c, "cy": c, "rx": 0.9 * r, "ry": 0.9 * r})
+        tab.other.set_outlines({"cx": c, "cy": c, "rx": r, "ry": r}, {"cx": c, "cy": c, "rx": 0.3 * r, "ry": 0.3 * r})
+        tab.refresh()
+        assert tab.flagged and tab.diff == pytest.approx(0.6, abs=0.03) and "두 눈이 다릅니다" in tab.lbl.text()
+    finally:
+        dlg.close()
+    # no fellow photo, or one of the same eye: said, nothing shown
+    for other in (None, _photo(3, "OD", seed=5)):
+        dlg = GlaucomaDialog(od, None, fellow=other)
+        try:
+            dlg.show()
+            dlg.tabs.setCurrentWidget(dlg.fellow)
+            app.processEvents()
+            assert not dlg.fellow.has_image() and dlg.fellow.lbl.text() == NONE_TEXT and dlg.fellow.render() is None
+        finally:
+            dlg.close()
+
+
+def test_fellow_pick_takes_the_other_eye_of_the_same_day_else_the_nearest():
+    from fundusview import fellow as F
+
+    def row(i, eye, day, disc=True, modality="color"):
+        return {"id": i, "eye": eye, "exam_date": day, "disc_x": 1.0 if disc else None, "modality": modality}
+    rows = [row(1, "OD", "2026-03-10"), row(2, "OS", "2025-01-01"), row(3, "OS", "2026-03-10"),
+            row(4, "OS", "2026-03-10"), row(5, "OS", "2026-03-12", disc=False), row(6, "OS", "2026-03-11")]
+    kw = dict(eye_of=lambda r: r["eye"], usable=lambda r: r["disc_x"] is not None)
+    assert F.pick(rows, "OD", "2026-03-10", **kw)["id"] == 4          # the same day (the newest of them)
+    assert F.pick(rows, "OD", "2026-03-12", **kw)["id"] == 6          # none that day with a disc: the nearest
+    assert F.pick(rows, "OD", "", **kw)["id"] in (2, 3, 4, 6)
+    assert F.pick(rows, "OS", "2026-03-10", **kw)["id"] == 1
+    assert F.pick(rows, None, "2026-03-10", **kw) is None and F.pick(rows[:1], "OD", "2026-03-10", **kw) is None
+    assert F.compare(0.5, 0.7) == (pytest.approx(0.2), True) and F.compare(0.5, 0.6)[1] is False
+    assert F.compare(None, 0.6) == (None, False) and F.other_eye("OD") == "OS" and F.other_eye(None) is None
