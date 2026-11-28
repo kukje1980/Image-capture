@@ -69,7 +69,7 @@ from ..extract.reticam_meta import reticam_size
 from ..samples import SampleLibrary
 from .. import share
 from ..watcher import ImportService
-from .dialogs import WHEEL3D, ImageDialog, PatientDialog, SettingsDialog, source_label
+from .dialogs import ImageDialog, PatientDialog, SettingsDialog, source_label
 from .dicom_dialogs import DicomSendDialog, WorklistDialog
 from .disc_pair import DiscPairDialog
 from .glaucoma_dialog import GlaucomaDialog, Photo
@@ -94,7 +94,7 @@ from .landmarks_view import LandmarkPhoto
 from .slit_scan import SLIT, ScanPhotoView, SlitScanShow, ViewTween
 from .thumbs import (DATE_ROLE, DockOverlay, EYE_ROLE, KIND_ROLE, PICK_ROLE, SECOND_COLOR, SECOND_ROLE, SHOWN, EyeRail,
                      ThumbDelegate, ThumbStrip, eye_badge_html, eye_row)
-from .toolbars import (CHECKABLE, CMDBAR, COMMANDS, MENUS, PROCBAR, PROCESSING, FitToolBar, GammaPopup, SliderPopup,
+from .toolbars import (CHECKABLE, CMDBAR, COMMANDS, MENU_HIDDEN, MENUS, PROCBAR, PROCESSING, FitToolBar, GammaPopup, SliderPopup,
                        icon_for)
 from .widgets import ElidedLabel, Segmented, Switch, card, segment
 from .widgets import row as setting_row
@@ -310,6 +310,11 @@ class MainWindow(QMainWindow):
             if settings.ui_version < 10:
                 # 10: the toolbar icons as light grey lines with colour only where it says something
                 settings.icon_style = "accent"
+            if 0 < settings.ui_version < 11:
+                # 11: [Multi] · 16장 보기 only when switched on (설정 → 화면 · 툴바) — kept on where a patient
+                # opened on 16장 보기; the 3D bars at their places until 막대 옮기기 is switched on
+                settings.multi_view = settings.open_view != SIMPLE_MODE
+                settings.bars_movable3d = bool(settings.depth_bar3d or settings.zoom_bar3d)
             settings.ui_version = self.UI_VERSION
         else:
             relabel = False
@@ -399,8 +404,8 @@ class MainWindow(QMainWindow):
             a.setIcon(icon_for(icon))
             a.setIconVisibleInMenu(False)
             self._icon_acts.append((a, icon))     # (drawn again in another look: _set_icon_style)
-        vk_txt = f"<br><span style='color:{theme.TEXT3}'>VK-2: {vk}</span>" if vk and vk != "—" else ""
-        a.setToolTip(f"<b>{label}</b><br>{tip}{vk_txt}" if tip else label)
+        # (the VK-2's own name of the button — ``vk`` — is no longer shown: 0.13.17)
+        a.setToolTip(f"<b>{label}</b><br>{tip}" if tip else label)
         a.setStatusTip(tip)
         a.setCheckable(checkable)
         a.triggered.connect(lambda checked=False, k=key: self._on_action(k, checked if a.isCheckable() else None))
@@ -480,6 +485,8 @@ class MainWindow(QMainWindow):
         m.addAction(self.act_watch)
         m.addAction(self.act_follow)
         m.addAction(self.act_log)
+        self.act_dbadmin = m.addAction("데이터베이스 관리 (백업 · 점검)…", self.open_dbadmin)
+        self.act_dbadmin.setEnabled(not self.remote)       # (공유: the server's database is the server's)
         m.addSeparator()
         for a in self.menus["save"].actions():
             m.addAction(a)
@@ -490,10 +497,7 @@ class MainWindow(QMainWindow):
         m.addAction(A["print"])
         m.addSeparator()
         sub = m.addMenu("DICOM (PACS)")              # dicomnet.py: 설정 → DICOM
-        sub.addAction("보고 있는 사진 전송…", lambda: self.dicom_send("current"))
-        sub.addAction("고른 사진 전송…", lambda: self.dicom_send("picked"))
-        sub.addAction("이 검사일의 사진 전송…", lambda: self.dicom_send("exam"))
-        sub.addAction("이 환자의 사진 모두 전송…", lambda: self.dicom_send("patient"))
+        sub.addAction("PACS로 전송…", lambda: self.dicom_send("ask"))     # (보낼 범위 is chosen in the window)
         sub.addSeparator()
         sub.addAction("보고 있는 사진을 DICOM 파일로 저장…", self.save_dicom_file)
         sub.addSeparator()
@@ -602,6 +606,8 @@ class MainWindow(QMainWindow):
                 m.addSeparator()
                 continue
             key, label = spec[0], spec[1]
+            if key in MENU_HIDDEN:
+                continue
             if key in self.menus:
                 sub = m.addMenu(label)
                 for a in self.menus[key].actions():
@@ -946,6 +952,7 @@ class MainWindow(QMainWindow):
             p.slider.valueChanged.connect(self._schedule_adjust)
             p.pressed.connect(self._push_history)
         self._build_menus()
+        self._apply_buttons()
         mb = self.menuBar()
         self._line_in_menubar = not mb.isNativeMenuBar()
         if self._line_in_menubar:
@@ -1103,11 +1110,11 @@ class MainWindow(QMainWindow):
         self.s_height3d.setMinimumWidth(120)
         self.s_height3d.setToolTip("높낮이를 얼마나 크게 보일지 (실제보다 과장해서 보여 줍니다)")
         self.s_height3d.valueChanged.connect(self._on_height)
-        self.c_simple3d = Switch("단순하게 보기")
-        self.c_simple3d.setToolTip("공막·홍채·수정체·시신경을 단순한 모양과 색으로 그려 사진이 얹힌 망막과 그 입체가 "
-                                   "잘 보이게 합니다 (자세히 보기)")
-        self.c_simple3d.setChecked(bool(self.settings.simple3d))
-        self.c_simple3d.toggled.connect(self._on_simple)
+        self.c_bars3d = Switch("막대 옮기기")
+        self.c_bars3d.setToolTip("켜면 깊이 막대 · 배율 막대를 끌어서 옮기고 더블클릭으로 가로 ↔ 세로로 바꿀 수 있습니다 "
+                                 "(끄면 제자리에 고정)")
+        self.c_bars3d.setChecked(bool(self.settings.bars_movable3d))
+        self.c_bars3d.toggled.connect(lambda on: self._set_bars_movable(on))
 
         # -- effects ---------------------------------------------------------------------------
         self.c_relief3d = Switch("입체 조명")
@@ -1242,22 +1249,18 @@ class MainWindow(QMainWindow):
         self.eye3d.glass = self.settings.glass3d / 100.0
         self.eye3d.relief_on = bool(self.settings.surface3d)
         self.eye3d.relief_amount = self.settings.surface_height3d / 100.0 * self.HEIGHT_MAX
-        self.eye3d.simple = 1.0 if self.settings.simple3d else 0.0
         self.s_height3d.setEnabled(self.c_surface3d.isChecked())
         self.eye3d.journeyChanged.connect(self._on_journey)
         self._where = _WhereChip(self.eye3d)
         # 깊이 막대: the depth of the cut on a bar over the eye's right edge (the 깊이 slider, where the eye is)
-        # 배율 막대: the magnification, the same way. Both float over the eye, see-through: a double click
-        # lays one down or stands it up, a drag moves it (remembered), and the one whose ☑ 휠 is checked
-        # is what the wheel over the eye does (_set_wheel3d).
-        self.depth_bar = DepthBar(self.s_cut, self.eye3d, checkable=True)
-        self.zoom_bar = ZoomBar(self.s_zoom3d, self.eye3d, checkable=True)
-        self.depth_bar.set_state(self.settings.depth_bar3d)
-        self.zoom_bar.set_state(self.settings.zoom_bar3d)
+        # 배율 막대: the magnification, the same way. Both float over the eye, see-through, each at its own
+        # place (깊이 at the right edge, 배율 at the top left). 막대 옮기기 (표시) lets them be dragged and
+        # laid down / stood up by a double click (remembered). The wheel over the eye always zooms.
+        self.depth_bar = DepthBar(self.s_cut, self.eye3d)
+        self.zoom_bar = ZoomBar(self.s_zoom3d, self.eye3d)
+        self._set_bars_movable(bool(self.settings.bars_movable3d), save=False)
         self.depth_bar.placed.connect(self._on_bar_placed)
         self.zoom_bar.placed.connect(self._on_bar_placed)
-        self.depth_bar.checkToggled.connect(lambda on: self._set_wheel3d("depth" if on else "zoom"))
-        self.zoom_bar.checkToggled.connect(lambda on: self._set_wheel3d("zoom"))
 
         # 들어가며 보기: from the whole eye through the cornea, the pupil and the lens to the retina
         self.b_journey = QPushButton("▶ 들어가기")
@@ -1283,7 +1286,7 @@ class MainWindow(QMainWindow):
         self.b_walk = QPushButton("전안부 선택")
         self.b_walk.setObjectName("toggle")
         self.b_walk.setCheckable(True)
-        self.b_walk.setToolTip("누르거나 3D 안구의 각막을 누르면 전안부가 선택됩니다 — 마우스 휠을 앞으로 돌리면 각막 → 앞방 → "
+        self.b_walk.setToolTip("누르면 전안부가 선택됩니다 — 그동안 마우스 휠을 앞으로 돌리면 각막 → 앞방 → "
                                "동공 → 수정체 → 유리체 → 망막으로 들어가고, 뒤로 돌리면 나옵니다. 들어가는 중에는 왼쪽 "
                                "드래그로 둘러보고, 왼쪽 클릭한 곳이 가운데로 옵니다 (Esc · 다시 누르면 해제)")
         self.b_walk.toggled.connect(self._toggle_walk)
@@ -1296,22 +1299,6 @@ class MainWindow(QMainWindow):
         wr.addWidget(self.b_walk)
         wr.addWidget(walk_note, 1)
         self.eye3d.walkChanged.connect(self._on_walk)
-
-        # 마우스 휠: what the wheel over the eye does — 깊이 · 확대 · 들어가기 (also 설정 → 일반)
-        self._wheel_buttons = {}
-        for key, name, what in WHEEL3D:
-            b = segment(name, what)
-            b.clicked.connect(lambda _=False, k=key: self._set_wheel3d(k))
-            self._wheel_buttons[key] = b
-        self.seg_wheel3d = Segmented(list(self._wheel_buttons.values()))
-        self.c_walkclick3d = Switch("각막을 누르면 휠로 들어가기")
-        self.c_walkclick3d.setToolTip("휠이 깊이 · 확대일 때: 3D 안구의 각막을 누르면 전안부가 선택되고, 선택한 동안에는 휠이 "
-                                      "각막부터 망막까지 들어가기 · 나오기가 됩니다 (Esc · 다른 곳을 누르면 해제)")
-        self.c_walkclick3d.setChecked(bool(self.settings.walk_click3d))
-        self.c_walkclick3d.toggled.connect(self._on_walkclick3d)
-        self.lbl_wheel3d = QLabel("")
-        self.lbl_wheel3d.setObjectName("caption")
-        self.lbl_wheel3d.setWordWrap(True)
 
         # 슬릿 스캔: which way the slit crosses the photo
         self._slit_buttons = {}
@@ -1391,11 +1378,11 @@ class MainWindow(QMainWindow):
         self._marking3d: str | None = None
 
         # 조작: how to handle the eye (as the page's card)
-        keys_label = QLabel("<b>드래그</b> 회전 (놓으면 관성으로 더 돕니다) · <b>휠</b> 자르는 깊이 (내부: 확대) · "
-                            "<b>배율 막대</b> · <b>Ctrl+휠</b> · <b>오른쪽 드래그</b> 확대<br>"
+        keys_label = QLabel("<b>드래그</b> 회전 (놓으면 관성으로 더 돕니다) · <b>휠</b> 커서 쪽으로 확대 · "
+                            "<b>배율 막대</b> · <b>깊이 막대</b> 자르는 깊이 · <b>오른쪽 드래그</b> 확대<br>"
                             "<b>Shift+드래그</b> 또는 <b>가운데 버튼</b> 이동 · "
                             "<b>더블클릭</b> Simple로 · <b>0</b> 처음 보기 · <b>←↑→↓ + −</b><br><b>트랙패드</b> 두 손가락 벌리기·오므리기 확대"
-                            "<br><b>각막 클릭</b> 전안부 선택 → <b>휠</b> 각막부터 망막까지 들어가기·나오기 · "
+                            "<br><b>전안부 선택</b>을 누른 동안: <b>휠</b> 각막부터 망막까지 들어가기·나오기 · "
                             "<b>왼쪽 드래그</b> 둘러보기 · <b>왼쪽 클릭</b> 그곳을 가운데로 · <b>Esc</b> 해제")
         keys_label.setObjectName("caption")
         keys_label.setWordWrap(True)
@@ -1408,7 +1395,6 @@ class MainWindow(QMainWindow):
         bl = QVBoxLayout(body)
         bl.setContentsMargins(12, 10, 12, 12)
         bl.setSpacing(12)
-        bl.addWidget(card("마우스 휠", self.seg_wheel3d, self.lbl_wheel3d, self.c_walkclick3d))
         bl.addWidget(card("사진", self.lbl_photo3d, setting_row("장비", self.c_device3d), setting_row("눈", self.c_eye3d),
                           self.c_autofind3d, self.photo3d, self.lbl_found3d, fix_row, self.lbl_mark3d))
         bl.addWidget(card("망막 입체", self.c_surface3d, setting_row("높이", self.s_height3d), self.c_relief3d))
@@ -1418,7 +1404,7 @@ class MainWindow(QMainWindow):
                           self.c_xray3d))
         bl.addWidget(card("슬릿 스캔", self.seg_slit, self.lbl_slit, self.b_scan2))
         bl.addWidget(card("효과", self.c_spin3d, self.c_fov3d, self.c_side3d))
-        bl.addWidget(card("표시", self.c_simple3d, self.c_nerve, self.c_muscle, self.c_grid, self.c_adj3d))
+        bl.addWidget(card("표시", self.c_nerve, self.c_muscle, self.c_grid, self.c_adj3d, self.c_bars3d))
         bl.addWidget(card("사진 맞춤", self.c_align3d, setting_row("화각", self.sp_fov),
                           setting_row("화각 기준", self.c_fovtype), setting_row("투영", self.c_proj),
                           setting_row("회전", self.sp_roll), self.b_fit_fov, b_save_map))
@@ -1453,7 +1439,7 @@ class MainWindow(QMainWindow):
         self._tween = ViewTween(self.eye3d, self)
         self._full3d: QWidget | None = None
         self._set_3d_detail(self.settings.view3d_detail, save=False)
-        self._set_wheel3d(self.settings.wheel3d, save=False)
+        self._wheel_texts()
         lay.addWidget(bar)
         self._lay3d = lay
         lay.addWidget(self.split3d, 1)
@@ -1495,65 +1481,29 @@ class MainWindow(QMainWindow):
         lo, hi = self.s_cut.minimum(), self.s_cut.maximum()
         self._where.say("깊이 — 닫힌 안구" if v >= hi else f"깊이 {round(100 * (hi - v) / (hi - lo))}%", hold=1.0)
 
-    WHEEL_TEXTS = {   # (on the eye's tool tip, in 조작, under the choice)
-        "depth": ("휠: 자르는 깊이 (내부에서는 확대) · 확대: 배율 막대 · Ctrl+휠",
-                  "<b>휠</b> 자르는 깊이 (내부: 확대) · <b>배율 막대</b> · <b>Ctrl+휠</b>",
-                  "앞으로 굴리면 깊게 자르고, 뒤로 굴리면 닫힙니다 (내부에서는 확대) · Ctrl+휠: 확대"),
-        "zoom": ("휠: 커서 쪽으로 확대 · 배율 막대 · 자르는 깊이: 깊이 막대",
-                 "<b>휠</b> 커서 쪽으로 확대 · <b>배율 막대</b> · <b>깊이 막대</b> 자르는 깊이",
-                 "커서가 가리키는 곳으로 확대 · 축소합니다 — 자르는 깊이는 3D 화면 위의 깊이 막대로"),
-        "walk": ("휠: 각막부터 망막까지 들어가기 · 나오기 · 확대: 배율 막대 · Ctrl+휠",
-                 "<b>휠</b> 각막부터 망막까지 들어가기 · 나오기 · <b>배율 막대</b> · <b>Ctrl+휠</b>",
-                 "앞으로 굴리면 각막 → 앞방 → 동공 → 수정체 → 유리체 → 망막으로 들어가고, 뒤로 굴리면 나옵니다 · "
-                 "Ctrl+휠: 확대"),
-    }
-
-    def _set_wheel3d(self, mode: str, save: bool = True) -> None:
-        """마우스 휠 (3D 설정 · 설정 → 일반): what the wheel over the eye does — 깊이 (the cut's depth),
-        확대, or 들어가기 (in from the cornea; the wheel picks the anterior segment itself)."""
-        mode = mode if mode in self.WHEEL_TEXTS else "zoom"
-        eye = self.eye3d
-        was, eye.wheel_mode = eye.wheel_mode, mode
-        eye.pick_walk = mode == "walk" or bool(self.settings.walk_click3d)
-        if was == "walk" != mode and eye.walk and not eye.on_the_way():
-            eye.set_walk(False)               # (picked by the wheel itself: the wheel does something else now)
-        b = self._wheel_buttons[mode]
-        if not b.isChecked():
-            b.setChecked(True)
-        self.c_walkclick3d.setEnabled(mode != "walk")      # (들어가기: the wheel goes in anyway)
-        self.depth_bar.set_checked(mode == "depth")        # ☑ 휠 on the bars over the eye
-        self.zoom_bar.set_checked(mode == "zoom")
-        self._wheel_texts()
-        if save and self.settings.wheel3d != mode:
-            self.settings.wheel3d = mode
-            self.settings.save()
-
-    def _on_walkclick3d(self, on: bool) -> None:
-        """각막을 누르면 휠로 들어가기 — on or off (remembered)."""
-        eye = self.eye3d
-        eye.pick_walk = eye.wheel_mode == "walk" or bool(on)
-        if not eye.pick_walk and eye.walk and not eye.on_the_way():
-            eye.set_walk(False)
-        self._wheel_texts()
-        if self.settings.walk_click3d != bool(on):
-            self.settings.walk_click3d = bool(on)
-            self.settings.save()
+    def _set_bars_movable(self, on: bool, save: bool = True) -> None:
+        """막대 옮기기 (표시): off — 깊이 막대 · 배율 막대 stay at their own places; on — they are dragged over
+        the eye and laid down / stood up by a double click, where they were left last."""
+        s = self.settings
+        for bar, state in ((self.depth_bar, s.depth_bar3d), (self.zoom_bar, s.zoom_bar3d)):
+            bar.set_movable(on)
+            bar.set_state(state if on else "")
+        if save and s.bars_movable3d != bool(on):
+            s.bars_movable3d = bool(on)
+            s.save()
 
     def _wheel_texts(self) -> None:
-        """The eye's tool tip, the 조작 card and the line under 마우스 휠 say what the wheel does now."""
-        mode = self.eye3d.wheel_mode
-        tip, keys_part, line = self.WHEEL_TEXTS[mode]
-        click = mode != "walk" and self.eye3d.pick_walk
-        self.lbl_wheel3d.setText(line)
-        self.eye3d.setToolTip(f"드래그: 회전 · {tip} · 오른쪽 드래그 · +/− · 가운데/Shift+드래그: 이동 · "
-                              "0: 처음 보기 · 더블클릭: Simple로" + (" · 각막 클릭: 전안부 선택 (그동안 휠로 들어가기)" if click else ""))
-        walk = ("<br><b>각막 클릭</b> 전안부 선택 → <b>휠</b> 각막부터 망막까지 들어가기·나오기 · " if click else
-                "<br>들어가는 중 " if mode == "walk" else "")
-        if walk:
-            walk += "<b>왼쪽 드래그</b> 둘러보기 · <b>왼쪽 클릭</b> 그곳을 가운데로 · <b>Esc</b> 해제"
-        self.keys3d.setText(f"<b>드래그</b> 회전 (놓으면 관성으로 더 돕니다) · {keys_part} · <b>오른쪽 드래그</b> 확대<br>"
+        """The eye's tool tip and the 조작 card: the wheel over the eye zooms (0.13.17: always — the depth
+        of the cut is the 깊이 막대's, walking in is ▶ 들어가기 · 전안부 선택)."""
+        self.eye3d.wheel_mode, self.eye3d.pick_walk = "zoom", False
+        self.eye3d.setToolTip("드래그: 회전 · 휠: 커서 쪽으로 확대 · 배율 막대 · 자르는 깊이: 깊이 막대 · 오른쪽 드래그 · "
+                              "+/− · 가운데/Shift+드래그: 이동 · 0: 처음 보기 · 더블클릭: Simple로")
+        self.keys3d.setText("<b>드래그</b> 회전 (놓으면 관성으로 더 돕니다) · <b>휠</b> 커서 쪽으로 확대 · <b>배율 막대</b> · "
+                            "<b>깊이 막대</b> 자르는 깊이 · <b>오른쪽 드래그</b> 확대<br>"
                             "<b>Shift+드래그</b> 또는 <b>가운데 버튼</b> 이동 · <b>더블클릭</b> Simple로 · <b>0</b> 처음 보기 · "
-                            "<b>←↑→↓ + −</b><br><b>트랙패드</b> 두 손가락 벌리기·오므리기 확대" + walk)
+                            "<b>←↑→↓ + −</b><br><b>트랙패드</b> 두 손가락 벌리기·오므리기 확대"
+                            "<br><b>전안부 선택</b>(들어가며 보기)을 누른 동안: <b>휠</b> 각막부터 망막까지 들어가기·나오기 · "
+                            "<b>왼쪽 드래그</b> 둘러보기 · <b>왼쪽 클릭</b> 그곳을 가운데로 · <b>Esc</b> 해제")
 
     def _on_panel3d(self, on: bool) -> None:
         self.inspector.setVisible(on)
@@ -1656,16 +1606,14 @@ class MainWindow(QMainWindow):
             "<b>3D 안구</b><br>"
             "위 막대: 간단히 / 자세히 (가벼운 기본 모형 / 실제 해부 구조) · 외부 / 내부 · ▶ 슬릿 스캔 · "
             "크게 보기 · 설정 (나머지 설정을 여닫기 — 설정 메뉴 → 3D 보기 설정… 으로도 엽니다)<br>"
-            "<b>깊이 막대 · 배율 막대</b> (3D 화면 위, 반투명): 핸들을 끌거나 막대 위에서 휠 · <b>더블클릭</b> 가로 ↔ 세로 · "
-            "막대의 빈 곳을 끌어 옮기기 · <b>☑ 휠</b> 체크한 막대가 3D 화면 위 휠의 기본 동작 — 깊이: 닫힘 쪽이 닫힌 안구 "
+            "<b>깊이 막대 · 배율 막대</b> (3D 화면 위, 반투명): 핸들을 끌거나 막대 위에서 휠 · 제자리에 고정 "
+            "(설정 → 표시 → <b>막대 옮기기</b>를 켜면 끌어 옮기기 · 더블클릭으로 가로 ↔ 세로) — 깊이: 닫힘 쪽이 닫힌 안구 "
             "(세로 단면은 맨 아래가 정확히 반)<br>"
-            "마우스 휠 — 처음에는 <b>확대</b>(커서 쪽으로). 설정 패널의 <b>마우스 휠</b>(또는 설정 → 일반 → 3D 마우스 휠)에서 "
-            "<b>깊이</b> 자르는 깊이 (앞으로 굴리면 깊게, 뒤로 굴리면 닫힘 · 내부에서는 확대) / <b>들어가기</b> 각막부터 망막까지로 "
-            "바꿀 수 있습니다 · 각막을 누르면 그동안 휠로 들어가기(끌 수 있음) · 확대는 언제나: 배율 막대, Ctrl+휠, 오른쪽 드래그, +/−<br>"
-            "설정 — <b>마우스 휠</b>: 확대 · 깊이 · 들어가기, 각막을 누르면 휠로 들어가기 / <b>망막 입체</b>: 표면 높낮이 · 높이 · 입체 조명 / <b>시점</b>: 정면 · 처음 시점 · 화면 저장 / "
+            "마우스 휠 — 언제나 <b>확대</b>(커서 쪽으로) · 자르는 깊이는 깊이 막대 · 확대는 배율 막대, 오른쪽 드래그, +/− 로도<br>"
+            "설정 — <b>망막 입체</b>: 표면 높낮이 · 높이 · 입체 조명 / <b>시점</b>: 정면 · 처음 시점 · 화면 저장 / "
             "<b>들어가며 보기</b>: ▶ 들어가기 · 위치 · 전안부 선택 / <b>안구 열기</b>: 앞쪽 절개 · 세로 단면, 깊이, 공막 투명도, "
             "망막 투시 / <b>슬릿 스캔</b>: 방향 ↓ ↑ → ← · 상하좌우 / <b>효과</b>: 자동 회전 · 화각 표시 · 사진 나란히 / "
-            "<b>표시</b>: 단순하게 보기 · 시신경 · 외안근 · 각도 격자 / <b>사진 맞춤</b>: 실제 위치에 맞춤 · 화각 · "
+            "<b>표시</b>: 시신경 · 외안근 · 각도 격자 · 막대 옮기기 / <b>사진 맞춤</b>: 실제 위치에 맞춤 · 화각 · "
             "투영 · 회전<br>"
             "사진 맞춤 → 실제 위치에 맞춤: 사진의 황반을 안구 뒤쪽 한가운데(후극)에, 시신경 유두를 코쪽 제자리에 "
             "오도록 얹습니다 — 잘못 찾았으면 2D 사진에서 오른쪽 클릭으로 황반·유두를 직접 지정<br>"
@@ -1673,18 +1621,17 @@ class MainWindow(QMainWindow):
             "(0 = 흰 공막) — 안구를 돌리면 망막이 안구 속 어디에 있는지 보입니다<br>"
             "▶ 슬릿 스캔: 위아래는 단면에 화각 → 슬릿이 사진을 훑으며 빛이 동공을 지나 망막에, 좌우는 앞을 연 안구의 "
             "망막 위로 → 사진을 입힌 3D 안구 (누르면 멈춤) · 크게 보기: 화면 전체 (Space 재생, Esc 돌아가기)<br>"
-            "드래그: 회전 (돌리다 놓으면 관성으로 더 돕니다) · Ctrl+휠 (내부에서는 휠): 커서가 가리키는 곳으로 확대 · "
+            "드래그: 회전 (돌리다 놓으면 관성으로 더 돕니다) · 휠: 커서가 가리키는 곳으로 확대 · "
             "가운데 버튼 또는 Shift+드래그: 이동<br>"
             "+/−: 확대·축소 · 0: 처음 보기 · 더블클릭: Simple로<br>"
             "망막 입체: 표면 높낮이 — 혈관은 솟고 유두 함몰·황반 오목은 파여 보임, 입체 조명 — 그 높낮이에 비스듬한 빛 · "
-            "단순하게 보기: 공막·홍채·수정체·시신경을 단순하게 그려 망막을 강조 · "
             "자동 회전: 손을 떼고 있으면 천천히 돕니다<br>"
             "들어가며 보기 · 내부: 안구 전체에서 각막 → 앞방 → 동공 → 수정체 → 유리체 → 망막까지 끊김 없이 들어갑니다 "
             "(위치 막대로 원하는 곳에서 멈춤)<br>"
-            "휠로 들어가기: 마우스 휠이 <b>들어가기</b>이면 그냥, 아니면 3D 안구의 각막을 누르거나 [전안부 선택] → "
+            "휠로 들어가기: 설정 → 들어가며 보기 → [전안부 선택]을 누른 동안 "
             "휠 앞으로: 각막 → 앞방 → 동공 → 수정체 → 유리체 → 망막, "
             "뒤로: 나오기 (망막에서는 휠이 커서 쪽으로 더 가까이) · 들어가는 중 왼쪽 드래그: 둘러보기, 왼쪽 클릭: 그곳을 가운데로 · "
-            "Esc 또는 다른 곳을 누르면 해제<br>"
+            "Esc 또는 [전안부 선택]을 다시 누르면 해제<br>"
             "보기 → 부드러운 움직임: 끄면 확대·회전·전환이 바로 바뀝니다 (원격 접속 등 느린 화면)<br><br>"
             "<b>단축키</b><br>"
             "← / → 또는 PageUp / PageDown: 이전 / 다음 사진 · Ctrl+1: Simple · Ctrl+2: Multi (16장) · Ctrl+3: 3D · "
@@ -1952,14 +1899,13 @@ class MainWindow(QMainWindow):
             old_share = (self.settings.share_mode, self.settings.share_port, self.settings.share_key,
                          self.settings.server_url)
             before = list(self.settings.watch_folders)
-            old_view = self.settings.open_view
+            old_view = self._grid_mode()
             dlg.apply()
+            self._apply_buttons()
             self._set_3d_detail(self.settings.view3d_detail, save=False)
-            self.c_walkclick3d.setChecked(bool(self.settings.walk_click3d))   # 3D 마우스 휠
-            self._set_wheel3d(self.settings.wheel3d, save=False)
             self.act_thumb_date.setChecked(bool(self.settings.thumb_date))   # 사진 목록: 날짜 · 종류
             self.act_thumb_kind.setChecked(bool(self.settings.thumb_kind))
-            if self.settings.open_view != old_view and self.current is not None:
+            if self._grid_mode() != old_view and self.current is not None:
                 self._set_default_picks(self.patient_list.current_exam())   # the other way at once:
                 self._show_opening()                                        # Simple (OD | OS) / 16장 보기
             autosetup.remember_removed(self.settings, before)
@@ -2380,6 +2326,9 @@ class MainWindow(QMainWindow):
         self.lbl_status.setText(f"워크리스트 환자: {patient['patient_id']} {patient['name'] or ''} — 아직 사진이 "
                                 "없습니다. [사진 가져오기]로 넣는 사진은 이 환자로 지정할 수 있습니다")
 
+    DICOM_SCOPES = (("current", "보고 있는 사진"), ("picked", "고른 사진"), ("exam", "이 검사일의 사진"),
+                    ("patient", "이 환자의 사진 모두"))
+
     def _dicom_rows(self, which: str, image_id: int | None = None) -> list:
         """The photos a DICOM 전송 command means: "one" (``image_id``), "current", "picked" (the
         numbered ones; none: the one on screen), "exam" (the day of the photo on screen), "patient"."""
@@ -2402,16 +2351,38 @@ class MainWindow(QMainWindow):
 
     def dicom_send(self, which: str = "current", image_id: int | None = None, *, run: bool = True):
         """파일 → DICOM (PACS) · a photo's right-click menu: the send window for those photos."""
+        scopes = None
+        if which == "ask":                 # 파일 → DICOM (PACS) → PACS로 전송…: 보낼 범위 in the window
+            scopes = [(label, self._dicom_rows(key)) for key, label in self.DICOM_SCOPES]
+            if len(self._picked_ids()) < 2:
+                scopes = [sc for sc, (key, _) in zip(scopes, self.DICOM_SCOPES) if key != "picked"]
+            scopes = [sc for sc in scopes if sc[1]]
+            which = "current"
         rows = self._dicom_rows(which, image_id)
+        if not rows and scopes:
+            rows = scopes[0][1]
         if not rows:
             self.lbl_status.setText("전송할 사진이 없습니다 — 환자를 열고 사진을 고르세요")
             return None
-        dlg = DicomSendDialog(self.db, self.settings, rows, self._dialog_parent())
+        dlg = DicomSendDialog(self.db, self.settings, rows, self._dialog_parent(), scopes=scopes)
         if run:
             dlg.exec()
             sent = sum(1 for r in dlg.results.values() if r.ok)
             if sent:
                 self.lbl_status.setText(f"DICOM 전송: {sent}장을 PACS로 보냈습니다")
+        return dlg
+
+    def open_dbadmin(self, *, run: bool = True):
+        """파일 → 데이터베이스 관리…: backups, the check-up, going back to a backup (dbadmin.py)."""
+        if self.remote:
+            self.lbl_status.setText("서버에 연결된 상태입니다 — 데이터베이스 관리는 서버 컴퓨터에서 합니다")
+            return None
+        from .dbadmin_dialog import DatabaseDialog
+        dlg = DatabaseDialog(self.db, self.settings, self._dialog_parent())
+        if run:
+            dlg.exec()
+            if dlg.restore_asked:
+                self.lbl_status.setText("프로그램을 다시 시작하면 고른 백업으로 되돌립니다")
         return dlg
 
     def save_dicom_file(self, dest: str | None = None) -> None:
@@ -3349,13 +3320,13 @@ class MainWindow(QMainWindow):
         cur = self.current["id"] if self.current else None
         if iid != cur:
             menu.addAction("두 번째 사진(②)으로", lambda: self._set_compare(iid))
-            menu.addAction("스테레오 보기 (보고 있는 사진과)…", lambda: self.open_stereo(iid))
-            menu.addAction("녹내장 분석 (보고 있는 사진과)…", lambda: self.open_glaucoma(iid))
+            menu.addAction("스테레오 보기…", lambda: self.open_stereo(iid)).setToolTip("보고 있는 사진과 이 사진 두 장으로")
+            menu.addAction("녹내장 분석…", lambda: self.open_glaucoma(iid)).setToolTip("보고 있는 사진과 이 사진 두 장으로")
         elif self.compare is not None:
-            menu.addAction("스테레오 보기 (② 사진과)…", lambda: self.open_stereo())
-            menu.addAction("녹내장 분석 (② 사진과)…", lambda: self.open_glaucoma())
+            menu.addAction("스테레오 보기…", lambda: self.open_stereo()).setToolTip("② 사진과 두 장으로")
+            menu.addAction("녹내장 분석…", lambda: self.open_glaucoma()).setToolTip("② 사진과 두 장으로")
             menu.addAction("두 번째 사진(②) 선택 해제", lambda: self._pick_second(self.compare["id"]))
-        menu.addAction("시간별 비교 (이 눈의 유두 사진들)…",
+        menu.addAction("시간별 비교…",
                        lambda: (self._show_image(iid) if iid != cur else None, self.open_glaucoma(start="timeline")))
         menu.addAction("원본 폴더 열기", lambda: (self._show_image(iid), self._open_folder()))
         if len(pinned) >= 2 and iid in pinned:
@@ -3382,17 +3353,15 @@ class MainWindow(QMainWindow):
         a.setEnabled(n >= 2)
         if n < 2:
             a.setToolTip("몽타주는 사진 2장 이상(같은 눈)을 골라야 만들 수 있습니다")
-        menu.addAction(line_icon("glaucoma"), "Glaucoma — 녹내장 분석…", lambda: self._cell_run(iid, self.open_glaucoma))
-        menu.addAction("Glaucoma — 시간별 비교 (이 눈의 유두 사진들)…",
-                       lambda: self._cell_run(iid, lambda: self.open_glaucoma(start="timeline")))
+        # 녹내장 분석 · 스테레오 보기: one entry each — with the other photo on screen when there are two
+        # (else the ② photo, if one is picked); 시간별 비교 is a tab of the same window
         others = [i for i in ids if i != iid]
-        if len(others) == 1:               # two on screen: the pair, without picking ② first
-            other = others[0]
-            menu.addAction("Glaucoma — 다른 한 장과 함께 (스테레오 · 경과)…",
-                           lambda: self._cell_run(iid, lambda: self.open_glaucoma(other)))
-            menu.addAction("스테레오 보기 (다른 한 장과)…", lambda: self._cell_run(iid, lambda: self.open_stereo(other)))
-        elif self.compare is not None and self.compare["id"] != iid:
-            menu.addAction("스테레오 보기 (② 사진과)…", lambda: self._cell_run(iid, self.open_stereo))
+        other = others[0] if len(others) == 1 else None
+        menu.addAction(line_icon("glaucoma"), "녹내장 분석…",
+                       lambda: self._cell_run(iid, lambda: self.open_glaucoma(other)))
+        if other is not None or (self.compare is not None and self.compare["id"] != iid):
+            menu.addAction("스테레오 보기…", lambda: self._cell_run(iid, lambda: self.open_stereo(other)))
+        menu.addAction("시간별 비교…", lambda: self._cell_run(iid, lambda: self.open_glaucoma(start="timeline")))
         menu.addSeparator()
         menu.addAction(line_icon("detail"), "Detail — 크게 보기", lambda: self.open_large(iid))
         menu.addAction("환자 지정/정보 수정…", lambda: self._cell_run(iid, self._edit_image))
@@ -4927,23 +4896,17 @@ class MainWindow(QMainWindow):
         self.eye3d.relief_amount = v / 100.0 * self.HEIGHT_MAX
         self.eye3d.update()
 
-    def _on_simple(self, on: bool) -> None:
-        self.settings.simple3d = bool(on)
-        eye, start, goal = self.eye3d, self.eye3d.simple, 1.0 if on else 0.0
-        self._simple_tween = motion.Tween(lambda k: (setattr(eye, "simple", start + (goal - start) * k), eye.update()),
-                                          0.45, motion.ease_in_out)
-        self._simple_tween.start()
-
     # -- 효과: 입체 조명 · 자동 회전 -----------------------------------------------------------
     RELIEF = 0.6            # strength of 입체 조명
     SPIN = 10.0             # 자동 회전, degrees per second
-    UI_VERSION = 10         # 2: the dark look — 자세히, 유리 공막 and 자동 회전 from the start; 3: the 3D tab
+    UI_VERSION = 11         # 2: the dark look — 자세히, 유리 공막 and 자동 회전 from the start; 3: the 3D tab
                             # as the web page (자세히, 황반·유두 자동으로 찾기); 4: the 3D eye shows the
                             # original photo (망막 입체 — 표면 높낮이 and 입체 조명 — off from the start);
                             # 5: the 3D wheel zooms, the depth is on the 깊이 막대 beside the eye;
                             # 6: a patient opens on 16장 보기; 7: RetiCam-sized 일반 45° photos → RetiCam 176°;
                             # 8: a patient opens on Simple (날짜 책갈피 · 미리 보기 · 클릭으로 고정);
-                            # 9: no loupe over the large photos without a button · 미리 보기 on
+                            # 9: no loupe over the large photos without a button · 미리 보기 on;
+                            # 11: [Multi] · 16장 보기 and moving the 3D bars only when switched on
 
     def _on_relief(self, on: bool) -> None:
         self.settings.relief3d = bool(on)
@@ -5163,7 +5126,18 @@ class MainWindow(QMainWindow):
 
     def _grid_mode(self) -> bool:
         """A patient opens on 16장 보기 — unless Simple ("odos") was chosen (an older "overview": 16장 보기)."""
-        return self.settings.open_view != SIMPLE_MODE
+        return bool(self.settings.multi_view) and self.settings.open_view != SIMPLE_MODE
+
+    def _apply_buttons(self) -> None:
+        """설정 → 화면 · 툴바: [Multi] (and 보기 → Multi, Ctrl+2) only when 16장 보기 · Multi is used; the
+        영상 처리 buttons taken off the toolbar are off it (and out of the 영상 처리 menu)."""
+        multi = bool(self.settings.multi_view)
+        self.acts["view:multi"].setVisible(multi)
+        self.view_acts[MULTI].setVisible(multi)
+        hidden = set(self.settings.hidden_tools or ())
+        for spec in PROCBAR:
+            if spec is not None:
+                self.acts[spec[0]].setVisible(spec[0] not in hidden)
 
     def _sync_grid_bar(self) -> None:
         """16장 보기's line: how many photos, which of them are on screen, the page buttons."""

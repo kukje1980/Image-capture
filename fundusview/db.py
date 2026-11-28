@@ -127,6 +127,17 @@ class Database:
         with self._lock:
             self._con.close()
 
+    def backup_to(self, dest: Path | str) -> None:
+        """A whole copy of the database in the file ``dest`` (SQLite's own backup: safe while the program
+        works — other threads' writes wait for it). dbadmin.py."""
+        with self._lock:
+            self._con.commit()
+            out = sqlite3.connect(str(dest))
+            try:
+                self._con.backup(out)
+            finally:
+                out.close()
+
     def revision(self) -> int:
         """Grows with every change made through this connection (sharing: has anything changed?)."""
         with self._lock:

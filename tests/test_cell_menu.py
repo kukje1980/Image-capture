@@ -42,7 +42,9 @@ def test_right_click_on_a_cell_offers_3d_montage_glaucoma(tmp_path, demo_dir, im
         texts = list(acts)
         assert texts[0] == "3D — 이 사진" and "3D — 화면의 사진 모두 (2장)" in texts
         assert acts["Montage — 화면의 사진 2장…"].isEnabled()
-        assert "Glaucoma — 녹내장 분석…" in texts and "Detail — 크게 보기" in texts
+        assert "녹내장 분석…" in texts and "Detail — 크게 보기" in texts
+        # one entry each (0.13.17): no "(② 사진과)" · "(다른 한 장과)" variants
+        assert "스테레오 보기…" in texts and "시간별 비교…" in texts and not any("(다른" in t or "②" in t for t in texts)
         assert "화면에 맞춤" in texts                                           # the photo's own entries follow
 
         opened = []
@@ -51,10 +53,9 @@ def test_right_click_on_a_cell_offers_3d_montage_glaucoma(tmp_path, demo_dir, im
         other.view._context_menu(QPoint(0, 0), QPointF(5, 5))
         acts = {a.text(): a for a in menus[-1].actions() if a.text()}
         acts["Montage — 화면의 사진 2장…"].trigger()
-        acts["Glaucoma — 녹내장 분석…"].trigger()
-        acts["Glaucoma — 다른 한 장과 함께 (스테레오 · 경과)…"].trigger()
+        acts["녹내장 분석…"].trigger()                    # two on screen: with the other one (스테레오 · 경과 too)
         first = next(c.image_id for c in cells if c is not other)
-        assert opened == ["montage", ("glaucoma", ()), ("glaucoma", (first,))]
+        assert opened == ["montage", ("glaucoma", (first,))]
 
         acts["3D — 화면의 사진 모두 (2장)"].trigger()                            # both on 3D eyes
         app.processEvents()

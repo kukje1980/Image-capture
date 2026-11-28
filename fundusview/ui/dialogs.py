@@ -7,7 +7,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QCompleter, QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog,
-    QFormLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QPlainTextEdit,
+    QFormLayout, QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QPlainTextEdit,
     QPushButton, QSpinBox, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 
@@ -58,12 +58,6 @@ DISC3D_METHODS = (("hybrid", "하이브리드 — 경계는 혈관 꺾임, 혈�
 # 설정 → 일반 → 3D 입체 두 장 스테레오 (Settings.disc3d_stereo_method): … and the stereo depth on this one
 DISC3D_STEREO_METHODS = (("parallax_vessels", "시차 + 혈관 꺾임 — 깊이는 시차, 컵 경계는 혈관이 꺾이는 곳"),
                          ("parallax", "시차 — 두 사진의 시차로 계산한 깊이 그대로"))
-
-
-# 3D 안구의 마우스 휠 (Settings.wheel3d): (key, short name, what it does)
-WHEEL3D = (("zoom", "확대", "커서가 가리키는 곳으로 확대 · 축소 (깊이는 3D 화면 위의 깊이 막대로)"),
-           ("depth", "깊이", "자르는 깊이 — 앞으로 굴리면 깊게, 뒤로 굴리면 닫힘 (내부에서는 확대)"),
-           ("walk", "들어가기", "각막 → 앞방 → 동공 → 수정체 → 유리체 → 망막, 뒤로 굴리면 나오기"))
 
 
 def _combo(items, current) -> QComboBox:
@@ -330,18 +324,6 @@ class SettingsDialog(QDialog):
         self.opengl = _combo([("auto", "자동"), ("desktop", "그래픽카드 OpenGL"),
                               ("software", "소프트웨어 렌더링 (호환 모드)")], settings.opengl)
         f2.addRow("3D 렌더링 (재시작 필요)", self.opengl)
-        self.wheel3d = _combo([(k, f"{name} — {what}") for k, name, what in WHEEL3D], settings.wheel3d)
-        self.wheel3d.setToolTip("3D 안구 위에서 마우스 휠이 하는 일 (3D 탭의 설정 → 마우스 휠에서도 바꿉니다)\n"
-                                "어느 것이든 Ctrl+휠 · 배율 막대 · 오른쪽 드래그 · + / − 는 확대입니다")
-        f2.addRow("3D 마우스 휠", self.wheel3d)
-        self.walk_click3d = QCheckBox("각막을 누르면 그동안 휠로 들어가기 (휠이 깊이 · 확대일 때)")
-        self.walk_click3d.setToolTip("3D 안구의 각막을 누르면 전안부가 선택되고, 선택한 동안에는 휠이 각막부터 망막까지 "
-                                     "들어가기 · 나오기가 됩니다 (Esc · 다른 곳을 누르면 해제)")
-        self.walk_click3d.setChecked(bool(settings.walk_click3d))
-        f2.addRow("", self.walk_click3d)
-        self.wheel3d.currentIndexChanged.connect(          # (들어가기: the wheel goes in anyway)
-            lambda _: self.walk_click3d.setEnabled(self.wheel3d.currentData() != "walk"))
-        self.walk_click3d.setEnabled(self.wheel3d.currentData() != "walk")
         # (anything but Simple — an older "overview" — is 16장 보기, as the main window reads it)
         self.open_view = _combo(OPEN_VIEWS, "odos" if settings.open_view == "odos" else "grid")
         self.open_view.setToolTip("환자 목록에서 환자를 열 때 처음 나오는 화면\n"
@@ -352,6 +334,7 @@ class SettingsDialog(QDialog):
                                   "[Multi]를 누르면 고른 사진만 보고, 다시 [Multi]를 누르면 16장으로 돌아옵니다.\n"
                                   "아래 사진 목록의 사진을 더블클릭하면 그 사진을 크게 봅니다(Detail).")
         f2.addRow("환자를 열면", self.open_view)
+        self.open_view.setEnabled(bool(settings.multi_view))     # (16장 보기: 화면 · 툴바 탭에서 켠 뒤에)
         self.open_book = _combo(OPEN_BOOKS, "all" if settings.open_book == "all" else "latest")
         self.open_book.setToolTip("환자를 열 때 아래 사진 목록이 먼저 보여 주는 날짜 책갈피\n"
                                   "최신 검사 (처음 설정): 가장 최근 검사일의 사진만 — 다른 날짜는 책갈피나 휠로 넘깁니다.\n"
@@ -379,6 +362,30 @@ class SettingsDialog(QDialog):
         thumb_row.addStretch(1)
         f2.addRow("사진 목록의 사진 위에 표시", thumb_row)
         tabs.addTab(w2, "일반")
+
+        # -- screen · toolbar: what is on the toolbars (0.13.17) -----------------------------------
+        from .toolbars import PROCBAR
+        w7 = QWidget()
+        l7 = QVBoxLayout(w7)
+        self.multi_view = QCheckBox("Multi · 16장 보기 사용 — 왼쪽 툴바에 [Multi] 단추 (끄면 여러 장은 Simple에서 봅니다)")
+        self.multi_view.setToolTip("끔 (처음 설정): 환자를 열면 Simple(최신 OD | OS) — 사진 목록을 클릭해 여러 장을 함께 봅니다.\n"
+                                   "켬: [Multi] 단추와 16장 보기를 쓰고, 일반 탭의 「환자를 열면」에서 16장 보기를 고를 수 있습니다.")
+        self.multi_view.setChecked(bool(settings.multi_view))
+        self.multi_view.toggled.connect(self.open_view.setEnabled)
+        l7.addWidget(self.multi_view)
+        l7.addWidget(QLabel("아래 영상 처리 툴바에 둘 단추 — 체크를 끄면 툴바와 영상 처리 메뉴에서 빠집니다."))
+        grid7 = QGridLayout()
+        hidden = set(settings.hidden_tools or ())
+        self.tool_checks: dict[str, QCheckBox] = {}
+        for i, spec in enumerate(sp for sp in PROCBAR if sp is not None):
+            cb = QCheckBox(spec[1])
+            cb.setToolTip(spec[2])
+            cb.setChecked(spec[0] not in hidden)
+            self.tool_checks[spec[0]] = cb
+            grid7.addWidget(cb, i // 4, i % 4)
+        l7.addLayout(grid7)
+        l7.addStretch(1)
+        tabs.addTab(w7, "화면 · 툴바")
 
         # -- sharing (share.py) -----------------------------------------------------
         from .. import share
@@ -682,9 +689,9 @@ class SettingsDialog(QDialog):
         s.stable_seconds = self.stable.value()
         s.rescan_seconds = self.rescan.value()
         s.opengl = self.opengl.currentData()
-        s.wheel3d = self.wheel3d.currentData()
-        s.walk_click3d = self.walk_click3d.isChecked()
         s.open_view = self.open_view.currentData()
+        s.multi_view = self.multi_view.isChecked()
+        s.hidden_tools = [key for key, cb in self.tool_checks.items() if not cb.isChecked()]
         s.open_book = self.open_book.currentData()
         s.disc3d_method = self.disc3d_method.currentData()
         s.disc3d_stereo_method = self.disc3d_stereo_method.currentData()

@@ -635,7 +635,14 @@ class DiscTab(_Tab):
         self.lbl_ratio = QLabel()
         self.lbl_ratio.setTextFormat(Qt.TextFormat.RichText)
         self.lbl_ratio.setWordWrap(True)
-        self.side.addWidget(card("수직 C/D", self.lbl_v, self.lbl_ratio))
+        # 직접 맞추기 (0.13.17: the toolbar's C/D 길이 · 면적 tools are here): the points of the two lines are
+        # dragged, and the ratios by length (수직 · 수평) and by area follow at once
+        self.b_manual = _button("직접 맞추기 — 처음부터",
+                                tip="두 선을 기본 크기의 타원으로 되돌립니다 — 초록 점 8개를 디스크 경계에, 노란 점 8개를 컵 "
+                                    "경계에 끌어다 놓으면 길이 방식 · 면적 방식 C/D가 바로 계산됩니다")
+        self.b_manual.clicked.connect(self.manual_fit)
+        self.side.addWidget(card("C/D — 길이 방식 · 면적 방식", self.lbl_v, self.lbl_ratio, self.b_manual,
+                                 _note("초록 선 = 디스크, 노란 선 = 컵. 점을 끌어 직접 맞추면 값이 바로 바뀝니다.")))
 
         self.b_auto = _button("자동 맞춤", primary=True,
                               tip="디스크 경계는 밝기가 망막 쪽으로 꺾이는 곳, 컵은 아래 기준 깊이의 등고선 — 그 뒤 점을 끌어 다듬습니다")
@@ -708,6 +715,14 @@ class DiscTab(_Tab):
                           "유두를 찾지 못해 예상 위치를 잘랐습니다 — 2D 사진에서 오른쪽 클릭 → 시신경 유두로 지정")
         self.warn.setVisible(not self.photo.disc_found)
         self.view.set_rgb(self.img)
+        self._changed()
+
+    def manual_fit(self) -> None:
+        """직접 맞추기 — 처음부터: both lines as plain ovals, to be put on the disc and the cup by hand."""
+        if self.photo is None:
+            return
+        self.reset_outlines()
+        self.state = {"disc": "hand", "cup": "hand"}
         self._changed()
 
     def reset_outlines(self) -> None:
@@ -1025,8 +1040,9 @@ class DiscTab(_Tab):
         v = m["vertical"]
         band = "0.7 이상" if v >= 0.7 else "0.5~0.7" if v >= 0.5 else "0.5 미만"
         self.lbl_v.setText(f"{v:.2f}")
-        text = (f"<span style='color:{theme.TEXT2}'>{band}</span><br>"
-                f"수평 C/D <b>{m['horizontal']:.2f}</b> &nbsp;·&nbsp; 면적 C/D <b>{m['area']:.2f}</b>"
+        text = (f"<span style='color:{theme.TEXT2}'>수직 C/D · {band}</span><br>"
+                f"<b>길이 방식</b> — 수직 C/D <b>{v:.2f}</b> &nbsp;·&nbsp; 수평 C/D <b>{m['horizontal']:.2f}</b><br>"
+                f"<b>면적 방식</b> — 면적 C/D <b>{m['area']:.2f}</b>"
                 f" &nbsp;·&nbsp; 림 면적 <b>{(1 - m['area']) * 100:.0f}%</b>")
         mm = self.disc_mm()
         if mm is not None:                                       # what is normal depends on the disc's size

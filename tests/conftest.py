@@ -15,6 +15,21 @@ os.environ["FUNDUSVIEW_NO_MOTION"] = "1"
 
 
 @pytest.fixture(autouse=True)
+def _multi_view_on(monkeypatch):
+    """[Multi] · 16장 보기 are an option since 0.13.17 (설정 → 화면 · 툴바, off at first). The tests of those
+    views were written with them on: here a ``Settings`` made without saying so has the option on. A test
+    of the first setting passes ``multi_view=False`` itself."""
+    from fundusview.config import Settings
+
+    init = Settings.__init__
+
+    def with_multi(self, *args, **kwargs):
+        kwargs.setdefault("multi_view", True)
+        init(self, *args, **kwargs)
+    monkeypatch.setattr(Settings, "__init__", with_multi)
+
+
+@pytest.fixture(autouse=True)
 def _no_blocking_message_boxes(monkeypatch):
     """A message box waits for a click that never comes on a headless runner, so one shown
     by mistake hung the whole CI job until its time limit. Here every QMessageBox.warning /
