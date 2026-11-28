@@ -3304,6 +3304,9 @@ class MainWindow(QMainWindow):
 
     def _photo_menu(self, iid: int, global_pos) -> None:
         """Right click on a photo of the strip or of 16장 보기."""
+        self._build_photo_menu(iid).exec(global_pos)
+
+    def _build_photo_menu(self, iid: int) -> QMenu:
         menu = QMenu(self)
         multi = self._multi_picks()
         pinned = multi if self._own_picks() else []
@@ -3318,13 +3321,15 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         menu.addAction("환자 지정/정보 수정…", lambda: (self._show_image(iid), self._edit_image()))
         cur = self.current["id"] if self.current else None
+        # 녹내장 분석: always there — one photo is enough (디스크 C/D · 3D 입체 · 광각 분석); with a ② photo or
+        # another photo of the same eye picked, 스테레오 · 경과 are in the same window
+        menu.addAction("녹내장 분석…", lambda: self.open_glaucoma(first_id=iid)).setToolTip(
+            "이 사진 한 장으로 — 같은 눈의 사진을 한 장 더 골라 두었으면 스테레오 · 경과 비교도 함께")
         if iid != cur:
             menu.addAction("두 번째 사진(②)으로", lambda: self._set_compare(iid))
             menu.addAction("스테레오 보기…", lambda: self.open_stereo(iid)).setToolTip("보고 있는 사진과 이 사진 두 장으로")
-            menu.addAction("녹내장 분석…", lambda: self.open_glaucoma(iid)).setToolTip("보고 있는 사진과 이 사진 두 장으로")
         elif self.compare is not None:
             menu.addAction("스테레오 보기…", lambda: self.open_stereo()).setToolTip("② 사진과 두 장으로")
-            menu.addAction("녹내장 분석…", lambda: self.open_glaucoma()).setToolTip("② 사진과 두 장으로")
             menu.addAction("두 번째 사진(②) 선택 해제", lambda: self._pick_second(self.compare["id"]))
         menu.addAction("시간별 비교…",
                        lambda: (self._show_image(iid) if iid != cur else None, self.open_glaucoma(start="timeline")))
@@ -3336,7 +3341,7 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         menu.addAction("다시 분석 (원·시신경 검출)", lambda: self._reanalyse(iid))
         menu.addAction("목록에서 제거…", lambda: self._remove_image(iid))
-        menu.exec(global_pos)
+        return menu
 
     def _cell_menu(self, iid: int, menu: QMenu) -> None:
         """Right click on a photo of Simple · Multi (the cell is selected by it): what the command
@@ -3353,12 +3358,13 @@ class MainWindow(QMainWindow):
         a.setEnabled(n >= 2)
         if n < 2:
             a.setToolTip("몽타주는 사진 2장 이상(같은 눈)을 골라야 만들 수 있습니다")
-        # 녹내장 분석 · 스테레오 보기: one entry each — with the other photo on screen when there are two
-        # (else the ② photo, if one is picked); 시간별 비교 is a tab of the same window
+        # 녹내장 분석 · 스테레오 보기: one entry each — 스테레오 with the other photo on screen when there are
+        # two (else the ② photo, if one is picked); 시간별 비교 is a tab of the same window
         others = [i for i in ids if i != iid]
         other = others[0] if len(others) == 1 else None
-        menu.addAction(line_icon("glaucoma"), "녹내장 분석…",
-                       lambda: self._cell_run(iid, lambda: self.open_glaucoma(other)))
+        # (one photo is enough; another photo of the same eye on screen comes along by itself — an OD | OS
+        # pair does not: each eye is analysed on its own)
+        menu.addAction(line_icon("glaucoma"), "녹내장 분석…", lambda: self._cell_run(iid, self.open_glaucoma))
         if other is not None or (self.compare is not None and self.compare["id"] != iid):
             menu.addAction("스테레오 보기…", lambda: self._cell_run(iid, lambda: self.open_stereo(other)))
         menu.addAction("시간별 비교…", lambda: self._cell_run(iid, lambda: self.open_glaucoma(start="timeline")))
