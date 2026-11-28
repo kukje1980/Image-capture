@@ -493,8 +493,10 @@ class MainWindow(QMainWindow):
         m.addAction(A["glaucoma"])
         m.addAction(A["discpair"])                   # 스테레오 보기 (고른 두 사진)
         m.addAction("시간별 비교 (이 눈의 유두 사진 여러 장)…", lambda: self.open_glaucoma(start="timeline"))
+        m.addAction("변화 지도 (같은 눈의 예전 사진과 겹쳐 보기)…", lambda: self.open_change_map())
         m.addAction("몽타주 만들기 (고른 사진)…", lambda: self.open_montage())
         m.addAction(A["print"])
+        m.addAction("환자용 한 장 요약 (PDF · 인쇄)…", lambda: self.open_handout())
         m.addSeparator()
         sub = m.addMenu("DICOM (PACS)")              # dicomnet.py: 설정 → DICOM
         sub.addAction("PACS로 전송…", lambda: self.dicom_send("ask"))     # (보낼 범위 is chosen in the window)
@@ -3345,6 +3347,10 @@ class MainWindow(QMainWindow):
             menu.addAction("두 번째 사진(②) 선택 해제", lambda: self._pick_second(self.compare["id"]))
         menu.addAction("시간별 비교…",
                        lambda: (self._show_image(iid) if iid != cur else None, self.open_glaucoma(start="timeline")))
+        menu.addAction("변화 지도…", lambda: self.open_change_map(iid)).setToolTip(
+            "같은 눈의 다른 날짜 사진과 겹쳐 맞추고 달라진 곳을 색으로")
+        menu.addAction("환자용 한 장 요약…", lambda: self.open_handout(iid)).setToolTip(
+            "사진 + 질환 설명 그림 + 의사 메모를 한 장으로 (PDF · 인쇄)")
         menu.addAction("원본 폴더 열기", lambda: (self._show_image(iid), self._open_folder()))
         if len(pinned) >= 2 and iid in pinned:
             menu.addAction(f"DICOM 전송 — 고른 사진 {len(pinned)}장 (PACS)…", lambda: self.dicom_send("picked"))
@@ -3950,6 +3956,8 @@ class MainWindow(QMainWindow):
             self._stop_slideshow() if self._slide_timer.isActive() else self._start_slideshow()
         elif key in ("pin_undo", "pin_clear", "pin_note"):
             self._pin_command(key)
+        elif key == "pin_sight":
+            self.open_sight()
         elif key == "annot_undo":
             v.undo_annotation()
         elif key == "annot_clear":
@@ -5869,6 +5877,154 @@ class MainWindow(QMainWindow):
         dlg, why = self._build_glaucoma(second_id, start, first_id)
         if dlg is None:
             QMessageBox.information(self, "스테레오 보기" if start == "stereo" else "녹내장 분석", why)
+            return
+        dlg.exec()
+
+    # -- 환자 설명 · 경과: 시야 시뮬레이션 · 변화 지도 · 환자용 한 장 요약 (ui/patient_views.py) --------------
+    def _patient_bits(self, row) -> tuple[str, str]:
+        """``("홍길동 · ID 1234", "1234")`` of a photo's patient ("미분류" · "" without one)."""
+        p = self.db.get_patient(row["patient_ref"]) if row["patient_ref"] else None
+        if p is None:
+            return "미분류", ""
+        return f"{p['name'] or '(이름 없음)'} · ID {p['patient_id']}", p["patient_id"] or ""
+
+    def _read_photo(self, row) -> np.ndarray | None:
+        """A photo's picture without putting it into the cache of the photos on screen."""
+        rgb = self._cache.get(row["id"])
+        if rgb is None:
+            path = self._image_path(row)
+            try:
+                rgb = imaging.load_rgb(path) if path is not None else None
+            except Exception:
+                rgb = None
+        return rgb
+
+    def _sight_parts(self, row, rgb):
+        """``(pins, camera, where the patient looks, how that was found)`` of a photo, for 시야 시뮬레이션."""
+        from .. import fieldsim
+
+        have = self._pins_of(row)
+        _circle, disc, fovea = self._marks_of(row)
+        cam = self._photo_camera(row)
+        centre, how = fieldsim.centre_of(cam, fovea=fovea, disc=disc, laterality=row["laterality"],
+                                         size=(rgb.shape[1], rgb.shape[0]))
+        return have, cam, centre, how
+
+    def _build_sight(self):
+        """``(dialog, "")`` — 이 환자의 시야 시뮬레이션 of the photo on screen and its 병변 핀 — or ``(None, why not)``."""
+        from .. import fieldsim
+        from .patient_views import SightDialog
+
+        row = self.current
+        if row is None:
+            return None, "사진을 고르세요."
+        rgb = self._load(row)
+        if rgb is None:
+            return None, "영상을 열 수 없습니다."
+        have, cam, centre, how = self._sight_parts(row, rgb)
+        if not have:
+            return None, fieldsim.NO_PINS
+        who, pid = self._patient_bits(row)
+        title = "  ·  ".join(x for x in (who, row["laterality"] or "", row["exam_date"] or "") if x)
+        stem = safe_component("_".join(x for x in (pid, row["laterality"] or "", row["exam_date"] or "") if x), "시야")
+        return SightDialog(rgb, have, cam, centre, how, title_line=title, file_stem=stem, parent=self), ""
+
+    def open_sight(self) -> None:
+        dlg, why = self._build_sight()
+        if dlg is None:
+            QMessageBox.information(self, "시야 시뮬레이션", why)
+            return
+        dlg.exec()
+
+    def _build_change_map(self, image_id: int | None = None):
+        """``(dialog, "")`` — 변화 지도 of the photo on screen (or ``image_id``) with the photos of the same eye
+        taken on other days — or ``(None, why not)``."""
+        from .patient_views import ChangeDialog, Shot
+
+        if image_id is None and self.current is None:
+            return None, "사진을 고르세요."
+        first = self.db.get_image(self.current["id"] if image_id is None else image_id)
+        if first is None:
+            return None, "사진이 삭제되었습니다. 다시 선택하세요."
+        skip = ("anterior", "disc", "glaucoma", "montage")
+        if first["modality"] in skip:
+            return None, f"{MODALITY_LABELS[first['modality']]} 사진은 비교할 수 없습니다."
+        if first["patient_ref"] is None:
+            return None, "예전 사진과 비교하려면 먼저 환자를 지정하세요."
+        eye = self._glaucoma_eye(first)
+        if eye not in ("OD", "OS"):
+            return None, "어느 눈(OD · OS)인지 모르는 사진입니다 — 정보 수정에서 눈을 정하세요."
+
+        def shot(row) -> Shot:
+            circle, disc, fovea = self._marks_of(row)
+            fov = f"{row['fov_deg']:g}°" if row["fov_deg"] else ""
+            caption = " · ".join(x for x in (fov, MODALITY_LABELS.get(row["modality"] or "", "")) if x)
+            when = f"{row['exam_date'] or ''} {row['exam_time'] or ''}".strip()
+            return Shot(row["id"], when, caption, lambda row=row: self._read_photo(row), circle, disc, fovea)
+
+        others = [r for r in self.db.images_for_patient(first["patient_ref"])
+                  if r["id"] != first["id"] and r["modality"] not in skip and self._glaucoma_eye(r) == eye
+                  and (r["exam_date"] or "") != (first["exam_date"] or "")]
+        if not others:
+            return None, f"이 환자의 {eye} 사진 중 다른 날짜에 찍은 것이 없습니다."
+        mine = shot(first)
+        shots = sorted((shot(r) for r in others), key=lambda s: (s.when, s.image_id), reverse=True)
+        start = next((i for i, s in enumerate(shots) if s.when < mine.when), 0)      # the last one before it
+        who, pid = self._patient_bits(first)
+        stem = safe_component("_".join(x for x in (pid, eye, first["exam_date"] or "") if x), "변화")
+        return ChangeDialog(mine, shots, start=start, title_line=f"{who}  ·  {eye}", file_stem=stem, parent=self), ""
+
+    def open_change_map(self, image_id: int | None = None) -> None:
+        dlg, why = self._build_change_map(image_id)
+        if dlg is None:
+            QMessageBox.information(self, "변화 지도", why)
+            return
+        dlg.exec()
+
+    def _build_handout(self, image_id: int | None = None):
+        """``(dialog, "")`` — 환자용 한 장 요약 of the photo on screen (or ``image_id``): with the other eye's
+        photo of the same day and, where the photo has 병변 핀, where they lie in what the patient sees — or
+        ``(None, why not)``."""
+        from .. import fieldsim, handout
+        from .. import glaucoma as G
+        from .patient_views import HandoutDialog, pinned_photo
+
+        if image_id is None and self.current is None:
+            return None, "사진을 고르세요."
+        row = self.db.get_image(self.current["id"] if image_id is None else image_id)
+        if row is None:
+            return None, "사진이 삭제되었습니다. 다시 선택하세요."
+        rgb = self._read_photo(row)
+        if rgb is None:
+            return None, "영상을 열 수 없습니다."
+
+        def caption(r) -> str:
+            kind = MODALITY_LABELS.get(r["modality"] or "", "")
+            return " · ".join(x for x in (r["laterality"] or "", r["exam_date"] or "", kind) if x)
+
+        sight = None
+        have, cam, centre, _how = self._sight_parts(row, rgb)
+        shown = imaging.downscale(rgb, 1400)
+        if have:
+            found = fieldsim.spots(have, cam, centre, width=rgb.shape[1])
+            if found:
+                sight = (fieldsim.simulate(G.sample_scene(600), found), fieldsim.describe(found))
+            shown = pinned_photo(rgb, have, centre, shown.shape[0])
+        photos = [(shown, caption(row))]
+        other = self._fellow_row(row, self._glaucoma_eye(row))
+        if other is not None and (other["exam_date"] or "") == (row["exam_date"] or ""):
+            other_rgb = self._read_photo(other)
+            if other_rgb is not None:
+                photos.append((imaging.downscale(other_rgb, 1400), caption(other)))
+        who, pid = self._patient_bits(row)
+        stem = safe_component(handout.file_stem(pid, row["exam_date"]), "설명자료")
+        dlg = HandoutDialog(who, f"검사일 {row['exam_date'] or '-'}", photos, sight=sight, file_stem=stem, parent=self)
+        return dlg, ""
+
+    def open_handout(self, image_id: int | None = None) -> None:
+        dlg, why = self._build_handout(image_id)
+        if dlg is None:
+            QMessageBox.information(self, "환자용 한 장 요약", why)
             return
         dlg.exec()
 

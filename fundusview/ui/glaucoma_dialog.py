@@ -85,6 +85,10 @@ class _View(QWidget):
         self._img = to_qimage(rgb) if rgb is not None else None
         self.update()
 
+    def set_image(self, img: QImage | None) -> None:
+        self._img = img
+        self.update()
+
     def has_image(self) -> bool:
         return self._img is not None
 
