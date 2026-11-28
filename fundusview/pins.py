@@ -66,6 +66,7 @@ def to_meta(meta: dict, pins: list[Pin]) -> dict:
 @dataclass
 class Where:
     hour: int | None = None           # 1 … 12, None at the centre
+    bearing: float | None = None      # the same direction, not rounded: degrees clockwise from 12 (None: centre)
     about: str = ""                   # what the hour is counted round: "fovea" · "expected" · "image"
     disc_mm: float | None = None      # from the disc centre, along the retina
     disc_deg: float | None = None
@@ -136,6 +137,8 @@ def where(x: float, y: float, cam: placement.Camera | None, *, fovea=None, disc=
         out.hour = None if central and out.about != "image" else _hour(dx, dy)
         if math.hypot(dx, dy) < 1e-6:
             out.hour = None
+        else:
+            out.bearing = math.degrees(math.atan2(dx, -dy)) % 360.0
     return out
 
 

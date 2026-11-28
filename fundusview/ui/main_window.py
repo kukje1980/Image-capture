@@ -495,6 +495,9 @@ class MainWindow(QMainWindow):
         m.addAction("시간별 비교 (이 눈의 유두 사진 여러 장)…", lambda: self.open_glaucoma(start="timeline"))
         m.addAction("몽타주 만들기 (고른 사진)…", lambda: self.open_montage())
         m.addAction(A["print"])
+        self.act_sheet = m.addAction("환자용 요약 (한 장)…", lambda: self.open_patient_sheet())
+        self.act_sheet.setShortcut(QKeySequence("Ctrl+Shift+P"))
+        self.act_sheet.setStatusTip(keys("환자가 가져갈 한 장 — 환자의 사진과 표시한 곳, 시야 그림, 질환 설명, 의사 소견 (Ctrl+Shift+P)"))
         m.addSeparator()
         sub = m.addMenu("DICOM (PACS)")              # dicomnet.py: 설정 → DICOM
         sub.addAction("PACS로 전송…", lambda: self.dicom_send("ask"))     # (보낼 범위 is chosen in the window)
@@ -5786,6 +5789,88 @@ class MainWindow(QMainWindow):
                                        lambda row=row: self._glaucoma_shot(row),
                                        source_version=self._analysis_source_version(row)))
         return shots
+
+    # -- 환자용 요약 (한 장): ui/patient_sheet.py ---------------------------------------------------------
+    SHEET_SIDE = 1500        # the photos on the page, at most this many pixels across
+
+    def _sheet_photo(self, row):
+        """A photo for the page (reduced, its pins with it) and its ``sight.Spot`` list — None unread."""
+        from .. import sight
+        from ..glaucoma import fit as glaucoma_fit
+        from .patient_sheet import EyePhoto
+
+        shot_rgb = self._cache.get(row["id"])
+        if shot_rgb is None:
+            path = self._image_path(row)
+            try:
+                shot_rgb = imaging.load_rgb(path) if path is not None else None
+            except Exception:
+                shot_rgb = None
+        if shot_rgb is None:
+            return None
+        k = min(1.0, self.SHEET_SIDE / max(shot_rgb.shape[:2]))
+        small = glaucoma_fit(shot_rgb, self.SHEET_SIDE)
+        eye = self._glaucoma_eye(row)
+        marks, spots = [], []
+        for n, pin in enumerate(self._pins_of(row), 1):
+            said = self._pin_where(row, pin)
+            text = f"{said.short} — {pin.note}" if pin.note else said.short
+            marks.append((pin.x * k, pin.y * k, text))
+            spot = sight.spot_of(said, str(n))
+            if spot is not None:
+                spots.append(spot)
+        kind = MODALITY_LABELS.get(row["modality"] or "", "")
+        caption = " · ".join(x for x in (row["exam_date"] or "", kind) if x)
+        return EyePhoto(eye, small, marks, caption), spots
+
+    def _sheet_device(self, row) -> str:
+        """The sentence under the photos: what they were taken with, and how wide."""
+        prof = get_profile(row["profile"])
+        name = row["device"] or prof.name
+        fov = row["fov_deg"] or prof.fov_deg
+        wide = bool(fov) and ((row["fov_type"] or prof.fov_type) == "internal") and fov >= 100
+        if wide:
+            return (f"촬영 장비: {name} — 초광각 안저카메라로, 한 번의 촬영에 망막의 약 {fov:g}° 범위(안구 중심각)를 "
+                    "담았습니다. 일반 안저사진(약 45°)보다 주변부까지 넓게 확인할 수 있습니다.")
+        return f"촬영 장비: {name}" + (f" · 화각 {fov:g}°" if fov else "")
+
+    def build_patient_sheet(self):
+        """``(dialog, "")`` for the photo on screen, or ``(None, why not)``."""
+        from .. import fellow
+        from .patient_sheet import PatientSheetDialog, Sheet
+
+        row = self.current
+        if row is None:
+            return None, "사진을 고르세요."
+        got = self._sheet_photo(row)
+        if got is None:
+            return None, "영상을 열 수 없습니다."
+        mine, spots = got
+        p = self.db.get_patient(row["patient_ref"]) if row["patient_ref"] else None
+        who = "  ·  ".join(x for x in ((p["name"] or "") if p else "", (p["patient_id"] or "") if p else "",
+                                       (p["birth_date"] or "") if p else "") if x)
+        base = Sheet(clinic=self.settings.dicom_institution or "", patient=who, exam=row["exam_date"] or "",
+                     photos=[mine], device=self._sheet_device(row))
+        pair = None
+        if p is not None and mine.eye in ("OD", "OS"):
+            other = fellow.pick(self.db.images_for_patient(row["patient_ref"]), mine.eye, row["exam_date"] or "",
+                                eye_of=self._glaucoma_eye,
+                                usable=lambda r: (r["id"] != row["id"] and r["modality"] not in
+                                                  ("anterior", "disc", "glaucoma", "montage")))
+            theirs = self._sheet_photo(other) if other is not None else None
+            if theirs is not None:
+                pair = sorted([mine, theirs[0]], key=lambda ph: ph.eye != "OD")      # OD on the left
+        stem = safe_component("_".join(x for x in ((p["patient_id"] or "") if p else "", "안저검사안내",
+                                                   row["exam_date"] or "") if x), "안저검사안내")
+        dlg = PatientSheetDialog(base, pair, {mine.eye or "": spots}, file_stem=stem, parent=self._dialog_parent())
+        return dlg, ""
+
+    def open_patient_sheet(self) -> None:
+        dlg, why = self.build_patient_sheet()
+        if dlg is None:
+            self.lbl_status.setText(f"환자용 요약을 만들 수 없습니다 — {why}")
+            return
+        dlg.exec()
 
     def _fellow_row(self, first, eye: str | None):
         """The photo of the patient's other eye that OD · OS 비교 shows next to ``first``: one with its disc
