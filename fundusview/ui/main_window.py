@@ -57,7 +57,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem, QTabWidget, QToolBar, QToolButton, QVBoxLayout, QWidget,
 )
 
-from .. import APP_TITLE, __version__, autosetup, discpair, imaging, measure, placement
+from .. import APP_TITLE, __version__, autosetup, discpair, imaging, measure, pins, placement
 from .. import projection as proj
 from ..config import Settings
 from ..db import Database
@@ -797,6 +797,8 @@ class MainWindow(QMainWindow):
         self.nav2d.stepped.connect(self._step)
         self.view2d.discPicked.connect(self._on_disc_picked)
         self.view2d.foveaPicked.connect(self._on_fovea_picked)
+        self.view2d.pinPlaced.connect(self._add_pin)             # 병변 핀 (pins.py)
+        self.view2d.pinPicked.connect(self._remove_pin)
         self.view2d.measured.connect(self._on_measured)
         self.view2d.hovered.connect(lambda t: self.lbl_hover.setText(t))
         self.view2d.clicked.connect(self._stop_slideshow)
@@ -1204,6 +1206,15 @@ class MainWindow(QMainWindow):
         self.eye3d.dblclick_leaves = True     # a double click: Simple (the start view: 0 · [처음 시점])
         self.eye3d.activated.connect(self._to_simple)
         self.eye3d.depthWheel.connect(self._on_depth_wheel)
+        self.eye3d.pinPlaced.connect(self._add_pin)              # 병변 핀: a click on the retina (b_pin3d)
+        self.eye3d.pinMissed.connect(lambda: self._where.say("핀은 사진이 있는 망막 안쪽에 꽂습니다 — 안구를 열거나 "
+                                                             "내부에서 누르세요", hold=2.0))
+        self.b_pin3d = QPushButton("병변 핀")
+        self.b_pin3d.setObjectName("toggle")
+        self.b_pin3d.setCheckable(True)
+        self.b_pin3d.setToolTip("켜고 망막을 누르면 그곳에 핀이 꽂힙니다 — 시계 방향과 유두에서의 거리가 붙고, 2D 사진에도 "
+                                "같은 핀이 보입니다 (지우기: 아래 툴바의 병변 핀 ▾)")
+        self.b_pin3d.toggled.connect(self._set_pin_mode3d)
         self._depth_wheel = 0.0               # (the part of a slider step a fine wheel has not made up yet)
         self.lbl_zoom3d = QLabel("배율 ×1.0", bar)     # (not shown: owned by the bar, so it goes with the window)
         self.lbl_zoom3d.hide()
@@ -1230,6 +1241,7 @@ class MainWindow(QMainWindow):
         top.addWidget(self.seg_detail)
         top.addWidget(self.seg_mode)
         top.addStretch(1)
+        top.addWidget(self.b_pin3d)
         top.addWidget(self.b_scan)
         top.addWidget(self.b_full3d)
         top.addWidget(self.b_inspector)
@@ -3456,6 +3468,7 @@ class MainWindow(QMainWindow):
             view.geometry = None
             view.set_overlays(None, None, None)
         self.eye3d.set_image(None)
+        self.eye3d.set_pins([])
         self.eye3d.set_landmarks(None, None, None, None)
         self.eye3d.field_from_cover = False
         self.scan_photo.set_image(None)
@@ -3520,6 +3533,94 @@ class MainWindow(QMainWindow):
         if self._tab() == "all":
             self._fill_overview(multi=not self._multi_lock)
         self._preload_timer.start(180)        # once the browsing pauses: read the neighbours ahead
+
+    # -- 병변 핀 (pins.py): places marked on the photo — "11시 · 유두에서 9 mm" — kept with the photo -----
+    def _pins_of(self, row) -> list:
+        try:
+            return pins.from_meta(json.loads(row["meta_json"] or "{}")) if row is not None else []
+        except (TypeError, ValueError):
+            return []
+
+    def _pin_where(self, row, pin) -> "pins.Where":
+        circle, disc, fovea = self._marks_of(row)
+        return pins.where(pin.x, pin.y, self._photo_camera(row), fovea=fovea, disc=disc, laterality=row["laterality"])
+
+    def _pin_texts(self, row) -> list[tuple[float, float, str]]:
+        """The photo's pins as the views show them: pixel, and "11시 · 유두에서 9.2 mm" (+ the note)."""
+        out = []
+        for pin in self._pins_of(row):
+            text = self._pin_where(row, pin).short
+            out.append((pin.x, pin.y, f"{text} — {pin.note}" if pin.note else text))
+        return out
+
+    def _push_pins(self) -> None:
+        """The pins of the photo on screen: on the big 2D photo and on the 3D eye (numbered alike)."""
+        row = self.current
+        shown = self._pin_texts(row) if row is not None else []
+        self.view2d.set_pins(shown)
+        self.eye3d.set_pins([(x, y, f"{n}  {text}") for n, (x, y, text) in enumerate(shown, 1)])
+
+    def _store_pins(self, row, new: list) -> None:
+        fresh = self.db.get_image(row["id"])
+        if fresh is None:
+            return
+        meta = pins.to_meta(json.loads(fresh["meta_json"] or "{}"), new)
+        self.db.update_image(row["id"], meta_json=meta)
+        if self.current is not None and self.current["id"] == row["id"]:
+            self.current = self.db.get_image(row["id"])
+            self._push_pins()
+
+    def _add_pin(self, x: float, y: float) -> None:
+        row = self.current
+        if row is None:
+            return
+        have = self._pins_of(row)
+        if len(have) >= pins.MAX_PINS:
+            self.lbl_status.setText(f"한 사진에 핀은 {pins.MAX_PINS}개까지입니다")
+            return
+        pin = pins.Pin(float(x), float(y))
+        said = self._pin_where(row, pin)
+        if not said.inside:
+            self.lbl_status.setText("사진의 시야(원) 밖에는 핀을 꽂을 수 없습니다")
+            return
+        self._store_pins(row, have + [pin])
+        self.lbl_status.setText(f"핀 {len(have) + 1}: {said.long}")
+
+    def _remove_pin(self, index: int) -> None:
+        row = self.current
+        have = self._pins_of(row) if row is not None else []
+        if 0 <= index < len(have):
+            del have[index]
+            self._store_pins(row, have)
+            self.lbl_status.setText(f"핀 {index + 1}을 지웠습니다")
+
+    def _pin_command(self, key: str) -> None:
+        """병변 핀 ▾: 마지막 핀에 메모 · 마지막 핀 지우기 · 이 사진의 핀 모두 지우기."""
+        row = self.current
+        have = self._pins_of(row) if row is not None else []
+        if not have:
+            self.lbl_status.setText("이 사진에는 핀이 없습니다 — 병변 핀을 누르고 사진을 클릭하세요")
+            return
+        if key == "pin_undo":
+            self._remove_pin(len(have) - 1)
+        elif key == "pin_clear":
+            self._store_pins(row, [])
+            self.lbl_status.setText("이 사진의 핀을 모두 지웠습니다")
+        elif key == "pin_note":
+            text = self._ask_pin_note(have[-1].note)
+            if text is not None:
+                have[-1].note = text.strip()[:pins.NOTE_MAX]
+                self._store_pins(row, have)
+
+    def _ask_pin_note(self, old: str = "") -> str | None:
+        text, ok = QInputDialog.getText(self, "병변 핀 메모", "마지막 핀에 붙일 메모 (예: 열공, 격자변성, 레이저 예정)",
+                                        text=old)
+        return text if ok else None
+
+    def _set_pin_mode3d(self, on: bool) -> None:
+        self.eye3d.pin_mode = bool(on)
+        if on:
+            self._where.say("망막을 누르면 핀이 꽂힙니다", hold=1.5)
 
     @staticmethod
     def _marks_of(row) -> tuple:
@@ -3847,6 +3948,8 @@ class MainWindow(QMainWindow):
             self._step_shown(-1 if key == "prev" else 1)
         elif key == "slideshow":
             self._stop_slideshow() if self._slide_timer.isActive() else self._start_slideshow()
+        elif key in ("pin_undo", "pin_clear", "pin_note"):
+            self._pin_command(key)
         elif key == "annot_undo":
             v.undo_annotation()
         elif key == "annot_clear":
@@ -4323,6 +4426,7 @@ class MainWindow(QMainWindow):
                 projection=self.c_proj.currentData(), viewpoint=prof.viewpoint,
                 radial_c=prof.radial_c) if circle and (row["modality"] not in ("montage", "disc", "glaucoma")
                                                       or self._montage_definition(row)) else None
+        self._push_pins()
         self.lbl_3d.setText(self._placement_text())
         both = row is not None and row["disc_x"] is not None and row["fovea_x"] is not None
         self.b_fit_fov.setEnabled(bool(both))

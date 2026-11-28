@@ -635,3 +635,44 @@ def test_3d_view_and_its_full_screen(tmp_path, demo_dir, import_and_wait):
     finally:
         w.close()
         db.close()
+
+
+def test_the_photos_pins_are_drawn_on_the_retina_and_hidden_behind_the_coats(eye):
+    """병변 핀: a pin of the photo is a pink dot where its pixel is on the retina — seen with the eye open
+    or from inside, not through the closed eye's coats."""
+    v, app, errors = eye
+    circle = v._marks[2]
+    try:
+        v.set_pins([(circle[0], circle[1], "1  황반 중심")])          # the middle of the photo: the posterior pole
+        v.set_detail("detailed")
+        v.reset_view()
+        v.set_mode("inside")
+        v.update()
+        _settle(app, 0.2)
+        assert not errors, errors
+        img = v.grabFramebuffer()
+        pts = v.pin_points()
+        assert len(pts) == 1
+        # looking at the posterior pole from inside: the dot is in the middle of the picture
+        cx, cy = img.width() // 2, img.height() // 2
+        pink = 0
+        for dx in range(-14, 15):
+            for dy in range(-14, 15):
+                r, g, b = img.pixelColor(cx + dx, cy + dy).getRgb()[:3]
+                pink += r > 200 and 60 < g < 140 and 100 < b < 190
+        assert pink > 20, pink
+        # the closed eye from the front: the retina is behind the coats — no dot
+        v.set_mode("outside")
+        v.cut = 1.0
+        v.reset_view()
+        v.update()
+        _settle(app, 0.2)
+        img = v.grabFramebuffer()
+        pink = 0
+        for x in range(0, img.width(), 2):
+            for y in range(0, img.height(), 2):
+                r, g, b = img.pixelColor(x, y).getRgb()[:3]
+                pink += r > 235 and 80 < g < 105 and 125 < b < 150
+        assert pink < 4, pink
+    finally:
+        v.set_pins([])

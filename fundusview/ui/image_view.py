@@ -49,9 +49,10 @@ from .widgets import RoundCorners
 TOOLS = {
     "pan": "이동", "zoom": "확대/축소", "loupe": "돋보기", "length": "길이 측정", "angle": "각도 측정",
     "cd_length": "C/D 비 (길이)", "cd_area": "C/D 비 (면적)", "text": "글자 입력", "arrow": "화살표+글자",
-    "profile": "회색조 분석",
+    "profile": "회색조 분석", "pin": "병변 핀",
 }
 TOOL_HINTS = {
+    "pin": "클릭한 곳에 핀 — 시계 방향과 유두에서의 거리가 붙습니다 · 핀을 다시 클릭하면 지워집니다",
     "pan": "드래그: 이동 · 휠: 확대·축소 · 더블클릭: 돋보기 켜기·끄기 · 0: 화면 맞춤",
     "zoom": "휠: 확대·축소 (커서 위치 중심) · 드래그: 이동 · 더블클릭: 돋보기 켜기·끄기 · 0: 화면 맞춤",
     "loupe": "누르고 있는 동안 돋보기 · 누른 채 휠: 배율",
@@ -168,6 +169,8 @@ class ImageView(QGraphicsView):
     clicked = Signal()           # any left press (multi-view selection, slideshow stop)
     activated = Signal()         # double click
     stepped = Signal(int)        # ← (-1) / → (+1) while ``step_keys``: the photo before / after
+    pinPlaced = Signal(float, float)   # 병변 핀: a click on the photo (image pixel)
+    pinPicked = Signal(int)            # … on the pin of that index
     menuOpening = Signal(object)  # the right-click QMenu, still empty: the owner puts its own entries first
 
     def __init__(self, parent=None):
@@ -215,6 +218,8 @@ class ImageView(QGraphicsView):
         self.tool = "zoom"
         self._drag: dict | None = None
         self._annots: list[list[QGraphicsItem]] = []   # one entry per finished annotation
+        self._pins: list[tuple[float, float, str]] = []   # 병변 핀 (pins.py): pixel and what is written by it
+        self._pin_items: list[QGraphicsItem] = []
         self._labels: list[QGraphicsSimpleTextItem] = []
         self._work: list[QGraphicsItem] = []           # in-progress items
         self._pts: list[QPointF] = []
@@ -298,6 +303,7 @@ class ImageView(QGraphicsView):
         if not keep_view:
             self.stop_motion()
             self.clear_annotations()
+            self.set_pins([])                 # (another photo: its own pins are given after it)
             self._rot, self._fh, self._fv = 0, False, False
         self._rgb = rgb
         if rgb is None:
@@ -675,6 +681,44 @@ class ImageView(QGraphicsView):
                 self._labels.remove(it)
         self._work, self._pts, self._cd, self._rubber = [], [], {}, None
 
+    # -- 병변 핀: they stay with the photo (not cleared with the measurements) -----------------------------
+    PIN_COLOR = QColor(255, 92, 138)
+
+    def _pin_radius(self) -> float:
+        return max(5.0, self._side / 130.0)
+
+    def pin_at(self, x: float, y: float) -> int | None:
+        """The pin under the image point (the nearest within a pin's size and a half), or None."""
+        best, at = None, self._pin_radius() * 1.5
+        for i, (px, py, _text) in enumerate(self._pins):
+            d = math.hypot(px - x, py - y)
+            if d <= at:
+                best, at = i, d
+        return best
+
+    def set_pins(self, pins) -> None:
+        """Show these pins: ``[(x, y, text), …]`` — each a numbered dot with ``text`` beside it."""
+        for it in self._pin_items:
+            if it.scene():
+                self.scene().removeItem(it)
+            if it in self._labels:
+                self._labels.remove(it)
+        self._pin_items = []
+        self._pins = [(float(x), float(y), str(text)) for x, y, text in (pins or [])] if self.has_image() else []
+        r = self._pin_radius()
+        for n, (x, y, text) in enumerate(self._pins, 1):
+            halo = QGraphicsEllipseItem(x - r * 1.35, y - r * 1.35, 2.7 * r, 2.7 * r)
+            halo.setPen(QPen(QColor(0, 0, 0, 170), max(1.0, r / 4)))
+            halo.setBrush(Qt.BrushStyle.NoBrush)
+            dot = QGraphicsEllipseItem(x - r, y - r, 2 * r, 2 * r)
+            dot.setPen(QPen(QColor(255, 255, 255), max(1.5, r / 4)))
+            dot.setBrush(QBrush(self.PIN_COLOR))
+            for it in (halo, dot):
+                it.setZValue(18)
+                self.scene().addItem(it)
+            lab = self._label(f"{n}  {text}" if text else str(n), QPointF(x + r * 1.6, y - r * 1.2), QColor(255, 255, 255))
+            self._pin_items += [halo, dot, lab]
+
     def undo_annotation(self) -> None:
         if self._work:
             self._cancel_work()
@@ -881,6 +925,12 @@ class ImageView(QGraphicsView):
             text = self._ask_text("글자 입력")
             if text:
                 self._finish([self._label(text, sp)])
+        elif t == "pin" and self.has_image() and self._pix.sceneBoundingRect().contains(sp):
+            i = self.pin_at(sp.x(), sp.y())
+            if i is None:
+                self.pinPlaced.emit(sp.x(), sp.y())
+            else:
+                self.pinPicked.emit(i)
 
     def mouseMoveEvent(self, e):
         pos = e.position().toPoint()
@@ -942,7 +992,7 @@ class ImageView(QGraphicsView):
         if self.tool == "cd_area" and len(self._pts) >= 3:
             self._close_polygon()
             return
-        if self.tool in ("angle", "cd_area", "length", "arrow", "cd_length", "text"):
+        if self.tool in ("angle", "cd_area", "length", "arrow", "cd_length", "text", "pin"):
             return
         if self.dblclick_leaves and self.tool in ("zoom", "pan"):
             pass                                                         # (the window leaves the view)
