@@ -123,7 +123,8 @@ class Settings:
     # (depth_bar.FloatBar.state(): "" as at first, "h", "v:0.250:0.900" — fractions of the free room)
     depth_bar3d: str = ""
     zoom_bar3d: str = ""
-    walk_click3d: bool = True
+    walk_click3d: bool = True       # (0.13.17: not used — the wheel always zooms; kept so old settings load)
+    bars_movable3d: bool = False    # 3D 막대 옮기기: 깊이 · 배율 막대 dragged / laid down by hand (off: fixed)
     # Motion and 3D effects (보기 → 부드러운 움직임; 3D 안구: 입체 조명, 자동 회전)
     smooth_motion: bool = True
     relief3d: bool = False          # 3D 입체 조명 (off: the photo keeps its own brightness, as taken)
@@ -133,7 +134,7 @@ class Settings:
     surface3d: bool = False         # 3D 망막 입체: 표면 높낮이 (the retina raised by its relief, relief.py;
                                     # off: the photo lies smooth on the retina, as taken)
     surface_height3d: int = 45      # … 높이 0 … 100
-    simple3d: bool = False          # 3D 단순하게 보기 (coats, iris, lens and nerve plain)
+    simple3d: bool = False          # (0.13.17: not used — 간단히 | 자세히 is the one choice; kept so old settings load)
     slit_dir3d: str = "down"        # 슬릿 스캔: "down", "up", "right", "left" or "all" (상하좌우)
     autofind3d: bool = True         # 3D 사진: the macula and disc found automatically are used (off: only marked ones)
     # the look this settings file was last used with: a newer one may adopt new defaults once
@@ -187,6 +188,10 @@ class Settings:
     inbox_dir: str = ""
     auto_detect: bool = True
     ignored_auto_folders: list[str] = field(default_factory=list)  # removed by the user: never re-added
+    # 설정 → 화면 · 툴바 (0.13.17): Simple is the view of several photos — [Multi] and 16장 보기 only when
+    # switched on; the 영상 처리 buttons taken off the toolbar (their keys, toolbars.PROCBAR)
+    multi_view: bool = False
+    hidden_tools: list[str] = field(default_factory=list)
     # Sharing with other computers (share.py, 설정 → 공유): "off" — this computer only; "server" — this
     # computer holds the database and the photos and answers the others; "client" — the library of
     # the server at ``server_url`` is shown in place of this computer's own

@@ -67,10 +67,19 @@ def _open_library(settings, gui: bool):
 
     from .db import Database
 
+    from . import dbadmin
+
     path = settings.library / "fundus.db"
     try:
         settings.library.mkdir(parents=True, exist_ok=True)
-        return Database(path)
+        kept, why = dbadmin.apply_pending(settings.library, path)   # 되돌리기 asked for before the last exit
+        db = Database(path)
+        if kept is not None:
+            db.log("info", f"데이터베이스를 백업으로 되돌렸습니다 — 전의 파일: {kept.name}")
+        elif why:
+            db.log("error", f"데이터베이스를 백업으로 되돌리지 못했습니다: {why}")
+        dbadmin.auto_backup(db, settings.library)      # the day's first start (never raises)
+        return db
     except (sqlite3.Error, OSError) as exc:
         text = (f"라이브러리를 열 수 없습니다.\n{path}\n{exc}\n\n"
                 "데이터베이스 파일이 손상되었거나 다른 프로그램의 파일입니다.")
@@ -83,12 +92,25 @@ def _open_library(settings, gui: bool):
             return None
     from PySide6.QtWidgets import QMessageBox
 
+    # the newest backup that can be read (dbadmin.py: one is made by itself every day)
+    good = next((b for b in dbadmin.list_backups(settings.library) if dbadmin.sound(b.path)), None)
+    back_text = (f"\n\n가장 최근 백업({good.label})으로 되돌릴 수 있습니다 — 그 뒤에 한 환자 지정 · 수정은 "
+                 "다시 해야 하지만 사진 파일은 그대로입니다." if good else "")
     box = QMessageBox(QMessageBox.Icon.Critical, APP_TITLE,
-                      text + "\n\n손상된 파일을 옆에 보관하고 빈 라이브러리로 시작할 수 있습니다. "
-                             "사진 파일은 그대로 있으며, 사진 폴더를 다시 가져오면 목록이 만들어집니다.")
-    fresh = box.addButton("보관하고 새로 시작", QMessageBox.ButtonRole.AcceptRole)
+                      text + back_text + "\n\n손상된 파일을 옆에 보관하고 빈 라이브러리로 시작할 수도 있습니다. "
+                                         "사진 파일은 그대로 있으며, 사진 폴더를 다시 가져오면 목록이 만들어집니다.")
+    back = box.addButton(f"백업으로 되돌리기 ({good.label})", QMessageBox.ButtonRole.AcceptRole) if good else None
+    fresh = box.addButton("보관하고 새로 시작", QMessageBox.ButtonRole.DestructiveRole if good
+                          else QMessageBox.ButtonRole.AcceptRole)
     box.addButton("끝내기", QMessageBox.ButtonRole.RejectRole)
     box.exec()
+    if back is not None and box.clickedButton() is back:
+        try:
+            dbadmin.restore(path, good.path)           # (the damaged file is kept beside it)
+            return Database(path)
+        except (sqlite3.Error, OSError, ValueError) as exc:
+            QMessageBox.critical(None, APP_TITLE, f"백업으로 되돌리지 못했습니다.\n{exc}")
+            return None
     if box.clickedButton() is not fresh:
         return None
     stamp = time.strftime("%Y%m%d-%H%M%S")

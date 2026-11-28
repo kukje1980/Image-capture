@@ -49,6 +49,7 @@ class FloatBar(QWidget):
         self.slider = slider
         self.checkable = checkable
         self.checked = False
+        self.movable = self.MOVABLE
         self.orient = self.ORIENT
         self.max_text, self.min_text = "", ""
         self._pos: tuple[float, float] | None = None   # where it was put (fractions of the free room); None: home
@@ -163,6 +164,13 @@ class FloatBar(QWidget):
         self._remember()
         self.update()
 
+    def set_movable(self, on: bool) -> None:
+        """막대 옮기기: dragged and laid down / stood up by hand (off: it stays where it is put)."""
+        self.movable = bool(on) and self.MOVABLE
+        tip = getattr(self, "TIP", "")
+        if tip:
+            self.setToolTip(tip + (MOVE_TIP if self.movable else ""))
+
     def state(self) -> str:
         """Orientation and place, to remember: ``""`` as at first, else ``"h"`` or ``"v:0.250:0.900"``."""
         if self._pos is None:
@@ -195,7 +203,7 @@ class FloatBar(QWidget):
             self.setCursor(Qt.CursorShape.PointingHandCursor)
         elif self._on_track(pos):
             self.setCursor(Qt.CursorShape.SizeVerCursor if self.vertical() else Qt.CursorShape.SizeHorCursor)
-        elif self.MOVABLE:
+        elif self.movable:
             self.setCursor(Qt.CursorShape.OpenHandCursor)
         else:
             self.unsetCursor()
@@ -211,7 +219,7 @@ class FloatBar(QWidget):
                 self._drag = True
                 self._before = self.slider.value()
                 self._set_from_pos(self._along(pos))
-            elif self.MOVABLE:
+            elif self.movable:
                 self._move, self._moved = pos.toPoint(), False
                 self.setCursor(Qt.CursorShape.ClosedHandCursor)
             self.update()
@@ -243,7 +251,7 @@ class FloatBar(QWidget):
     def mouseDoubleClickEvent(self, ev) -> None:
         """Lie down ↔ stand up (not the eye's double click, which resets the view)."""
         check = self._check_rect()
-        if (self.MOVABLE and ev.button() == Qt.MouseButton.LeftButton
+        if (self.movable and ev.button() == Qt.MouseButton.LeftButton
                 and not (check is not None and check.contains(ev.position()))):
             if self._before is not None:               # (the first press was on the track: as it was)
                 self.slider.setValue(self._before)
@@ -376,7 +384,7 @@ class DepthBar(FloatBar):
     (or 절반 for 세로 단면). At first standing at the eye's right edge."""
     TITLE = "깊이"
     TIP = ("깊이 막대 — 끌어서 안구를 자르는 깊이를 정합니다 (닫힘 = 닫힌 안구, 반대쪽으로 갈수록 깊게) · "
-           "막대 위에서 휠로도 조절" + MOVE_TIP)
+           "막대 위에서 휠로도 조절")
     FILL_FROM_MAX = True
 
     def __init__(self, slider: QSlider, eye: QWidget, checkable: bool = False):
@@ -424,8 +432,7 @@ class ZoomBar(FloatBar):
     """배율 막대: the magnification of the 3D eye (the slider is 100 · log2 of it). At first lying at the
     eye's top left."""
     TITLE = "배율"
-    TIP = ("배율 막대 — 끌어서 확대 · 축소합니다 (화면 가운데를 중심으로) · 막대 위에서 휠로도 조절"
-           + MOVE_TIP)
+    TIP = ("배율 막대 — 끌어서 확대 · 축소합니다 (화면 가운데를 중심으로) · 막대 위에서 휠로도 조절")
     ORIENT = "h"
     STEP = 12
 

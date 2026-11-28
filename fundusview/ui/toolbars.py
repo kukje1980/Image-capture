@@ -111,7 +111,10 @@ PROCESSING = (
 )
 
 # in the 영상 처리 menu (and the keys: wheel · drag · Delete) but not on the toolbar — 0.13.9
-PROCBAR_HIDDEN = ("tool:zoom", "slideshow", "histogram", "tool:pan", "tool:loupe", "tool:profile", "annot_undo")
+# (C/D: 0.13.17 — measured in Glaucoma → 디스크 C/D, by length and by area; not in the menu either)
+PROCBAR_HIDDEN = ("tool:zoom", "slideshow", "histogram", "tool:pan", "tool:loupe", "tool:profile", "annot_undo",
+                  "tool:cd_length")
+MENU_HIDDEN = ("tool:cd_length",)
 # the image processing toolbar, left to right
 PROCBAR = tuple(spec for spec in PROCESSING if spec is None or spec[0] not in PROCBAR_HIDDEN)
 

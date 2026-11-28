@@ -42,7 +42,9 @@ def test_right_click_on_a_cell_offers_3d_montage_glaucoma(tmp_path, demo_dir, im
         texts = list(acts)
         assert texts[0] == "3D — 이 사진" and "3D — 화면의 사진 모두 (2장)" in texts
         assert acts["Montage — 화면의 사진 2장…"].isEnabled()
-        assert "Glaucoma — 녹내장 분석…" in texts and "Detail — 크게 보기" in texts
+        assert "녹내장 분석…" in texts and "Detail — 크게 보기" in texts
+        # one entry each (0.13.17): no "(② 사진과)" · "(다른 한 장과)" variants
+        assert "스테레오 보기…" in texts and "시간별 비교…" in texts and not any("(다른" in t or "②" in t for t in texts)
         assert "화면에 맞춤" in texts                                           # the photo's own entries follow
 
         opened = []
@@ -51,10 +53,8 @@ def test_right_click_on_a_cell_offers_3d_montage_glaucoma(tmp_path, demo_dir, im
         other.view._context_menu(QPoint(0, 0), QPointF(5, 5))
         acts = {a.text(): a for a in menus[-1].actions() if a.text()}
         acts["Montage — 화면의 사진 2장…"].trigger()
-        acts["Glaucoma — 녹내장 분석…"].trigger()
-        acts["Glaucoma — 다른 한 장과 함께 (스테레오 · 경과)…"].trigger()
-        first = next(c.image_id for c in cells if c is not other)
-        assert opened == ["montage", ("glaucoma", ()), ("glaucoma", (first,))]
+        acts["녹내장 분석…"].trigger()                    # this photo (a same-eye pick comes along by itself)
+        assert opened == ["montage", ("glaucoma", ())]
 
         acts["3D — 화면의 사진 모두 (2장)"].trigger()                            # both on 3D eyes
         app.processEvents()
@@ -76,5 +76,22 @@ def test_right_click_on_a_cell_offers_3d_montage_glaucoma(tmp_path, demo_dir, im
         assert menus[-1].actions()[0].text().startswith("여기를 시신경 유두로")
         w.show_simple()
         app.processEvents()
+
+        # the photo list's menu: 녹내장 분석… on every photo — one photo is enough (no ② photo needed), and
+        # it is that photo that is analysed (an OD | OS pair on screen is not taken as a pair)
+        shown = []
+        opened.clear()
+        cur, away = w.current["id"], next(i for i in w._picks if i != w.current["id"])
+        monkeypatch.setattr(w, "open_glaucoma", lambda *a, **k: opened.append(k))
+        for iid in (cur, away):
+            menu = w._build_photo_menu(iid)
+            shown.append([x.text() for x in menu.actions()])
+            next(x for x in menu.actions() if x.text() == "녹내장 분석…").trigger()
+            assert shown[-1].count("녹내장 분석…") == 1 and not any("(" in t and "사진과" in t for t in shown[-1])
+        assert "스테레오 보기…" in shown[-1] and "스테레오 보기…" not in shown[-2]     # (that needs two)
+        assert opened == [{"first_id": cur}, {"first_id": away}]
+        dlg, why = w._build_glaucoma(first_id=away)       # the window itself: built from that one photo
+        assert dlg is not None and why == ""
+        dlg.deleteLater()
     finally:
         w.close()

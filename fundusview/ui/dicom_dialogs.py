@@ -20,7 +20,7 @@ from datetime import datetime
 from PySide6.QtCore import QDate, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QDateEdit, QDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QProgressBar, QPushButton, QTableWidget,
+    QComboBox, QDateEdit, QDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QProgressBar, QPushButton, QTableWidget,
     QTableWidgetItem, QVBoxLayout,
 )
 
@@ -312,7 +312,8 @@ class DicomSendDialog(QDialog):
     progressed = Signal(int, int, object)   # done, of, SendResult | None — from the worker
     finished_all = Signal(object, str)      # list[SendResult] | None, error
 
-    def __init__(self, db, settings: Settings, rows, parent=None):
+    def __init__(self, db, settings: Settings, rows, parent=None, scopes=None):
+        """``scopes``: ``[(label, rows), …]`` — 보낼 범위 to choose from in the window (the first: ``rows``)."""
         super().__init__(parent)
         self.setWindowTitle("DICOM 전송 (PACS)")
         self.setMinimumSize(820, 420)
@@ -325,6 +326,12 @@ class DicomSendDialog(QDialog):
         self.skipped = 0                             # photos of nobody (미분류): never sent
         self._cancel = threading.Event()
         self._thread: threading.Thread | None = None
+        self._take(rows)
+        self._build(scopes)
+
+    def _take(self, rows) -> None:
+        """The photos to send: those of a patient (미분류 photos are counted in ``skipped``)."""
+        self.rows, self.items, self.results, self.skipped = [], [], {}, 0
         patients: dict = {}
         for row in rows:
             ref = row["patient_ref"]
@@ -342,7 +349,20 @@ class DicomSendDialog(QDialog):
             self.items.append(dicomnet.item_of(row, patient, order, photo_label(row), path=""))
             self.rows.append(row)
 
+    def _build(self, scopes) -> None:
         lay = QVBoxLayout(self)
+        self.scope = None
+        if scopes and len(scopes) > 1:
+            self._scopes = list(scopes)
+            self.scope = QComboBox()
+            self.scope.setObjectName("dicomScope")
+            for label, rows in self._scopes:
+                self.scope.addItem(f"{label} ({len(rows)}장)")
+            self.scope.currentIndexChanged.connect(self._on_scope)
+            line = QHBoxLayout()
+            line.addWidget(QLabel("보낼 범위"))
+            line.addWidget(self.scope, 1)
+            lay.addLayout(line)
         self.lbl_head = QLabel("")
         self.lbl_head.setWordWrap(True)
         lay.addWidget(self.lbl_head)
@@ -371,6 +391,13 @@ class DicomSendDialog(QDialog):
         self.progressed.connect(self._on_progress)
         self.finished_all.connect(self._on_finished)
         self._fill()
+
+    def _on_scope(self, index: int) -> None:
+        if self._thread is None and 0 <= index < len(self._scopes):
+            self._take(self._scopes[index][1])
+            self.bar.setRange(0, max(len(self.items), 1))
+            self.bar.setValue(0)
+            self._fill()
 
     def _fill(self) -> None:
         with filling(self.table):
@@ -423,6 +450,8 @@ class DicomSendDialog(QDialog):
         if not self._batch:
             return
         self._cancel.clear()
+        if self.scope is not None:
+            self.scope.setEnabled(False)             # (what was sent stays on the list)
         self.btn_send.setEnabled(False)
         self.btn_close.setText("중지")
         self.bar.setRange(0, len(self._batch))
